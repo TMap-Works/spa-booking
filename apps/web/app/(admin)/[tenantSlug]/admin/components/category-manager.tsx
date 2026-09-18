@@ -79,6 +79,19 @@ const categoryFormSchema = z.object({
 type CategoryFormValues = z.input<typeof categoryFormSchema>;
 
 /**
+ * Ce que le dernier enregistrement a produit — et non plus un simple « c'est
+ * fait » (#998).
+ *
+ * La création porte la rubrique obtenue, parce que le bandeau la **nomme** et
+ * ouvre son écran : le formulaire vient d'être vidé, et « Rubrique enregistrée »
+ * seul laisserait chercher laquelle dans un tableau qui passe sous le pli dès la
+ * dixième ligne.
+ */
+type CategoryOutcome =
+  | { readonly kind: 'created'; readonly category: ServiceCategory }
+  | { readonly kind: 'updated' };
+
+/**
  * Le formulaire d'une rubrique — le même pour la créer et pour la modifier.
  *
  * Les deux gestes portent les mêmes champs et les mêmes règles ; les tenir en
@@ -135,6 +148,50 @@ type CategoryFormValues = z.input<typeof categoryFormSchema>;
  * lui-même, comme `StaffInviteForm` la pose sur sa `<section>` ; la liste des
  * rubriques, elle, garde ses 926 px, parce qu'un tableau profite de la place
  * qu'un formulaire gaspille.
+ *
+ * ## La création se confirme, comme l'enregistrement (#998)
+ *
+ * Elle ne le faisait pas : le formulaire se vidait, et le seul indice était une
+ * ligne de plus dans le tableau du dessous — sous le pli dès qu'une dizaine de
+ * rubriques existent. Le même composant annonçait pourtant « Rubrique
+ * enregistrée » quand on enregistrait une rubrique **existante**. Deux issues du
+ * même geste, deux traitements, dans un fichier de deux cents lignes : l'audit
+ * de conception `d20260917-2` l'a relevé au titre de `ds:etats` — « un succès
+ * qui ne se voit pas n'existe pas pour celle qui vient d'agir »
+ * (`.claude/skills/web-frontend/SKILL.md` §6).
+ *
+ * Le bandeau de création **nomme la rubrique** et ouvre son écran. Les deux
+ * tiennent au même fait : le formulaire est vide juste après, et un « c'est
+ * fait » anonyme laisserait retrouver soi-même, dans la liste, ce qu'on vient de
+ * créer. Le lien est le geste suivant que l'audit demandait — c'est là que se
+ * corrige un slug dérivé qu'on ne voulait pas.
+ *
+ * ## Pourquoi une région montée en permanence
+ *
+ * Une région `aria-live` insérée **avec** son message n'est annoncée par aucun
+ * lecteur d'écran de façon fiable : l'annonce se déclenche sur la mutation d'une
+ * région déjà suivie. Rendre le `<Notification>` au retour de l'action — ce qui
+ * suffit visuellement — resterait donc muet, et l'audit demande une région
+ * *annoncée* (WCAG 2.2 AA, 4.1.3 « Messages d'état »).
+ *
+ * D'où le conteneur toujours monté, `spa-visually-hidden` tant qu'il n'y a rien
+ * à dire : la classe sort l'élément du flux (`base.css`), si bien qu'une région
+ * vide ne consomme pas la gouttière de `.spa-admin__section` — c'est la classe
+ * qui change, jamais le nœud, et React ne le remplace donc pas. C'est le geste
+ * déjà écrit pour l'espace client (`account-announcement.tsx`), repris sans rien
+ * lui ajouter.
+ *
+ * Deux détails s'y rattachent :
+ *
+ * - `aria-atomic="true"` — le titre lu seul perdrait le nom de la rubrique ;
+ * - le `role="status"` du `<Notification>` fait double emploi avec la région qui
+ *   le porte, mais il vient du design system et ne se modifie pas d'ici. Deux
+ *   régions imbriquées annoncent **une** fois, là où un bandeau posé à côté d'une
+ *   annonce invisible ferait lire la phrase deux fois.
+ *
+ * L'échec, lui, reste hors de la région : son `role="alert"` est *assertif* par
+ * nature — il interrompt — et l'enfermer dans une région polie reviendrait à le
+ * faire attendre une pause.
  */
 export function CategoryForm({
   tenantSlug,
@@ -154,7 +211,7 @@ export function CategoryForm({
 }) {
   const router = useRouter();
   const { renewIfExpired } = useAdminSessionRenewal(tenantSlug);
-  const [saved, setSaved] = useState(false);
+  const [outcome, setOutcome] = useState<CategoryOutcome | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
   const suffix = category?.id ?? 'nouvelle';
 
@@ -177,7 +234,7 @@ export function CategoryForm({
   const submit = handleSubmit(
     async (values) => {
       setFailure(null);
-      setSaved(false);
+      setOutcome(null);
 
       const result =
         category === undefined
@@ -208,8 +265,9 @@ export function CategoryForm({
 
       if (category === undefined) {
         reset({ name: '', slug: '', description: '' });
+        setOutcome({ kind: 'created', category: result.data });
       } else {
-        setSaved(true);
+        setOutcome({ kind: 'updated' });
       }
 
       // Les deux écrans sont rendus côté serveur : sans ce rafraîchissement, la
@@ -220,11 +278,11 @@ export function CategoryForm({
     () => {
       /*
        * Une saisie refusée par le schéma n'atteint jamais le rappel ci-dessus :
-       * sans ce second rappel, le bandeau « Rubrique enregistrée » du précédent
-       * enregistrement resterait à l'écran **au-dessus** de l'erreur du champ,
-       * et annoncerait comme enregistré un nom vide qui ne l'est pas.
+       * sans ce second rappel, le bandeau du précédent enregistrement resterait
+       * à l'écran **au-dessus** de l'erreur du champ, et annoncerait comme
+       * enregistré un nom vide qui ne l'est pas.
        */
-      setSaved(false);
+      setOutcome(null);
       setFailure(null);
     },
   );
@@ -242,11 +300,36 @@ export function CategoryForm({
         </h2>
       ) : null}
 
-      {saved ? (
-        <Notification tone="success" title="Rubrique enregistrée">
-          <p>La page publique du salon reflète désormais ces informations.</p>
-        </Notification>
-      ) : null}
+      {/* Montée du premier rendu, vide et hors du flux tant qu'il n'y a rien à
+          dire : une région `aria-live` insérée avec son message n'est annoncée
+          par aucun lecteur d'écran de façon fiable (#998). */}
+      <div
+        className={outcome === null ? 'spa-visually-hidden' : undefined}
+        aria-live="polite"
+        aria-atomic="true"
+      >
+        {outcome === null ? null : outcome.kind === 'created' ? (
+          <Notification tone="success" title={`Rubrique « ${outcome.category.name} » créée`}>
+            {/* Au futur, et c'est voulu : la liste est rendue côté serveur et ne
+                rattrape son retard qu'au retour de `router.refresh()`. « Elle
+                figure dans la liste ci-dessous » contredirait, le temps d'un
+                aller-retour, l'état vide « Aucune rubrique » encore affiché sous
+                le bandeau — et une rubrique neuve ne paraît de toute façon en
+                public qu'une fois une prestation classée dessous. */}
+            <p>
+              Elle regroupera les prestations qu’on lui affecte, et paraîtra sur la page publique du
+              salon.{' '}
+              <Link href={adminServiceCategoryPath(tenantSlug, outcome.category.id)}>
+                Ouvrir la rubrique
+              </Link>
+            </p>
+          </Notification>
+        ) : (
+          <Notification tone="success" title="Rubrique enregistrée">
+            <p>La page publique du salon reflète désormais ces informations.</p>
+          </Notification>
+        )}
+      </div>
 
       {failure === null ? null : (
         <Notification tone="danger" title="L’enregistrement a échoué">
