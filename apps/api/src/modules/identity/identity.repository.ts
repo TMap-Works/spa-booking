@@ -870,19 +870,60 @@ export class IdentityRepository {
    * demande suivante. Il ne s'efface jamais : une demande consommée doit
    * continuer de compter.
    *
+   * ## C'est le `where` qui porte la limite de débit par adresse — #1034
+   *
+   * `notRequestedSince` est l'instant au plus tard auquel la demande précédente
+   * doit se situer pour qu'une nouvelle soit servie. Il est **dans le `where`**, et non
+   * dans une comparaison faite en amont : deux demandes parties ensemble sur la
+   * même adresse lisent la même ligne, passent toutes deux le contrôle
+   * applicatif, et arriveraient toutes deux ici. Sous `READ COMMITTED`, la
+   * seconde bloque sur le verrou de ligne de la première, puis **réévalue** son
+   * `where` contre la version que celle-ci vient d'écrire : `requested_at` y vaut
+   * désormais l'instant de la gagnante, ni nul ni antérieur au seuil. Elle rend
+   * `count: 0`, et le service n'émet rien.
+   *
+   * Sans cela, deux courriers partaient pour une seule fenêtre, et le lien du
+   * premier n'ouvrait rien — la seconde écriture ayant écrasé son empreinte.
+   * C'est la même classe de défaut que booking-engine §1 interdit au moteur de
+   * réservation : une vérification applicative là où la base doit trancher.
+   *
+   * La valeur nulle est acceptée explicitement — un compte qui n'a jamais rien
+   * demandé n'a pas de `requested_at` à comparer, et une comparaison SQL contre
+   * `NULL` ne rend pas `true`.
+   *
+   * La comparaison est **large** (`lte`), et non stricte, parce qu'elle doit
+   * décider exactement comme `AuthService.isWithinResetCooldown` : ce raccourci
+   * refuse tant que l'écart est *strictement* inférieur au délai, donc il laisse
+   * passer l'instant où l'écart vaut exactement le délai. Avec un `lt`, cet
+   * instant-là — atteignable, `requested_at` étant un `timestamp(3)` à la
+   * milliseconde — passait le raccourci puis se faisait refuser ici : la
+   * personne recevait un 202 sans courrier, et le journal l'attribuait à une
+   * demande concurrente. La garantie contre la course, elle, ne bouge pas : deux
+   * demandes parties ensemble portent un `requested_at` gagnant proche de leur
+   * propre `now`, très au-dessus du seuil, quelle que soit la borne.
+   *
    * `updateMany` pour la raison qui vaut partout dans ce fichier : sous le
    * scoping, le `where` porte `id` **et** `tenantId`, ce qui n'est pas une clé
    * unique au sens de Prisma. Le compte de lignes donne le `false` attendu pour
-   * un compte disparu entre la lecture et l'écriture.
+   * un compte disparu entre la lecture et l'écriture, comme pour une demande
+   * trop rapprochée — le service ne distingue pas les deux, et n'a pas à le
+   * faire : l'un et l'autre valent « rien à envoyer ».
    */
   public async armPasswordReset(input: {
     userId: string;
     tokenHash: string;
     expiresAt: Date;
     requestedAt: Date;
+    notRequestedSince: Date;
   }): Promise<boolean> {
     const { count } = await this.prisma.user.updateMany({
-      where: { id: input.userId },
+      where: {
+        id: input.userId,
+        OR: [
+          { passwordResetRequestedAt: null },
+          { passwordResetRequestedAt: { lte: input.notRequestedSince } },
+        ],
+      },
       data: {
         passwordResetTokenHash: input.tokenHash,
         passwordResetExpiresAt: input.expiresAt,
