@@ -112,8 +112,15 @@ export interface ConsentCopy {
  * (CDC §1.4), et le dire est une information, pas une promesse commerciale —
  * c'est même la première question que pose un formulaire qui demande un
  * téléphone.
+ *
+ * Depuis #1050 la phrase est **soudée à celle qui la précède** plutôt que posée
+ * en seconde phrase : l'encart faisait huit lignes au-dessus du bouton de
+ * l'étape à 360 px, et la moitié de sa hauteur venait de là. Elle reste
+ * néanmoins **hors du dépliant** — c'est la promesse que la cliente est sûre
+ * d'avoir lue au moment où elle coche, et la reléguer derrière un clic aurait
+ * été la retirer (CDC §5.1).
  */
-const NO_MARKETING = 'Elles ne servent à rien d’autre : aucune prospection, aucune revente.';
+const NO_MARKETING = 'et à rien d’autre : aucune prospection, aucune revente.';
 
 const IDENTITY_PURPOSE: ConsentPurpose = {
   data: 'Prénom et nom',
@@ -157,9 +164,8 @@ const RIGHTS =
 /** L'étape « Coordonnées » du tunnel — wireframes.md, étape 4. */
 export const BOOKING_CONSENT: ConsentCopy = {
   intro:
-    'Vos coordonnées servent à gérer ce rendez-vous : le salon vous identifie, ' +
-    'vous recevez la confirmation par e-mail et, si vous laissez un numéro, le ' +
-    `rappel la veille par SMS. ${NO_MARKETING}`,
+    'Vos coordonnées servent à gérer ce rendez-vous — confirmation par e-mail, ' +
+    `rappel la veille par SMS si vous laissez un numéro — ${NO_MARKETING}`,
   summary: SUMMARY,
   purposes: [
     IDENTITY_PURPOSE,
@@ -178,9 +184,9 @@ export const BOOKING_CONSENT: ConsentCopy = {
 /** La création de compte — `/{salon}/compte/inscription`. */
 export const ACCOUNT_CONSENT: ConsentCopy = {
   intro:
-    'Vos coordonnées servent à tenir votre compte et vos rendez-vous : vous ' +
-    'connecter, retrouver votre historique, recevoir les confirmations par ' +
-    `e-mail et, si vous laissez un numéro, les rappels par SMS. ${NO_MARKETING}`,
+    'Vos coordonnées servent à tenir votre compte et vos rendez-vous — ' +
+    'connexion, historique, confirmations par e-mail, rappels par SMS si vous ' +
+    `laissez un numéro — ${NO_MARKETING}`,
   summary: SUMMARY,
   purposes: [
     IDENTITY_PURPOSE,
@@ -248,6 +254,22 @@ interface ConsentFieldProps
  * La case n'est pas cochée d'avance, et ne peut pas l'être : un consentement
  * pré-coché n'est pas un consentement, et le schéma ci-dessus exige un `true`
  * que seule la cliente peut poser.
+ *
+ * ## Pourquoi la case est sortie de l'encart gris (#1050)
+ *
+ * `BM-TUNNEL-06` (`docs/design/benchmark/parcours-client.md`) : *« toute case
+ * facultative […] est décochée par défaut, **séparée** de l'acceptation des
+ * conditions de réservation »*. La case vivait jusqu'ici **dans** le pavé
+ * d'information, au même fond et au même cadre : à 360 px, le geste qui engage
+ * se lisait comme la dernière ligne d'un paragraphe juridique, et l'audit
+ * `d20260918-1` l'a relevé comme tel.
+ *
+ * Elle est donc désormais sœur de l'encart, et non son enfant : l'information
+ * garde son fond creusé — c'est un texte à lire, pas une saisie —, la décision
+ * se pose sur le fond du formulaire, comme les autres contrôles. Les deux
+ * restent dans le même conteneur, et le même `aria-describedby` continue de
+ * rattacher l'une à l'autre : rien ne change pour un lecteur d'écran, qui
+ * annonce toujours les finalités avec la case.
  */
 export function ConsentField({ id, copy, tenantSlug, error, ref, ...input }: ConsentFieldProps) {
   const introId = `${id}-finalites`;
@@ -258,51 +280,50 @@ export function ConsentField({ id, copy, tenantSlug, error, ref, ...input }: Con
 
   return (
     <div className="spa-consent">
-      <p className="spa-consent__intro" id={introId}>
-        {copy.intro}{' '}
-        {/*
-          Le lien vit **dans** le paragraphe d'intro, et non dans le libellé de
-          la case : un lien à l'intérieur d'un `<label>` est activé par le clic
-          qui coche, et la cliente se retrouverait sur une autre page en croyant
-          consentir. Ce paragraphe est par ailleurs la cible d'`aria-describedby`
-          ci-dessous, si bien que le lien fait partie de ce qu'un lecteur d'écran
-          annonce avec la case.
+      {/* L'encart d'information — ce qu'il faut avoir lu, et rien qui se saisit. */}
+      <div className="spa-consent__notice">
+        <p className="spa-consent__intro" id={introId}>
+          {copy.intro}{' '}
+          {/*
+            Le lien vit **dans** le paragraphe d'intro, et non dans le libellé de
+            la case : un lien à l'intérieur d'un `<label>` est activé par le clic
+            qui coche, et la cliente se retrouverait sur une autre page en croyant
+            consentir. Ce paragraphe est par ailleurs la cible d'`aria-describedby`
+            ci-dessous, si bien que le lien fait partie de ce qu'un lecteur d'écran
+            annonce avec la case.
 
-          `target="_blank"` pour la raison écrite en tête de fichier : le tunnel
-          est à moitié rempli, et rien de ce qui informe ne doit le faire perdre.
-          `rel` va avec — une page ouverte par `_blank` sans lui garde une prise
-          sur celle qui l'a ouverte. La mention entre parenthèses est écrite en
-          toutes lettres plutôt que laissée à un attribut : c'est ce que voit
-          aussi la personne qui n'a pas de lecteur d'écran, et c'est elle qu'un
-          nouvel onglet surprend.
-        */}
-        {/* Aucune classe : le socle (`styles/base.css`) donne déjà à tout `a` la
-            couleur d'accent et le soulignement, et une classe sans règle est une
-            promesse de style que rien ne tient. Le lien ressort donc du gris de
-            ce paragraphe sans qu'on ait à le redire. */}
-        <a
-          href={dataPolicyPath(tenantSlug)}
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          Lire la politique de données (nouvel onglet)
-        </a>
-      </p>
+            `target="_blank"` pour la raison écrite en tête de fichier : le tunnel
+            est à moitié rempli, et rien de ce qui informe ne doit le faire perdre.
+            `rel` va avec — une page ouverte par `_blank` sans lui garde une prise
+            sur celle qui l'a ouverte. La mention entre parenthèses est écrite en
+            toutes lettres plutôt que laissée à un attribut : c'est ce que voit
+            aussi la personne qui n'a pas de lecteur d'écran, et c'est elle qu'un
+            nouvel onglet surprend.
+          */}
+          {/* Aucune classe : le socle (`styles/base.css`) donne déjà à tout `a` la
+              couleur d'accent et le soulignement, et une classe sans règle est une
+              promesse de style que rien ne tient. Le lien ressort donc du gris de
+              ce paragraphe sans qu'on ait à le redire. */}
+          <a href={dataPolicyPath(tenantSlug)} target="_blank" rel="noopener noreferrer">
+            Lire la politique de données (nouvel onglet)
+          </a>
+        </p>
 
-      <details className="spa-consent__details">
-        <summary className="spa-consent__summary">{copy.summary}</summary>
-        {/* `spa-list` rend la puce et le retrait que le socle retire à toute
-            liste (styles/base.css) : celle-ci est une liste de prose, pas une
-            suite d'éléments d'interface. */}
-        <ul className="spa-list spa-consent__list">
-          {copy.purposes.map((purpose) => (
-            <li key={purpose.data}>
-              <span className="spa-consent__data">{purpose.data}</span> — {purpose.why}
-            </li>
-          ))}
-        </ul>
-        <p className="spa-consent__rights">{copy.rights}</p>
-      </details>
+        <details className="spa-consent__details">
+          <summary className="spa-consent__summary">{copy.summary}</summary>
+          {/* `spa-list` rend la puce et le retrait que le socle retire à toute
+              liste (styles/base.css) : celle-ci est une liste de prose, pas une
+              suite d'éléments d'interface. */}
+          <ul className="spa-list spa-consent__list">
+            {copy.purposes.map((purpose) => (
+              <li key={purpose.data}>
+                <span className="spa-consent__data">{purpose.data}</span> — {purpose.why}
+              </li>
+            ))}
+          </ul>
+          <p className="spa-consent__rights">{copy.rights}</p>
+        </details>
+      </div>
 
       <div className="spa-consent__choice">
         <input
