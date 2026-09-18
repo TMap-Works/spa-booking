@@ -6,10 +6,13 @@ import {
   PERMISSIONS,
   PHONE_MAX_LENGTH,
   SLUG_MAX_LENGTH,
+  type PasswordResetRequest,
   type Permission,
   type TenantScopedLoginRequest,
   authSessionResponseSchema,
   authenticatedAccountSchema,
+  passwordResetConfirmRequestSchema,
+  passwordResetRequestSchema,
   passwordSchema,
   sessionUserSchema,
   tenantScopedLoginRequestSchema,
@@ -97,6 +100,33 @@ const registerRequestSchema = tenantScopedRegisterRequestSchema.extend({
  */
 export const loginBody = new ZodValidationPipe(tenantScopedLoginRequestSchema);
 export const registerBody = new ZodValidationPipe(registerRequestSchema);
+
+/**
+ * Les deux corps de la réinitialisation (#809) — validés par le contrat, comme
+ * ceux de session.
+ *
+ * La confirmation étend le schéma partagé de la même borne de 72 octets que
+ * l'inscription, et pour la même raison : le mot de passe est **choisi** ici, et
+ * bcrypt ne considère pas ce qui suit son 72e octet. Relâcher jusqu'à 128 pour
+ * suivre le contrat serait le sens interdit par l'ADR 0008 — on resserre l'API,
+ * on ne la relâche pas.
+ *
+ * Un compte du personnel ou une cliente qui récupère son accès n'a aucune raison
+ * d'être moins bien protégé qu'à l'inscription : la politique est la même des
+ * trois côtés.
+ */
+const passwordResetConfirmSchema = passwordResetConfirmRequestSchema.extend({
+  password: bcryptBoundedPasswordSchema,
+});
+
+export const passwordResetBody = new ZodValidationPipe(passwordResetRequestSchema);
+export const passwordResetConfirmBody = new ZodValidationPipe(passwordResetConfirmSchema);
+
+/** La demande de réinitialisation, telle que le contrat la rend au contrôleur. */
+export type PasswordResetBody = PasswordResetRequest;
+
+/** La confirmation, telle que le contrat bornée la rend au contrôleur. */
+export type PasswordResetConfirmBody = z.infer<typeof passwordResetConfirmSchema>;
 
 /** La demande de connexion, telle que le contrat la rend au contrôleur. */
 export type LoginBody = TenantScopedLoginRequest;
@@ -234,6 +264,58 @@ export class AcceptInvitationDto {
 }
 
 /**
+ * Demande de réinitialisation — la documentation de `passwordResetRequestSchema`
+ * (#809).
+ *
+ * Elle étend `TenantScopedRequest` comme la connexion : la même adresse désigne
+ * deux comptes distincts dans deux salons, et sans le slug la demande n'aurait
+ * aucun moyen de savoir lequel des deux récupérer.
+ */
+export class PasswordResetRequestDto extends TenantScopedRequest {
+  @ApiProperty({
+    example: 'alice@example.test',
+    maxLength: EMAIL_ADDRESS_MAX_LENGTH,
+    description:
+      'Adresse du compte. **Aucune réponse ne dit si elle est connue** : la ' +
+      'route rend 202 dans tous les cas, sans quoi ce formulaire serait un ' +
+      'annuaire de la clientèle du salon.',
+  })
+  public email!: string;
+}
+
+/**
+ * Confirmation d'une réinitialisation — la documentation du schéma borné
+ * ci-dessus (#809).
+ *
+ * ## Aucun `tenantSlug`, contrairement à la demande
+ *
+ * L'établissement est une revendication **signée** du jeton, comme il l'est du
+ * jeton de rafraîchissement et de celui d'invitation. Le demander en plus
+ * donnerait deux sources pour la même information — donc un désaccord possible,
+ * qu'il faudrait arbitrer sur la foi d'une entrée utilisateur. Cette classe
+ * n'étend donc pas `TenantScopedRequest`, et ce n'est pas un oubli.
+ */
+export class PasswordResetConfirmDto {
+  @ApiProperty({
+    description:
+      'Jeton reçu par courrier. À usage unique, et il ne vit que trente ' +
+      'minutes : il cesse d’ouvrir quoi que ce soit dès que le mot de passe est ' +
+      'posé, dès qu’une demande plus récente est faite, et à son échéance.',
+  })
+  public token!: string;
+
+  @ApiProperty({
+    minLength: PASSWORD_MIN_LENGTH,
+    maxLength: BCRYPT_SIGNIFICANT_BYTES,
+    description:
+      'Le nouveau mot de passe. Même politique qu’à l’inscription : douze ' +
+      'caractères au minimum, soixante-douze au maximum — bcrypt ne considère ' +
+      'pas ce qui suit.',
+  })
+  public password!: string;
+}
+
+/**
  * Le compte tel qu'il sort de l'API — la documentation de `sessionUserSchema`.
  *
  * **Ni `tenantId`, ni `passwordHash`.** Une entité Prisma renvoyée telle quelle
@@ -347,6 +429,26 @@ type _LoginDtoHasTheContractKeys = AssertNever<
 type _RegisterDtoHasTheContractKeys = AssertNever<
   | Exclude<keyof RegisterDto, keyof z.input<typeof registerRequestSchema>>
   | Exclude<keyof z.input<typeof registerRequestSchema>, keyof RegisterDto>
+>;
+
+/**
+ * Les deux corps de la réinitialisation, tenus contre leurs schémas comme les
+ * deux corps de session (#809).
+ *
+ * La garde porte ici quelque chose de plus qu'ailleurs : ces routes ne sont pas
+ * authentifiées, et un champ documenté comme acceptable sur l'une d'elles est
+ * une invitation à l'envoyer. Un `tenantSlug` annoncé sur la confirmation, par
+ * exemple, aurait suggéré une seconde source pour un établissement que le jeton
+ * porte déjà signé.
+ */
+type _PasswordResetRequestDtoHasTheContractKeys = AssertNever<
+  | Exclude<keyof PasswordResetRequestDto, keyof z.input<typeof passwordResetRequestSchema>>
+  | Exclude<keyof z.input<typeof passwordResetRequestSchema>, keyof PasswordResetRequestDto>
+>;
+
+type _PasswordResetConfirmDtoHasTheContractKeys = AssertNever<
+  | Exclude<keyof PasswordResetConfirmDto, keyof z.input<typeof passwordResetConfirmSchema>>
+  | Exclude<keyof z.input<typeof passwordResetConfirmSchema>, keyof PasswordResetConfirmDto>
 >;
 
 /**

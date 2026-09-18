@@ -6,6 +6,7 @@ import { PrismaClient } from '@prisma/client';
 import { runInTenantScope } from '../src/common/tenant';
 import { createScopedPrismaClient } from '../src/infrastructure/database/prisma-clients';
 import { AuthService, REFRESH_ROTATION_GRACE_MS } from '../src/modules/identity/auth.service';
+import { IdentityEvents } from '../src/modules/identity/events/identity-events';
 import { InvalidRefreshTokenError } from '../src/modules/identity/identity.errors';
 import { IdentityRepository } from '../src/modules/identity/identity.repository';
 import type { RefreshResult } from '../src/modules/identity/identity.types';
@@ -78,6 +79,10 @@ describe('Renouvellements concurrents — contre un vrai PostgreSQL', () => {
       new PasswordHasher(config),
       tokens,
       silentLogger(),
+      // Le bus du module (#809). Aucun abonné n'est posé : cette suite n'exerce
+      // que la rotation de session, qui ne publie rien. L'instance est là pour
+      // satisfaire le constructeur, pas pour être observée.
+      new IdentityEvents(silentLogger()),
     );
   });
 

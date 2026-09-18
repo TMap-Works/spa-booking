@@ -134,6 +134,44 @@ const SESSION_SELECT = {
 } as const;
 
 /**
+ * L'état de réinitialisation d'un compte — #809.
+ *
+ * ## Pourquoi une structure à part, et non trois champs sur `UserRecord`
+ *
+ * Parce que `UserRecord` traverse tout le module, jusqu'aux frontières où l'on
+ * vérifie qu'aucune donnée sensible ne sort. Une empreinte de jeton de
+ * réinitialisation y aurait voyagé dans chaque connexion, chaque lecture de
+ * profil et chaque liste de comptes, pour n'être lue que par deux méthodes du
+ * service. « La bonne défense est de ne pas la lire » — c'est le raisonnement
+ * qui a déjà produit `STAFF_ACCOUNT_SELECT`.
+ *
+ * `role` et `isActive` en font partie parce que les deux décident : le premier
+ * dit vers quel écran le lien pointe (quatrième critère), le second si le
+ * message part du tout (sixième critère).
+ */
+export interface PasswordResetState {
+  id: string;
+  role: UserRole;
+  isActive: boolean;
+  /** `null` quand aucune réinitialisation n'est en cours. */
+  passwordResetTokenHash: string | null;
+  /** Nulle exactement quand l'empreinte l'est — la contrainte de la migration. */
+  passwordResetExpiresAt: Date | null;
+  /** Instant de la dernière demande, même si son jeton a servi ou a expiré. */
+  passwordResetRequestedAt: Date | null;
+}
+
+/** La projection de cet état, écrite une fois. */
+const PASSWORD_RESET_SELECT = {
+  id: true,
+  role: true,
+  isActive: true,
+  passwordResetTokenHash: true,
+  passwordResetExpiresAt: true,
+  passwordResetRequestedAt: true,
+} as const;
+
+/**
  * Projection du compte, écrite une fois.
  *
  * `passwordHash` n'est jamais dans un `select` destiné à sortir du module, et
@@ -735,9 +773,147 @@ export class IdentityRepository {
   }): Promise<boolean> {
     const { count } = await this.prisma.user.updateMany({
       where: { id: input.userId, passwordHash: null },
-      data: { passwordHash: input.passwordHash },
+      data: {
+        passwordHash: input.passwordHash,
+        // « Le jeton est invalidé par tout changement de mot de passe » — le
+        // deuxième critère de #809, appliqué ici aussi. Une invitation acceptée
+        // *est* un mot de passe posé : un lien de réinitialisation demandé
+        // entre-temps ne doit plus ouvrir le compte. Le cas est étroit — il
+        // faudrait qu'une réinitialisation ait été demandée sur un compte encore
+        // sans mot de passe — mais c'est justement le genre de cas qu'aucun
+        // appelant ne pense à couvrir, et la colonne est ici.
+        passwordResetTokenHash: null,
+        passwordResetExpiresAt: null,
+      },
     });
     return count === 1;
+  }
+
+  /**
+   * L'état de réinitialisation d'un compte — #809.
+   *
+   * Une projection à part et non trois champs de plus dans `USER_SELECT` : le
+   * reste du module n'a rien à faire d'une empreinte de jeton, et l'élargir
+   * l'aurait fait voyager dans tous les `UserRecord` du module — jusqu'aux
+   * frontières où l'on vérifie, justement, que rien de sensible ne sort.
+   *
+   * Rend `null` pour un compte d'un autre établissement, exactement comme pour
+   * un compte inexistant : le client scopé ne fait pas la différence, et c'est ce
+   * qui donne le refus indistinct du cinquième critère d'acceptation.
+   */
+  public async findPasswordResetState(userId: string): Promise<PasswordResetState | null> {
+    return this.prisma.user.findFirst({
+      where: { id: userId },
+      select: PASSWORD_RESET_SELECT,
+    });
+  }
+
+  /**
+   * Arme le jeton de réinitialisation d'un compte — #809, premier et deuxième
+   * critères.
+   *
+   * ## L'écriture **est** l'invalidation du jeton précédent
+   *
+   * L'empreinte est écrasée, pas ajoutée : le lien envoyé cinq minutes plus tôt
+   * cesse d'ouvrir quoi que ce soit à l'instant même où celui-ci part. C'est ce
+   * que « le jeton est invalidé par l'émission d'un nouveau jeton » demande, et
+   * cela ne coûte aucune écriture supplémentaire — voir l'en-tête de la colonne
+   * dans `schema.prisma`.
+   *
+   * `requestedAt` est écrit dans la même opération, et il borne le débit de la
+   * demande suivante. Il ne s'efface jamais : une demande consommée doit
+   * continuer de compter.
+   *
+   * `updateMany` pour la raison qui vaut partout dans ce fichier : sous le
+   * scoping, le `where` porte `id` **et** `tenantId`, ce qui n'est pas une clé
+   * unique au sens de Prisma. Le compte de lignes donne le `false` attendu pour
+   * un compte disparu entre la lecture et l'écriture.
+   */
+  public async armPasswordReset(input: {
+    userId: string;
+    tokenHash: string;
+    expiresAt: Date;
+    requestedAt: Date;
+  }): Promise<boolean> {
+    const { count } = await this.prisma.user.updateMany({
+      where: { id: input.userId },
+      data: {
+        passwordResetTokenHash: input.tokenHash,
+        passwordResetExpiresAt: input.expiresAt,
+        passwordResetRequestedAt: input.requestedAt,
+      },
+    });
+    return count === 1;
+  }
+
+  /**
+   * Pose le nouveau mot de passe **et** consomme le jeton, en une écriture —
+   * #809, deuxième et troisième critères.
+   *
+   * ## C'est le `where` qui fait l'usage unique
+   *
+   * L'écriture est conditionnée à l'empreinte attendue. Deux confirmations
+   * concurrentes du même lien se disputent donc la ligne : la première l'emporte
+   * et efface l'empreinte, la seconde ne trouve plus rien à mettre à jour et
+   * reçoit `false`. L'unicité d'usage est ainsi portée par la base, jamais par
+   * une vérification applicative — c'est le même procédé que `rotateSession` et
+   * que `setInitialPassword`, et c'est la seule forme qui tienne sous
+   * concurrence (booking-engine §1 le dit du moteur de réservation, la raison
+   * est la même).
+   *
+   * L'échéance est vérifiée ici **aussi**, et pas seulement par le service :
+   * c'est la base qui tranche, pas le porteur ni l'horloge de la tâche qui a lu
+   * la ligne une milliseconde plus tôt.
+   *
+   * ## Ce que l'écriture efface, et ce qu'elle garde
+   *
+   * L'empreinte et l'échéance partent ensemble — `users_password_reset_pair_check`
+   * l'exige, et c'est de toute façon ce qu'« un seul usage » veut dire.
+   * `password_reset_requested_at` reste : sans lui, se servir du lien rouvrirait
+   * aussitôt le droit d'en demander un autre.
+   *
+   * ## La révocation des sessions est **dans la même transaction**
+   *
+   * « Révoque tous les refresh tokens du compte » est le troisième critère, et il
+   * ne se tient pas en deux écritures indépendantes : si la seconde échoue — une
+   * coupure de connexion, un basculement RDS —, le mot de passe est changé, le
+   * jeton est consommé, et les sessions ouvertes ailleurs survivent. Rien ne
+   * permet alors de rattraper l'écart : le lien ne peut plus servir, et la
+   * personne croit avoir reprise la main sur son compte alors que l'appareil dont
+   * elle se protégeait y est toujours connecté. Les deux écritures sont donc
+   * atomiques, ou aucune n'a lieu.
+   */
+  public async consumePasswordReset(input: {
+    userId: string;
+    expectedTokenHash: string;
+    passwordHash: string;
+    now: Date;
+  }): Promise<boolean> {
+    return this.prisma.$transaction(async (tx) => {
+      const { count } = await tx.user.updateMany({
+        where: {
+          id: input.userId,
+          passwordResetTokenHash: input.expectedTokenHash,
+          passwordResetExpiresAt: { gt: input.now },
+        },
+        data: {
+          passwordHash: input.passwordHash,
+          passwordResetTokenHash: null,
+          passwordResetExpiresAt: null,
+        },
+      });
+
+      if (count !== 1) {
+        return false;
+      }
+
+      await tx.refreshToken.updateMany({
+        where: { userId: input.userId, revokedAt: null },
+        data: { revokedAt: input.now },
+      });
+
+      return true;
+    });
   }
 
   /**

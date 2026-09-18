@@ -7,6 +7,7 @@ import { toStaffAccount } from '../identity.repository';
 import type {
   IdentityRepository,
   OpeningHourRecord,
+  PasswordResetState,
   PublicTenantRecord,
   SessionRecord,
   TenantSettingsChanges,
@@ -63,6 +64,13 @@ export async function rejectionOf(promise: Promise<unknown>): Promise<unknown> {
 
 export function silentLogger(): StructuredLogger {
   return {
+    // `log` manquait, et l'`as unknown as` le laissait passer : le double ne
+    // portait que les trois niveaux que le module employait jusqu'ici. Le
+    // premier appelant de `log` — `IdentityEvents`, #809 — échouait donc en
+    // `this.logger.log is not a function`, sur un chemin que la production sert
+    // très bien. Les quatre niveaux sont désormais là, pour que le prochain
+    // n'ait pas à le redécouvrir.
+    log: (): void => undefined,
     error: (): void => undefined,
     warn: (): void => undefined,
     debug: (): void => undefined,
@@ -91,6 +99,21 @@ interface StoredUser extends UserRecord {
    * accord recueilli en ligne —, ce que la colonne signifie déjà.
    */
   dataConsentAt?: Date | null;
+  /**
+   * L'état de réinitialisation, tel que les trois colonnes le portent (#809).
+   *
+   * Sur le **stockage** et non sur `UserRecord`, pour la raison de
+   * `dataConsentAt` : `USER_SELECT` ne les lit pas, et un double qui les rendrait
+   * avec le compte laisserait passer une projection élargie par distraction —
+   * ici une empreinte de jeton, dans chaque connexion.
+   *
+   * Facultatives, donc : un compte poussé par une suite d'un autre module n'a
+   * aucune réinitialisation en cours, et absent se lit comme `null`, ce que les
+   * colonnes signifient déjà.
+   */
+  passwordResetTokenHash?: string | null;
+  passwordResetExpiresAt?: Date | null;
+  passwordResetRequestedAt?: Date | null;
 }
 
 interface StoredSession extends SessionRecord {
@@ -486,6 +509,118 @@ export class FakeIdentityRepository {
       return false;
     }
     user.passwordHash = input.passwordHash;
+    // Comme le vrai : poser un mot de passe invalide le jeton de
+    // réinitialisation en cours (#809, deuxième critère). Un double qui
+    // l'oublierait ferait passer au vert un lien qui survit à l'activation du
+    // compte qu'il désigne.
+    user.passwordResetTokenHash = null;
+    user.passwordResetExpiresAt = null;
+    return true;
+  }
+
+  /**
+   * L'état de réinitialisation d'un compte — #809.
+   *
+   * Rend `null` pour un compte d'un autre établissement, et c'est **la**
+   * propriété que la suite d'isolation exerce : le vrai dépôt lit par le client
+   * scopé, qui ne distingue pas « ailleurs » de « nulle part ». Un double qui
+   * chercherait par identifiant seul ferait passer au vert la fuite que le
+   * cinquième critère interdit.
+   */
+  public async findPasswordResetState(userId: string): Promise<PasswordResetState | null> {
+    const tenantId = this.requireTenant();
+    const user = this.users.find(
+      (candidate) => candidate.tenantId === tenantId && candidate.id === userId,
+    );
+
+    if (user === undefined) {
+      return null;
+    }
+
+    return {
+      id: user.id,
+      role: user.role,
+      isActive: user.isActive,
+      passwordResetTokenHash: user.passwordResetTokenHash ?? null,
+      passwordResetExpiresAt: user.passwordResetExpiresAt ?? null,
+      passwordResetRequestedAt: user.passwordResetRequestedAt ?? null,
+    };
+  }
+
+  /**
+   * Arme le jeton de réinitialisation — #809.
+   *
+   * L'écriture **écrase** l'empreinte précédente, comme le vrai : c'est ce qui
+   * fait que l'émission d'un nouveau jeton invalide l'ancien, et un double qui
+   * les accumulerait ferait passer au vert deux liens vivants pour un compte.
+   */
+  public async armPasswordReset(input: {
+    userId: string;
+    tokenHash: string;
+    expiresAt: Date;
+    requestedAt: Date;
+  }): Promise<boolean> {
+    const tenantId = this.requireTenant();
+    const user = this.users.find(
+      (candidate) => candidate.tenantId === tenantId && candidate.id === input.userId,
+    );
+
+    if (user === undefined) {
+      return false;
+    }
+
+    user.passwordResetTokenHash = input.tokenHash;
+    user.passwordResetExpiresAt = input.expiresAt;
+    user.passwordResetRequestedAt = input.requestedAt;
+    return true;
+  }
+
+  /**
+   * Pose le mot de passe **et** consomme le jeton — #809.
+   *
+   * Les trois conditions du `where` réel sont reproduites, et chacune porte un
+   * cas de la suite : le tenant (isolation), l'empreinte attendue (le rejeu), et
+   * l'échéance (le jeton périmé). Un double qui n'en vérifierait qu'une ferait
+   * passer au vert exactement le scénario que le critère 5 demande de refuser.
+   *
+   * `password_reset_requested_at` n'est pas effacé, comme dans le vrai : se
+   * servir du lien ne rouvre pas le droit d'en demander un autre aussitôt.
+   */
+  public async consumePasswordReset(input: {
+    userId: string;
+    expectedTokenHash: string;
+    passwordHash: string;
+    now: Date;
+  }): Promise<boolean> {
+    const tenantId = this.requireTenant();
+    const user = this.users.find(
+      (candidate) =>
+        candidate.tenantId === tenantId &&
+        candidate.id === input.userId &&
+        candidate.passwordResetTokenHash === input.expectedTokenHash &&
+        candidate.passwordResetExpiresAt !== null &&
+        candidate.passwordResetExpiresAt !== undefined &&
+        candidate.passwordResetExpiresAt.getTime() > input.now.getTime(),
+    );
+
+    if (user === undefined) {
+      return false;
+    }
+
+    user.passwordHash = input.passwordHash;
+    user.passwordResetTokenHash = null;
+    user.passwordResetExpiresAt = null;
+
+    // Comme le vrai, et **dans la même opération** : le troisième critère exige
+    // que toutes les sessions du compte tombent, et le vrai dépôt les révoque
+    // dans la transaction qui pose le mot de passe. Un double qui laisserait
+    // l'appelant s'en charger ferait passer au vert un service qui l'oublierait.
+    for (const session of this.sessions) {
+      if (session.userId === input.userId && session.revokedAt === null) {
+        session.revokedAt = input.now;
+      }
+    }
+
     return true;
   }
 
