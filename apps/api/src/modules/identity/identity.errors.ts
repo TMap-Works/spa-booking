@@ -102,6 +102,36 @@ export class InvalidInvitationError extends DomainError {
 }
 
 /**
+ * Jeton de réinitialisation de mot de passe refusé — #809.
+ *
+ * **Un seul message pour six causes** : jeton contrefait, expiré, déjà consommé,
+ * remplacé par une demande plus récente, désignant un compte disparu, ou
+ * désignant un compte désactivé. Même raisonnement qu'`InvalidInvitationError`,
+ * et il porte ici davantage : le lien circule par courrier, il traverse des
+ * boîtes partagées et des historiques de navigation, et distinguer les cas
+ * dirait à qui le ramasse si le compte qu'il désigne est encore en service.
+ *
+ * 401 et non 422, pour la raison qui vaut pour les deux autres jetons : ce qui
+ * est refusé est une **preuve de qualité**, pas une règle métier.
+ *
+ * ## La demande, elle, ne lève jamais
+ *
+ * Cette erreur n'est le fait que de la **confirmation**. La demande de
+ * réinitialisation répond 202 en toutes circonstances — adresse inconnue,
+ * compte désactivé, demande trop rapprochée — parce qu'un refus y ferait de ce
+ * formulaire un annuaire de la clientèle du salon (premier critère
+ * d'acceptation).
+ */
+export class InvalidPasswordResetTokenError extends DomainError {
+  public override readonly code = IDENTITY_ERROR_CODES.INVALID_PASSWORD_RESET_TOKEN;
+  public override readonly status = UNAUTHORIZED;
+
+  public constructor(details: DomainErrorDetails = {}) {
+    super('Lien de réinitialisation invalide ou expiré.', details);
+  }
+}
+
+/**
  * Réémission demandée sur un compte **déjà activé** — #55.
  *
  * Distincte d'`InvalidInvitationError`, et sans contradiction avec elle : la

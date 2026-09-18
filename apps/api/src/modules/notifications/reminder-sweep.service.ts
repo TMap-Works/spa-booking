@@ -8,7 +8,7 @@ import {
   appointmentDedupeKey,
   reachableChannels,
   type DueReminder,
-  type NotificationMessage,
+  type AppointmentScopedMessage,
 } from './notifications.types';
 
 /**
@@ -100,7 +100,7 @@ export interface ReminderSweepResult {
   /** Nombre de rendez-vous retenus. */
   readonly appointmentCount: number;
   /** Les enveloppes à publier — une par canal joignable. */
-  readonly messages: readonly NotificationMessage[];
+  readonly messages: readonly AppointmentScopedMessage[];
   /** Vrai si le plafond a arrêté le balayage avant la fin. */
   readonly truncated: boolean;
 }
@@ -269,7 +269,7 @@ export class ReminderSweepService {
    * elle, est immédiate, si bien qu'un rappel part entre 24 et 25 heures avant le
    * rendez-vous — la largeur de la fenêtre de balayage, et rien de plus.
    */
-  private envelopes(reminder: DueReminder): readonly NotificationMessage[] {
+  private envelopes(reminder: DueReminder): readonly AppointmentScopedMessage[] {
     const channels = reachableChannels(reminder);
 
     if (channels.length === 0) {

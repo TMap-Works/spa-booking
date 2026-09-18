@@ -1,17 +1,22 @@
+import { randomUUID } from 'node:crypto';
+
 import { BadRequestException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 
 import { BusinessRuleError, ConflictError, NotFoundError } from '../../../common/errors';
 import { getTenantId, runInTenantScope, runWithTenant } from '../../../common/tenant';
 import { AuthService, REFRESH_ROTATION_GRACE_MS } from '../auth.service';
+import { IdentityEvents } from '../events/identity-events';
+import type { PasswordResetRequestedEvent } from '../events/password-reset-requested.event';
 import {
   EmailAlreadyRegisteredError,
   InvalidCredentialsError,
   InvalidInvitationError,
+  InvalidPasswordResetTokenError,
   InvalidRefreshTokenError,
 } from '../identity.errors';
 import { PasswordHasher } from '../password.hasher';
-import { hashJti, TokenService } from '../token.service';
+import { hashJti, PASSWORD_RESET_COOLDOWN_MS, TokenService } from '../token.service';
 import { FakeIdentityRepository, fakeConfig, rejectionOf, silentLogger } from './identity.doubles';
 
 /**
@@ -29,17 +34,30 @@ describe('AuthService', () => {
   let service: AuthService;
   let tokens: TokenService;
   let tenantId: string;
+  let events: IdentityEvents;
+  /**
+   * Ce que le bus a publié pendant le cas en cours — la seule façon d'observer
+   * que la chaîne d'envoi a été sollicitée, `AuthService` ne rendant rien sur la
+   * demande de réinitialisation.
+   */
+  let emitted: PasswordResetRequestedEvent[];
 
   beforeEach(() => {
     const config = fakeConfig();
     repository = new FakeIdentityRepository();
     tenantId = repository.addTenant(SLUG);
     tokens = new TokenService(new JwtService(), config);
+    events = new IdentityEvents(silentLogger());
+    emitted = [];
+    events.onPasswordResetRequested((event) => {
+      emitted.push(event);
+    });
     service = new AuthService(
       repository.asRepository(),
       new PasswordHasher(config),
       tokens,
       silentLogger(),
+      events,
     );
   });
 
@@ -938,4 +956,302 @@ describe('AuthService', () => {
       expect(repository.users.find((user) => user.id === actif)?.passwordHash).toBeNull();
     });
   });
+
+  /**
+   * Réinitialisation d'un mot de passe oublié — #809.
+   *
+   * Les cinq cas du cinquième critère d'acceptation sont ici, et le sixième avec
+   * eux. Ce qui est vérifié n'est pas « ça marche » mais, comme partout dans
+   * cette suite, **ce que ça refuse et ce que ça ne dit pas en refusant** : la
+   * valeur d'une procédure de récupération d'accès tient à ce qu'elle ne
+   * transforme pas un formulaire public en annuaire de la clientèle du salon.
+   */
+  describe('réinitialisation de mot de passe', () => {
+    const EMAIL = 'alice@example.test';
+    const NEW_PASSWORD = 'nouveau-mot-de-passe-long';
+
+    /** Le compte ordinaire des cas passants — cliente, active, avec un mot de passe. */
+    const seedClient = async (): Promise<string> => {
+      const user = repository.addUser({
+        tenantId,
+        email: EMAIL,
+        passwordHash: await new PasswordHasher(fakeConfig()).hash(PASSWORD),
+      });
+      return user.id;
+    };
+
+    /**
+     * Le jeton que la demande vient d'émettre, lu **sur l'événement** et non
+     * rendu par le service.
+     *
+     * C'est la seule façon de l'obtenir, et c'est voulu : la route ne rend rien
+     * (« toujours 202 »), et le jeton n'existe en clair qu'à cet instant — la
+     * base n'en garde que l'empreinte. Un test qui irait le chercher ailleurs
+     * testerait autre chose que la production.
+     */
+    const requestAndTakeToken = async (): Promise<string> => {
+      await inRequest(() => service.requestPasswordReset({ tenantSlug: SLUG, email: EMAIL }));
+      const event = emitted.at(-1);
+      if (event === undefined) {
+        throw new Error('aucun événement de réinitialisation publié');
+      }
+      return event.token;
+    };
+
+    it('arme un jeton haché et publie le lien, sans jamais rendre le jeton', async () => {
+      const userId = await seedClient();
+
+      await inRequest(() => service.requestPasswordReset({ tenantSlug: SLUG, email: EMAIL }));
+
+      const stored = repository.users.find((user) => user.id === userId);
+      expect(emitted).toHaveLength(1);
+      expect(emitted[0]?.userId).toBe(userId);
+      // Ce qui est **stocké** est l'empreinte, jamais le jeton : c'est le
+      // deuxième critère, et c'est ce qui rend une fuite de la table sans effet.
+      expect(stored?.passwordResetTokenHash).toBe(hashJti(decodeJti(emitted[0]?.token ?? '')));
+      expect(stored?.passwordResetTokenHash).not.toBe(emitted[0]?.token);
+      // L'échéance est à trente minutes, et c'est la base qui la porte — pas
+      // seulement l'`exp` du porteur.
+      const ttlMs = (stored?.passwordResetExpiresAt?.getTime() ?? 0) - Date.now();
+      expect(ttlMs).toBeGreaterThan(29 * 60_000);
+      expect(ttlMs).toBeLessThanOrEqual(30 * 60_000);
+    });
+
+    it('répond la même chose sur une adresse inconnue que sur une adresse connue', async () => {
+      // Le quatrième cas du cinquième critère. Aucun compte n'est semé : la
+      // demande porte sur une adresse qui n'existe pas dans ce salon.
+      const inconnue = await inRequest(() =>
+        service.requestPasswordReset({ tenantSlug: SLUG, email: 'personne@example.test' }),
+      );
+
+      await seedClient();
+      const connue = await inRequest(() =>
+        service.requestPasswordReset({ tenantSlug: SLUG, email: EMAIL }),
+      );
+
+      // Les deux rendent `undefined` — la route en fait un 202 dans les deux
+      // cas. Si l'une des deux levait, le contrôleur rendrait un statut
+      // différent, et le formulaire dirait quelles adresses ont un compte.
+      expect(inconnue).toBeUndefined();
+      expect(connue).toBeUndefined();
+      // Et seule l'adresse connue a produit un message : c'est la réponse qui
+      // est indistincte, pas l'effet.
+      expect(emitted).toHaveLength(1);
+    });
+
+    it('n’envoie rien à un compte suspendu, ni à un compte sans mot de passe', async () => {
+      // Sixième critère, moitié « compte suspendu ». Le compte sans mot de passe
+      // relève de l'invitation (#55) et non de la réinitialisation : lui servir
+      // un jeton aurait ouvert un second chemin d'activation.
+      repository.addUser({
+        tenantId,
+        email: 'suspendue@example.test',
+        passwordHash: 'peu-importe',
+        isActive: false,
+      });
+      repository.addUser({ tenantId, email: 'invitee@example.test', passwordHash: null });
+
+      await inRequest(() =>
+        service.requestPasswordReset({ tenantSlug: SLUG, email: 'suspendue@example.test' }),
+      );
+      await inRequest(() =>
+        service.requestPasswordReset({ tenantSlug: SLUG, email: 'invitee@example.test' }),
+      );
+
+      expect(emitted).toHaveLength(0);
+    });
+
+    it('traite un établissement désactivé comme un établissement inexistant', async () => {
+      // Sixième critère, moitié « établissement désactivé » (voir #407). Le
+      // refus est celui d'un slug inconnu : distinguer les deux dirait à un
+      // visiteur qu'un salon a fermé, et lequel.
+      const fermeId = repository.addTenant('salon-ferme', randomUUID(), { isActive: false });
+      repository.addUser({ tenantId: fermeId, email: EMAIL, passwordHash: 'peu-importe' });
+
+      const error = await rejectionOf(
+        inRequest(() =>
+          service.requestPasswordReset({ tenantSlug: 'salon-ferme', email: EMAIL }),
+        ),
+      );
+
+      expect(error).toBeInstanceOf(NotFoundError);
+      expect(emitted).toHaveLength(0);
+    });
+
+    it('n’émet pas un second message quand la demande est trop rapprochée', async () => {
+      await seedClient();
+
+      await inRequest(() => service.requestPasswordReset({ tenantSlug: SLUG, email: EMAIL }));
+      await inRequest(() => service.requestPasswordReset({ tenantSlug: SLUG, email: EMAIL }));
+
+      // La moitié « par adresse » de la limite de débit du premier critère. Elle
+      // est en base — donc partagée par toutes les tâches —, et son refus est
+      // invisible : la seconde demande rend quand même 202.
+      expect(emitted).toHaveLength(1);
+    });
+
+    it('pose le mot de passe, consomme le jeton et révoque toutes les sessions', async () => {
+      const userId = await seedClient();
+      // Deux sessions ouvertes ailleurs — c'est ce que le troisième critère
+      // demande de couper.
+      await inRequest(() => service.login({ tenantSlug: SLUG, email: EMAIL, password: PASSWORD }));
+      await inRequest(() => service.login({ tenantSlug: SLUG, email: EMAIL, password: PASSWORD }));
+      const token = await requestAndTakeToken();
+
+      await inRequest(() => service.confirmPasswordReset({ token, password: NEW_PASSWORD }));
+
+      const stored = repository.users.find((user) => user.id === userId);
+      // Le jeton est consommé dans l'écriture même qui pose le mot de passe.
+      expect(stored?.passwordResetTokenHash).toBeNull();
+      expect(stored?.passwordResetExpiresAt).toBeNull();
+      // Le nouveau mot de passe ouvre la session, l'ancien non.
+      await expect(
+        inRequest(() => service.login({ tenantSlug: SLUG, email: EMAIL, password: NEW_PASSWORD })),
+      ).resolves.toBeDefined();
+      // Toutes les sessions antérieures sont éteintes : une réinitialisation est
+      // le geste de quelqu'un qui a perdu la main sur son compte.
+      expect(
+        repository.sessions.filter(
+          (session) => session.userId === userId && session.revokedAt === null,
+        ),
+      ).toHaveLength(1);
+    });
+
+    it('refuse de rejouer un jeton déjà consommé', async () => {
+      // Deuxième cas du cinquième critère.
+      await seedClient();
+      const token = await requestAndTakeToken();
+      await inRequest(() => service.confirmPasswordReset({ token, password: NEW_PASSWORD }));
+
+      const error = await rejectionOf(
+        inRequest(() => service.confirmPasswordReset({ token, password: 'encore-un-autre-mdp' })),
+      );
+
+      expect(error).toBeInstanceOf(InvalidPasswordResetTokenError);
+      expect((error as InvalidPasswordResetTokenError).status).toBe(401);
+    });
+
+    it('refuse un jeton qu’une demande plus récente a remplacé', async () => {
+      await seedClient();
+      const premier = await requestAndTakeToken();
+      // La limite de débit ne doit pas empêcher ce scénario : on recule la
+      // dernière demande au-delà du délai, comme l'aurait fait le temps.
+      const stored = repository.users.find((user) => user.email === EMAIL);
+      if (stored !== undefined) {
+        stored.passwordResetRequestedAt = new Date(Date.now() - PASSWORD_RESET_COOLDOWN_MS - 1);
+      }
+      const second = await requestAndTakeToken();
+
+      const error = await rejectionOf(
+        inRequest(() => service.confirmPasswordReset({ token: premier, password: NEW_PASSWORD })),
+      );
+
+      // L'émission d'un nouveau jeton invalide l'ancien — deuxième critère. Le
+      // second, lui, ouvre bien le compte.
+      expect(error).toBeInstanceOf(InvalidPasswordResetTokenError);
+      await expect(
+        inRequest(() => service.confirmPasswordReset({ token: second, password: NEW_PASSWORD })),
+      ).resolves.toBeUndefined();
+    });
+
+    it('refuse un jeton expiré', async () => {
+      // Troisième cas du cinquième critère. L'échéance est reculée en base
+      // plutôt que dans le jeton : c'est **la base qui tranche**, et c'est
+      // précisément cette propriété qu'on veut voir échouer côté base même quand
+      // l'`exp` du porteur serait encore bon.
+      await seedClient();
+      const token = await requestAndTakeToken();
+      const stored = repository.users.find((user) => user.email === EMAIL);
+      if (stored !== undefined) {
+        stored.passwordResetExpiresAt = new Date(Date.now() - 1_000);
+      }
+
+      const error = await rejectionOf(
+        inRequest(() => service.confirmPasswordReset({ token, password: NEW_PASSWORD })),
+      );
+
+      expect(error).toBeInstanceOf(InvalidPasswordResetTokenError);
+    });
+
+    it('refuse un jeton du salon A présenté sur le salon B, sans rien révéler', async () => {
+      // **Le test d'isolation inter-tenant du cinquième critère.**
+      //
+      // Le jeton est émis dans le salon A, pour un compte du salon A. La
+      // confirmation est ensuite tentée dans une requête déjà bornée au salon B
+      // — ce que fait le middleware de résolution publique sur une page du salon
+      // B. Le refus doit être **le même** que celui d'un jeton contrefait : rien
+      // ne doit apprendre au salon B que ce jeton existe, ni qu'un compte le
+      // porte ailleurs.
+      await seedClient();
+      const token = await requestAndTakeToken();
+      const voisinId = repository.addTenant('salon-voisin');
+
+      const croise = await rejectionOf(
+        runWithTenant(voisinId, () => service.confirmPasswordReset({ token, password: NEW_PASSWORD })),
+      );
+      const contrefait = await rejectionOf(
+        inRequest(() => service.confirmPasswordReset({ token: 'pas-un-jeton', password: NEW_PASSWORD })),
+      );
+
+      // Même classe, même statut, même message : le refus ne distingue pas
+      // « ce jeton est d'un autre salon » de « ce jeton n'existe pas »
+      // (tenant-isolation §4).
+      expect(croise).toBeInstanceOf(InvalidPasswordResetTokenError);
+      expect(contrefait).toBeInstanceOf(InvalidPasswordResetTokenError);
+      expect((croise as InvalidPasswordResetTokenError).message).toBe(
+        (contrefait as InvalidPasswordResetTokenError).message,
+      );
+      expect((croise as InvalidPasswordResetTokenError).status).toBe(
+        (contrefait as InvalidPasswordResetTokenError).status,
+      );
+      // Et le compte du salon A n'a pas bougé : le jeton est toujours armé, son
+      // mot de passe est intact.
+      const stored = repository.users.find((user) => user.email === EMAIL);
+      expect(stored?.passwordResetTokenHash).not.toBeNull();
+      await expect(
+        inRequest(() => service.login({ tenantSlug: SLUG, email: EMAIL, password: PASSWORD })),
+      ).resolves.toBeDefined();
+    });
+
+    it('refuse un jeton d’invitation présenté comme jeton de réinitialisation', async () => {
+      // La séparation des clés dérivées, vue depuis l'extérieur. Sans elle, une
+      // invitation de sept jours — que tout le personnel reçoit par courrier —
+      // aurait servi à poser le mot de passe d'un compte déjà activé.
+      const userId = await seedClient();
+      const invitation = await tokens.signInvitationToken({ userId, tenantId });
+
+      const error = await rejectionOf(
+        inRequest(() =>
+          service.confirmPasswordReset({ token: invitation.token, password: NEW_PASSWORD }),
+        ),
+      );
+
+      expect(error).toBeInstanceOf(InvalidPasswordResetTokenError);
+    });
+  });
 });
+
+/**
+ * Le `jti` d'un jeton de réinitialisation, lu sans vérifier sa signature.
+ *
+ * Réservé aux assertions : la suite a besoin de recalculer l'empreinte que le
+ * service a écrite pour la comparer à la colonne, et le `jti` est l'aléa dont
+ * elle est tirée. Aucun code de production ne lit un jeton sans le vérifier —
+ * c'est `TokenService.verifyPasswordResetToken` qui en a la charge.
+ */
+function decodeJti(token: string): string {
+  const payload = token.split('.')[1] ?? '';
+  const decoded: unknown = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'));
+
+  if (decoded === null || typeof decoded !== 'object') {
+    throw new Error('charge utile de jeton illisible');
+  }
+
+  const jti = (decoded as Record<string, unknown>)['jti'];
+
+  if (typeof jti !== 'string') {
+    throw new Error('jeton sans jti');
+  }
+
+  return jti;
+}

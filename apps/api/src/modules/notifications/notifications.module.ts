@@ -21,6 +21,7 @@ import { NotificationsConfig } from './notifications.config';
 import { NotificationsController } from './notifications.controller';
 import { NotificationsRepository } from './notifications.repository';
 import { NotificationsService } from './notifications.service';
+import { PasswordResetListener } from './password-reset.listener';
 import { ReminderSweepRepository } from './reminder-sweep.repository';
 import { ReminderSweepService } from './reminder-sweep.service';
 
@@ -108,6 +109,12 @@ import { ReminderSweepService } from './reminder-sweep.service';
     // un autre événement que le premier, si bien qu'aucun des deux ne voit
     // passer ce qui ne le regarde pas.
     CancellationNoticeListener,
+    // Le lien de réinitialisation d'un mot de passe (#809). Troisième abonné du
+    // module, et le premier qui n'écoute pas le bus d'`appointments` : il écoute
+    // celui d'`identity`, que `IdentityModule` — déjà importé ici pour ses
+    // gardes — exporte désormais. Le sens de dépendance ne change pas : c'est
+    // `notifications` qui dépend des deux autres modules.
+    PasswordResetListener,
     // Les modèles par établissement (#69). Le dépôt sert **deux** appelants qui
     // n'ont rien en commun : le service, pour le back-office, et le renderer,
     // juste avant chaque envoi. C'est la raison pour laquelle il est un provider

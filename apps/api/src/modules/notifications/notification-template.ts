@@ -152,6 +152,33 @@ export const TEMPLATE_VARIABLES = [
    * n'était pas là.
    */
   'destinataire_client',
+  /**
+   * Le lien de réinitialisation d'un mot de passe — #809, quatrième critère.
+   *
+   * ## Elle est composée par le serveur, jamais écrite par un salon
+   *
+   * Même régime que `lien_annulation`, et pour la même raison : le modèle la
+   * **nomme**, il ne l'écrit pas. L'origine vient d'`AppConfigService.appUrl`,
+   * validée au démarrage, si bien qu'aucun en-tête `Host` d'une requête
+   * entrante ne peut finir dans un courrier — le vecteur classique de
+   * l'empoisonnement de lien. Et un salon qui personnalise son message ne peut
+   * pas faire pointer le lien d'un e-mail signé de son nom vers un domaine
+   * qu'il aurait choisi.
+   *
+   * ## Son chemin dépend du rôle du compte
+   *
+   * `/{slug}/admin/mot-de-passe` pour un compte du personnel,
+   * `/{slug}/compte/mot-de-passe` pour une cliente. Le rôle est lu **en base**
+   * au moment du rendu, jamais porté par le jeton : un rôle figé à l'émission
+   * enverrait une praticienne promue la veille vers l'espace client.
+   *
+   * ## Vide sur les trois autres messages
+   *
+   * Comme `origine`, elle est donc utilisable en section — un modèle qui la
+   * nommerait dans une confirmation n'écrirait rien plutôt qu'un lien mort. Les
+   * modèles de plateforme des trois messages du CDC §1.4 ne la portent pas.
+   */
+  'lien_mot_de_passe',
 ] as const;
 
 export type TemplateVariableName = (typeof TEMPLATE_VARIABLES)[number];
@@ -588,6 +615,14 @@ export const SMS_REFERENCE_VARIABLES: TemplateVariables = {
   // mesurer avec la variable vide aurait annoncé un segment à un salon dont le
   // SMS en coûte deux dès qu'il part vers une cliente.
   destinataire_client: 'oui',
+  // Le plus long des deux chemins que `passwordResetUrl` sait composer — celui
+  // du personnel, `/admin/mot-de-passe`, cinq caractères de plus que celui de la
+  // clientèle. La plateforme n'envoie ce message que par e-mail, mais un salon a
+  // le droit d'écrire son propre modèle de SMS, et c'est cette mesure-là qui le
+  // refusera s'il dépasse — un lien de 66 caractères ne laisse pas grand-chose
+  // des 160 d'un segment. Mesurer le chemin court aurait annoncé un segment à
+  // un salon dont le SMS en coûte deux dès qu'il part vers une praticienne.
+  lien_mot_de_passe: 'https://maison-lotus.reservation.spa-booking.app/admin/mot-de-passe',
 };
 
 /**

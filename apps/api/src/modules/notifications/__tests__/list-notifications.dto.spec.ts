@@ -58,6 +58,10 @@ describe('notifications — les deux vocabulaires se correspondent terme à term
       'booking_confirmation',
       'reminder_24h',
       'cancellation',
+      // Le lien de réinitialisation (#809). Il laisse une ligne dans le journal
+      // d'envois comme les trois autres, et le filtre doit donc exister : sans
+      // lui, le back-office ne pourrait pas isoler ces messages de la liste.
+      'password_reset',
     ]);
     expect(NOTIFICATION_CHANNEL_FILTERS).toEqual(['email', 'sms']);
     expect(NOTIFICATION_STATUS_FILTERS).toEqual(['pending', 'sent', 'failed']);

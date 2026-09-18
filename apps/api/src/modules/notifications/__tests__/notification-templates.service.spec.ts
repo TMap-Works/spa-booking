@@ -116,10 +116,18 @@ describe('modèles — la résolution du modèle effectif', () => {
 });
 
 describe('modèles — la liste du back-office', () => {
-  it('rend les six modèles servis par défaut — trois messages, deux canaux', async () => {
-    // Quatre jusqu'à #72, qui a livré l'avis d'annulation. L'ordre est celui des
-    // énumérations : une liste de configuration qui change d'ordre fait bouger
-    // les lignes sous la souris.
+  it('rend les sept modèles servis par défaut, et saute le couple qui n’en a pas', async () => {
+    // Quatre jusqu'à #72, qui a livré l'avis d'annulation ; six ensuite ; sept
+    // depuis #809. L'ordre est celui des énumérations : une liste de
+    // configuration qui change d'ordre fait bouger les lignes sous la souris.
+    //
+    // **Sept et non huit** : `PASSWORD_RESET` n'a de modèle de plateforme que
+    // sur le canal e-mail, et c'est le quatrième critère d'acceptation de #809.
+    // Le couple `PASSWORD_RESET/SMS` n'apparaît donc pas — « la liste répond à
+    // "que reçoit ma cliente ?", et la réponse pour ce message est "rien" ».
+    // C'est cette propriété de la liste, et non seulement le compte, que ce cas
+    // éprouve : un couple sans modèle qui s'y glisserait afficherait au salon un
+    // gabarit vide à personnaliser.
     const store = new FakeNotificationTemplates();
 
     const list = await runWithTenant(SALON, () => serviceOn(store).list());
@@ -131,6 +139,7 @@ describe('modèles — la liste du back-office', () => {
       'REMINDER_24H/SMS',
       'CANCELLATION/EMAIL',
       'CANCELLATION/SMS',
+      'PASSWORD_RESET/EMAIL',
     ]);
     expect(list.every((item) => item.origin === 'PLATFORM')).toBe(true);
   });

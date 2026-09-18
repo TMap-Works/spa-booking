@@ -4,10 +4,12 @@ import { BusinessRuleError, ConflictError, NotFoundError } from '../../common/er
 import { getTenantId, setRequestTenantId } from '../../common/tenant';
 import { StructuredLogger } from '../../common/logging/structured-logger';
 import { normalizeEmail } from './email';
+import { IdentityEvents } from './events/identity-events';
 import {
   EmailAlreadyRegisteredError,
   InvalidCredentialsError,
   InvalidInvitationError,
+  InvalidPasswordResetTokenError,
   InvalidRefreshTokenError,
 } from './identity.errors';
 import {
@@ -20,7 +22,7 @@ import type { AuthenticationResult, RefreshResult, UserProfile } from './identit
 import { PasswordHasher } from './password.hasher';
 import { toE164OrNull } from './phone';
 import { isStaffRole } from './roles';
-import { hashJti, TokenService } from './token.service';
+import { hashJti, PASSWORD_RESET_COOLDOWN_MS, TokenService } from './token.service';
 
 /**
  * Le délai pendant lequel un jeton de rafraîchissement **tout juste remplacé**
@@ -38,6 +40,23 @@ import { hashJti, TokenService } from './token.service';
  * plus tard.
  */
 export const REFRESH_ROTATION_GRACE_MS = 10_000;
+
+/**
+ * Le `sub` du jeton qu'une demande de réinitialisation **jette** — #809.
+ *
+ * Il ne désigne aucun compte, et c'est tout son objet : quand l'adresse
+ * demandée n'a pas de compte joignable, la signature a quand même lieu, pour que
+ * le temps de réponse des deux chemins soit le même. Sans elle, la rapidité du
+ * chemin stérile dirait que l'adresse est inconnue dans ce salon — l'énumération
+ * que la réponse 202 uniforme interdit, refaite au chronomètre. C'est le même
+ * défaut que `PasswordHasher.burnComparableTime` corrige sur la connexion.
+ *
+ * Un UUID nul plutôt qu'un aléa : la valeur ne doit rien apprendre non plus.
+ * Deux demandes sur deux adresses inconnues produisent ainsi des jetons qui ne
+ * diffèrent que par leur `jti`, comme deux demandes légitimes. Le jeton produit
+ * n'est jamais rendu, jamais émis, jamais écrit — il est signé et perdu.
+ */
+const PLACEHOLDER_USER_ID = '00000000-0000-0000-0000-000000000000';
 
 /**
  * Règles d'authentification. Ne connaît ni `Request`, ni `Response`, ni Prisma
@@ -64,6 +83,16 @@ export class AuthService {
     private readonly passwords: PasswordHasher,
     private readonly tokens: TokenService,
     private readonly logger: StructuredLogger,
+    /**
+     * Le bus du module — le seul point par lequel `identity` annonce un fait à
+     * qui voudra l'entendre (#809).
+     *
+     * Ce service ne sait rien de la chaîne de notifications, et c'est la
+     * condition pour que `notifications` puisse continuer d'importer
+     * `IdentityModule` : la dépendance inverse formerait un cycle que Nest
+     * refuse au démarrage. Voir `events/password-reset-requested.event.ts`.
+     */
+    private readonly events: IdentityEvents,
   ) {}
 
   /**
@@ -319,6 +348,252 @@ export class AuthService {
     // mémoire : `openSession` n'en fait rien, mais rendre un `UserRecord` qui se
     // dit encore sans mot de passe serait faux pour le prochain lecteur.
     return this.openSession(claims.tenantId, { ...user, passwordHash });
+  }
+
+  /**
+   * Demande de réinitialisation d'un mot de passe oublié — #809, premier
+   * critère.
+   *
+   * ## Elle ne rend rien, et n'échoue que sur l'établissement
+   *
+   * « Il répond **toujours 202**, que le compte existe ou non » : ce point
+   * d'entrée n'est pas authentifié, et la moindre différence de réponse en
+   * ferait un annuaire de la clientèle du salon. Adresse inconnue, compte sans
+   * mot de passe, compte désactivé, demande trop rapprochée — les quatre suivent
+   * le même chemin, ne produisent rien, et se taisent.
+   *
+   * La **seule** exception est le slug : un établissement inconnu ou désactivé
+   * rend 404, comme pour `login` et `register`. Ce n'est pas une entorse au
+   * critère, qui parle de l'existence du **compte** : un slug est une donnée
+   * publique — c'est celle de l'URL de réservation — et son 404 n'apprend rien
+   * que la page du salon ne dise déjà. Répondre 202 sur un salon qui n'existe
+   * pas aurait au contraire promis un courrier que personne n'enverrait jamais.
+   * `findTenantIdBySlug` conflue déjà « inconnu » et « désactivé », si bien
+   * qu'aucun visiteur n'apprend qu'un salon a fermé — c'est la moitié
+   * « établissement désactivé » du sixième critère.
+   *
+   * ## Le temps de réponse ne dit rien non plus
+   *
+   * Un compte introuvable ne coûterait, sans précaution, qu'une lecture indexée,
+   * là où un compte trouvé paie la signature d'un jeton et une écriture. L'écart
+   * est mesurable depuis l'extérieur, et il rétablirait au chronomètre
+   * l'énumération que la réponse uniforme interdit — c'est exactement le défaut
+   * que `burnComparableTime` corrige sur `login`. Les deux chemins passent donc
+   * par une signature de jeton : sur le chemin stérile, elle est **jetée**.
+   *
+   * ## Un compte sans mot de passe ne reçoit rien
+   *
+   * `passwordHash === null` désigne un compte jamais activé — une invitation de
+   * personnel en attente, ou une fiche cliente saisie au comptoir. Il n'y a rien
+   * à réinitialiser : ce qui lui manque est une **première** connexion, et elle
+   * a sa propre procédure (`POST /auth/invitations/accept`, #55). Lui servir un
+   * jeton de réinitialisation aurait ouvert un second chemin d'activation, sans
+   * le contrôle de rôle que l'invitation exerce.
+   *
+   * ## L'ordre des trois écritures
+   *
+   * 1. le jeton est signé — rien n'est encore engagé ;
+   * 2. l'empreinte est armée en base, ce qui **invalide** le jeton précédent
+   *    (deuxième critère) ;
+   * 3. l'événement est émis, et l'abonné de `notifications` publie l'enveloppe.
+   *
+   * L'émission vient en dernier pour la raison qui vaut pour tous les événements
+   * de ce dépôt : annoncer un jeton que la base n'a pas accepté enverrait un
+   * lien qui ne pourrait rien ouvrir.
+   */
+  public async requestPasswordReset(input: { tenantSlug: string; email: string }): Promise<void> {
+    const tenantId = await this.openTenantScope(input.tenantSlug);
+    const email = normalizeEmail(input.email);
+
+    const user = await this.repository.findUserByEmail(email);
+    const now = new Date();
+
+    // Signé avant de savoir si on s'en servira : c'est ce qui égalise le temps
+    // de réponse des deux chemins. Le coût est une signature HMAC de quelques
+    // microsecondes sur une route limitée en débit, et la route n'a de toute
+    // façon rien d'autre à faire.
+    const issued = await this.tokens.signPasswordResetToken({
+      userId: user?.id ?? PLACEHOLDER_USER_ID,
+      tenantId,
+    });
+
+    if (user === null || !user.isActive || user.passwordHash === null) {
+      // Les trois refus qui ne se voient pas. Le journal, lui, les distingue —
+      // c'est ce qui permet de répondre au comptoir « cette adresse n'a pas de
+      // compte ici » sans que la route l'ait jamais dit.
+      this.logger.log(
+        'réinitialisation sans destinataire : demande sans effet',
+        {
+          reason:
+            user === null ? 'compte-inconnu' : user.isActive ? 'compte-sans-mot-de-passe' : 'compte-desactive',
+        },
+        AuthService.name,
+      );
+      return;
+    }
+
+    const state = await this.repository.findPasswordResetState(user.id);
+
+    if (state !== null && AuthService.isWithinResetCooldown(state.passwordResetRequestedAt, now)) {
+      // La moitié « par adresse » de la limite de débit. Silencieuse : un 429
+      // aurait dit que l'adresse existe.
+      this.logger.log(
+        'réinitialisation trop rapprochée : demande sans effet',
+        { userId: user.id },
+        AuthService.name,
+      );
+      return;
+    }
+
+    const armed = await this.repository.armPasswordReset({
+      userId: user.id,
+      tokenHash: issued.tokenHash,
+      expiresAt: issued.expiresAt,
+      requestedAt: now,
+    });
+
+    if (!armed) {
+      // Le compte a disparu entre la lecture et l'écriture. Rien à envoyer, et
+      // rien à dire au demandeur qu'il ne sache déjà — il reçoit 202.
+      this.logger.warn(
+        'réinitialisation : le jeton n’a pas pu être armé, aucun message n’est émis',
+        { userId: user.id },
+        AuthService.name,
+      );
+      return;
+    }
+
+    this.events.passwordResetRequested({ tenantId, userId: user.id, token: issued.token });
+  }
+
+  /**
+   * `true` si la demande précédente est trop récente pour qu'une nouvelle
+   * produise un message — #809, limite de débit par adresse.
+   *
+   * L'écart est pris en valeur absolue, comme celui du délai de grâce de
+   * rotation, et pour la même raison : `password_reset_requested_at` est écrit
+   * par la tâche qui a servi la demande, et deux tâches ECS n'ont jamais tout à
+   * fait la même horloge. Un instant daté d'un léger futur doit compter comme
+   * récent — l'ignorer aurait ouvert la porte qu'il est là pour fermer.
+   */
+  private static isWithinResetCooldown(requestedAt: Date | null, now: Date): boolean {
+    if (requestedAt === null) {
+      return false;
+    }
+    return Math.abs(now.getTime() - requestedAt.getTime()) < PASSWORD_RESET_COOLDOWN_MS;
+  }
+
+  /**
+   * Choix du nouveau mot de passe, jeton en main — #809, troisième critère.
+   *
+   * ## Le déroulé, et l'ordre des refus
+   *
+   * 1. le jeton est vérifié cryptographiquement — sinon rien de ce qui suit n'a
+   *    de sens ;
+   * 2. son `tenantId`, désormais une donnée serveur, ouvre la portée ;
+   * 3. l'état du compte est relu **dans cette portée** : un `sub` d'un autre
+   *    établissement ne s'y trouve pas. C'est le cinquième critère
+   *    d'acceptation, et il est tenu par le scoping plutôt que par une
+   *    comparaison — « un jeton émis pour le salon A est refusé sur le salon B,
+   *    sans révéler son existence » ;
+   * 4. quatre conditions valent refus, et **toutes rendent le même 401** :
+   *    compte inconnu dans cette portée, compte désactivé, aucun jeton armé, ou
+   *    une empreinte qui n'est pas celle du jeton présenté. Le point d'entrée
+   *    n'est pas authentifié — distinguer les cas dirait à qui présente un lien
+   *    ramassé si le compte existe encore, et dans quel état ;
+   * 5. l'écriture elle-même est conditionnée à l'empreinte attendue **et** à
+   *    l'échéance, ce qui la rend atomique : deux confirmations concurrentes du
+   *    même lien se disputent la ligne, une seule gagne, la perdante reçoit le
+   *    même 401 que les autres refus.
+   *
+   * Le pas 5 est ce qui fait l'**usage unique** : l'empreinte est effacée dans
+   * l'écriture même qui pose le mot de passe. Le jeton reste
+   * cryptographiquement valide jusqu'à son expiration, mais il n'ouvre plus
+   * rien — exactement le procédé de l'invitation de #55, et de la rotation de
+   * session de #21.
+   *
+   * ## L'usage unique est tenu **par la base**, la comparaison en mémoire n'est
+   * qu'un raccourci
+   *
+   * C'est le `where` de l'écriture qui décide, et lui seul le peut : la
+   * comparaison du pas 4 lit une ligne, l'écriture du pas 5 en referme la
+   * fenêtre. Les deux ne sont donc pas interchangeables, et le pas 4 ne dispense
+   * de rien — il **épargne** le bcrypt du pas intermédiaire sur un jeton dont on
+   * sait déjà, à la lecture, qu'il n'ouvrira rien : rejoué, remplacé par une
+   * demande plus récente, ou ramassé dans une boîte mail. Sans lui, chaque
+   * tentative sur un lien mort coûtait une centaine de millisecondes de CPU sur
+   * une route publique dont le quota par IP ne distingue pas les visiteurs.
+   *
+   * ## Toutes les sessions tombent
+   *
+   * « Révoque tous les refresh tokens du compte » est le critère, et ce n'est
+   * pas une précaution de style : une réinitialisation est le geste de quelqu'un
+   * qui a perdu la main sur son compte, ou qui craint de l'avoir perdue. Laisser
+   * vivre les sessions ouvertes ailleurs laisserait exactement ce dont on se
+   * protège. Contrairement à la détection de réemploi (#862), où la révocation
+   * se borne à la session fautive, la portée est ici le **compte entier** : le
+   * fait qui la déclenche porte sur le mot de passe, donc sur tout ce qui en
+   * dépend.
+   *
+   * La révocation vient **après** l'écriture du mot de passe, et **dans la même
+   * transaction** : révoquer d'abord aurait déconnecté partout quelqu'un dont la
+   * confirmation échoue ensuite — un lien mort suffirait à le mettre dehors —, et
+   * révoquer dans une seconde écriture indépendante aurait laissé, sur une
+   * coupure entre les deux, un mot de passe changé et les sessions d'avant
+   * toujours vivantes, sans aucun moyen de rattraper l'écart : le jeton est déjà
+   * consommé. C'est `consumePasswordReset` qui porte les deux.
+   */
+  public async confirmPasswordReset(input: { token: string; password: string }): Promise<void> {
+    const claims = await this.tokens.verifyPasswordResetToken(input.token);
+
+    if (!AuthService.adoptTenantScope(claims.tenantId)) {
+      // La requête est déjà bornée à un autre établissement : le jeton n'est pas
+      // celui de cette requête, et il est hors de question de choisir l'un des
+      // deux.
+      throw new InvalidPasswordResetTokenError();
+    }
+
+    const state = await this.repository.findPasswordResetState(claims.sub);
+    const expectedTokenHash = hashJti(claims.jti);
+
+    if (
+      state === null ||
+      !state.isActive ||
+      state.passwordResetTokenHash === null ||
+      // Quatrième cause, et elle n'ajoute **aucune** garantie : c'est le `where`
+      // de `consumePasswordReset` qui fait l'usage unique, et lui seul le peut.
+      // Ce qu'elle épargne est le bcrypt ci-dessous — cent millisecondes de CPU
+      // par tentative — sur un jeton dont on sait déjà qu'il n'ouvrira rien :
+      // rejoué, remplacé, ou ramassé dans une boîte mail. La route n'est pas
+      // authentifiée, et son quota par IP compte l'adresse du serveur Next pour
+      // tous les visiteurs (`auth.controller.ts`).
+      state.passwordResetTokenHash !== expectedTokenHash
+    ) {
+      // Un seul refus pour quatre causes — voir `InvalidPasswordResetTokenError`.
+      throw new InvalidPasswordResetTokenError();
+    }
+
+    const passwordHash = await this.passwords.hash(input.password);
+
+    const consumed = await this.repository.consumePasswordReset({
+      userId: claims.sub,
+      expectedTokenHash,
+      passwordHash,
+      now: new Date(),
+    });
+
+    if (!consumed) {
+      // Le jeton a déjà servi, il a été remplacé par une demande plus récente,
+      // ou son échéance est passée entre la lecture et l'écriture. Même réponse
+      // que tous les autres refus.
+      throw new InvalidPasswordResetTokenError();
+    }
+
+    this.logger.log(
+      'mot de passe réinitialisé, sessions du compte révoquées',
+      { userId: claims.sub },
+      AuthService.name,
+    );
   }
 
   /**

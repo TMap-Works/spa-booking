@@ -45,7 +45,17 @@ import type { SmsCost } from './notification-template';
  * En ajouter une valeur revient à élargir le périmètre MVP : cela passe par une
  * issue, pas par une ligne.
  */
-export const NOTIFICATION_TYPES = ['BOOKING_CONFIRMATION', 'REMINDER_24H', 'CANCELLATION'] as const;
+export const NOTIFICATION_TYPES = [
+  'BOOKING_CONFIRMATION',
+  'REMINDER_24H',
+  'CANCELLATION',
+  // Le lien de réinitialisation d'un mot de passe (#809). Quatrième et dernière
+  // valeur : l'ordre est celui de l'énumération PostgreSQL, et les trois
+  // messages du CDC §1.4 restent en tête. Voir l'en-tête de l'énumération dans
+  // `schema.prisma` pour ce que ce message n'est pas — il n'annonce aucun
+  // rendez-vous, et n'élargit donc pas le périmètre des notifications.
+  'PASSWORD_RESET',
+] as const;
 
 export type NotificationType = (typeof NOTIFICATION_TYPES)[number];
 
@@ -160,8 +170,27 @@ export interface NotificationMessage {
    */
   readonly dedupeKey: string;
 
-  /** Le rendez-vous concerné — les trois types du MVP en portent tous un. */
-  readonly appointmentId: string;
+  /**
+   * Le rendez-vous concerné — **`null` pour `PASSWORD_RESET`**, et pour lui
+   * seul.
+   *
+   * Les trois messages du CDC §1.4 en portent tous un : ils annoncent un
+   * rendez-vous, et c'est de lui que le rendu tire l'heure, la prestation et le
+   * praticien. La réinitialisation d'un mot de passe n'en annonce aucun — elle
+   * s'adresse à un **compte**. La colonne `notifications.appointment_id` est
+   * nullable depuis l'origine ; ce champ l'était resté non nul faute d'un
+   * message qui en ait besoin (#809).
+   *
+   * Le typer `string | null` plutôt qu'introduire une union discriminée est un
+   * arbitrage assumé : l'union aurait été plus sûre, et elle aurait touché les
+   * deux abonnés, le publieur, le DTO de la route interne, le dépôt et leurs
+   * suites — un diff sans rapport avec ce ticket sur le chemin d'envoi des trois
+   * messages existants. Ce que le type ne garantit plus, les deux lecteurs le
+   * vérifient là où ils lisent : `reminderStillDue` sous sa condition de type,
+   * et le renderer qui refuse en `NotificationContextGoneError` un message de
+   * rendez-vous sans rendez-vous.
+   */
+  readonly appointmentId: string | null;
 
   /** Le compte destinataire. L'adresse se relit dessus au moment de l'envoi. */
   readonly recipientUserId: string;
@@ -174,7 +203,57 @@ export interface NotificationMessage {
    * `null` pour un message immédiat.
    */
   readonly scheduledFor: Date | null;
+
+  /**
+   * Le jeton de réinitialisation en clair — **`PASSWORD_RESET` uniquement**, et
+   * la seule chose de toute cette enveloppe qui ne soit pas un identifiant
+   * (#809).
+   *
+   * ## Pourquoi il est ici, alors que « le message ne porte rien qui puisse
+   * dériver »
+   *
+   * Parce que celui-ci ne peut **pas** se relire : la base n'en garde que
+   * l'empreinte SHA-256, c'est le deuxième critère d'acceptation de #809, et
+   * rien ne permet de reconstituer le jeton à partir d'elle. La règle « il
+   * désigne, et l'expéditeur relit » suppose que ce qu'on relit existe ; ici, ne
+   * pas pouvoir le relire *est* la propriété recherchée.
+   *
+   * ## Ce que ce champ coûte, et ce qui le borne
+   *
+   * Le raisonnement complet est dans
+   * `identity/events/password-reset-requested.event.ts`, et il tient en trois
+   * points : ce n'est pas une donnée personnelle — c'est un aléa signé, il ne
+   * dit ni qui ni quoi, là où notifications §7 protège les coordonnées et le
+   * contenu des messages ; il se périme seul en trente minutes et meurt au
+   * premier usage, si bien qu'un rejeu tardif de la file produit un lien mort et
+   * non un accès ; et aucun chemin ne le journalise — ni le publieur, ni la
+   * route interne, ni le dépôt, qui tous ne tracent que la clé de déduplication,
+   * le type et le canal.
+   *
+   * ## Absent, il fait échouer le rendu, pas l'envoi d'un message vide
+   *
+   * `PasswordResetNotificationRenderer` refuse en `UnrenderableNotificationError`
+   * une enveloppe de ce type qui n'en porterait pas — la ligne finit en `FAILED`,
+   * donc reprenable, plutôt qu'un courrier annonçant un lien vide.
+   */
+  readonly passwordResetToken?: string;
 }
+
+/**
+ * Une enveloppe dont le rendez-vous est **certain** — #809.
+ *
+ * `NotificationMessage.appointmentId` est devenu nullable pour le seul
+ * `PASSWORD_RESET`, et la plupart des producteurs n'ont rien perdu de leur
+ * certitude : le balayage du rappel J-1 part d'un `DueReminder`, qui en porte un
+ * `NOT NULL`. Cet alias rend cette certitude lisible par le compilateur là où
+ * elle existe, plutôt que de la faire revérifier — c'est ce qui permet à
+ * `ReminderMessageDto.appointmentId` de rester `string` sans assertion.
+ *
+ * Il ne remplace pas la vérification côté **consommateur** : une enveloppe
+ * arrive par une file et un corps HTTP, d'où aucun type ne survit. C'est le
+ * renderer qui tranche là-bas.
+ */
+export type AppointmentScopedMessage = NotificationMessage & { readonly appointmentId: string };
 
 /**
  * Un rendez-vous que le balayage horaire a retenu pour son rappel J-1 (#71).
@@ -340,6 +419,64 @@ export function appointmentDedupeKey(
   const base = `appointment:${appointmentId}:${type}:${channel}`;
 
   return recipientUserId === undefined ? base : `${base}:${recipientUserId}`;
+}
+
+/**
+ * La clé de déduplication d'un lien de réinitialisation — #809.
+ *
+ * ## Elle porte le **jeton**, et c'est ce qui la distingue de sa voisine
+ *
+ * `appointmentDedupeKey` est déterministe sur un fait durable : le même rappel
+ * du même rendez-vous, publié deux fois, doit entrer en conflit avec lui-même.
+ * Ici, deux demandes de réinitialisation successives sont deux faits
+ * **distincts** — la seconde invalide le jeton de la première, et elle doit
+ * partir. Une clé qui n'aurait porté que le compte les aurait confondues :
+ * la seconde demande se serait heurtée à l'index d'idempotence, et la personne
+ * n'aurait jamais reçu le lien qui, lui, est le seul encore valable.
+ *
+ * Ce qui est employé n'est pas le jeton mais son **empreinte** : la clé de
+ * déduplication est écrite en base (`notifications.dedupe_key`), relue par le
+ * back-office et journalisée par la route interne comme par le publieur de file.
+ * Y mettre le secret aurait annulé tout le soin pris à ne pas le journaliser —
+ * et une empreinte discrimine exactement aussi bien.
+ *
+ * L'idempotence qu'elle sert est donc celle de la **livraison** : le même
+ * message rejoué par SQS retombe sur la même clé et ne repart pas, ce qui est
+ * précisément ce que l'index garantit (notifications §2).
+ */
+export function passwordResetDedupeKey(
+  tokenHash: string,
+  channel: NotificationChannel,
+): string {
+  return `password-reset:${tokenHash}:${channel}`;
+}
+
+/**
+ * Ce qu'il faut savoir d'un compte pour lui écrire son lien de
+ * réinitialisation — #809.
+ *
+ * Quatre champs, et chacun répond à un critère d'acceptation :
+ *
+ * | Champ | Ce qu'il décide |
+ * |---|---|
+ * | `role` | vers quel écran le lien pointe — `/admin/mot-de-passe` ou `/compte/mot-de-passe` (quatrième critère) |
+ * | `isActive` | si le message part du tout (sixième critère) |
+ * | `tenantSlug` | l'établissement dans l'URL |
+ * | `tenantName` | le salon que le message signe |
+ *
+ * Aucune coordonnée, comme partout dans ce module : ni adresse, ni nom de
+ * personne. Le message ne salue personne par son nom — voir le modèle de
+ * plateforme, qui explique pourquoi.
+ *
+ * `tenantTimeZone` n'y est pas : ce message n'annonce aucune heure. C'est la
+ * seule chose que les quatre types ne partagent pas, et c'est bien la preuve
+ * que ce contexte-là n'est pas celui d'un rendez-vous.
+ */
+export interface PasswordResetMessageContext {
+  readonly role: string;
+  readonly isActive: boolean;
+  readonly tenantSlug: string;
+  readonly tenantName: string;
 }
 
 /**

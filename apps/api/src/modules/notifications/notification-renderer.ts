@@ -1,12 +1,22 @@
 import { Injectable } from '@nestjs/common';
 
 import { AppConfigService } from '../../config/app-config.service';
-import { buildTemplateVariables, cancellationUrl, renderNotification } from './notification-content';
+import {
+  buildPasswordResetVariables,
+  buildTemplateVariables,
+  cancellationUrl,
+  passwordResetUrl,
+  renderNotification,
+} from './notification-content';
 import { defaultTemplateFor } from './notification-default-templates';
 import { NotificationTemplatesRepository } from './notification-templates.repository';
 import { NotificationContextGoneError, UnrenderableNotificationError } from './notifications.errors';
 import { NotificationsRepository } from './notifications.repository';
-import type { NotificationMessage, RenderedNotification } from './notifications.types';
+import type {
+  NotificationMessage,
+  NotificationTemplateSource,
+  RenderedNotification,
+} from './notifications.types';
 
 /**
  * Le **port de rendu** — ce qui transforme la désignation d'un message en un
@@ -104,6 +114,48 @@ export class AppointmentNotificationRenderer implements NotificationRenderer {
   ) {}
 
   public async render(message: NotificationMessage): Promise<RenderedNotification> {
+    const source = await this.resolveSource(message);
+
+    if (message.type === 'PASSWORD_RESET') {
+      return this.renderPasswordReset(message, source);
+    }
+
+    // Le contexte se lit **après** le modèle : un message sans modèle n'a aucune
+    // raison de coûter une jointure sur le rendez-vous, la cliente, la prestation
+    // et le praticien.
+    //
+    // `appointmentId` est nullable depuis #809 — pour le seul `PASSWORD_RESET`,
+    // traité ci-dessus. Une enveloppe de message de rendez-vous qui n'en
+    // porterait pas est une faute de producteur : elle échoue ici, comme un
+    // rendez-vous disparu, ce qui laisse la ligne `FAILED` donc reprenable.
+    const context =
+      message.appointmentId === null
+        ? null
+        : await this.repository.loadAppointmentContext(message.appointmentId);
+
+    if (context === null) {
+      throw new NotificationContextGoneError(message.appointmentId ?? message.recipientUserId);
+    }
+
+    const cancelUrl = cancellationUrl(this.config.appUrl, context.tenantSlug);
+
+    return renderNotification(
+      source,
+      buildTemplateVariables(context, cancelUrl, message.channel, message.recipientUserId),
+      message.channel,
+    );
+  }
+
+  /**
+   * Le modèle effectif de ce message — la personnalisation du salon d'abord,
+   * le défaut de la plateforme sinon.
+   *
+   * Extrait de `render` par #809, sans changer d'un iota : les deux formes de
+   * message résolvent leur modèle de la même façon, et c'est important qu'elles
+   * le fassent — un salon doit pouvoir réécrire son courrier de
+   * réinitialisation comme il réécrit ses confirmations.
+   */
+  private async resolveSource(message: NotificationMessage): Promise<NotificationTemplateSource> {
     const source =
       (await this.templates.find(message.type, message.channel))?.source ??
       defaultTemplateFor(message.type, message.channel);
@@ -112,20 +164,65 @@ export class AppointmentNotificationRenderer implements NotificationRenderer {
       throw new UnrenderableNotificationError(message.type);
     }
 
-    // Le contexte se lit **après** le modèle : un message sans modèle n'a aucune
-    // raison de coûter une jointure sur le rendez-vous, la cliente, la prestation
-    // et le praticien.
-    const context = await this.repository.loadAppointmentContext(message.appointmentId);
+    return source;
+  }
 
-    if (context === null) {
-      throw new NotificationContextGoneError(message.appointmentId);
+  /**
+   * Le rendu d'un lien de réinitialisation — #809.
+   *
+   * ## Le jeton vient de l'enveloppe, et il ne peut pas venir d'ailleurs
+   *
+   * C'est la seule valeur de tout ce module qui ne se relise pas en base :
+   * `users.password_reset_token_hash` n'en garde que l'empreinte, par exigence
+   * du deuxième critère d'acceptation. Voir
+   * `NotificationMessage.passwordResetToken` pour ce que ce transport coûte et
+   * ce qui le borne.
+   *
+   * Absent, le message est refusé en `UnrenderableNotificationError` — la ligne
+   * finit `FAILED`, donc reprenable et visible au back-office, plutôt qu'un
+   * courrier annonçant un lien vide. C'est le même régime qu'un modèle manquant,
+   * et pour la même raison : mieux vaut un message qui ne part pas qu'un message
+   * qui part faux.
+   *
+   * ## Le compte est relu, et sa suspension arrête l'envoi ici aussi
+   *
+   * Sixième critère : « un compte suspendu, ou un compte d'un établissement
+   * désactivé, ne reçoit rien ». `identity` l'a déjà vérifié avant d'armer le
+   * jeton, et cette relecture n'est pas une redite — entre l'armement et l'envoi
+   * il y a un bus, une file et jusqu'à cinq réceptions. Une décision d'envoi se
+   * prend à l'envoi, exactement comme pour le rappel J-1 et pour la suppression
+   * d'adresse.
+   *
+   * Un compte disparu ou d'un autre établissement produit le même refus : le
+   * client scopé ne les distingue pas, et c'est ce qui fait qu'une enveloppe
+   * nommant le salon A ne peut rien rendre du salon B.
+   */
+  private async renderPasswordReset(
+    message: NotificationMessage,
+    source: NotificationTemplateSource,
+  ): Promise<RenderedNotification> {
+    const token = message.passwordResetToken;
+
+    if (token === undefined || token === '') {
+      throw new UnrenderableNotificationError(message.type);
     }
 
-    const cancelUrl = cancellationUrl(this.config.appUrl, context.tenantSlug);
+    const context = await this.repository.loadPasswordResetContext(message.recipientUserId);
+
+    if (context === null || !context.isActive) {
+      throw new NotificationContextGoneError(message.recipientUserId);
+    }
+
+    const resetUrl = passwordResetUrl(
+      this.config.appUrl,
+      context.tenantSlug,
+      context.role,
+      token,
+    );
 
     return renderNotification(
       source,
-      buildTemplateVariables(context, cancelUrl, message.channel, message.recipientUserId),
+      buildPasswordResetVariables(context, resetUrl, message.channel),
       message.channel,
     );
   }

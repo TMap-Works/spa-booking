@@ -184,6 +184,20 @@ export const IDENTITY_ERROR_CODES = {
   /** Réémission demandée sur un compte déjà activé, par un administrateur authentifié. */
   INVITATION_ALREADY_ACCEPTED: 'INVITATION_ALREADY_ACCEPTED',
   /**
+   * Jeton de réinitialisation de mot de passe refusé — #809.
+   *
+   * Un seul code pour six causes : jeton contrefait, expiré, déjà consommé,
+   * remplacé par une demande plus récente, ou désignant un compte désactivé ou
+   * disparu. Même raison que pour `INVALID_INVITATION` — le point d'entrée n'est
+   * pas authentifié, et la nuance dirait au porteur d'un lien ramassé si le
+   * compte qu'il désigne existe encore et dans quel état.
+   *
+   * Le front ne distingue pas non plus : sur ce refus, il renvoie vers le
+   * formulaire de demande. « Ce lien n'est plus valable, demandez-en un
+   * nouveau » couvre les six cas sans en trahir aucun.
+   */
+  INVALID_PASSWORD_RESET_TOKEN: 'INVALID_PASSWORD_RESET_TOKEN',
+  /**
    * L'appelant n'a le droit d'agir que sur **son propre** périmètre, et la
    * ressource visée n'en fait pas partie — #812, ADR 0013.
    *

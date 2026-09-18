@@ -9,7 +9,16 @@ import {
   Res,
   UseGuards,
 } from '@nestjs/common';
-import { ApiBody, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
+import {
+  ApiAcceptedResponse,
+  ApiBody,
+  ApiNoContentResponse,
+  ApiNotFoundResponse,
+  ApiOkResponse,
+  ApiOperation,
+  ApiTags,
+  ApiUnauthorizedResponse,
+} from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
 import type { Request, Response } from 'express';
 
@@ -22,9 +31,15 @@ import {
   AuthTokensDto,
   type LoginBody,
   LoginDto,
+  type PasswordResetBody,
+  type PasswordResetConfirmBody,
+  PasswordResetConfirmDto,
+  PasswordResetRequestDto,
   type RegisterBody,
   RegisterDto,
   loginBody,
+  passwordResetBody,
+  passwordResetConfirmBody,
   registerBody,
 } from './dto/auth.dto';
 import type { RefreshResult } from './identity.types';
@@ -178,6 +193,121 @@ export class AuthController {
     });
 
     return this.respondWithSession(response, result);
+  }
+
+  /**
+   * Demande de réinitialisation d'un mot de passe oublié — #809, premier
+   * critère.
+   *
+   * ## 202, toujours, et c'est le critère lui-même
+   *
+   * « Il répond **toujours 202**, que le compte existe ou non. » Un 404 sur une
+   * adresse inconnue ferait de ce formulaire un annuaire de la clientèle du
+   * salon, et l'énumération que `INVALID_CREDENTIALS` interdit à la connexion se
+   * referait ici. Le service ne rend donc rien, et il n'y a pas de corps de
+   * réponse à déclarer : 202 « la demande est acceptée », pas 200 « voilà le
+   * résultat » — ce qui est exact, l'envoi ayant lieu après la réponse.
+   *
+   * Une seule chose peut encore échouer : le **slug**. Un établissement inconnu
+   * ou désactivé rend 404, comme pour `login` et `register`, et c'est la moitié
+   * « établissement désactivé » du sixième critère. Le slug est public — c'est
+   * celui de l'URL de réservation — et son refus n'apprend rien que la page du
+   * salon ne dise déjà ; répondre 202 sur un salon qui n'existe pas aurait
+   * promis un courrier que personne n'enverrait.
+   *
+   * ## Cinq par minute et par IP, plus une limite par adresse en base
+   *
+   * Le quota d'IP est celui de l'inscription, et pour la même raison : cinq
+   * demandes par minute suffisent largement à un usage réel. Il ne suffit pas à
+   * lui seul — il est en mémoire de tâche, et l'adresse qu'il compte est celle
+   * du serveur Next pour tous les visiteurs (voir l'en-tête de ce contrôleur,
+   * « le même angle mort vaut pour les autres routes »). La moitié « par
+   * adresse » que le critère exige est donc en base
+   * (`users.password_reset_requested_at`, `PASSWORD_RESET_COOLDOWN_MS`) :
+   * partagée par toutes les tâches, et durable à travers leurs redémarrages.
+   *
+   * Ce refus-là est **invisible** — la route rend 202 et n'envoie rien. Un 429
+   * aurait dit que l'adresse existe.
+   */
+  @Post('password-reset')
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
+  @HttpCode(HttpStatus.ACCEPTED)
+  @ApiOperation({ summary: 'Demander la réinitialisation d’un mot de passe oublié' })
+  @ApiBody({ type: PasswordResetRequestDto })
+  @ApiAcceptedResponse({
+    description:
+      'La demande est acceptée. **Aucune réponse ne dit si l’adresse est connue** : ce code est ' +
+      'le même pour un compte existant, une adresse inconnue, un compte désactivé et une ' +
+      'demande trop rapprochée de la précédente.',
+  })
+  @ApiNotFoundResponse({ description: 'Aucun établissement actif ne porte ce slug.' })
+  public async requestPasswordReset(
+    // Le type est celui **du contrat**, jamais la classe : elle n'a plus de
+    // décorateur `class-validator`, et la typer ici ferait rejouer le
+    // `ValidationPipe` global, dont le `whitelist` viderait le corps.
+    @Body(passwordResetBody) body: PasswordResetBody,
+  ): Promise<void> {
+    await this.auth.requestPasswordReset({
+      tenantSlug: body.tenantSlug,
+      email: body.email,
+    });
+  }
+
+  /**
+   * Choix du nouveau mot de passe, jeton en main — #809, troisième critère.
+   *
+   * Publique, et elle ne peut pas être autrement : la personne qui l'appelle
+   * n'a, par hypothèse, plus accès à son compte. Ce qui l'autorise est le jeton
+   * — un aléa de 256 bits signé, dont la base ne garde que l'empreinte, à usage
+   * unique et valable trente minutes.
+   *
+   * ## 204 et non 200
+   *
+   * Rien n'est rendu, et surtout **aucune session n'est ouverte**. C'est la
+   * différence avec `invitations/accept`, qui connecte la personne dans la
+   * foulée, et elle est délibérée : une invitation prouve que son porteur est
+   * bien l'invité — le compte n'avait pas de mot de passe, personne d'autre ne
+   * pouvait l'attendre. Un lien de réinitialisation, lui, peut avoir été
+   * ramassé dans une boîte mail restée ouverte sur un poste partagé. Faire
+   * repasser par le formulaire de connexion coûte une saisie et prouve que le
+   * porteur connaît le mot de passe qu'il vient de choisir. Le critère ne
+   * demande rien d'autre, et il demande en revanche que **toutes** les sessions
+   * du compte soient révoquées — y compris celle qu'on aurait ouverte ici.
+   *
+   * ## 401 sur tout refus, sans jamais dire lequel
+   *
+   * Jeton contrefait, expiré, déjà consommé, remplacé par une demande plus
+   * récente, désignant un compte disparu ou désactivé, ou émis pour un autre
+   * établissement : six causes, une réponse. Le point d'entrée n'est pas
+   * authentifié, et la nuance dirait à qui présente un lien ramassé si le compte
+   * qu'il désigne existe encore.
+   *
+   * Cinq tentatives par minute et par IP, comme l'acceptation d'invitation : le
+   * jeton ne se devine pas, et cette limite borne surtout le coût du bcrypt
+   * qu'un corps valide nous ferait payer.
+   */
+  @Post('password-reset/confirm')
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOperation({ summary: 'Poser un nouveau mot de passe depuis un lien de réinitialisation' })
+  @ApiBody({ type: PasswordResetConfirmDto })
+  @ApiNoContentResponse({
+    description:
+      'Le mot de passe est posé et **toutes les sessions du compte sont révoquées**. Aucune ' +
+      'session n’est ouverte : la connexion se fait par le formulaire habituel.',
+  })
+  @ApiUnauthorizedResponse({
+    description:
+      'Lien invalide, expiré, déjà utilisé, remplacé par une demande plus récente, ou désignant ' +
+      'un compte qui n’est plus en service. Les causes ne sont pas distinguées.',
+  })
+  public async confirmPasswordReset(
+    @Body(passwordResetConfirmBody) body: PasswordResetConfirmBody,
+  ): Promise<void> {
+    await this.auth.confirmPasswordReset({
+      token: body.token,
+      password: body.password,
+    });
   }
 
   /**

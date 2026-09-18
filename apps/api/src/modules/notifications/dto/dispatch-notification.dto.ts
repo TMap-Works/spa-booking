@@ -87,9 +87,27 @@ export class DispatchMessageDto {
   @MaxLength(255, { message: 'message.dedupeKey : trop longue' })
   public dedupeKey!: string;
 
-  @ApiProperty({ format: 'uuid' })
+  @ApiPropertyOptional({
+    format: 'uuid',
+    nullable: true,
+    description:
+      'Le rendez-vous annoncé. **Absent ou nul pour `PASSWORD_RESET`**, qui n’en annonce aucun ' +
+      '(#809) ; obligatoire pour les trois messages du CDC §1.4.',
+  })
+  // `@IsOptional` couvre l'absence comme le nul, pour la raison qui vaut déjà
+  // pour `scheduledFor` : une enveloppe sérialisée par `JSON.stringify` porte
+  // `null`, là où un producteur qui omet le champ n'envoie rien. Refuser l'une
+  // des deux formes perdrait la moitié des messages en 400, que la Lambda
+  // compterait en échec permanent.
+  //
+  // La validation ne peut pas exiger le champ « selon le type » : ce serait une
+  // règle métier dans un DTO, et elle vivrait ici en second exemplaire de ce que
+  // le renderer décide déjà. Un message de rendez-vous sans rendez-vous échoue
+  // donc au rendu, en `NotificationContextGoneError` — 404, acquitté,
+  // `PermanentFailures`, exactement le sort d'un rendez-vous disparu.
+  @IsOptional()
   @IsUUID('4', { message: 'message.appointmentId : identifiant invalide' })
-  public appointmentId!: string;
+  public appointmentId?: string | null;
 
   @ApiProperty({
     format: 'uuid',
@@ -120,6 +138,24 @@ export class DispatchMessageDto {
   @IsOptional()
   @IsISO8601({}, { message: 'message.scheduledFor : date ISO 8601 attendue' })
   public scheduledFor?: string | null;
+
+  @ApiPropertyOptional({
+    description:
+      'Le jeton de réinitialisation en clair — **`PASSWORD_RESET` uniquement**, et la seule ' +
+      'valeur de cette enveloppe qui ne soit pas un identifiant (#809). Il ne se relit pas : la ' +
+      'base n’en garde que l’empreinte SHA-256, par exigence du deuxième critère d’acceptation. ' +
+      'Il se périme en trente minutes, meurt au premier usage, et n’est journalisé par aucun ' +
+      'chemin de la chaîne.',
+    maxLength: 4096,
+  })
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty({ message: 'message.passwordResetToken : vide' })
+  // Bornée comme tout jeton reçu, et pour la même raison que
+  // `AcceptInvitationDto` : un corps arbitrairement long n'a pas à atteindre une
+  // vérification de signature. La borne est celle du contrat partagé.
+  @MaxLength(4096, { message: 'message.passwordResetToken : trop long' })
+  public passwordResetToken?: string;
 }
 
 export class DispatchNotificationDto {
@@ -153,7 +189,10 @@ export function toNotificationMessage(dto: DispatchMessageDto): NotificationMess
   return {
     tenantId: dto.tenantId,
     dedupeKey: dto.dedupeKey,
-    appointmentId: dto.appointmentId,
+    // `undefined` et `null` deviennent tous deux `null`, comme pour l'échéance :
+    // `NotificationMessage.appointmentId` ne connaît pas l'absence, et « pas de
+    // rendez-vous » est ce que `null` veut dire depuis #809.
+    appointmentId: dto.appointmentId ?? null,
     recipientUserId: dto.recipientUserId,
     type: dto.type,
     channel: dto.channel,
@@ -161,6 +200,12 @@ export function toNotificationMessage(dto: DispatchMessageDto): NotificationMess
       dto.scheduledFor === undefined || dto.scheduledFor === null
         ? null
         : new Date(dto.scheduledFor),
+    // Omis plutôt que posé à `undefined` : sous `exactOptionalPropertyTypes`, un
+    // `undefined` explicite n'est pas la même chose qu'une propriété absente, et
+    // le type déclare la seconde.
+    ...(dto.passwordResetToken === undefined
+      ? {}
+      : { passwordResetToken: dto.passwordResetToken }),
   };
 }
 

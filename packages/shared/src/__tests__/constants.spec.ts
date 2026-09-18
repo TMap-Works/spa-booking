@@ -122,9 +122,34 @@ describe('rôles', () => {
 });
 
 describe('notifications et paiements', () => {
-  it('s’en tient aux deux canaux et trois messages du périmètre MVP', () => {
+  /**
+   * Le périmètre des notifications, et ce que « figé » veut dire ici.
+   *
+   * L'assertion **énumère** désormais au lieu de compter, et ce n'est pas un
+   * assouplissement : un compte disait seulement « pas plus de trois », qu'un
+   * ajout satisfait en changeant le chiffre. La liste dit lesquels, et dans quel
+   * ordre — l'ordre étant celui de l'énumération PostgreSQL, qu'une valeur
+   * insérée au milieu désaccorderait.
+   *
+   * Les **trois premiers** sont ceux du CDC §1.4, et ils sont le périmètre figé :
+   * ce qu'un rendez-vous déclenche, rien d'autre. Le marketing et les campagnes
+   * restent hors périmètre (CLAUDE.md, contrainte 1).
+   *
+   * `password_reset` est entré par la porte que l'en-tête de
+   * `constants/notification.ts` prescrit — une issue, #809 — et il n'annonce
+   * aucun rendez-vous : il porte le lien de récupération d'un accès perdu, que le
+   * CDC §2.3 exige au titre de l'authentification. Il passe par cette chaîne
+   * parce qu'il n'y en a qu'une, et que la seule autre issue serait un appel
+   * direct à SES depuis le chemin de requête HTTP (notifications §1).
+   */
+  it('s’en tient aux deux canaux et aux messages que le périmètre autorise', () => {
     expect([...NOTIFICATION_CHANNELS]).toEqual(['email', 'sms']);
-    expect(NOTIFICATION_TYPES.length).toBe(3);
+    expect([...NOTIFICATION_TYPES]).toEqual([
+      'booking_confirmation',
+      'reminder_24h',
+      'cancellation',
+      'password_reset',
+    ]);
     expect(isNotificationChannel('email')).toBe(true);
     expect(isNotificationChannel('push')).toBe(false);
   });

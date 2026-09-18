@@ -8,6 +8,7 @@ import {
 } from '../../common/tenant/public-tenant.resolver';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
+import { IdentityEvents } from './events/identity-events';
 import { IdentityRepository } from './identity.repository';
 import { JwtAuthGuard } from './jwt-auth.guard';
 import { PasswordHasher } from './password.hasher';
@@ -157,6 +158,13 @@ const publicTenantResolver: PublicTenantResolverProvider = {
     IdentityRepository,
     PasswordHasher,
     TokenService,
+    // Le bus du module (#809). Il n'a qu'un émetteur — `AuthService`, sur la
+    // demande de réinitialisation — et qu'un abonné, dans `notifications`.
+    // Exporté ci-dessous pour cette raison, et pour elle seule : c'est
+    // `notifications` qui dépend d'`identity`, jamais l'inverse (api-module §3),
+    // et un appel direct à la chaîne d'envoi depuis ici formerait le cycle que
+    // Nest refuse au démarrage.
+    IdentityEvents,
     JwtAuthGuard,
     RolesGuard,
     SessionThrottlerGuard,
@@ -166,6 +174,13 @@ const publicTenantResolver: PublicTenantResolverProvider = {
     PlatformTokenService,
     PlatformAuthGuard,
   ],
-  exports: [JwtAuthGuard, RolesGuard, TokenService, UsersService, PUBLIC_TENANT_RESOLVER],
+  exports: [
+    JwtAuthGuard,
+    RolesGuard,
+    TokenService,
+    UsersService,
+    IdentityEvents,
+    PUBLIC_TENANT_RESOLVER,
+  ],
 })
 export class IdentityModule {}

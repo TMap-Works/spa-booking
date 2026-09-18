@@ -3,7 +3,11 @@ import type { AppConfigService } from '../../../config/app-config.service';
 import { AppointmentNotificationRenderer } from '../notification-renderer';
 import { UnrenderableNotificationError, NotificationContextGoneError } from '../notifications.errors';
 import type { NotificationsRepository } from '../notifications.repository';
-import type { AppointmentMessageContext, NotificationMessage } from '../notifications.types';
+import type {
+  AppointmentMessageContext,
+  NotificationMessage,
+  PasswordResetMessageContext,
+} from '../notifications.types';
 import { FakeNotificationTemplates } from './notifications.doubles';
 
 /**
@@ -235,5 +239,137 @@ describe('rendu à l’envoi — quel modèle part', () => {
     );
 
     expect(lectures).toBe(0);
+  });
+
+  /**
+   * Le lien de réinitialisation — #809, quatrième et sixième critères.
+   *
+   * Ce qui se prouve ici et nulle part ailleurs : le **chemin** du lien selon le
+   * rôle, et le refus d'écrire à un compte qui n'est plus en service au moment
+   * où le message part.
+   */
+  describe('lien de réinitialisation de mot de passe', () => {
+    const COMPTE = '55555555-5555-4555-8555-555555555555';
+    const JETON = 'jeton.de.reinitialisation';
+
+    const RESET_MESSAGE: NotificationMessage = {
+      tenantId: SALON,
+      dedupeKey: 'password-reset:abc:EMAIL',
+      // Ce message n'annonce aucun rendez-vous : c'est le seul des quatre dans
+      // ce cas, et c'est ce que le `null` dit.
+      appointmentId: null,
+      recipientUserId: COMPTE,
+      type: 'PASSWORD_RESET',
+      channel: 'EMAIL',
+      scheduledFor: null,
+      passwordResetToken: JETON,
+    };
+
+    /** Le dépôt, réduit à la seule lecture que ce rendu-là demande. */
+    const resetRepository = (
+      context: PasswordResetMessageContext | null,
+    ): NotificationsRepository =>
+      ({
+        loadPasswordResetContext: () => Promise.resolve(context),
+      }) as unknown as NotificationsRepository;
+
+    const CONTEXTE_CLIENTE: PasswordResetMessageContext = {
+      role: 'CLIENT',
+      isActive: true,
+      tenantSlug: 'maison-lotus',
+      tenantName: 'Maison Lotus',
+    };
+
+    const resetRendererOn = (
+      context: PasswordResetMessageContext | null,
+    ): AppointmentNotificationRenderer =>
+      new AppointmentNotificationRenderer(
+        resetRepository(context),
+        new FakeNotificationTemplates().repository,
+        CONFIG,
+      );
+
+    it('envoie une cliente vers son espace compte', async () => {
+      const rendered = await runWithTenant(SALON, () =>
+        resetRendererOn(CONTEXTE_CLIENTE).render(RESET_MESSAGE),
+      );
+
+      expect(rendered.html).toContain('/compte/mot-de-passe');
+      expect(rendered.html).not.toContain('/admin/mot-de-passe');
+      // Le jeton est dans le lien, et il est échappé : c'est la seule valeur de
+      // l'enveloppe qui ne se relise pas en base.
+      expect(rendered.html).toContain(`jeton=${encodeURIComponent(JETON)}`);
+      // Le message ne nomme personne — voir l'en-tête du modèle de plateforme :
+      // il part à l'adresse demandée, et rien ne dit que celle ou celui qui la
+      // relève soit le titulaire du compte.
+      expect(rendered.html).not.toContain('Amina');
+      expect(rendered.text).toContain('trente minutes');
+    });
+
+    it('envoie chacun des trois rôles internes vers la console d’administration', async () => {
+      // `STAFF`, `MANAGER`, `ADMIN` — les libellés de `enum UserRole`, et les
+      // seuls. Ce cas nommait `PRACTITIONER`, qui n'existe dans aucune
+      // énumération du produit : il passait parce que l'ancien code envoyait
+      // vers `/admin` **tout ce qui n'était pas `CLIENT`**, faute de frappe
+      // comprise.
+      for (const role of ['STAFF', 'MANAGER', 'ADMIN']) {
+        const rendered = await runWithTenant(SALON, () =>
+          resetRendererOn({ ...CONTEXTE_CLIENTE, role }).render(RESET_MESSAGE),
+        );
+
+        expect(rendered.html).toContain('/admin/mot-de-passe');
+        expect(rendered.html).not.toContain('/compte/mot-de-passe');
+      }
+    });
+
+    it('envoie un rôle inconnu vers l’espace client, qui ne suppose aucun droit', async () => {
+      // Un rôle ajouté à l'énumération sans que `passwordResetUrl` soit revu.
+      // L'écran client est le défaut : il ne suppose aucun droit, là où la
+      // console d'administration en suppose.
+      const rendered = await runWithTenant(SALON, () =>
+        resetRendererOn({ ...CONTEXTE_CLIENTE, role: 'COMPTABLE' }).render(RESET_MESSAGE),
+      );
+
+      expect(rendered.html).toContain('/compte/mot-de-passe');
+      expect(rendered.html).not.toContain('/admin/mot-de-passe');
+    });
+
+    it('refuse d’écrire à un compte suspendu entre la demande et l’envoi', async () => {
+      // Sixième critère. `identity` a déjà refusé d'armer un jeton sur un compte
+      // désactivé ; entre cet armement et l'envoi il y a un bus, une file et
+      // jusqu'à cinq réceptions — une décision d'envoi se prend à l'envoi.
+      await expect(
+        runWithTenant(SALON, () =>
+          resetRendererOn({ ...CONTEXTE_CLIENTE, isActive: false }).render(RESET_MESSAGE),
+        ),
+      ).rejects.toBeInstanceOf(NotificationContextGoneError);
+    });
+
+    it('refuse un compte introuvable — ou d’un autre établissement', async () => {
+      // Le client scopé ne distingue pas les deux, et c'est ce qui fait qu'une
+      // enveloppe nommant le salon A ne peut rien rendre du salon B.
+      await expect(
+        runWithTenant(SALON, () => resetRendererOn(null).render(RESET_MESSAGE)),
+      ).rejects.toBeInstanceOf(NotificationContextGoneError);
+    });
+
+    it('refuse une enveloppe sans jeton plutôt que d’annoncer un lien vide', async () => {
+      const { passwordResetToken: _ignore, ...sansJeton } = RESET_MESSAGE;
+
+      await expect(
+        runWithTenant(SALON, () => resetRendererOn(CONTEXTE_CLIENTE).render(sansJeton)),
+      ).rejects.toBeInstanceOf(UnrenderableNotificationError);
+    });
+
+    it('n’a aucun modèle de plateforme sur le canal SMS', async () => {
+      // Quatrième critère : « canal e-mail ». Le SMS n'a pas de défaut, et le
+      // refus laisse la ligne `FAILED` — donc reprenable — plutôt que de servir
+      // le modèle d'un autre message.
+      await expect(
+        runWithTenant(SALON, () =>
+          resetRendererOn(CONTEXTE_CLIENTE).render({ ...RESET_MESSAGE, channel: 'SMS' }),
+        ),
+      ).rejects.toBeInstanceOf(UnrenderableNotificationError);
+    });
   });
 });
