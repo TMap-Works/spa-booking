@@ -28,8 +28,8 @@
  *    correcte, énoncé en jetons résolus et non en pixels de rendu ;
  * 2. les cinq étapes du tunnel portent bien cette mise en page ;
  * 3. chacune groupe ses boutons — dans la rangée `.spa-booking__actions`, ou dans
- *    la barre collante `.spa-booking__cta` de l'étape 1 (#741) —, faute de quoi la
- *    colonne flex les étirerait sur toute la largeur du panneau ;
+ *    la barre basse `<BookingActionBar>` (#741, #1047) —, faute de quoi la
+ *    colonne flex les étirerait sur toute la largeur de la colonne ;
  * 4. la grille de créneaux ne cumule pas ses marges avec le `gap` de l'étape.
  *
  * La preuve visuelle, elle, est au navigateur : phase de recette de #624.
@@ -233,20 +233,21 @@ describe('Les cinq étapes du tunnel portent cette mise en page', () => {
       // et le tunnel en a deux, que rien ne confond :
       //
       // - `.spa-booking__actions` — la rangée qui suit le contenu dans le flux,
-      //   celle de #624, et le cas des quatre étapes qui offrent une paire de
-      //   boutons (« Corriger mes coordonnées » / « Confirmer la réservation ») ;
-      // - `.spa-booking__cta` — la barre collante de l'étape 1, où le bouton est
-      //   seul et prend **exprès** toute la largeur : `wireframes.md` prescrit à
-      //   cet endroit un « CTA primaire pleine largeur, ancré en bas de l'écran »
-      //   (#741). Ce que #624 interdit — un bouton étiré sans l'avoir voulu —
-      //   reste interdit : la largeur y vient de `--block`, pas d'un oubli de
-      //   conteneur, et `booking-service-cards.test.mjs` tient cette barre-là.
+      //   celle de #624, et le cas des étapes qui offrent une correction nommée
+      //   (« Corriger mes coordonnées », « Changer de créneau ») ;
+      // - `<BookingActionBar>` — la barre basse commune depuis #1047, où
+      //   l'action primaire est seule et prend **exprès** toute la largeur :
+      //   `wireframes.md` prescrit à cet endroit un « CTA primaire pleine
+      //   largeur, ancré en bas de l'écran ». Ce que #624 interdit — un bouton
+      //   étiré sans l'avoir voulu — reste interdit : la largeur y vient de
+      //   `block`, pas d'un oubli de conteneur, et
+      //   `booking-summary-bar.test.mjs` tient cette barre-là.
       assert.match(
         source,
-        /className="spa-booking__(?:actions|cta)"/,
+        /className="spa-booking__actions"|<BookingActionBar/u,
         `${name} ne groupe ses boutons ni dans \`.spa-booking__actions\` ni dans ` +
-          '`.spa-booking__cta` : posés directement dans la colonne flex de l’étape, ' +
-          'ils s’étirent sur toute la largeur du panneau (#624).',
+          'la barre basse : posés directement dans la colonne flex de l’étape, ' +
+          'ils s’étirent sur toute la largeur de la colonne (#624).',
       );
     });
   }

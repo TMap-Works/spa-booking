@@ -51,88 +51,34 @@ const serviceStep = join(
   'service-step.tsx',
 );
 
-/** La barre qui porte l'action de l'étape 1. */
-const CTA = 'spa-booking__cta';
 /** Le groupe de cartes, et la carte. */
 const CARTES = 'spa-booking__services';
 const CARTE = 'spa-booking__service';
 
 const booking = stripComments(readStyleSheet(styleSheetPath('components/booking.css')));
 
-describe('Le CTA de l’étape 1 est ancré au bas de l’écran (#741)', () => {
-  const rule = rulesFor(booking, `.${CTA}`).join(' ');
-
-  it('est collé au bas de la fenêtre tant que l’étape déborde', () => {
-    assert.notEqual(rule, '', `Aucune règle ne vise \`.${CTA}\`.`);
-
-    assert.equal(
-      declaration(rule, 'position'),
-      'sticky',
-      'La barre d’action n’est plus collante : le CTA repart dans le flux, et ' +
-        'une liste de prestations un peu longue le repousse sous la ligne de ' +
-        'flottaison — l’écart relevé par l’audit (#741).',
-    );
-
-    assert.equal(
-      declaration(rule, 'inset-block-end'),
-      '0',
-      'La barre est `sticky` sans point d’ancrage : sans `inset-block-end`, elle ' +
-        'ne se colle à rien et se comporte exactement comme une barre statique.',
-    );
-  });
-
-  it('est opaque, parce que le contenu défile derrière elle', () => {
-    const background = declaration(rule, 'background');
-
-    assert.ok(
-      background !== null && background.startsWith('var(--spa-color-'),
-      'La barre d’action n’a plus de fond pris aux jetons sémantiques : les ' +
-        `cartes se lisent au travers du bouton (lu : ${String(background)}).`,
-    );
-
-    assert.ok(
-      declaration(rule, 'border-block-start') !== null,
-      'La barre n’a plus de filet supérieur : rien ne la sépare des cartes qui ' +
-        'passent dessous, et les deux se lisent comme un seul bloc.',
-    );
-  });
-
-  it('rejoint les bords du panneau, dont elle annule le remplissage', () => {
-    const padding = declaration(rulesFor(booking, '.spa-booking__panel').join(' '), 'padding');
-
-    assert.ok(padding !== null, '`.spa-booking__panel` ne déclare plus de remplissage.');
-
-    // Mêmes marges négatives que `.spa-booking__summary`, et pour la même
-    // raison : sans elles la barre s'arrête à 24 px des bords et laisse voir le
-    // fond du panneau au-dessous d'elle pendant le défilement. Les deux barres
-    // se succèdent d'une étape à l'autre — deux ancrages différents pour un même
-    // bas d'écran se verraient au passage de l'une à l'autre.
-    for (const property of ['margin-inline', 'margin-block-end']) {
-      assert.equal(
-        declaration(rule, property),
-        `calc(${padding} * -1)`,
-        `\`${property}\` de la barre d’action ne compense plus le remplissage du ` +
-          `panneau (${padding}) : la barre ne touche plus le bas de la carte.`,
-      );
-    }
-  });
-
-  it('porte un bouton pleine largeur, monté par l’étape 1', () => {
+describe('Le CTA de l’étape 1 est ancré au bas de l’écran (#741, #1047)', () => {
+  it('est porté par la barre basse commune, pleine largeur', () => {
     const source = readFileSync(serviceStep, 'utf8');
 
+    // L'ancrage et l'opacité de cette barre sont tenus par
+    // `booking-summary-bar.test.mjs` : depuis #1047 il n'y en a plus qu'une pour
+    // toutes les étapes, et l'éprouver deux fois ferait diverger les deux
+    // messages d'échec le jour où elle change.
     assert.match(
       source,
-      new RegExp(`className="${CTA}"`),
-      `\`service-step.tsx\` ne porte plus \`${CTA}\` : la feuille a beau déclarer ` +
-        'la règle, plus rien ne la déclenche.',
+      /<BookingActionBar/u,
+      '`service-step.tsx` ne monte plus la barre basse : le CTA repart dans le ' +
+        'flux, et une liste de prestations un peu longue le repousse sous la ' +
+        'ligne de flottaison — l’écart relevé par l’audit (#741).',
     );
 
-    // `--block` est ce qui donne au bouton la mesure de la barre
+    // `block` est ce qui donne au bouton la mesure de la barre
     // (`styles/README.md` §2) : sans lui, le CTA reprend sa largeur automatique
     // au milieu d'une barre pleine largeur, ce que le wireframe écarte.
     assert.match(
       source,
-      /<Button[^>]*\sblock\b/s,
+      /<Button[^>]*\sblock\b/su,
       '`service-step.tsx` ne passe plus `block` à son CTA : le bouton cesse de ' +
         'mesurer la barre qui le porte (`wireframes.md`, « CTA primaire pleine largeur »).',
     );

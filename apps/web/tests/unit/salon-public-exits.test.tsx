@@ -152,8 +152,21 @@ describe("l'accès à l'espace client depuis la vitrine", () => {
   });
 });
 
-describe('le tunnel nomme les mêmes sorties', () => {
-  it('rend le pied de page par le composant partagé, libellés compris', async () => {
+/**
+ * Le tunnel, lui, n'a plus de sorties publiques — #1047.
+ *
+ * Il en a eu deux successivement : les siennes (#623), puis celles-ci, partagées
+ * avec la vitrine (#739). `BM-TUNNEL-10` les écarte l'une comme l'autre — *« la
+ * navigation du site disparaît au profit d'un "←" (étape précédente) et d'un "×"
+ * (quitter) »*, pour que *« l'attention reste sur la réservation »*. Sa seule
+ * sortie est « ✕ Quitter », dans son en-tête, et
+ * `booking-tunnel.test.tsx` l'éprouve là où elle se trouve désormais.
+ *
+ * Ce qui reste à garder ici, c'est qu'elles n'y reviennent pas : un pied de page
+ * remis sous le tunnel rouvrirait l'écart sans qu'aucune autre suite le voie.
+ */
+describe('le tunnel n’a plus de sorties publiques (#1047)', () => {
+  it('n’enveloppe l’étape d’aucun pied de page', async () => {
     servir();
 
     render(
@@ -163,11 +176,8 @@ describe('le tunnel nomme les mêmes sorties', () => {
       }),
     );
 
-    expect(screen.getByRole('link', { name: 'Mon compte' }).getAttribute('href')).toBe(
-      `/${tenant.slug}/compte`,
-    );
-    expect(
-      screen.getByRole('link', { name: 'Voir toutes les prestations' }).getAttribute('href'),
-    ).toBe(`/${tenant.slug}`);
+    expect(screen.queryByRole('link', { name: 'Mon compte' })).toBeNull();
+    expect(screen.queryByRole('link', { name: 'Voir toutes les prestations' })).toBeNull();
+    expect(screen.getByText('étape en cours')).toBeDefined();
   });
 });

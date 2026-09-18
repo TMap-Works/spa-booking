@@ -132,7 +132,7 @@ describe('le CTA de l’étape 1 (#741)', () => {
     expect(cta).toHaveProperty('disabled', true);
   });
 
-  it('mesure la largeur du panneau — `--block`, comme le prescrit le wireframe', async () => {
+  it('mesure la largeur de la barre — `block`, comme le prescrit le wireframe', async () => {
     const { user, onSubmit } = renderStep();
 
     await user.click(carte('Rituel duo 90 min'));
@@ -140,8 +140,9 @@ describe('le CTA de l’étape 1 (#741)', () => {
     const cta = screen.getByRole('button', { name: 'Choisir un créneau' });
 
     expect(cta.className).toContain('spa-button--block');
-    // La barre qui l'ancre : c'est elle que la feuille colle au bas de l'écran.
-    expect(cta.closest('.spa-booking__cta')).not.toBeNull();
+    // La barre basse qui l'ancre — commune à toutes les étapes depuis #1047 :
+    // c'est elle que la feuille colle au bas de l'écran.
+    expect(cta.closest('.spa-booking__bar')).not.toBeNull();
 
     await user.click(cta);
 
