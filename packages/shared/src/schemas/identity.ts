@@ -396,3 +396,69 @@ export const createStaffAccountRequestSchema = z
   .strict();
 
 export type CreateStaffAccountRequest = z.infer<typeof createStaffAccountRequestSchema>;
+
+/**
+ * Borne d'un jeton opaque **reçu dans un corps de requête** — 4096 octets.
+ *
+ * `opaqueTokenSchema` décrit un jeton que l'API **rend** : sa longueur est celle
+ * qu'elle a elle-même produite, et la borner n'apprendrait rien. Un jeton reçu
+ * est une entrée arbitraire, et il ne doit pas atteindre une vérification de
+ * signature sans avoir été borné — un corps d'un mégaoctet coûterait le HMAC
+ * qu'il ne mérite pas.
+ *
+ * Quatre kilo-octets sont larges : un JWT d'invitation ou de réinitialisation de
+ * ce produit tient en quelques centaines d'octets. C'est la borne que
+ * `AcceptInvitationDto` applique déjà en `class-validator`, écrite ici pour que
+ * le contrat la porte à son tour.
+ */
+const receivedTokenSchema = opaqueTokenSchema.max(4096, { message: 'jeton trop long' });
+
+/**
+ * Demande de réinitialisation d'un mot de passe oublié — #809, premier critère.
+ *
+ * `tenantSlug` est exigé pour la raison qui vaut déjà pour la connexion : la
+ * même adresse désigne deux comptes distincts dans deux salons
+ * (`@@unique([tenantId, email])`), et sans lui la demande n'aurait aucun moyen
+ * de savoir lequel des deux récupérer. Il **désigne** un établissement sans en
+ * accorder l'accès — ce n'est donc pas une entorse à l'invariant 2 de l'en-tête.
+ *
+ * La réponse est **toujours 202**, que l'adresse soit connue ou non : un refus
+ * distinct ferait de ce formulaire un annuaire de la clientèle du salon, et
+ * l'énumération que `INVALID_CREDENTIALS` interdit à la connexion se referait
+ * ici. Le contrat n'a donc aucun schéma de réponse à déclarer — il n'y a pas de
+ * corps à lire.
+ */
+export const passwordResetRequestSchema = z
+  .object({
+    tenantSlug: slugSchema,
+    email: emailSchema,
+  })
+  .strict();
+
+export type PasswordResetRequest = z.infer<typeof passwordResetRequestSchema>;
+
+/**
+ * Choix du nouveau mot de passe, jeton en main — #809, troisième critère.
+ *
+ * ## Aucun `tenantSlug`, contrairement à la demande
+ *
+ * L'établissement est une revendication **signée** du jeton, comme il l'est du
+ * jeton de rafraîchissement et de celui d'invitation. Le réclamer en plus
+ * donnerait au client une seconde source pour la même information — donc un
+ * désaccord possible, qu'il faudrait arbitrer sur la foi d'une entrée
+ * utilisateur.
+ *
+ * ## `passwordSchema` et non `submittedPasswordSchema`
+ *
+ * Le mot de passe est **choisi** ici, pas vérifié : la politique de longueur
+ * s'applique, exactement comme à l'inscription. C'est le sens du « il applique
+ * la politique de mot de passe » du critère.
+ */
+export const passwordResetConfirmRequestSchema = z
+  .object({
+    token: receivedTokenSchema,
+    password: passwordSchema,
+  })
+  .strict();
+
+export type PasswordResetConfirmRequest = z.infer<typeof passwordResetConfirmRequestSchema>;
