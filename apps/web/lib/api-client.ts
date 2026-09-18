@@ -31,6 +31,10 @@
 import {
   ERROR_CODES,
   apiErrorSchema,
+  platformSessionSchema,
+  platformTenantPageSchema,
+  provisionedTenantSchema,
+  reissuedTenantInvitationSchema,
   appointmentSchema,
   authSessionResponseSchema,
   availabilityResponseSchema,
@@ -50,6 +54,7 @@ import {
   staffScheduleSchema,
   staffTimeOffSchema,
   tenantSchema,
+  type AcceptInvitationRequest,
   type Appointment,
   type AppointmentListQuery,
   type AssignServiceStaffRequest,
@@ -66,6 +71,7 @@ import {
   type CreateServiceRequest,
   type CreateStaffMemberRequest,
   type CreateStaffTimeOffRequest,
+  type CreateTenantRequest,
   type Customer,
   type CustomerHistoryQuery,
   type CustomerPage,
@@ -74,9 +80,14 @@ import {
   type LoginRequest,
   type MyAppointmentsQuery,
   type Notification as NotificationTrace,
+  type PlatformLoginRequest,
+  type PlatformSession,
+  type PlatformTenantPage,
+  type ProvisionedTenant,
   type PublicService,
   type PublicTenant,
   type RegisterRequest,
+  type ReissuedTenantInvitation,
   type RescheduleAppointmentRequest,
   type Service,
   type ServiceCategory,
@@ -458,6 +469,8 @@ interface AuthorizedRequestOptions<TSchema extends z.ZodTypeAny | null> {
   readonly body?: unknown;
   /** Jeton d'accès, posé en `Authorization: Bearer`. */
   readonly accessToken?: string;
+  /** En-têtes propres à une route — `Idempotency-Key` de l'ouverture d'un salon. */
+  readonly headers?: Readonly<Record<string, string>>;
   /**
    * Jeton de rafraîchissement, réémis vers l'API sous la forme du cookie qu'elle
    * a elle-même posé. C'est la seule façon de le lui rendre : `/auth/refresh` le
@@ -489,7 +502,7 @@ const API_REFRESH_COOKIE_NAME = 'spa_refresh_token';
 async function authorizedRequest<TSchema extends z.ZodTypeAny | null>(
   options: AuthorizedRequestOptions<TSchema>,
 ): Promise<{ payload: TSchema extends z.ZodTypeAny ? z.infer<TSchema> : null; response: Response }> {
-  const headers: Record<string, string> = { accept: 'application/json' };
+  const headers: Record<string, string> = { ...options.headers, accept: 'application/json' };
 
   if (options.accessToken !== undefined) {
     headers['authorization'] = `Bearer ${options.accessToken}`;
@@ -635,6 +648,14 @@ export function registerAccount(
   body: RegisterRequest,
 ): Promise<ApiSession> {
   return openSession('/auth/register', { ...body, tenantSlug });
+}
+
+/**
+ * Active un compte invité et ouvre sa session (#55) — le gérant d'un salon
+ * qu'on vient d'ouvrir, ou un membre de son équipe.
+ */
+export function acceptInvitation(body: AcceptInvitationRequest): Promise<ApiSession> {
+  return openSession('/auth/invitations/accept', body);
 }
 
 /**
@@ -1923,5 +1944,81 @@ export async function fetchNoShowReport(
     schema: noShowReportSchema,
     accessToken,
   });
+  return payload;
+}
+
+/*
+ * Console de l'éditeur — ADR 0012.
+ *
+ * Un espace d'authentification à part : le jeton d'opérateur ne porte aucun
+ * établissement, et aucune de ces routes n'accepte un jeton de salon.
+ */
+
+/** Connexion d'un opérateur — mot de passe et code TOTP. */
+export async function loginPlatformOperator(
+  credentials: PlatformLoginRequest,
+): Promise<PlatformSession> {
+  const { payload } = await authorizedRequest({
+    method: 'POST',
+    path: '/platform/auth/login',
+    body: credentials,
+    schema: platformSessionSchema,
+  });
+
+  return payload;
+}
+
+/** Les établissements de la plateforme, les plus récents d'abord. */
+export async function fetchPlatformTenants(
+  accessToken: string,
+  page: number,
+): Promise<PlatformTenantPage> {
+  const query = new URLSearchParams({ page: String(page) });
+  const { payload } = await authorizedRequest({
+    method: 'GET',
+    path: `/platform/tenants?${query.toString()}`,
+    accessToken,
+    schema: platformTenantPageSchema,
+  });
+
+  return payload;
+}
+
+/**
+ * Ouvre un établissement et invite son administrateur.
+ *
+ * La clé d'idempotence est celle du formulaire, pas de l'appel : une
+ * soumission rejouée après une coupure rend le salon déjà ouvert au lieu d'en
+ * ouvrir un second.
+ */
+export async function provisionTenant(
+  accessToken: string,
+  idempotencyKey: string,
+  body: CreateTenantRequest,
+): Promise<ProvisionedTenant> {
+  const { payload } = await authorizedRequest({
+    method: 'POST',
+    path: '/platform/tenants',
+    accessToken,
+    headers: { 'idempotency-key': idempotencyKey },
+    body,
+    schema: provisionedTenantSchema,
+  });
+
+  return payload;
+}
+
+/** Réémet l'invitation de l'administrateur d'un salon, avec des liens frais. */
+export async function reissueTenantInvitation(
+  accessToken: string,
+  tenantId: string,
+): Promise<ReissuedTenantInvitation> {
+  const { payload } = await authorizedRequest({
+    method: 'POST',
+    path: `/platform/tenants/${encodeURIComponent(tenantId)}/invitation`,
+    accessToken,
+    schema: reissuedTenantInvitationSchema,
+  });
+
   return payload;
 }

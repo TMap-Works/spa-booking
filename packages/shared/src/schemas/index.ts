@@ -155,6 +155,7 @@ export type {
 } from './crm';
 
 export {
+  acceptInvitationRequestSchema,
   accountDataConsentSchema,
   authSessionResponseSchema,
   authSessionSchema,
@@ -179,6 +180,7 @@ export {
   userSummarySchema,
 } from './identity';
 export type {
+  AcceptInvitationRequest,
   AuthSession,
   AuthSessionResponse,
   AuthTokens,
@@ -212,6 +214,31 @@ export type {
   NotificationListQuery,
   NotificationPreferences,
 } from './notification';
+
+export {
+  createTenantRequestSchema,
+  PLATFORM_PASSWORD_MAX_LENGTH,
+  PLATFORM_PASSWORD_MIN_LENGTH,
+  platformLoginRequestSchema,
+  platformOperatorSchema,
+  platformSessionSchema,
+  platformTenantPageSchema,
+  platformTenantSchema,
+  provisionedTenantSchema,
+  reissuedTenantInvitationSchema,
+  tenantAccessLinksSchema,
+} from './platform';
+export type {
+  CreateTenantRequest,
+  PlatformLoginRequest,
+  PlatformOperator,
+  PlatformSession,
+  PlatformTenant,
+  PlatformTenantPage,
+  ProvisionedTenant,
+  ReissuedTenantInvitation,
+  TenantAccessLinks,
+} from './platform';
 
 export {
   counterPaymentMethodSchema,
