@@ -13,6 +13,7 @@ import {
   adminDashboardPath,
   adminCatalogPath,
   adminCheckoutPath,
+  adminMyPlanningPath,
   adminReportingPath,
   adminSessionRefreshPath,
   adminSettingsPath,
@@ -51,7 +52,11 @@ describe('sommaire du back-office — ce que chaque rôle voit', () => {
   it('ouvre au rang praticien tout ce que les routes au seuil STAFF servent', () => {
     // Le personnel en fait partie depuis #480 : ses lectures sont au seuil
     // `STAFF`, et l'écran masque de lui-même les écritures de gestion.
+    // « Mon planning » en tête (#813) : c'est l'écran de la praticienne. Le
+    // rang seul annonce encore le planning du salon et l'encaissement ; ce sont
+    // les **permissions** qui les lui retirent (`admin-rail-permissions`).
     expect(labels('staff')).toEqual([
+      'Mon planning',
       'Planning',
       'Clients',
       'Prestations',
@@ -65,6 +70,7 @@ describe('sommaire du back-office — ce que chaque rôle voit', () => {
     // mènerait à un 403, sur un écran qu'on ne peut pas déverrouiller.
     expect(labels('manager')).toEqual([
       'Tableau de bord',
+      'Mon planning',
       'Planning',
       'Clients',
       'Prestations',
@@ -74,8 +80,8 @@ describe('sommaire du back-office — ce que chaque rôle voit', () => {
     ]);
   });
 
-  it('donne au rang administrateur les neuf sections, réglages et abonnement compris', () => {
-    expect(labels('admin')).toHaveLength(9);
+  it('donne au rang administrateur les dix sections, réglages et abonnement compris', () => {
+    expect(labels('admin')).toHaveLength(10);
     // L'abonnement du salon à la plateforme (ADR 0016) ferme le sommaire.
     expect(labels('admin').slice(-2)).toEqual(['Réglages', 'Abonnement']);
   });
@@ -103,11 +109,14 @@ describe('sommaire du back-office — ce que chaque rôle voit', () => {
 });
 
 describe('où la connexion dépose chaque rôle (#618)', () => {
-  it('dépose une praticienne sur le planning, et non sur les réglages', () => {
+  it('dépose une praticienne sur son propre planning, et non sur les réglages', () => {
     // Le défaut corrigé : la redirection était inconditionnelle vers
     // `adminSettingsPath`, écran `@AuthAtLeast('ADMIN')`. Le premier écran d'une
-    // praticienne après son mot de passe était « Accès réservé ».
-    expect(adminLandingPath(SLUG, 'staff')).toBe(adminCalendarPath(SLUG));
+    // praticienne après son mot de passe était « Accès réservé ». Depuis #813,
+    // ce n'est plus le planning du salon non plus — qui lui répond 403 depuis
+    // #812 — mais le sien.
+    expect(adminLandingPath(SLUG, 'staff')).toBe(adminMyPlanningPath(SLUG));
+    expect(adminLandingPath(SLUG, 'staff')).not.toBe(adminCalendarPath(SLUG));
     expect(adminLandingPath(SLUG, 'staff')).not.toBe(adminSettingsPath(SLUG));
   });
 
@@ -120,7 +129,7 @@ describe('où la connexion dépose chaque rôle (#618)', () => {
 
       expect(adminLandingPath(SLUG, role)).toBe(first?.href);
     }
-    expect(adminLandingPath(SLUG, 'staff')).toBe(adminCalendarPath(SLUG));
+    expect(adminLandingPath(SLUG, 'staff')).toBe(adminMyPlanningPath(SLUG));
     expect(adminLandingPath(SLUG, 'manager')).toBe(adminDashboardPath(SLUG));
     expect(adminLandingPath(SLUG, 'admin')).toBe(adminDashboardPath(SLUG));
   });

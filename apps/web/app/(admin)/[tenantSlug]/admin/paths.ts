@@ -124,6 +124,30 @@ export function adminCalendarPath(
 }
 
 /**
+ * « Mon planning » — l'emploi du temps du praticien connecté (#813).
+ *
+ * La vue et la date sont dans l'adresse, comme au planning du salon : l'écran
+ * se consulte sur un téléphone entre deux soins, et un rafraîchissement ne doit
+ * pas ramener la praticienne à la journée courante. `vue` vaut `jour`
+ * (omise), `semaine` ou `a-venir`.
+ */
+export function adminMyPlanningPath(
+  tenantSlug: string,
+  options: { readonly view?: 'jour' | 'semaine' | 'a-venir'; readonly date?: CalendarDate } = {},
+): string {
+  const search = new URLSearchParams();
+
+  if (options.view !== undefined && options.view !== 'jour') {
+    search.set('vue', options.view);
+  }
+  if (options.date !== undefined) {
+    search.set('date', options.date);
+  }
+
+  return `${adminPath(tenantSlug)}/mon-planning${search.size === 0 ? '' : `?${search.toString()}`}`;
+}
+
+/**
  * L'encaissement au comptoir (#59).
  *
  * La journée **et** le rendez-vous en cours de règlement sont dans l'URL, pour

@@ -58,13 +58,14 @@ afterEach(() => {
 });
 
 describe('la destination après connexion', () => {
-  it('dépose une praticienne sur le planning, jamais sur les réglages', async () => {
+  it('dépose une praticienne sur son propre planning, jamais sur les réglages', async () => {
     adminLoginAction.mockResolvedValue({ ok: true, data: account('staff') });
     render(<AdminLoginForm tenantSlug={SLUG} notice={null} />);
 
     await signIn();
 
-    expect(replace).toHaveBeenCalledWith(`/${SLUG}/admin/calendrier`);
+    // « Mon planning » (#813) : le planning du salon lui répond 403 depuis #812.
+    expect(replace).toHaveBeenCalledWith(`/${SLUG}/admin/mon-planning`);
     expect(replace).not.toHaveBeenCalledWith(`/${SLUG}/admin/reglages`);
     // Les pages sont rendues côté serveur : sans ce rafraîchissement, la
     // navigation servirait le rendu fait avant que le cookie n'existe.

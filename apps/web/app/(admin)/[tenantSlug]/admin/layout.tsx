@@ -1,9 +1,14 @@
-import type { TenantBillingStatus, UserRole } from '@spa/shared';
+import type { Permission, TenantBillingStatus, UserRole } from '@spa/shared';
 import type { Metadata } from 'next';
 import { Inter } from 'next/font/google';
-import type { ReactNode } from 'react';
+import { cache, type ReactNode } from 'react';
 
-import { ApiClientError, fetchOwnProfile, fetchPublicTenant } from '@/lib/api-client';
+import {
+  ApiClientError,
+  fetchMyStaffProfile,
+  fetchOwnProfile,
+  fetchPublicTenant,
+} from '@/lib/api-client';
 
 import {
   AdminAnnouncementProvider,
@@ -133,6 +138,13 @@ export interface AdminShell {
    * pas dit : le bandeau d'essai s'efface, rien d'autre ne change.
    */
   readonly billing: AdminShellBilling | null;
+  /**
+   * Les permissions effectives (`GET /v1/auth/me`, ADR 0013) — `null` quand
+   * l'API ne les a pas rendues : le rail garde alors le sommaire du rang.
+   */
+  readonly permissions: readonly Permission[] | null;
+  /** Le compte a une fiche praticien — `null` si la question n'a pas eu de réponse. */
+  readonly hasStaffProfile: boolean | null;
 }
 
 export interface AdminShellBilling {
@@ -238,16 +250,19 @@ function isDenial(settled: PromiseSettledResult<unknown>): boolean {
  * connexion en boucle — et le prix est celui d'une décision unique : une seconde
  * lecture de la session, écrite ailleurs, aurait divergé de celle-ci.
  */
-export async function loadAdminShell(tenantSlug: string): Promise<AdminShell | null> {
+export const loadAdminShell = cache(async function loadAdminShell(
+  tenantSlug: string,
+): Promise<AdminShell | null> {
   const accessToken = await readAdminAccessToken();
 
   if (accessToken === null) {
     return null;
   }
 
-  const [profile, tenant] = await Promise.allSettled([
+  const [profile, tenant, staffProfile] = await Promise.allSettled([
     fetchOwnProfile(accessToken),
     fetchPublicTenant(tenantSlug),
+    fetchMyStaffProfile(accessToken),
   ]);
 
   if (isDenial(profile) || isDenial(tenant)) {
@@ -278,8 +293,16 @@ export async function loadAdminShell(tenantSlug: string): Promise<AdminShell | n
         : null,
     role: profile.status === 'fulfilled' ? profile.value.role : OUTAGE_ROLE,
     billing: profile.status === 'fulfilled' ? (profile.value.billing ?? null) : null,
+    permissions: profile.status === 'fulfilled' ? (profile.value.permissions ?? null) : null,
+    // 404 : le compte n'a pas de fiche praticien — une réponse, pas une panne.
+    hasStaffProfile:
+      staffProfile.status === 'fulfilled'
+        ? true
+        : staffProfile.reason instanceof ApiClientError && staffProfile.reason.status === 404
+          ? false
+          : null,
   };
-}
+});
 
 interface AdminLayoutProps {
   readonly children: ReactNode;
@@ -335,6 +358,8 @@ export default async function AdminLayout({ children, params }: AdminLayoutProps
     <div className={`spa-admin ${adminFont.variable}`}>
       <AdminRail
         establishments={shell.establishments}
+        hasStaffProfile={shell.hasStaffProfile}
+        permissions={shell.permissions}
         role={shell.role}
         tenantSlug={tenantSlug}
         timeZone={shell.timeZone}

@@ -23,7 +23,12 @@ import {
 import { isRenewalReturn, RENEWAL_PARAM } from '@/lib/session-refresh';
 
 import { CalendarBoard } from '../components/calendar-board';
-import { adminLoadFailure, adminUnauthorizedPath, requireAdminAccessToken } from '../guard';
+import {
+  adminLoadFailure,
+  adminUnauthorizedPath,
+  redirectWithoutPermission,
+  requireAdminAccessToken,
+} from '../guard';
 import { adminCalendarPath } from '../paths';
 
 /**
@@ -129,6 +134,8 @@ export default async function CalendarPage({ params, searchParams }: CalendarPag
   // recompose que la vue et la date — c'est donc l'URL reçue qui en fait foi.
   const renewal = { returnTo: here, attempted: isRenewalReturn(query[RENEWAL_PARAM]) };
   const accessToken = await requireAdminAccessToken(tenantSlug, here);
+  // Une praticienne n'a pas l'agenda du salon : elle arrive sur le sien (#813).
+  await redirectWithoutPermission(tenantSlug, 'agenda:read:all');
 
   let tenant: PublicTenant;
   try {

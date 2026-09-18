@@ -6,6 +6,7 @@ import {
   adminCalendarPath,
   adminDashboardPath,
   adminCatalogPath,
+  adminMyPlanningPath,
   adminCheckoutPath,
   adminReportingPath,
   adminSettingsPath,
@@ -87,6 +88,21 @@ export function adminNavigation(tenantSlug: string, role: UserRole): readonly Ad
       label: 'Tableau de bord',
       href: adminDashboardPath(tenantSlug),
       minimumRole: 'manager',
+      upcoming: null,
+    },
+    {
+      key: 'mon-planning',
+      label: 'Mon planning',
+      href: adminMyPlanningPath(tenantSlug),
+      /*
+       * `GET /v1/me/*` — `agenda:read:own`, que la matrice donne à tout rôle
+       * interne (#811, #812). Placée **avant** le planning du salon : pour une
+       * praticienne, c'est la première entrée qui reste une fois les
+       * permissions appliquées, donc son écran d'arrivée (#813). Pour un gérant,
+       * le tableau de bord la précède, et le rail ne l'annonce que s'il a une
+       * fiche praticien (`hasStaffProfile` du layout).
+       */
+      minimumRole: 'staff',
       upcoming: null,
     },
     {

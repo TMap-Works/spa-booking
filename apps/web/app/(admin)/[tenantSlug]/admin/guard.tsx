@@ -1,4 +1,4 @@
-import { ERROR_CODES } from '@spa/shared';
+import { ERROR_CODES, type Permission } from '@spa/shared';
 import type { ReactElement } from 'react';
 import { redirect } from 'next/navigation';
 
@@ -7,7 +7,13 @@ import { ApiClientError } from '@/lib/api-client';
 import { renewalReturnTo } from '@/lib/session-refresh';
 
 import { AdminRetryButton } from './components/admin-retry-button';
-import { adminBillingPath, adminLoginPath, adminSessionRefreshPath } from './paths';
+import { loadAdminShell } from './layout';
+import {
+  adminBillingPath,
+  adminLoginPath,
+  adminMyPlanningPath,
+  adminSessionRefreshPath,
+} from './paths';
 import { readAdminAccessToken, readAdminRefreshToken } from './session';
 
 /**
@@ -225,4 +231,34 @@ export function adminLoadFailure(
       <AdminRetryButton />
     </Notification>
   );
+}
+
+/**
+ * Renvoie vers « Mon planning » un compte à qui l'écran demandé est fermé
+ * (#813, arbitrage du PO du 16/09 : « le praticien ne voit que son propre
+ * planning »).
+ *
+ * Le planning du salon et l'encaissement répondraient 403 à une praticienne
+ * qui en taperait l'adresse : plutôt qu'un encart « Accès réservé », elle
+ * arrive sur l'écran qui est le sien. Seulement quand les permissions sont
+ * **connues** et qu'elles lui ouvrent son propre agenda — sans elles, l'écran
+ * suit son cours et rend lui-même son refus.
+ *
+ * Le shell est celui que le layout a déjà chargé (`cache`) : aucune requête de
+ * plus.
+ */
+export async function redirectWithoutPermission(
+  tenantSlug: string,
+  required: Permission,
+): Promise<void> {
+  const shell = await loadAdminShell(tenantSlug);
+  const permissions = shell?.permissions ?? null;
+
+  if (
+    permissions !== null &&
+    !permissions.includes(required) &&
+    permissions.includes('agenda:read:own')
+  ) {
+    redirect(adminMyPlanningPath(tenantSlug));
+  }
 }

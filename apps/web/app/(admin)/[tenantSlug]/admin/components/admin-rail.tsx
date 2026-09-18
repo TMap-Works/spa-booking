@@ -17,6 +17,7 @@ import { adminNavigation, isCurrentEntry, roleLabel, type AdminNavEntry } from '
 /** Le pictogramme de chaque section — décoratif, le libellé reste écrit. */
 const NAV_ICONS: Readonly<Record<string, IconName>> = {
   'tableau-de-bord': 'home',
+  'mon-planning': 'clock',
   planning: 'calendar',
   encaissement: 'card',
   clients: 'users',
@@ -33,7 +34,10 @@ const NAV_ICONS: Readonly<Record<string, IconName>> = {
  * nomme rejoint le dernier plutôt que de disparaître.
  */
 const NAV_GROUPS: readonly { readonly label: string; readonly keys: readonly string[] }[] = [
-  { label: 'Au quotidien', keys: ['tableau-de-bord', 'planning', 'encaissement', 'clients'] },
+  {
+    label: 'Au quotidien',
+    keys: ['tableau-de-bord', 'mon-planning', 'planning', 'encaissement', 'clients'],
+  },
   { label: 'Gestion', keys: ['prestations', 'personnel'] },
   { label: 'Pilotage', keys: ['reporting', 'reglages', 'abonnement'] },
 ];
@@ -199,6 +203,13 @@ interface AdminRailProps {
    * celle de l'API.
    */
   readonly permissions?: readonly Permission[] | null;
+  /**
+   * Le compte a une fiche praticien (`GET /v1/me/staff-profile`). `false`
+   * retire « Mon planning » — un gérant qui ne donne pas de soins n'a pas
+   * d'agenda à lui ; `null` (inconnu) ne la laisse qu'à un praticien, pour qui
+   * c'est l'écran d'arrivée (#813).
+   */
+  readonly hasStaffProfile?: boolean | null;
 }
 
 export function AdminRail({
@@ -208,13 +219,18 @@ export function AdminRail({
   userName,
   role,
   permissions = null,
+  hasStaffProfile = null,
 }: AdminRailProps) {
   const pathname = usePathname();
   // Deux filtres, et ils ne disent pas la même chose : le rang écarte ce qui est
   // au-dessus de l'appelant, les permissions écartent ce que le rang ne sait pas
   // exprimer — un praticien est bien au rang `staff`, et n'a pourtant ni le
   // planning du salon ni l'encaissement (#812).
-  const entries = entriesAllowedBy(adminNavigation(tenantSlug, role), permissions);
+  const entries = entriesAllowedBy(adminNavigation(tenantSlug, role), permissions).filter(
+    (entry) =>
+      entry.key !== 'mon-planning' ||
+      (hasStaffProfile === null ? role === 'staff' : hasStaffProfile),
+  );
   const brand = establishments.find((salon) => salon.slug === tenantSlug)?.name ?? tenantSlug;
 
   const groups = groupEntries(entries);

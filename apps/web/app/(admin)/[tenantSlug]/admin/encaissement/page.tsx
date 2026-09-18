@@ -31,7 +31,7 @@ import type { PaymentTransaction } from '@/lib/admin/payment-contract';
 import { CheckoutPanel } from '../components/checkout-panel';
 import { PeriodNav } from '../components/period-nav';
 import { adminCheckoutPath } from '../paths';
-import { adminLoadFailure, requireAdminAccessToken } from '../guard';
+import { adminLoadFailure, redirectWithoutPermission, requireAdminAccessToken } from '../guard';
 import { readDaySettlements } from './settlements';
 
 /**
@@ -107,6 +107,8 @@ export default async function CheckoutPage({ params, searchParams }: CheckoutPag
       ...(rdv === undefined ? {} : { appointmentId: rdv }),
     }),
   );
+  // L'encaissement n'est pas ouvert au praticien : il arrive sur son planning (#813).
+  await redirectWithoutPermission(tenantSlug, 'checkout:collect');
 
   const denial = {
     deniedTitle: 'Accès réservé',
