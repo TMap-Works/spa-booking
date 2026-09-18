@@ -464,6 +464,39 @@ l'API, et traduit la réponse en une décision de rejeu. Rien de plus.
 | tout autre `4xx` | acquitté, compté `PermanentFailures` | adresse morte, désinscription, requête mal formée : le répéter ne le rendra pas vrai |
 | enveloppe illisible ou non conforme | acquitté, compté `PermanentFailures` | un JSON invalide ne se répare pas en le relisant |
 
+#### Ce que l'enveloppe doit porter
+
+La Lambda valide la forme avant d'appeler quoi que ce soit — un appel à l'API
+pour une enveloppe illisible coûte un aller-retour pour un 400. Ce miroir du
+contrat est dans `lambda/dispatcher/index.mjs`, et il doit suivre
+`DispatchMessageDto` côté API : les deux exemplaires ont divergé une fois (#1032),
+et la divergence n'était visible dans **aucun environnement de test** — la
+Lambda n'est employée que là où `NOTIFICATION_QUEUE_URL` est posée, c'est-à-dire
+en déployé.
+
+| Champ | Exigence |
+|---|---|
+| `tenantId` | chaîne non vide — la portée du consommateur s'ouvre dessus, et rien ne la relit (#71) |
+| `dedupeKey` | chaîne non vide |
+| `recipientUserId` | chaîne non vide |
+| `type` | `BOOKING_CONFIRMATION`, `REMINDER_24H`, `CANCELLATION` ou `PASSWORD_RESET` |
+| `channel` | `EMAIL` ou `SMS` |
+| `appointmentId` | **obligatoire pour les trois messages du CDC §1.4** ; absent ou nul pour `PASSWORD_RESET`, qui n'annonce aucun rendez-vous (#809). Présent mais mal formé : refusé pour tous les types |
+| `scheduledFor` | absent, nul, ou une date analysable |
+| `passwordResetToken` | **`PASSWORD_RESET` uniquement**, et alors obligatoire — sans lui l'API ne rend rien (#809). La Lambda ne le valide pas : elle le **recopie sans le lire**, et surtout sans le journaliser. C'est la seule valeur de l'enveloppe qui ne soit pas un identifiant |
+
+Les valeurs dérivent du domaine
+(`apps/api/src/modules/notifications/notifications.types.ts`) : **y ajouter un
+type de message oblige à élargir l'ensemble de la Lambda dans le même lot.**
+Sans quoi la chaîne rejette chaque message du nouveau type en échec permanent —
+acquitté, donc irrécupérable, et compté dans `PermanentFailures`, dont l'alarme
+sonne alors pour une panne qui n'en est pas une.
+
+Cette obligation-là est désormais **tenue par un témoin** et non par la présente
+phrase : la fumigation lit `NOTIFICATION_TYPES` dans `notifications.types.ts` et
+le compare à celui de la Lambda. C'est ce qui manquait à #1032 — la prescription
+existait déjà, et elle n'avait pas suffi.
+
 Un `401` ou un `403` compte comme **transitoire**, et il faut s'y arrêter : un
 refus d'authentification ne dit rien du message, il dit que la fonction ne s'est
 pas fait reconnaître — jeton tourné, secret vide, politique mal posée. Ce
@@ -572,8 +605,21 @@ que ni `terraform validate` ni la lecture du code ne prouvent :
 cd infra/terraform/modules/notifications/lambda && node dispatcher.smoke.mjs
 ```
 
-Trois vérifications : le tri des issues (seuls les transitoires sont rendus à
-SQS), la garde de fin de temps imparti, et le défaut fermé.
+Sept vérifications : le tri des issues (seuls les transitoires sont rendus à
+SQS), les formes d'enveloppe `PASSWORD_RESET` sans rendez-vous qui doivent
+atteindre l'API, le jeton de réinitialisation qui n'atteint jamais le journal,
+le rendez-vous qui reste exigé des messages qui en annoncent un, le miroir des
+types confronté au domaine, la garde de fin de temps imparti, et le défaut fermé.
+
+Les vérifications du milieu ne se lisent pas dans `batchItemFailures` : un
+rejet d'enveloppe et un `4xx` rendu par l'API s'y ressemblent, tous deux étant
+acquittés. La fumigation observe donc ce qui a **atteint `fetch`** et la raison
+journalisée du rejet — c'est ce qui distingue « refusée » de « refusée pour ce
+qui manque vraiment ». Elle observe aussi ce que la sortie standard a porté :
+le jeton de `PASSWORD_RESET` est la seule valeur non-identifiante de toute la
+chaîne, et le contexte journalisé est composé champ par champ — un `{ ...message }`
+posé un jour de refactorisation l'enverrait en clair dans CloudWatch Logs sans
+qu'aucune autre barrière ne rougisse (CDC §5.1).
 
 #### Où les fumigations tournent (#496)
 
