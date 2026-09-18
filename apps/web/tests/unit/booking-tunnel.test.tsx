@@ -23,6 +23,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { BookingTunnel } from '@/app/(booking)/[tenantSlug]/reservation/booking-tunnel';
 import type { AccountPresence } from '@/lib/account-presence';
+import { emptyBookingDraft } from '@/lib/booking/draft';
 
 import { service, tenant } from './fixtures';
 
@@ -156,6 +157,10 @@ function renderTunnel(presence: AccountPresence | null = null) {
       exitHref={`/${tenant.slug}`}
       presence={presence}
       loginHref={`/${tenant.slug}/compte/connexion`}
+      // L'état de départ que le serveur lit dans l'adresse (#1055). Ces cas-ci
+      // arrivent tous par la première étape : c'est le brouillon vierge, et
+      // l'effet d'hydratation prend ensuite le relais sur `sessionStorage`.
+      initialDraft={emptyBookingDraft()}
     />,
   );
 

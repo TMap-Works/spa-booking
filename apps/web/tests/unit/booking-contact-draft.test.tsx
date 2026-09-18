@@ -253,6 +253,7 @@ describe('« Un mot pour le salon » face à un rechargement', () => {
         exitHref={`/${tenant.slug}`}
         presence={null}
         loginHref={`/${tenant.slug}/compte/connexion`}
+        initialDraft={emptyBookingDraft()}
       />);
 
     const champ = taperLeMot();
@@ -273,6 +274,7 @@ describe('« Un mot pour le salon » face à un rechargement', () => {
         exitHref={`/${tenant.slug}`}
         presence={null}
         loginHref={`/${tenant.slug}/compte/connexion`}
+        initialDraft={emptyBookingDraft()}
       />);
 
     taperLeMot();
@@ -289,6 +291,7 @@ describe('« Un mot pour le salon » face à un rechargement', () => {
         exitHref={`/${tenant.slug}`}
         presence={null}
         loginHref={`/${tenant.slug}/compte/connexion`}
+        initialDraft={emptyBookingDraft()}
       />);
 
     expect(champDuMot().value).toBe(NOTE);
@@ -304,6 +307,7 @@ describe('« Un mot pour le salon » face à un rechargement', () => {
         exitHref={`/${tenant.slug}`}
         presence={null}
         loginHref={`/${tenant.slug}/compte/connexion`}
+        initialDraft={emptyBookingDraft()}
       />);
 
     taperLeMot();
@@ -357,6 +361,7 @@ describe('une soumission refusée sur le champ en cours de frappe', () => {
         exitHref={`/${tenant.slug}`}
         presence={null}
         loginHref={`/${tenant.slug}/compte/connexion`}
+        initialDraft={emptyBookingDraft()}
       />);
 
     const champ = screen.getByLabelText<HTMLInputElement>(/Téléphone/);
