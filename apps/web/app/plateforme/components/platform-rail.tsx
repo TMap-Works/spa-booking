@@ -10,12 +10,31 @@ import { initialsOf } from '@/lib/initials';
 import { PLATFORM_NAME } from '@/lib/platform';
 
 import { platformLogoutAction } from '../actions';
-import { PLATFORM_CONSOLE_PATH, PLATFORM_NEW_TENANT_PATH, platformLoginPath } from '../paths';
+import {
+  PLATFORM_CONSOLE_PATH,
+  PLATFORM_NEW_TENANT_PATH,
+  PLATFORM_TENANTS_PATH,
+  platformLoginPath,
+} from '../paths';
 
-const ENTRIES: readonly { href: string; label: string; icon: IconName }[] = [
-  { href: PLATFORM_CONSOLE_PATH, label: 'Salons', icon: 'store' },
-  { href: PLATFORM_NEW_TENANT_PATH, label: 'Ouvrir un salon', icon: 'sparkle' },
+/**
+ * Les entrées du rail. `exact` : le tableau de bord n'est « la page courante »
+ * que sur `/plateforme` même — sans quoi il resterait allumé sous toute la
+ * console, dont il est la racine.
+ */
+const ENTRIES: readonly { href: string; label: string; icon: IconName; exact: boolean }[] = [
+  { href: PLATFORM_CONSOLE_PATH, label: 'Tableau de bord', icon: 'home', exact: true },
+  { href: PLATFORM_TENANTS_PATH, label: 'Salons', icon: 'store', exact: false },
+  { href: PLATFORM_NEW_TENANT_PATH, label: 'Ouvrir un salon', icon: 'sparkle', exact: true },
 ];
+
+/** La page courante — la fiche d'un salon allume « Salons », pas « Ouvrir un salon ». */
+function isCurrent(pathname: string, entry: (typeof ENTRIES)[number]): boolean {
+  if (entry.exact || pathname === PLATFORM_NEW_TENANT_PATH) {
+    return pathname === entry.href;
+  }
+  return pathname === entry.href || pathname.startsWith(`${entry.href}/`);
+}
 
 /** Le rail de la console — celui du back-office (#1058), sans salon ni rang. */
 export function PlatformRail({ operatorName }: { readonly operatorName: string | null }) {
@@ -59,7 +78,7 @@ export function PlatformRail({ operatorName }: { readonly operatorName: string |
           </span>
           {ENTRIES.map((entry) => (
             <Link
-              aria-current={pathname === entry.href ? 'page' : undefined}
+              aria-current={isCurrent(pathname, entry) ? 'page' : undefined}
               className="spa-admin__nav-link"
               href={entry.href}
               key={entry.href}

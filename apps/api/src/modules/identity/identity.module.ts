@@ -14,6 +14,9 @@ import { JwtAuthGuard } from './jwt-auth.guard';
 import { PasswordHasher } from './password.hasher';
 import { PlatformAuthController } from './platform/platform-auth.controller';
 import { PlatformAuthGuard } from './platform/platform-auth.guard';
+import { PlatformConsoleRepository } from './platform/platform-console.repository';
+import { PlatformConsoleService } from './platform/platform-console.service';
+import { PlatformOverviewController } from './platform/platform-overview.controller';
 import { PlatformRepository } from './platform/platform.repository';
 import { PlatformService } from './platform/platform.service';
 import { PlatformTenantsController } from './platform/platform-tenants.controller';
@@ -153,6 +156,7 @@ const publicTenantResolver: PublicTenantResolverProvider = {
     TenantSettingsController,
     PlatformAuthController,
     PlatformTenantsController,
+    PlatformOverviewController,
     SignupController,
   ],
   providers: [
@@ -177,6 +181,8 @@ const publicTenantResolver: PublicTenantResolverProvider = {
     publicTenantResolver,
     PlatformService,
     PlatformRepository,
+    PlatformConsoleService,
+    PlatformConsoleRepository,
     PlatformTokenService,
     PlatformAuthGuard,
     TenantBillingGate,

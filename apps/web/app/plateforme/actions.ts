@@ -13,21 +13,29 @@
  */
 
 import {
+  createPlatformNoteRequestSchema,
   createTenantRequestSchema,
   platformLoginRequestSchema,
+  updateTenantStatusRequestSchema,
   uuidSchema,
   type PlatformOperator,
+  type PlatformTenant,
+  type PlatformTenantEvent,
   type ProvisionedTenant,
   type ReissuedTenantInvitation,
 } from '@spa/shared';
+import { revalidatePath } from 'next/cache';
 
 import {
+  addPlatformTenantNote,
   loginPlatformOperator,
   provisionTenant,
   reissueTenantInvitation,
+  updatePlatformTenantStatus,
 } from '@/lib/api-client';
 
 import { expired, failure, invalid, type AdminActionResult } from '@/app/(admin)/[tenantSlug]/admin/action-result';
+import { platformTenantPath } from './paths';
 import { clearPlatformSession, readPlatformAccessToken, writePlatformSession } from './session';
 
 export type PlatformActionResult<TData> = AdminActionResult<TData>;
@@ -104,6 +112,72 @@ export async function reissueTenantInvitationAction(
 
   try {
     return { ok: true, data: await reissueTenantInvitation(accessToken, id.data) };
+  } catch (error) {
+    return failure(error);
+  }
+}
+
+/**
+ * Ajoute une note interne à l'historique d'un salon.
+ *
+ * La fiche est un Server Component : la note apparaît parce que son segment
+ * est revalidé, pas parce que l'écran l'insère de lui-même — l'historique reste
+ * celui que la base rend.
+ */
+export async function addTenantNoteAction(
+  tenantId: string,
+  values: unknown,
+): Promise<PlatformActionResult<PlatformTenantEvent>> {
+  const id = uuidSchema.safeParse(tenantId);
+  const parsed = createPlatformNoteRequestSchema.safeParse(values);
+
+  if (!id.success) {
+    return invalid('Établissement inconnu.');
+  }
+  if (!parsed.success) {
+    return invalid(parsed.error.issues[0]?.message ?? 'La note est invalide.');
+  }
+
+  const accessToken = await readPlatformAccessToken();
+
+  if (accessToken === null) {
+    return expired();
+  }
+
+  try {
+    const event = await addPlatformTenantNote(accessToken, id.data, parsed.data.body);
+    revalidatePath(platformTenantPath(id.data));
+    return { ok: true, data: event };
+  } catch (error) {
+    return failure(error);
+  }
+}
+
+/** Suspend ou réactive un salon — le motif est exigé, dans les deux sens. */
+export async function updateTenantStatusAction(
+  tenantId: string,
+  values: unknown,
+): Promise<PlatformActionResult<PlatformTenant>> {
+  const id = uuidSchema.safeParse(tenantId);
+  const parsed = updateTenantStatusRequestSchema.safeParse(values);
+
+  if (!id.success) {
+    return invalid('Établissement inconnu.');
+  }
+  if (!parsed.success) {
+    return invalid('Indiquez le motif — il est gardé dans l’historique du salon.');
+  }
+
+  const accessToken = await readPlatformAccessToken();
+
+  if (accessToken === null) {
+    return expired();
+  }
+
+  try {
+    const tenant = await updatePlatformTenantStatus(accessToken, id.data, parsed.data);
+    revalidatePath(platformTenantPath(id.data));
+    return { ok: true, data: tenant };
   } catch (error) {
     return failure(error);
   }

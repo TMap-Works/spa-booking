@@ -2,8 +2,12 @@ import type { INestApplication } from '@nestjs/common';
 import request from 'supertest';
 
 import { PasswordHasher } from '../src/modules/identity/password.hasher';
+import { PlatformConsoleRepository } from '../src/modules/identity/platform/platform-console.repository';
 import { PlatformRepository } from '../src/modules/identity/platform/platform.repository';
-import { FakePlatformRepository } from '../src/modules/identity/platform/__tests__/platform.doubles';
+import {
+  FakePlatformConsoleRepository,
+  FakePlatformRepository,
+} from '../src/modules/identity/platform/__tests__/platform.doubles';
 import { generateTotpSecret, totpCodeAt } from '../src/modules/identity/platform/totp';
 import { createTenantHarness, type TenantHarness } from './utils/tenant-harness';
 
@@ -49,7 +53,10 @@ describe('Console plateforme — étanchéité des deux espaces (#806)', () => {
   beforeEach(async () => {
     platform = new FakePlatformRepository();
     harness = await createTenantHarness({
-      overrides: [{ provide: PlatformRepository, useValue: platform }],
+      overrides: [
+        { provide: PlatformRepository, useValue: platform },
+        { provide: PlatformConsoleRepository, useValue: new FakePlatformConsoleRepository(platform) },
+      ],
     });
 
     // L'empreinte est posée par le **vrai** `PasswordHasher`, celui que
@@ -118,6 +125,29 @@ describe('Console plateforme — étanchéité des deux espaces (#806)', () => {
 
     it('refuse aussi l’absence totale de jeton', async () => {
       await request(server()).get(PLATFORM_TENANTS).expect(401);
+    });
+
+    it('refuse un jeton ADMIN en 401 sur la vue d’ensemble', async () => {
+      await request(server())
+        .get('/api/v1/platform/overview')
+        .set('Authorization', await harness.bearer('ADMIN'))
+        .expect(401);
+    });
+
+    it.each([
+      ['GET', ''],
+      ['POST', '/notes'],
+      ['PUT', '/status'],
+    ] as const)('refuse un jeton ADMIN en 401 sur %s /platform/tenants/:id%s', async (method, suffix) => {
+      const url = `${PLATFORM_TENANTS}/99999999-9999-4999-8999-999999999999${suffix}`;
+      const call =
+        method === 'GET'
+          ? request(server()).get(url)
+          : method === 'POST'
+            ? request(server()).post(url).send({ body: 'note' })
+            : request(server()).put(url).send({ isActive: false, reason: 'motif' });
+
+      await call.set('Authorization', await harness.bearer('ADMIN')).expect(401);
     });
   });
 
@@ -356,6 +386,59 @@ describe('Console plateforme — étanchéité des deux espaces (#806)', () => {
       const body = response.body as { tenantId: string; links: { adminInvitationUrl: string } };
       expect(body.tenantId).toBe(tenant.id);
       expect(body.links.adminInvitationUrl).toContain('token=');
+    });
+
+    it('rend la vue d’ensemble à un opérateur', async () => {
+      const response = await request(server())
+        .get('/api/v1/platform/overview')
+        .set('Authorization', `Bearer ${await platformToken()}`)
+        .expect(200);
+
+      const body = response.body as { signupsByWeek: unknown[]; revenue: { monthlyRecurring: unknown } };
+      expect(body.signupsByWeek).toHaveLength(12);
+      expect(body.revenue.monthlyRecurring).toEqual({ amountMinor: 0, currency: 'EUR' });
+    });
+
+    it('rend la fiche d’un salon, sans lien d’activation', async () => {
+      const tenant = platform.addTenant({ slug: 'salon-des-lilas' });
+
+      const response = await request(server())
+        .get(`${PLATFORM_TENANTS}/${tenant.id}`)
+        .set('Authorization', `Bearer ${await platformToken()}`)
+        .expect(200);
+
+      const body = response.body as { tenant: { slug: string }; links: Record<string, string> };
+      expect(body.tenant.slug).toBe('salon-des-lilas');
+      expect(JSON.stringify(body.links)).not.toContain('token=');
+    });
+
+    it('refuse une note vide — 400', async () => {
+      const tenant = platform.addTenant({ slug: 'salon-des-lilas' });
+
+      await request(server())
+        .post(`${PLATFORM_TENANTS}/${tenant.id}/notes`)
+        .set('Authorization', `Bearer ${await platformToken()}`)
+        .send({ body: '   ' })
+        .expect(400);
+    });
+
+    it('suspend un salon, motif exigé', async () => {
+      const tenant = platform.addTenant({ slug: 'salon-des-lilas' });
+      const token = `Bearer ${await platformToken()}`;
+
+      await request(server())
+        .put(`${PLATFORM_TENANTS}/${tenant.id}/status`)
+        .set('Authorization', token)
+        .send({ isActive: false })
+        .expect(400);
+
+      const response = await request(server())
+        .put(`${PLATFORM_TENANTS}/${tenant.id}/status`)
+        .set('Authorization', token)
+        .send({ isActive: false, reason: 'Impayé depuis 30 jours' })
+        .expect(200);
+
+      expect((response.body as { isActive: boolean }).isActive).toBe(false);
     });
 
     it('rend 404 sur un établissement inconnu', async () => {

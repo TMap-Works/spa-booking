@@ -1,5 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
+import { Prisma, type TenantBillingStatus as DbBillingStatus } from '@prisma/client';
 
 import {
   PRISMA_UNSCOPED,
@@ -10,6 +10,7 @@ import type {
   PlatformOperatorRecord,
   ProvisionTenantInput,
   ProvisionedTenantRecord,
+  TenantListQuery,
   TenantSummary,
 } from './platform.types';
 
@@ -45,8 +46,15 @@ import type {
 /** Code Prisma d'une violation de contrainte d'unicité. */
 const UNIQUE_VIOLATION = 'P2002';
 
-/** Ce que la console rend d'un établissement — jamais la ligne entière. */
-const TENANT_SUMMARY_SELECT = {
+/**
+ * Ce que la console rend d'un établissement — jamais la ligne entière.
+ *
+ * Le décompte des lignes d'ouverture dit **d'où vient** le salon : une ligne
+ * `platform_tenant_provisionings` le désigne s'il a été ouvert depuis la
+ * console, aucune s'il s'est inscrit seul (ADR 0016). Exporté : le dépôt de la
+ * fiche salon rend la même projection.
+ */
+export const TENANT_SUMMARY_SELECT = {
   id: true,
   slug: true,
   name: true,
@@ -56,17 +64,77 @@ const TENANT_SUMMARY_SELECT = {
   billingStatus: true,
   trialEndsAt: true,
   createdAt: true,
+  _count: { select: { platformProvisionings: true } },
 } as const;
 
 /** La ligne telle que Prisma la rend, avant la casse du contrat. */
-type TenantSummaryRow = Prisma.TenantGetPayload<{ select: typeof TENANT_SUMMARY_SELECT }>;
+export type TenantSummaryRow = Prisma.TenantGetPayload<{ select: typeof TENANT_SUMMARY_SELECT }>;
 
-/** Le statut de facturation passe en minuscules, comme toutes les énumérations du contrat. */
-function toTenantSummary(row: TenantSummaryRow): TenantSummary {
+/**
+ * D'où vient un salon. Une ligne d'ouverture le dit ouvert par la console ; sans
+ * elle, un salon `managed` précède la console (seed, jeu d'essai), et tout
+ * autre statut est celui d'une inscription en libre-service, qui naît `pending`.
+ */
+export function tenantOrigin(row: {
+  readonly billingStatus: string;
+  readonly _count: { readonly platformProvisionings: number };
+}): TenantSummary['origin'] {
+  if (row._count.platformProvisionings > 0) {
+    return 'console';
+  }
+  return row.billingStatus === 'MANAGED' ? 'legacy' : 'signup';
+}
+
+/**
+ * Le statut de facturation passe en minuscules, comme toutes les énumérations du
+ * contrat ; le décompte des ouvertures devient une origine.
+ */
+export function toTenantSummary(row: TenantSummaryRow): TenantSummary {
   return {
-    ...row,
+    id: row.id,
+    slug: row.slug,
+    name: row.name,
+    timezone: row.timezone,
+    defaultCurrency: row.defaultCurrency,
+    isActive: row.isActive,
     billingStatus: row.billingStatus.toLowerCase() as TenantSummary['billingStatus'],
+    trialEndsAt: row.trialEndsAt,
+    createdAt: row.createdAt,
+    origin: tenantOrigin(row),
   };
+}
+
+/**
+ * Le filtre de la liste, traduit en clause Prisma.
+ *
+ * La recherche est insensible à la casse, et elle regarde aussi l'e-mail des
+ * **gérants et administrateurs** du salon — jamais celui d'une cliente : la
+ * console n'a pas à retrouver un salon par ses clientes.
+ */
+function tenantListWhere(query: TenantListQuery): Prisma.TenantWhereInput {
+  const clauses: Prisma.TenantWhereInput[] = [];
+
+  if (query.billingStatus !== undefined) {
+    clauses.push({
+      billingStatus: query.billingStatus.toUpperCase() as DbBillingStatus,
+    });
+  }
+  if (query.state !== undefined) {
+    clauses.push({ isActive: query.state === 'active' });
+  }
+  if (query.q !== undefined && query.q !== '') {
+    const term = { contains: query.q, mode: 'insensitive' } as const;
+    clauses.push({
+      OR: [
+        { name: term },
+        { slug: term },
+        { contactEmail: term },
+        { users: { some: { role: { in: ['ADMIN', 'MANAGER'] }, email: term } } },
+      ],
+    });
+  }
+
+  return clauses.length === 0 ? {} : { AND: clauses };
 }
 
 /**
@@ -275,18 +343,19 @@ export class PlatformRepository {
    * `id` départage deux créations de la même milliseconde, sans quoi deux
    * lectures de la même page pourraient ne pas rendre les mêmes lignes.
    */
-  public async listTenants(input: {
-    page: number;
-    pageSize: number;
-  }): Promise<{ items: TenantSummary[]; totalItems: number }> {
+  public async listTenants(
+    input: TenantListQuery,
+  ): Promise<{ items: TenantSummary[]; totalItems: number }> {
+    const where = tenantListWhere(input);
     const [items, totalItems] = await this.prismaUnscoped.$transaction([
       this.prismaUnscoped.tenant.findMany({
+        where,
         select: TENANT_SUMMARY_SELECT,
         orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
         skip: (input.page - 1) * input.pageSize,
         take: input.pageSize,
       }),
-      this.prismaUnscoped.tenant.count(),
+      this.prismaUnscoped.tenant.count({ where }),
     ]);
 
     return { items: items.map(toTenantSummary), totalItems };
