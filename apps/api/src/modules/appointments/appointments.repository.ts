@@ -2,6 +2,7 @@ import { Inject, Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 
 import { ConflictError, InvalidStateTransitionError, NotFoundError } from '../../common/errors';
+import type { TenantCountryProvider } from '../../common/tenant';
 import { requireTenantId } from '../../common/tenant/tenant-context';
 import { PRISMA, type ScopedPrismaClient } from '../../infrastructure/database/prisma-clients';
 // La **porte de service** du module `crm`, jamais son repository (api-module §3).
@@ -306,7 +307,7 @@ function toRecord(row: AppointmentRow): AppointmentRecord {
 }
 
 @Injectable()
-export class AppointmentsRepository {
+export class AppointmentsRepository implements TenantCountryProvider {
   public constructor(
     @Inject(PRISMA) private readonly prisma: ScopedPrismaClient,
     /**
@@ -1149,6 +1150,29 @@ export class AppointmentsRepository {
     const tenant = await this.prisma.tenant.findFirst({ select: { timezone: true } });
 
     return tenant?.timezone ?? null;
+  }
+
+  /**
+   * Le pays de l'établissement courant — ISO 3166-1 alpha-2, `null` s'il n'a pas
+   * encore saisi son adresse (#1028).
+   *
+   * C'est ce que ce module fournit à `TENANT_COUNTRY_PROVIDER`, et donc ce avec
+   * quoi le pipe du tunnel invité complète un numéro **national**. Jumelle
+   * exacte de `CrmRepository.findCurrentTenantCountryCode`, qui sert la même
+   * règle au comptoir : deux lectures d'une colonne, pas deux règles.
+   *
+   * Tout ce qui motive `currentTimeZone` juste au-dessus vaut mot pour mot ici —
+   * une lecture d'une seule colonne d'une table que ce module ne possède pas,
+   * faute de porte ouverte par `identity`, et sans `where` ni identifiant en
+   * paramètre. L'extension borne `Tenant` **sur son `id`**
+   * (`tenant-scope.extension.ts`) : cette requête ne peut rendre que
+   * l'établissement de la portée ouverte, celui que le slug de l'URL a résolu.
+   * Il n'existe aucune écriture par laquelle demander le pays du voisin.
+   */
+  public async currentCountryCode(): Promise<string | null> {
+    const tenant = await this.prisma.tenant.findFirst({ select: { countryCode: true } });
+
+    return tenant?.countryCode ?? null;
   }
 
   /**

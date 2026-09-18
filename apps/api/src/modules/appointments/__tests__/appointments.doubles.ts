@@ -10,6 +10,7 @@ import { generateAppointmentReference } from '../appointment-reference';
 import type { AppointmentCancelledBy, AppointmentStatus } from '../appointment-status';
 import { OCCUPYING_STATUSES, occupiesSlot } from '../appointment-status';
 import { SlotNoLongerAvailableError } from '../appointments.errors';
+import { type BookAppointmentBody, BookAppointmentBodyPipe } from '../dto/book-appointment.dto';
 import type { AppointmentsRepository } from '../appointments.repository';
 import { SlotLockService } from '../slot-lock.service';
 import type {
@@ -205,6 +206,8 @@ export class FakeAppointmentsRepository {
   private readonly closedWeekdays = new Map<string, number[]>();
   /** Fuseau par établissement — `UTC` par défaut, voir `seedTimeZone`. */
   private readonly timeZones = new Map<string, string | null>();
+  /** Pays par établissement — **aucun** par défaut, voir `seedCountryCode`. */
+  private readonly countryCodes = new Map<string, string | null>();
   /** Affichage d'agenda par prestation — voir `seedServiceDisplay`. */
   private readonly displays = new Map<string, AgendaDisplay>();
 
@@ -316,6 +319,19 @@ export class FakeAppointmentsRepository {
    */
   public seedTimeZone(tenantId: string, timeZone: string | null): void {
     this.timeZones.set(tenantId, timeZone);
+  }
+
+  /**
+   * Le pays d'un établissement — ISO 3166-1 alpha-2 (#1028).
+   *
+   * Sans valeur semée, `currentCountryCode` rend `null`, et le défaut n'est pas
+   * un raccourci non plus : c'est l'état d'un salon qui n'a pas saisi son
+   * adresse, celui qui refuse un numéro national. Une suite qui parle du pays le
+   * sème ; les autres n'ont pas à connaître ce champ, et leurs numéros
+   * internationaux traversent sans lui.
+   */
+  public seedCountryCode(tenantId: string, countryCode: string | null): void {
+    this.countryCodes.set(tenantId, countryCode);
   }
 
   /**
@@ -703,6 +719,20 @@ export class FakeAppointmentsRepository {
   }
 
   /**
+   * Le pays de l'établissement courant — `null` faute de valeur semée (#1028).
+   *
+   * `requireTenant` comme partout ailleurs dans ce double : le vrai lève hors
+   * portée, l'extension refusant toute opération sans contexte. C'est ce qui
+   * fait rougir une suite dont la portée serait ouverte sur le mauvais
+   * établissement, au lieu de la laisser verdir sur le pays du voisin.
+   */
+  public async currentCountryCode(): Promise<string | null> {
+    const tenantId = this.requireTenant();
+
+    return this.countryCodes.get(tenantId) ?? null;
+  }
+
+  /**
    * Rattache une fiche praticien à un **compte**, dans un établissement (#811).
    *
    * Le couple `(tenantId, userId)` est celui de l'unique `staff` du schéma : le
@@ -1012,4 +1042,26 @@ function toRecord(stored: StoredAppointment): AppointmentRecord {
     cancelledBy: stored.cancelledBy,
     cancellationReason: stored.cancellationReason,
   };
+}
+
+/**
+ * Le pipe du tunnel invité, prêt à transformer, avec le pays qu'on lui donne
+ * (#1028).
+ *
+ * `BookAppointmentBodyPipe` est une **classe** dont Nest injecte le fournisseur
+ * du pays en production ; ici on lui en passe un littéral, ce qui suffit — le
+ * pipe n'attend qu'une méthode, et monter un conteneur Nest pour exercer une
+ * frontière de validation coûterait le prix d'une suite d'intégration sans rien
+ * prouver de plus.
+ *
+ * `null` par défaut, le pays étant précisément ce que les suites qui en parlent
+ * doivent nommer : c'est la variante « établissement sans adresse », celle qui
+ * refuse un numéro national.
+ */
+export function bookAppointmentPipe(countryCode: string | null = null): {
+  transform(value: unknown): Promise<BookAppointmentBody>;
+} {
+  return new BookAppointmentBodyPipe({
+    currentCountryCode: (): Promise<string | null> => Promise.resolve(countryCode),
+  }) as { transform(value: unknown): Promise<BookAppointmentBody> };
 }

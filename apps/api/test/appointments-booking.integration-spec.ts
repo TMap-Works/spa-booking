@@ -489,6 +489,72 @@ describe('POST /api/v1/public/:tenantSlug/appointments', () => {
       expect(response.status).toBe(400);
     });
 
+    /**
+     * Le pays de l'établissement complète un numéro **national** (#1028).
+     *
+     * Ce que ces trois cas exercent, et que les suites unitaires ne peuvent pas
+     * exercer, c'est le **trajet entier** : le slug de l'URL résolu en
+     * établissement par `TenantScopeMiddleware`, le pays lu par le pipe sur le
+     * dépôt de ce module, et la valeur enregistrée dans la fiche cliente. Un
+     * pipe resté sur la variante sans pays sortirait ici en 400.
+     */
+    describe('pays de l’établissement et numéro national', () => {
+      it('accepte « 06 12 34 56 78 » sur un salon français et enregistre +33612345678', async () => {
+        harness.appointments.seedCountryCode(harness.a.tenant.id, 'FR');
+
+        const response = await request(harness.server())
+          .post(BOOKING_PATH(harness.a.tenant.slug))
+          .send(body({ client: guest({ phone: '06 12 34 56 78' }) }));
+
+        expect(response.status).toBe(201);
+        // La **même** valeur que `POST /api/v1/auth/register` enregistre sur ce
+        // salon : c'est l'écart que le ticket referme, et c'est aussi la seule
+        // écriture que SNS sait composer.
+        expect(harness.appointments.clients[0]?.phone).toBe('+33612345678');
+      });
+
+      it('complète « 034 12 345 67 » en +261341234567 sur un salon malgache', async () => {
+        harness.appointments.seedCountryCode(harness.a.tenant.id, 'MG');
+
+        const response = await request(harness.server())
+          .post(BOOKING_PATH(harness.a.tenant.slug))
+          .send(body({ client: guest({ phone: '034 12 345 67' }) }));
+
+        expect(response.status).toBe(201);
+        expect(harness.appointments.clients[0]?.phone).toBe('+261341234567');
+      });
+
+      it('refuse en 400 le même corps sur un établissement sans pays', async () => {
+        // Aucun `seedCountryCode` : le salon n'a pas saisi son adresse, et le
+        // pays ne se devine pas — le deviner enverrait le rappel à un inconnu.
+        const response = await request(harness.server())
+          .post(BOOKING_PATH(harness.a.tenant.slug))
+          .send(body({ client: guest({ phone: '06 12 34 56 78' }) }));
+
+        expect(response.status).toBe(400);
+        expect(response.body).toMatchObject({ code: 'VALIDATION_ERROR' });
+        // Le champ est nommé, et il l'est sous sa forme imbriquée : c'est ce qui
+        // permet au formulaire de poser le message sous *son* champ plutôt qu'en
+        // bloc en tête de page (web-frontend §4).
+        expect(JSON.stringify(response.body.details)).toContain('client.phone');
+        expect(harness.appointments.appointments).toHaveLength(0);
+        expect(harness.appointments.clients).toHaveLength(0);
+      });
+
+      it('laisse passer l’international inchangé, avec ou sans pays', async () => {
+        harness.appointments.seedCountryCode(harness.a.tenant.id, 'FR');
+
+        const response = await request(harness.server())
+          .post(BOOKING_PATH(harness.a.tenant.slug))
+          .send(body({ client: guest({ phone: '+261 34 12 345 67' }) }));
+
+        expect(response.status).toBe(201);
+        // Le pays ne remplace rien : il complète ce qui n'a pas d'indicatif. Une
+        // cliente malgache en voyage garde son numéro.
+        expect(harness.appointments.clients[0]?.phone).toBe('+261341234567');
+      });
+    });
+
     it('canonise l’adresse e-mail avant de chercher la fiche', async () => {
       harness.appointments.seedClient({
         tenantId: harness.a.tenant.id,
