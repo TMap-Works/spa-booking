@@ -42,8 +42,46 @@
 // Reflet de `NotificationMessage` (apps/api/src/modules/notifications/notifications.types.ts).
 // Élargir ces ensembles revient à élargir le périmètre MVP : cela passe par une
 // issue, pas par une ligne.
-const NOTIFICATION_TYPES = new Set(['BOOKING_CONFIRMATION', 'REMINDER_24H', 'CANCELLATION']);
+//
+// `PASSWORD_RESET` est la quatrième valeur, ajoutée par #809 côté domaine et par
+// #1032 dans ce miroir. Elle n'élargit pas le périmètre : le lien de
+// réinitialisation relève de l'authentification, pas du marketing. L'écart entre
+// les deux exemplaires est resté invisible aux suites parce qu'elles tournent
+// toutes sans file branchée — la Lambda n'est employée que là où
+// `NOTIFICATION_QUEUE_URL` est posée, c'est-à-dire en déployé seulement.
+//
+// **Exporté pour être confronté au domaine**, et pas seulement pour la forme :
+// documenter l'obligation de les élargir d'un même lot ne l'a pas tenue une
+// première fois. La fumigation lit `notifications.types.ts` et compare — c'est
+// le même témoin que `__tests__/notifications.types.spec.ts` tient entre ce
+// fichier-là et `schema.prisma`, à l'exemplaire près. Un export de plus ne coûte
+// rien à l'artefact déployé : le runtime n'appelle que `handler`.
+export const NOTIFICATION_TYPES = new Set([
+  'BOOKING_CONFIRMATION',
+  'REMINDER_24H',
+  'CANCELLATION',
+  'PASSWORD_RESET',
+]);
 const NOTIFICATION_CHANNELS = new Set(['EMAIL', 'SMS']);
+
+/**
+ * Les messages qui **annoncent un rendez-vous**, et qui doivent donc le nommer.
+ *
+ * C'est le seul endroit du contrat d'enveloppe où la forme dépend du type, et
+ * cela n'en fait pas une règle métier de plus : un message de rendez-vous sans
+ * rendez-vous n'a pas d'objet, et le refuser ici économise un appel à l'API pour
+ * une enveloppe qu'aucun rendu ne pourrait servir — là où la laisser passer
+ * rendrait un 404 dont le journal ne dirait pas ce qui manquait.
+ *
+ * `PASSWORD_RESET` en est absent : son enveloppe porte délibérément `null`
+ * (`password-reset.listener.ts`), et c'est ce que `DispatchMessageDto` accepte
+ * côté API depuis #809.
+ */
+const APPOINTMENT_NOTIFICATION_TYPES = new Set([
+  'BOOKING_CONFIRMATION',
+  'REMINDER_24H',
+  'CANCELLATION',
+]);
 
 // --- Configuration ------------------------------------------------------------
 
@@ -149,6 +187,36 @@ function isNonEmptyString(value) {
 }
 
 /**
+ * Le sort de `appointmentId`, rendu à part parce qu'il a trois issues et non deux.
+ *
+ * | Ce que porte l'enveloppe | `PASSWORD_RESET` | Les trois messages du CDC §1.4 |
+ * |---|---|---|
+ * | absent, ou `null` | accepté | `missing-appointment-id` |
+ * | chaîne non vide | accepté | accepté |
+ * | chaîne vide, nombre, objet… | `invalid-appointment-id` | `invalid-appointment-id` |
+ *
+ * L'absence et le nul sont traités ensemble, pour la raison qui vaut déjà pour
+ * `scheduledFor` des deux côtés de la chaîne : un producteur qui omet le champ
+ * n'envoie rien, là où une enveloppe sérialisée par `JSON.stringify` porte
+ * `null`. Refuser l'une des deux formes perdrait la moitié des messages en échec
+ * permanent — acquittés, donc irrécupérables.
+ *
+ * Une valeur **présente et mal formée** est un rejet distinct de l'absence, et
+ * pour tous les types : ce n'est pas un producteur qui n'annonce aucun
+ * rendez-vous, c'est un producteur qui en annonce un mal. Les deux ne se
+ * diagnostiquent pas au même endroit, et le journal doit les distinguer.
+ */
+function appointmentIdRejection(message) {
+  const { appointmentId } = message;
+
+  if (appointmentId === undefined || appointmentId === null) {
+    return APPOINTMENT_NOTIFICATION_TYPES.has(message.type) ? 'missing-appointment-id' : null;
+  }
+
+  return isNonEmptyString(appointmentId) ? null : 'invalid-appointment-id';
+}
+
+/**
  * Rend `null` quand l'enveloppe est conforme, sinon la raison du rejet.
  *
  * La raison est une chaîne fixe, pas un extrait du message : elle part dans les
@@ -164,10 +232,14 @@ function envelopeRejection(message) {
   // beaucoup plus grave — la faire hors portée.
   if (!isNonEmptyString(message.tenantId)) return 'missing-tenant-id';
   if (!isNonEmptyString(message.dedupeKey)) return 'missing-dedupe-key';
-  if (!isNonEmptyString(message.appointmentId)) return 'missing-appointment-id';
   if (!isNonEmptyString(message.recipientUserId)) return 'missing-recipient-user-id';
+  // Le type se valide **avant** le rendez-vous : c'est lui qui dit si l'enveloppe
+  // doit en nommer un. Sur un type inconnu, la raison rendue est `unknown-type`
+  // et non un verdict sur un champ dont on ne sait pas encore s'il est attendu.
   if (!NOTIFICATION_TYPES.has(message.type)) return 'unknown-type';
   if (!NOTIFICATION_CHANNELS.has(message.channel)) return 'unknown-channel';
+  const appointmentRejection = appointmentIdRejection(message);
+  if (appointmentRejection !== null) return appointmentRejection;
   if (message.scheduledFor !== null && message.scheduledFor !== undefined) {
     if (!isNonEmptyString(message.scheduledFor) || Number.isNaN(Date.parse(message.scheduledFor))) {
       return 'invalid-scheduled-for';
@@ -245,7 +317,11 @@ async function handleRecord(record) {
     messageId: record.messageId,
     tenantId: message.tenantId,
     dedupeKey: message.dedupeKey,
-    appointmentId: message.appointmentId,
+    // `?? null` plutôt que la valeur brute : `undefined` disparaîtrait de la
+    // ligne JSON, et le champ manquerait au journal exactement sur les messages
+    // qui n'annoncent aucun rendez-vous — là où sa présence à `null` est
+    // l'information (#1032).
+    appointmentId: message.appointmentId ?? null,
     type: message.type,
     channel: message.channel,
   };
