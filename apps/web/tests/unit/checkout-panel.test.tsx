@@ -689,13 +689,13 @@ describe('le ticket de caisse de la vente (#818)', () => {
 
     expect(print).toHaveBeenCalledTimes(1);
     // La copie destinée à l'imprimante vit directement sous <body>, hors de la
-    // page, et <html> porte la classe qui efface tout le reste à l'impression.
-    const copy = document.body.querySelector(':scope > .spa-print-ticket');
+    // page, et <html> porte l'attribut qui efface tout le reste à l'impression.
+    const copy = document.body.querySelector(':scope > [data-print-ticket]');
     expect(copy?.textContent).toContain('TIC-2026-000123');
-    expect(document.documentElement.classList.contains('spa-printing-ticket')).toBe(true);
+    expect(document.documentElement.getAttribute('data-printing')).toBe('ticket');
 
     window.dispatchEvent(new Event('afterprint'));
-    expect(document.documentElement.classList.contains('spa-printing-ticket')).toBe(false);
+    expect(document.documentElement.hasAttribute('data-printing')).toBe(false);
     print.mockRestore();
   });
 

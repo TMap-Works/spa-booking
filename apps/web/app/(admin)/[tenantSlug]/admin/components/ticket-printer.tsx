@@ -5,8 +5,12 @@ import { createPortal } from 'react-dom';
 
 import { Button } from '@/components/ui/button';
 
-/** La classe posée sur `<html>` le temps d'une impression de ticket. */
-const PRINTING_CLASS = 'spa-printing-ticket';
+/**
+ * L'attribut posé sur `<html>` le temps d'une impression de ticket —
+ * `data-printing="ticket"`. Un attribut et non une classe : ce n'est pas un
+ * style du design system, c'est un état que la feuille d'impression lit.
+ */
+const PRINTING_ATTRIBUTE = 'data-printing';
 
 /**
  * « Imprimer le ticket » — et **seulement** le ticket, pas la page.
@@ -16,7 +20,7 @@ const PRINTING_CLASS = 'spa-printing-ticket';
  * n'est pas un ticket.
  *
  * Le clic monte donc une copie du ticket **directement sous `<body>`** (un
- * portail), pose une classe sur `<html>`, et la feuille d'impression masque tout
+ * portail), pose un attribut sur `<html>`, et la feuille d'impression masque tout
  * ce qui n'est pas cette copie (`styles/admin/receipt-ticket.css`). La page
  * n'est pas cachée par `visibility` mais retirée du flux : sinon sa hauteur
  * produirait des pages blanches derrière le ticket.
@@ -45,10 +49,10 @@ export function TicketPrinter({
 
     const root = document.documentElement;
     const done = (): void => {
-      root.classList.remove(PRINTING_CLASS);
+      root.removeAttribute(PRINTING_ATTRIBUTE);
     };
 
-    root.classList.add(PRINTING_CLASS);
+    root.setAttribute(PRINTING_ATTRIBUTE, 'ticket');
     window.addEventListener('afterprint', done, { once: true });
     window.print();
 
@@ -70,7 +74,7 @@ export function TicketPrinter({
       </Button>
       {requests === 0
         ? null
-        : createPortal(<div className="spa-print-ticket">{children}</div>, document.body)}
+        : createPortal(<div data-print-ticket="">{children}</div>, document.body)}
     </>
   );
 }

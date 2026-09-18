@@ -102,8 +102,15 @@ test.describe('Parcours critique', () => {
       // désigner sans dépendre du rendu de la monnaie.
       await page.getByRole('button', { name: /^Encaisser .* en espèces/ }).click();
 
-      await expect(page.getByRole('heading', { name: 'Reçu' })).toBeVisible({ timeout: 20_000 });
+      await expect(page.getByRole('heading', { name: 'Ticket de caisse' })).toBeVisible({
+        timeout: 20_000,
+      });
       await expect(page.getByText(/^Encaissement enregistré/)).toBeVisible();
+      // La pièce que l'API compose — numérotée à la clôture de la vente, donc
+      // la preuve que l'encaissement a bien produit un ticket (#818, #1091).
+      await expect(page.getByRole('article', { name: /^Ticket n° / })).toBeVisible({
+        timeout: 20_000,
+      });
     });
 
     await test.step('Encaisser — aucun appel au prestataire sur le chemin espèces', async () => {

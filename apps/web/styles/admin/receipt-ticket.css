@@ -160,9 +160,11 @@
   justify-content: center;
 }
 
-/* La copie destinée à l'imprimante n'existe pas à l'écran. */
+/* La copie destinée à l'imprimante n'existe pas à l'écran. Attributs et non
+ * classes : `data-print-ticket` et `data-printing` sont des états que
+ * `TicketPrinter` pose, pas des styles du design system. */
 @media screen {
-  .spa-print-ticket {
+  [data-print-ticket] {
     display: none;
   }
 }
@@ -171,20 +173,20 @@
   /* Pendant une impression de ticket, la page entière s'efface — retirée du
    * flux et non rendue invisible, sans quoi sa hauteur ajouterait des pages
    * blanches derrière le ticket. */
-  .spa-printing-ticket body > :not(.spa-print-ticket) {
+  html[data-printing='ticket'] body > :not([data-print-ticket]) {
     display: none !important;
   }
 
-  .spa-printing-ticket body {
+  html[data-printing='ticket'] body {
     margin: 0;
     background: var(--spa-color-paper);
   }
 
-  .spa-print-ticket {
+  [data-print-ticket] {
     page: spa-ticket;
   }
 
-  .spa-print-ticket .spa-ticket {
+  [data-print-ticket] .spa-ticket {
     margin: 0;
     padding: 0;
     box-shadow: none;
