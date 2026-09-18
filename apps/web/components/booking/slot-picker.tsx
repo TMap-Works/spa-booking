@@ -21,6 +21,7 @@ import {
 
 import { AvailabilityCalendar } from '@/components/booking/availability-calendar';
 import { DateBand } from '@/components/booking/date-band';
+import { SlotGridSkeleton } from '@/components/booking/step-skeleton';
 import { Button } from '@/components/ui/button';
 import { Sheet } from '@/components/ui/sheet';
 import { bandStartShowing, bandWindow } from '@/lib/booking/day-band';
@@ -658,12 +659,16 @@ export function SlotPicker({
             // gardant la barre de dates interactive** pour changer de jour sans
             // attendre ». La bande ci-dessus se pose sans le serveur — ce sont
             // des dates ; seuls les comptes de créneaux l'attendent.
-            <div className="spa-card spa-card--loading" aria-busy="true">
+            //
+            // Le dessin est celui que le tunnel pose avant son hydratation
+            // (`step-skeleton.tsx`, #1055) : des pastilles d'horaires, aux
+            // places et à la hauteur de celles qui arrivent. Il remplace trois
+            // lignes de carte grise, qui ne ressemblaient ni à la grille ni à
+            // ce que le squelette d'avant hydratation montrait — la cliente
+            // voyait alors un squelette céder la place à un autre.
+            <div aria-busy="true">
               <span className="spa-visually-hidden">Chargement des disponibilités…</span>
-              <span className="spa-skeleton spa-field__skeleton" />
-              <span className="spa-skeleton spa-card__skeleton-line spa-card__skeleton-line--title" />
-              <span className="spa-skeleton spa-card__skeleton-line" />
-              <span className="spa-skeleton spa-card__skeleton-line spa-card__skeleton-line--short" />
+              <SlotGridSkeleton />
             </div>
           ) : open.length === 0 ? (
             // `role="status"` et non un focus déplacé : la bande reste à l'écran,

@@ -425,6 +425,191 @@
 }
 
 /*
+ * Le squelette de l'étape, avant hydratation (#1055) — `step-skeleton.tsx`
+ * =============================================================================
+ *
+ * ## Ce qu'il corrige
+ *
+ * Le tunnel est un Client Component : il relit l'adresse et `sessionStorage`
+ * dans un effet, donc **après** le premier rendu. Jusqu'ici ce premier rendu
+ * montrait une carte grise de trois lignes, la même à toutes les étapes.
+ * L'audit `d20260918-1` l'a relevée deux fois — *« la pastille "Prestation"
+ * active et un rectangle blanc vide de 100 px »* à 1 280 px, et à 360 px un
+ * cadre vide *« puis la liste apparaît et pousse le reste de la page »*.
+ *
+ * `BM-ECRAN-01` (`docs/design/benchmark/transverse.md`) demande l'inverse :
+ * *« pendant le chargement, la page a déjà sa forme »*, et `states.md` que la
+ * structure reste stable — *« pas de saut de mise en page à l'arrivée des
+ * données »*.
+ *
+ * ## Le principe : ne rien redéclarer de ce qui existe
+ *
+ * Le composant monte les classes de structure de l'étape réelle et n'y remplace
+ * que le **texte**. La feuille n'a donc à peindre que deux familles :
+ *
+ * - `.spa-booking__skeleton-text`, la barre grise qui tient lieu de texte. Elle
+ *   est `inline-block` et plus courte que la ligne : le bloc qui la porte garde
+ *   exactement la hauteur qu'il aura une fois rempli, corps et interligne
+ *   compris, sans qu'aucune valeur ne soit recopiée ici ;
+ * - les quelques boîtes sans texte — journée de la bande, pastille d'horaire,
+ *   contrôle de formulaire, bouton — dont la hauteur est écrite en jetons, à
+ *   l'identique de la vraie. `tests/booking-skeleton-reserve.test.mjs` compare
+ *   les deux calculs, et échoue si l'un des deux bouge seul.
+ *
+ * L'animation, elle, vient de `.spa-skeleton` (`base.css`), que
+ * `prefers-reduced-motion` y coupe déjà pour tout le produit.
+ */
+.spa-booking__step--skeleton {
+  /* Un squelette ne se clique pas, ne se survole pas, et ne prend pas le focus
+   * — aucun de ses éléments n'est focalisable, mais la règle vaut aussi pour les
+   * `:hover` que portent les classes réelles qu'il emprunte. */
+  pointer-events: none;
+}
+
+/*
+ * La barre grise qui tient lieu de texte.
+ *
+ * `inline-block` et non `block` : posée **dans** l'élément typographique réel —
+ * `.spa-booking__service-name`, `.spa-field__label`, `.spa-booking__recap-term`
+ * —, elle se range dans sa ligne sans la faire grandir, `0.7em` restant en deçà
+ * de l'ascendante de toute police. La hauteur du bloc est donc celle du texte
+ * attendu, quel que soit le corps que la classe déclare : un libellé passé de
+ * `sm` à `md` emporte son squelette avec lui.
+ *
+ * Les largeurs sont en `rem` et non en pourcentage : la plupart de ces éléments
+ * sont des boîtes ajustées à leur contenu — un prix, un terme de définition —,
+ * où un pourcentage n'aurait aucune largeur de référence à résoudre.
+ */
+.spa-booking__skeleton-text {
+  display: inline-block;
+  block-size: 0.7em;
+  border-radius: var(--spa-radius-full);
+}
+
+.spa-booking__skeleton-text--sm {
+  inline-size: 4rem;
+}
+
+.spa-booking__skeleton-text--md {
+  inline-size: 7rem;
+}
+
+.spa-booking__skeleton-text--lg {
+  inline-size: 11rem;
+}
+
+/*
+ * La rangée d'onglets de rubriques, à la hauteur de `.spa-tabs__tab`
+ * (`tabs.css`) — la cible tactile minimale, la liste n'ajoutant ni marge ni
+ * bordure autour.
+ */
+.spa-booking__skeleton-tabs {
+  block-size: var(--spa-target-min-size);
+  border-radius: var(--spa-radius-md);
+}
+
+/*
+ * Une journée de la bande — la boîte de `.spa-date-block` (`date-block.css`),
+ * refaite ici en jetons parce qu'elle ne porte aucun texte à imiter.
+ *
+ * `line-height: 1` y fait que chaque ligne vaut exactement son corps : deux
+ * abréviations en `xs`, le quantième en `lg`, deux gouttières de `0.125rem` et
+ * le rembourrage vertical. La largeur est celle du bloc, `3rem`.
+ */
+.spa-booking__skeleton-day {
+  flex: none;
+  inline-size: 3rem;
+  block-size: calc(
+    var(--spa-font-size-xs) * 2 + var(--spa-font-size-lg) + 0.125rem * 2 + var(--spa-space-2) * 2
+  );
+  border-radius: var(--spa-radius-md);
+}
+
+/*
+ * Une pastille d'horaire. Elle occupe sa piste de grille — trois colonnes à
+ * 360 px, six au bureau, `slot-grid.css` s'en charge — et prend la hauteur du
+ * bouton qu'elle remplace, `.spa-slot-grid__cell .spa-button`.
+ */
+.spa-booking__skeleton-slot {
+  block-size: var(--spa-target-min-size);
+  border-radius: var(--spa-radius-md);
+}
+
+/*
+ * Un contrôle de formulaire, à la hauteur de `.spa-field__control`
+ * (`field.css`) — et, dans la navigation de la bande, des trois boutons.
+ */
+.spa-booking__skeleton-control {
+  block-size: var(--spa-target-min-size);
+  inline-size: 100%;
+  border-radius: var(--spa-radius-md);
+}
+
+/* Les deux chevrons de la bande : carrés, à la cible tactile minimale. */
+.spa-booking__skeleton-control--square {
+  flex: none;
+  inline-size: var(--spa-target-min-size);
+}
+
+/* Le libellé de mois entre eux, qui prend ce qui reste. */
+.spa-booking__skeleton-control--grow {
+  flex: 1 1 auto;
+  inline-size: auto;
+}
+
+/*
+ * Le champ long — « Un mot pour le salon », le seul `TextArea` du formulaire, à
+ * ses trois lignes par défaut. Le calcul est celui de `.spa-field__control` :
+ * trois lignes de corps `md`, le rembourrage vertical, la bordure.
+ */
+.spa-booking__skeleton-control--tall {
+  block-size: calc(
+    var(--spa-font-size-md) * var(--spa-line-height-snug) * 3 + var(--spa-space-2) * 2 + 2px
+  );
+}
+
+/*
+ * La case de consentement et sa phrase. Une cible tactile de haut : c'est le
+ * plancher du bloc réel, qui porte une case et un libellé de deux lignes à
+ * 360 px.
+ */
+.spa-booking__skeleton-consent {
+  block-size: var(--spa-target-min-size);
+  border-radius: var(--spa-radius-md);
+}
+
+/* L'action primaire de la barre basse — pleine largeur, à la hauteur d'un
+ * `.spa-button` (`button.css`). */
+.spa-booking__skeleton-button {
+  block-size: var(--spa-target-min-size);
+  border-radius: var(--spa-radius-md);
+}
+
+/*
+ * La correction nommée du flux — « Changer de prestation », « Changer de
+ * créneau ». Même hauteur, mais une largeur à écrire : `.spa-booking__actions`
+ * est une rangée flex, et une boîte sans contenu n'y prendrait aucune place. Elle
+ * vaut la largeur de ces deux libellés, les seuls à s'y poser.
+ */
+.spa-booking__skeleton-button--inline {
+  inline-size: 11rem;
+}
+
+/*
+ * Le libellé du groupe de prestations quand il n'y a qu'une rubrique, où
+ * `ServiceChoice` le laisse visible.
+ *
+ * `display: block` est tout ce que cette classe ajoute à
+ * `.spa-booking__services-legend` : la vraie est une `<legend>`, celle-ci un
+ * `<span>`, et le `margin-block-end` de la première ne s'appliquerait pas à un
+ * élément resté en ligne — les 8 px entre le libellé et la première ligne
+ * reviendraient alors à l'hydratation.
+ */
+.spa-booking__skeleton-legend {
+  display: block;
+}
+
+/*
  * La racine d'une étape — le `<form>` ou la `<section>` que `BookingTunnel`
  * monte dans la colonne de contenu.
  *

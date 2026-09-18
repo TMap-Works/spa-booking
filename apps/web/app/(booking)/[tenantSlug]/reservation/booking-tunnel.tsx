@@ -3,6 +3,7 @@
 import type { BookedAppointment, PublicService, PublicTenant, UtcInstant } from '@spa/shared';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 
+import { BookingStepSkeleton } from '@/components/booking/step-skeleton';
 import { BookingSummaryAside, type BookingSummary } from '@/components/booking/summary-bar';
 import { BookingTunnelHeader } from '@/components/booking/tunnel-header';
 import { BookingProgress } from '@/components/booking/tunnel-progress';
@@ -78,6 +79,22 @@ interface BookingTunnelProps {
    * qui tient l'arborescence des routes (`salon-data.ts`).
    */
   readonly loginHref: string;
+  /**
+   * L'état de départ, lu **dans l'adresse par le serveur** (#1055).
+   *
+   * Sans lui, le premier rendu du tunnel partait d'un brouillon vierge : la
+   * progression annonçait « Étape 1 sur 4 · Quelle prestation ? » quelle que
+   * soit l'étape demandée, au-dessus d'une carte grise sans forme, et basculait
+   * sur l'étape reprise à l'hydratation (audit `d20260918-1`). `etape=` et
+   * `prestation=` sont pourtant dans l'URL, et l'URL, le serveur l'a : c'est
+   * `initial-draft.ts` qui la résout, contre le catalogue de cette page.
+   *
+   * Ce qui ne voyage pas dans l'adresse — coordonnées, rendez-vous obtenu —
+   * reste absent ici et n'arrive qu'à la relecture de `sessionStorage`, dans
+   * l'effet d'hydratation ci-dessous. C'est le même partage des rôles que
+   * partout ailleurs (`lib/booking/draft.ts`), vu depuis le serveur.
+   */
+  readonly initialDraft: BookingDraft;
 }
 
 /**
@@ -185,8 +202,12 @@ export function BookingTunnel({
   exitHref,
   presence,
   loginHref,
+  initialDraft,
 }: BookingTunnelProps) {
-  const [draft, setDraft] = useState<BookingDraft>(emptyBookingDraft);
+  // L'étape et les choix que l'adresse porte, dès le premier rendu — celui du
+  // serveur, que l'hydratation rejoue à l'identique (#1055). Le reste du
+  // brouillon arrive de `sessionStorage` dans l'effet ci-dessous.
+  const [draft, setDraft] = useState<BookingDraft>(() => initialDraft);
   const [hydrated, setHydrated] = useState(false);
   const [notice, setNotice] = useState<Notice | null>(null);
   const noticeRef = useRef<HTMLDivElement | null>(null);
@@ -237,10 +258,11 @@ export function BookingTunnel({
   /** Le titre de l'étape, cible de ce rattrapage. */
   const titleRef = useRef<HTMLHeadingElement | null>(null);
 
-  // Relecture du brouillon. Ni l'URL ni `sessionStorage` ne sont lisibles au
-  // rendu serveur : l'état de départ est donc toujours vierge, et l'étape réelle
-  // n'apparaît qu'après le montage — d'où l'écran d'attente ci-dessous plutôt
-  // qu'un affichage de la première étape qui sauterait aussitôt à la bonne.
+  // Relecture du brouillon. Depuis #1055, l'étape et les choix de l'adresse sont
+  // déjà là — le serveur les a résolus (`initial-draft.ts`) —, mais
+  // `sessionStorage` ne se lit toujours qu'ici : coordonnées et rendez-vous
+  // obtenu n'arrivent donc qu'après le montage, d'où le squelette ci-dessous,
+  // qui prend au moins la forme de la bonne étape.
   //
   // L'URL est relue **par-dessus** le stockage : c'est elle qui fait foi dès
   // qu'elle porte l'étape, sans quoi un lien partagé rouvrirait le parcours de
@@ -765,12 +787,15 @@ export function BookingTunnel({
             )}
 
             {!hydrated ? (
-              <div className="spa-card spa-card--loading" aria-busy="true">
-                <span className="spa-visually-hidden">Chargement de votre réservation…</span>
-                <span className="spa-card__skeleton-line spa-card__skeleton-line--title" />
-                <span className="spa-card__skeleton-line" />
-                <span className="spa-card__skeleton-line spa-card__skeleton-line--short" />
-              </div>
+              // Le squelette de **cette** étape, et non une carte grise unique
+              // (#1055, `BM-ECRAN-01`) : lignes de prestation, bande de jours et
+              // pastilles d'horaires, champs du formulaire, carte
+              // récapitulatif. L'étape vient de l'adresse, lue par le serveur.
+              <BookingStepSkeleton
+                step={step}
+                services={services}
+                selectedServiceId={draft.serviceId}
+              />
             ) : step === 'prestation' ? (
               <ServiceStep
                 services={services}

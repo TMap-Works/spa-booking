@@ -6,6 +6,7 @@ import { ApiClientError } from '@/lib/api-client';
 import { BookingErrorNotice } from '../booking-error-notice';
 import { accountPath, loadSalonServices, loadSalonTenant, salonPath } from '../salon-data';
 import { BookingTunnel } from './booking-tunnel';
+import { initialBookingDraft } from './initial-draft';
 
 /**
  * Page de réservation d'un établissement (#45).
@@ -28,10 +29,20 @@ export const dynamic = 'force-dynamic';
 
 interface PageProps {
   readonly params: Promise<{ readonly tenantSlug: string }>;
+  /**
+   * `?etape=`, `?prestation=`, `?praticien=`, `?creneau=` — la progression du
+   * tunnel, que le serveur lit désormais lui-même (#1055).
+   *
+   * Elle n'y était pas : la page montait le tunnel sans rien lui dire de
+   * l'adresse, et celui-ci ne la relisait qu'à l'hydratation. La page est déjà
+   * `force-dynamic`, et cette lecture ne lui coûte donc aucune mise en cache
+   * qu'elle n'avait pas.
+   */
+  readonly searchParams: Promise<Record<string, string | string[] | undefined>>;
 }
 
-export default async function BookingPage({ params }: PageProps) {
-  const { tenantSlug } = await params;
+export default async function BookingPage({ params, searchParams }: PageProps) {
+  const [{ tenantSlug }, search] = await Promise.all([params, searchParams]);
 
   try {
     // En parallèle : deux requêtes indépendantes, et le parcours critique vise
@@ -64,6 +75,11 @@ export default async function BookingPage({ params }: PageProps) {
         // mise en cache qu'elle n'avait pas.
         presence={presence}
         loginHref={`${accountPath(tenantSlug)}/connexion`}
+        // L'étape et les choix que l'adresse porte, résolus contre le catalogue
+        // qu'on vient de charger (#1055). C'est ce qui fait que la progression
+        // et le squelette sont justes dès le premier rendu, au lieu d'annoncer
+        // « Étape 1 sur 4 » puis de basculer.
+        initialDraft={initialBookingDraft(search, services)}
       />
     );
   } catch (error) {
