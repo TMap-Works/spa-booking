@@ -143,9 +143,24 @@ function renderForm(days: AvailabilityResponse = availability): ReturnType<typeo
   return userEvent.setup();
 }
 
-/** Le calendrier, nommé par son mois — la grille d'heures l'est par sa journée. */
-function calendrier(): HTMLElement {
-  return screen.getByRole('grid', { name: /Journée/ });
+/**
+ * La bande de jours, nommée par le mois qu'elle parcourt — la grille d'heures
+ * l'est par sa journée, et le calendrier du panneau par « Journée — <mois> ».
+ *
+ * L'écran de report a hérité de la bande (#1049) sans qu'une ligne ne change
+ * chez lui : il monte le même `SlotPicker` que le tunnel, et charge déjà un
+ * mois. C'est le troisième critère d'acceptation de l'issue — *« aucune
+ * modification de l'API de disponibilité ni du moteur »* — vérifié de fait.
+ */
+function bande(): HTMLElement {
+  return screen.getByRole('grid', { name: /^Jour du rendez-vous/ });
+}
+
+/** Le mois complet, que le bouton de période de la bande ouvre à la demande. */
+async function ouvrirLeCalendrier(user: ReturnType<typeof userEvent.setup>): Promise<HTMLElement> {
+  await user.click(screen.getByRole('button', { name: /^Ouvrir le calendrier/ }));
+
+  return screen.getByRole('grid', { name: /^Journée/ });
 }
 
 describe('report — les créneaux qui chevauchent le rendez-vous déplacé', () => {
@@ -228,22 +243,33 @@ describe('report — le sélecteur est celui du tunnel', () => {
     expect(screen.getByRole('rowheader', { name: 'Après-midi' })).toBeDefined();
   });
 
-  it('ne déplie qu’une journée à la fois, sous un calendrier mensuel', () => {
+  it('ne déplie qu’une journée à la fois, sous une bande de jours', () => {
     renderForm(troisJournees);
 
-    // Septembre entier est à l'écran — les journées complètes comprises, faute
-    // de quoi on croirait le salon fermé ce jour-là —, mais une seule grille
+    // Quatorze journées à l'écran — les journées complètes comprises, faute de
+    // quoi on croirait le salon fermé ce jour-là —, mais une seule grille
     // d'heures est dépliée.
-    expect(within(calendrier()).getAllByRole('button')).toHaveLength(30);
+    expect(within(bande()).getAllByRole('button')).toHaveLength(14);
     expect(screen.getByRole('button', { name: '13 h 45' })).toBeDefined();
     expect(screen.queryByRole('button', { name: '09 h 30' })).toBeNull();
+  });
+
+  it('ouvre le mois complet à la demande, et pas avant', async () => {
+    // `BM-CRENEAU-01` : le report hérite du second geste comme du premier.
+    const user = renderForm(troisJournees);
+
+    expect(screen.queryByRole('grid', { name: /^Journée/ })).toBeNull();
+
+    const calendrier = await ouvrirLeCalendrier(user);
+
+    expect(within(calendrier).getAllByRole('button')).toHaveLength(30);
   });
 
   it('change de journée sans recharger la page', async () => {
     const user = renderForm(troisJournees);
 
     await user.click(
-      within(calendrier()).getByRole('button', { name: /^jeudi 3 septembre 2026 — 1 créneau/ }),
+      within(bande()).getByRole('button', { name: /^jeudi 3 septembre 2026 — 1 créneau/ }),
     );
 
     expect(screen.getByRole('button', { name: '09 h 30' })).toBeDefined();
@@ -254,7 +280,7 @@ describe('report — le sélecteur est celui du tunnel', () => {
   it('n’ouvre pas une journée complète', async () => {
     const user = renderForm(troisJournees);
 
-    const complet = within(calendrier()).getByRole('button', {
+    const complet = within(bande()).getByRole('button', {
       name: /^mercredi 2 septembre 2026 — complet/,
     });
 
@@ -266,14 +292,14 @@ describe('report — le sélecteur est celui du tunnel', () => {
     expect(screen.getByRole('button', { name: '13 h 45' })).toBeDefined();
   });
 
-  it('explique le mois vide sans emporter le calendrier', () => {
-    // C'est ce qui change avec lui : la bande disparaissait, emportant la seule
-    // commande qui menait ailleurs.
+  it('explique le mois vide sans emporter la bande', () => {
+    // C'est ce qui ne change pas : le choix de la date reste à l'écran, et avec
+    // lui la seule commande qui mène ailleurs.
     renderForm({ ...availability, days: [{ date: '2026-09-01', slots: [] }] });
 
     expect(screen.getByText('Aucun créneau en septembre 2026')).toBeDefined();
     expect(screen.queryByRole('grid', { name: /Créneaux/ })).toBeNull();
-    expect(calendrier()).toBeDefined();
+    expect(bande()).toBeDefined();
   });
 });
 
@@ -326,6 +352,7 @@ describe('report — le changement de mois passe par l’adresse', () => {
   it('ouvre le mois demandé, sans empiler d’entrée d’historique', async () => {
     const user = renderForm();
 
+    await ouvrirLeCalendrier(user);
     await user.click(screen.getByRole('button', { name: 'Mois suivant' }));
 
     // `replace` et non `push` : le mois qu'on vient de quitter n'est pas une
@@ -334,14 +361,17 @@ describe('report — le changement de mois passe par l’adresse', () => {
     expect(replace).toHaveBeenCalledWith(`${MONTH_HREF}2026-10`);
   });
 
-  it('éteint le chevron au bord de la fenêtre de réservation', () => {
+  it('éteint le chevron au bord de la fenêtre de réservation', async () => {
     render(form(availability, '2026-10'));
+    const user = userEvent.setup();
+
+    await ouvrirLeCalendrier(user);
 
     expect(screen.getByRole('button', { name: 'Mois suivant' }).getAttribute('aria-disabled')).toBe(
       'true',
     );
-    // Le calendrier, lui, reste rendu : c'est la sortie qui s'éteint, pas le choix.
-    expect(calendrier()).toBeDefined();
+    // La bande, elle, reste rendue : c'est la sortie qui s'éteint, pas le choix.
+    expect(bande()).toBeDefined();
   });
 
   it('offre la sortie jusque dans le mois vide, où elle sert le plus', async () => {

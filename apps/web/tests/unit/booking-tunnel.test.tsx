@@ -430,10 +430,10 @@ describe('la progression est portée par l’adresse (#733)', () => {
 
     const avant = window.history.length;
 
-    await user.selectOptions(
-      screen.getByLabelText(/Praticien/),
-      service.staff[0]?.id ?? '',
-    );
+    // Le praticien se change depuis une puce qui ouvre un panneau de cartes
+    // (#1049, `BM-PRATICIEN-04`), et non plus depuis une liste déroulante.
+    await user.click(screen.getByRole('button', { name: /^Praticien :/ }));
+    await user.click(screen.getByRole('radio', { name: new RegExp(service.staff[0]?.displayName ?? '') }));
 
     await waitFor(() => {
       expect(query().get('praticien')).toBe(service.staff[0]?.id);
