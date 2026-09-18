@@ -976,3 +976,29 @@
   margin-block-end: var(--spa-space-1);
   padding: 0;
 }
+
+/* ==========================================================================
+ * Tiroir du rendez-vous
+ * ========================================================================== */
+
+/* Depuis #973, le pied du tiroir porte jusqu'à quatre actions (annuler,
+ * confirmer, fermer, enregistrer). Sur une rangée, chaque libellé s'écrasait
+ * sur quatre lignes et « Annuler le rendez-vous » débordait du tiroir : le
+ * tiroir s'élargit un peu, et les actions se rangent en grille de deux
+ * colonnes, libellés sur une ligne. */
+.spa-admin .spa-admin-calendar__drawer {
+  inline-size: 30rem;
+}
+
+.spa-admin .spa-admin-calendar__drawer .spa-admin-panel__footer {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--spa-space-2);
+}
+
+.spa-admin .spa-admin-calendar__drawer .spa-admin-panel__footer .spa-button {
+  inline-size: 100%;
+  padding-inline: var(--spa-space-3);
+  font-size: var(--spa-font-size-sm);
+  white-space: nowrap;
+}
