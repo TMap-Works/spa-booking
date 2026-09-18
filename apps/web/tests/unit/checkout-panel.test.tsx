@@ -248,6 +248,31 @@ describe('un rendez-vous déjà réglé (#828)', () => {
     expect(await screen.findByText('Rendez-vous déjà encaissé')).toBeDefined();
     expect(screen.queryByRole('button', { name: /en espèces/ })).toBeNull();
   });
+
+  it('bascule aussi sur le ticket soldé, et n’affiche pas le message brut de l’API', async () => {
+    // La reproduction exacte de l'audit `d20260917-2` (#1005) : second clic sur
+    // un rendez-vous déjà réglé. La route rend 409 `SALE_ALREADY_SETTLED` depuis
+    // qu'elle compose la vente avant de la régler (#817) ; l'écran laissait
+    // passer ce code, affichait « Ce ticket a déjà été réglé. » en ligne rouge et
+    // gardait son bouton recliquable — un second clic ne pouvait qu'échouer de la
+    // même façon, devant la cliente.
+    settleInCashAction.mockResolvedValue({
+      ok: false,
+      code: 'SALE_ALREADY_SETTLED',
+      message: 'Ce ticket a déjà été réglé.',
+    });
+    renderPanel();
+
+    await userEvent.click(screen.getByRole('button', { name: /en espèces/ }));
+
+    expect(await screen.findByText('Rendez-vous déjà encaissé')).toBeDefined();
+    // Le bouton **et** le choix du moyen ont disparu : c'est un état de l'écran,
+    // pas une ligne glissée entre les moyens de paiement et un bouton resté plein.
+    expect(screen.queryByRole('button', { name: /en espèces/ })).toBeNull();
+    expect(screen.queryAllByRole('radio')).toHaveLength(0);
+    // Et le texte est celui de l'écran, pas celui que l'API a rendu.
+    expect(screen.queryByText('Ce ticket a déjà été réglé.')).toBeNull();
+  });
 });
 
 describe('le règlement en espèces', () => {
@@ -526,24 +551,29 @@ describe('le récapitulatif rendu côté serveur, après l’encaissement (#1004
     expect(refresh).not.toHaveBeenCalled();
   });
 
-  it('ne redemande rien sur le refus « déjà encaissé » non plus', async () => {
-    // Le refus qu'un poste voisin provoque apprend, lui aussi, que la journée de
-    // caisse a changé — mais le corriger suppose d'abord que l'écran le
-    // **classe** comme tel, et `SALE_ALREADY_SETTLED`, le seul code que
-    // `POST /payments/cash` rende vraiment depuis #817, n'est pas rangé là par
-    // `isAlreadySettledRefusal`. Ce classement vit dans
-    // `lib/admin/checkout-summary.ts`, hors de l'empreinte de ce ticket : ce cas
-    // est donc laissé tel qu'il était, et ce test le dit plutôt que de le taire.
-    settleInCashAction.mockResolvedValue({
-      ok: false,
-      code: 'PAYMENT_ALREADY_SETTLED',
-      message: 'Already settled.',
-    });
-    renderPanel();
+  it.each(['PAYMENT_ALREADY_SETTLED', 'SALE_ALREADY_SETTLED'])(
+    'ne redemande rien sur le refus « déjà encaissé » non plus (%s)',
+    async (code) => {
+      // Le refus qu'un poste voisin provoque apprend, lui aussi, que la journée
+      // de caisse a changé — mais relire la journée ne rendrait pas au comptoir
+      // le ticket qu'il n'a pas produit, et coûterait un aller-retour devant la
+      // cliente. L'écran bascule, il ne se recharge pas.
+      //
+      // `SALE_ALREADY_SETTLED` est ici pour la raison qui a motivé #1005 : le
+      // classement vivait dans `lib/admin/checkout-summary.ts`, que #1004
+      // laissait hors de son empreinte, et ce code-là — le seul que
+      // `POST /payments/cash` rende vraiment depuis #817 — n'y était pas rangé.
+      settleInCashAction.mockResolvedValue({
+        ok: false,
+        code,
+        message: 'Already settled.',
+      });
+      renderPanel();
 
-    await userEvent.click(screen.getByRole('button', { name: /en espèces/ }));
+      await userEvent.click(screen.getByRole('button', { name: /en espèces/ }));
 
-    expect(await screen.findByText('Rendez-vous déjà encaissé')).toBeDefined();
-    expect(refresh).not.toHaveBeenCalled();
-  });
+      expect(await screen.findByText('Rendez-vous déjà encaissé')).toBeDefined();
+      expect(refresh).not.toHaveBeenCalled();
+    },
+  );
 });

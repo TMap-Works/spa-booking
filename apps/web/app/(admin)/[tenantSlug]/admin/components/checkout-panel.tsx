@@ -69,6 +69,13 @@ import { useAdminSessionRenewal } from './use-admin-session-renewal';
  * d'afficher une ligne rouge sous un bouton resté actif — un second clic ne
  * pouvait qu'échouer de la même façon.
  *
+ * Encore faut-il que le refus soit **reconnu** : ce panneau ne connaît aucun
+ * code, il demande à `isAlreadySettledRefusal` de classer celui que l'API rend.
+ * Tant qu'un code manquait à cette liste — `SALE_ALREADY_SETTLED`, servi par
+ * `POST /payments/cash` depuis #817 —, la phrase ci-dessus décrivait une
+ * intention plutôt qu'un comportement (#1005). Un code de refus s'ajoute donc
+ * dans `lib/admin/checkout-summary.ts`, jamais ici.
+ *
  * ## Le récapitulatif d'à côté suit, au lieu de rester à « À encaisser » (#1004)
  *
  * `settlement` est une **donnée du serveur** : elle est lue par la page, qui est

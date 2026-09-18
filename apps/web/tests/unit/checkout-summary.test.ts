@@ -1,5 +1,5 @@
 import type { AppointmentStatus, PaymentMethod, PaymentStatus } from '@spa/shared';
-import { ERROR_CODES } from '@spa/shared';
+import { ERROR_CODES, PAYMENT_ERROR_CODES } from '@spa/shared';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -244,10 +244,52 @@ describe('la lecture d’un refus de l’API', () => {
     expect(isAlreadySettledRefusal(ERROR_CODES.NOT_FOUND)).toBe(false);
   });
 
+  it('reconnaît le ticket soldé que « POST /payments/cash » rend depuis #817', () => {
+    // Le cas relevé par l'audit `d20260917-2` (#1005) : depuis que la route
+    // compose la vente avant de la régler, le second clic se heurte au **ticket**
+    // soldé et rend 409 `SALE_ALREADY_SETTLED`, et non `PAYMENT_ALREADY_SETTLED`.
+    // Le code manquait des deux listes du front : l'écran ne basculait pas, et
+    // affichait « Ce ticket a déjà été réglé. » — le message brut de l'API.
+    expect(isAlreadySettledRefusal('SALE_ALREADY_SETTLED')).toBe(true);
+    expect(checkoutFailureMessage('SALE_ALREADY_SETTLED', 'Ce ticket a déjà été réglé.')).toMatch(
+      /déjà été encaissé/i,
+    );
+  });
+
+  it('ne laisse aucun code « … déjà réglé » du contrat hors de la bascule', () => {
+    // Le garde qui empêche le prochain renommage de repasser en silence. Les
+    // deux codes d'aujourd'hui sont arrivés à deux ans d'écart et par deux
+    // tickets différents ; le troisième arrivera de la même façon. Le déduire de
+    // `PAYMENT_ERROR_CODES` plutôt que de le recopier fait échouer **ce test** le
+    // jour où l'API en sert un de plus, au lieu de laisser l'écran l'ignorer.
+    const settledCodes = Object.values(PAYMENT_ERROR_CODES).filter((code) =>
+      code.endsWith('_ALREADY_SETTLED'),
+    );
+
+    expect(settledCodes.length).toBeGreaterThan(1);
+
+    for (const code of settledCodes) {
+      expect(isAlreadySettledRefusal(code)).toBe(true);
+      expect(checkoutFailureMessage(code, 'Message brut de l’API.')).not.toBe(
+        'Message brut de l’API.',
+      );
+    }
+  });
+
+  it('dit la même chose de tous les refus « déjà encaissé », quel que soit le code', () => {
+    // Un seul texte pour un seul état : deux formulations feraient croire au
+    // comptoir à deux incidents différents, là où la conduite est la même.
+    const codes = ['PAYMENT_ALREADY_SETTLED', 'SALE_ALREADY_SETTLED', ERROR_CODES.CONFLICT];
+    const shown = codes.map((code) => checkoutFailureMessage(code, 'x'));
+
+    expect(new Set(shown).size).toBe(1);
+  });
+
   it('reconnaît aussi le repli « HTTP_409 » du filtre d’exception', () => {
     // Un 409 arrivé hors de la forme d'erreur du contrat porte `HTTP_409` —
     // c'est la raison même pour laquelle `HTTP_404` et `HTTP_429` sont lus ici.
-    // L'omettre laissait ce refus-là sous un bouton resté actif.
+    // Il ne rattrape pas pour autant un 409 **conforme** dont le code est inconnu
+    // de la liste : c'est ce qui a laissé passer `SALE_ALREADY_SETTLED`.
     expect(isAlreadySettledRefusal('HTTP_409')).toBe(true);
     expect(checkoutFailureMessage('HTTP_409', 'Conflict.')).toMatch(/déjà été encaissé/i);
   });
