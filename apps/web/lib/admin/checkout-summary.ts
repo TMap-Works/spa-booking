@@ -310,6 +310,67 @@ export const PROVIDER_UNREACHABLE_MESSAGE =
   'Le prestataire de paiement n’a pas répondu. Rien n’a été débité : réessayez, ou encaissez en espèces.';
 
 /**
+ * Les refus qui disent « ce rendez-vous porte déjà un encaissement » (#828).
+ *
+ * ## Une seule liste, lue à deux endroits
+ *
+ * `isAlreadySettledRefusal` décide de l'**état** de l'écran ;
+ * `checkoutFailureMessage` décide du **texte**. Les deux ont longtemps porté
+ * chacun sa propre énumération, et c'est exactement par là que le défaut est
+ * revenu (#1005) : un code ajouté à l'une sans l'autre donne un écran qui
+ * bascule en annonçant autre chose, ou — le cas rencontré — une ligne rouge
+ * sous un bouton resté actif. Une constante partagée rend la divergence
+ * impossible à écrire.
+ *
+ * ## Deux codes, parce que la route franchit deux frontières
+ *
+ * `POST /payments/cash` compose la vente du rendez-vous **puis** la règle
+ * (#817). Elle refuse donc en 409 pour deux raisons distinctes, et les deux
+ * appellent la même conduite au comptoir :
+ *
+ * | Code servi | Ce qui bloque |
+ * |---|---|
+ * | `SALE_ALREADY_SETTLED` | le ticket du rendez-vous est **soldé** — `sales_settled_amount_minor_check` refuse le règlement de trop |
+ * | `PAYMENT_ALREADY_SETTLED` | une ligne `payments` est déjà aboutie, ou une intention carte est encore en vol |
+ *
+ * Le premier manquait. Le refus retombait sur le `default` de
+ * `checkoutFailureMessage`, qui rend le message de l'API — « Ce ticket a déjà
+ * été réglé. » —, et `isAlreadySettledRefusal` rendait `false` : l'écran ne
+ * basculait pas, et le bouton d'encaissement restait cliquable sur un
+ * règlement qui ne pouvait qu'échouer à l'identique.
+ *
+ * `HTTP_409` est du lot, pour la raison même qui fait lire `HTTP_404` et
+ * `HTTP_429` plus bas : le filtre d'exception de l'API retombe sur
+ * `HTTP_<statut>` dès qu'un refus arrive hors de la forme d'erreur du contrat
+ * (voir l'en-tête d'`ApiClientError`). Il n'a pourtant **pas** suffi à rattraper
+ * le cas ci-dessus, et c'est la leçon du ticket : le repli ne se déclenche que
+ * lorsque le corps n'est *pas* au contrat. Un 409 parfaitement conforme dont le
+ * code est inconnu de cette liste passe devant lui sans le toucher.
+ */
+const ALREADY_SETTLED_REFUSAL_CODES: readonly string[] = [
+  PAYMENT_ERROR_CODES.PAYMENT_ALREADY_SETTLED,
+  PAYMENT_ERROR_CODES.SALE_ALREADY_SETTLED,
+  ERROR_CODES.CONFLICT,
+  'HTTP_409',
+];
+
+/** Ce que le comptoir lit sur un encaissement déjà inscrit, quel que soit le code. */
+const ALREADY_SETTLED_MESSAGE =
+  'Ce rendez-vous a déjà été encaissé. Rechargez l’écran avant de reprendre — un second règlement créerait une pièce comptable de trop.';
+
+/**
+ * `true` si ce refus dit « ce rendez-vous porte déjà un encaissement » (#828).
+ *
+ * L'écran s'en sert pour **changer d'état** plutôt que d'afficher une ligne
+ * d'erreur sous un bouton resté actif : un second clic ne pourrait qu'échouer
+ * de la même façon, et le proposer devant une cliente est ce que ce ticket
+ * corrige. Le code est lu, jamais le message (web-frontend §2).
+ */
+export function isAlreadySettledRefusal(code: string): boolean {
+  return ALREADY_SETTLED_REFUSAL_CODES.includes(code);
+}
+
+/**
  * Le message d'un refus d'encaissement, à partir du code rendu par l'API.
  *
  * L'écran réagit sur le **code**, jamais sur le message (web-frontend §2) : le
@@ -321,35 +382,14 @@ export const PROVIDER_UNREACHABLE_MESSAGE =
  * **et** celui d'un autre établissement, indistinctement, et l'écran n'a pas à
  * distinguer ce que l'API refuse de distinguer (tenant-isolation §4).
  */
-/**
- * `true` si ce refus dit « ce rendez-vous porte déjà un encaissement » (#828).
- *
- * L'écran s'en sert pour **changer d'état** plutôt que d'afficher une ligne
- * d'erreur sous un bouton resté actif : un second clic ne pourrait qu'échouer
- * de la même façon, et le proposer devant une cliente est ce que ce ticket
- * corrige. Le code est lu, jamais le message (web-frontend §2).
- *
- * `HTTP_409` est du lot, pour la raison même qui fait lire `HTTP_404` et
- * `HTTP_429` plus bas : le filtre d'exception de l'API retombe sur
- * `HTTP_<statut>` dès qu'un refus arrive hors de la forme d'erreur du contrat
- * (voir l'en-tête d'`ApiClientError`). L'omettre aurait laissé ce 409-là
- * s'afficher en ligne rouge sous un bouton resté actif — exactement le défaut
- * que cette fonction ferme.
- */
-export function isAlreadySettledRefusal(code: string): boolean {
-  return (
-    code === PAYMENT_ERROR_CODES.PAYMENT_ALREADY_SETTLED ||
-    code === ERROR_CODES.CONFLICT ||
-    code === 'HTTP_409'
-  );
-}
-
 export function checkoutFailureMessage(code: string, message: string): string {
+  // Avant le `switch`, et non parmi ses `case` : c'est ce qui garantit que le
+  // texte affiché et l'état de l'écran se décident sur la **même** liste.
+  if (isAlreadySettledRefusal(code)) {
+    return ALREADY_SETTLED_MESSAGE;
+  }
+
   switch (code) {
-    case PAYMENT_ERROR_CODES.PAYMENT_ALREADY_SETTLED:
-    case ERROR_CODES.CONFLICT:
-    case 'HTTP_409':
-      return 'Ce rendez-vous a déjà été encaissé. Rechargez l’écran avant de reprendre — un second règlement créerait une pièce comptable de trop.';
     case PAYMENT_ERROR_CODES.APPOINTMENT_NOT_PAYABLE:
       return 'Le paiement par carte n’accepte pas ce rendez-vous : il est annulé, terminé ou non honoré. Encaissez en espèces si la prestation a été rendue.';
     case PAYMENT_ERROR_CODES.APPOINTMENT_NOT_SETTLEABLE:
