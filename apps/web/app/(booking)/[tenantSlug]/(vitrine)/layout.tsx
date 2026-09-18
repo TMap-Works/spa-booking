@@ -56,14 +56,14 @@ interface VitrineLayoutProps {
 
 export default async function VitrineLayout({ children, params }: VitrineLayoutProps) {
   const { tenantSlug } = await params;
-  // Chaîné sur une promesse déjà résolue : une lecture qui échouerait avant même
-  // de rendre sa promesse retombe dans le même repli, au lieu de lever ici.
+  // Le repli couvre toute la chaîne — une lecture qui échoue avant même de
+  // rendre sa promesse, une réponse inattendue — et la promesse ne rejette
+  // jamais : quand `notFound()` lève plus bas, personne ne l'attendra, et un
+  // rejet resté sans preneur serait une erreur non gérée.
   const bookable = Promise.resolve(tenantSlug)
     .then(loadSalonServices)
-    .then(
-      (services) => services.length > 0,
-      () => true,
-    );
+    .then((services) => services.length > 0)
+    .catch(() => true);
 
   let tenant: PublicTenant | null = null;
   try {
