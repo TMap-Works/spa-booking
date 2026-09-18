@@ -34,7 +34,11 @@ interface ServiceChoiceProps {
  * - `BM-SERVICE-02` et `BM-SERVICE-05` — les rubriques en rangée d'onglets, avec
  *   l'effectif de chacune ;
  * - `BM-SERVICE-06` — *« la prestation choisie se voit sans ambiguïté »*,
- *   autrement que par la seule couleur.
+ *   autrement que par la seule couleur, et *« la catégorie porte aussi la
+ *   marque »* : l'onglet de la rubrique qui contient la prestation retenue porte
+ *   une coche (#1079). La coche de la ligne, elle, part avec le panneau fermé —
+ *   sans celle de l'onglet, changer de rubrique effacerait de l'écran toute
+ *   trace du choix fait.
  *
  * ## Le regroupement vient de la vitrine, et n'est pas réécrit ici
  *
@@ -125,8 +129,17 @@ export function ServiceChoice({ services, selectedServiceId, onSelect }: Service
           id: section.key,
           label: section.title,
           count: section.services.length,
+          // `BM-SERVICE-06` — « la catégorie porte aussi la marque » : l'onglet
+          // de la rubrique qui porte la prestation retenue se distingue de ses
+          // voisins, ouvert ou non. Sans lui, changer d'onglet efface de l'écran
+          // toute trace du choix — le CTA devenu actif mis à part (#1079).
+          marked: section.services.some((service) => service.id === selectedServiceId),
         }))}
         label="Rubriques de prestations"
+        // La coche est décorative ; c'est cette phrase que le lecteur d'écran
+        // entend à la suite du libellé et de l'effectif. Elle nomme la
+        // prestation comme le reste de l'étape la nomme (`ds:libelles`).
+        markedLabel="prestation retenue"
         onChange={setOpenSection}
         value={openSection}
       />
