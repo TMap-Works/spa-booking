@@ -1,15 +1,21 @@
 import type { PublicService } from '@spa/shared';
+import Link from 'next/link';
 
 import { formatDuration, formatMoney } from '@/lib/format';
 
+import { serviceBookingHref } from './booking-link';
+import { CatalogCategories } from './catalog-categories';
 import { groupServicesByCategory } from './group-services';
 import type { SalonContactAction } from './salon-contact';
 
 /** Identifiant du titre de section, repris par `aria-labelledby` de la page. */
 export const CATALOG_HEADING_ID = 'catalogue';
 
+/** Préfixe des `id` d'onglets et de panneaux de rubriques. */
+const CATEGORY_TABS_PREFIX = 'rubrique';
+
 /**
- * Ce que la carte affiche à la place des noms de praticiens quand il n'y en a
+ * Ce que la ligne affiche à la place des noms de praticiens quand il n'y en a
  * aucun (#765).
  *
  * Écrit une fois et exporté : l'aperçu du back-office réemploie ce composant et
@@ -19,11 +25,39 @@ export const CATALOG_HEADING_ID = 'catalogue';
 export const UNSTAFFED_SERVICE_LABEL = 'Aucun praticien — pas de créneau en ligne';
 
 /**
- * Catalogue public d'un salon, groupé par rubrique (#43).
+ * Catalogue public d'un salon, groupé par rubrique (#43, refondu par #1046).
  *
  * **Server Component** : c'est du texte, et c'est la partie indexable de la
- * page. Aucun état, aucun filtre côté client — le tri et le choix appartiennent
- * au tunnel de réservation, qui est un autre écran.
+ * page. Le seul îlot client est la rangée d'onglets de rubriques
+ * (`catalog-categories.tsx`), qui reçoit des panneaux **déjà rendus** ici — pas
+ * une ligne de prestation n'est peinte par le navigateur.
+ *
+ * ## Une prestation, c'est une ligne (BM-SERVICE-01)
+ *
+ * L'audit `d20260918-1` relève des « cartes sans action, sur une grille qui
+ * laisse la moitié droite de l'écran vide à 1280 px ». Le motif du marché est
+ * une **ligne dense** : le nom, la durée et les praticiens à gauche, le prix en
+ * gras et l'action à droite, aucune vignette (BM-VISUEL-03, BM-VISUEL-04). La
+ * grille de cartes a donc laissé place à une liste, et la colonne latérale de
+ * la page occupe la largeur qui restait.
+ *
+ * La description est bornée à deux lignes par la feuille de style
+ * (BM-SERVICE-04) : une longue description ne repousse plus les prestations
+ * suivantes. Le texte entier reste dans le document — pour les moteurs comme
+ * pour les lecteurs d'écran —, seule sa hauteur est contenue.
+ *
+ * ## Une prestation se choisit depuis la vitrine (BM-VITRINE-05)
+ *
+ * « On ne choisit rien depuis la vitrine » était le second constat de l'audit.
+ * Chaque ligne porte désormais « Choisir », qui ouvre le tunnel **sur cette
+ * prestation**, à l'étape du créneau (`booking-link.ts`). Le bouton est en
+ * contour et non en aplat : l'écran n'a qu'une seule action pleine, celle du
+ * bandeau (BM-VISUEL-02).
+ *
+ * Il n'apparaît pas sur une prestation que personne ne pratique : le moteur de
+ * disponibilité ne proposera aucun créneau pour elle, et l'y envoyer serait
+ * offrir une action qui ne peut pas s'exercer — la règle que #773 a posée pour
+ * l'état vide du catalogue vaut ligne à ligne.
  *
  * ## Ce que chaque ligne montre, et pourquoi
  *
@@ -40,39 +74,27 @@ export const UNSTAFFED_SERVICE_LABEL = 'Aucun praticien — pas de créneau en l
  *
  * La ligne « Praticiens : » était simplement **masquée** quand `staff` était
  * vide. La carte devenait alors indiscernable d'une prestation réservable —
- * même titre, même durée, même prix, sous le même « Prendre rendez-vous » — et
- * l'absence ne se lisait qu'en creux, à condition d'avoir sous les yeux une
- * autre carte qui, elle, nommait ses praticiens. Le back-office énonce pourtant
- * la règle sur la fiche de la prestation : « Tant qu'aucun praticien ne pratique
- * cette prestation, le moteur de disponibilité ne proposera aucun créneau pour
- * elle » (`admin/components/service-staff-panel.tsx`). La vitrine porte
- * désormais la même condition, dans les mots de la cliente.
+ * même titre, même durée, même prix — et l'absence ne se lisait qu'en creux. Le
+ * back-office énonce pourtant la règle sur la fiche de la prestation : « Tant
+ * qu'aucun praticien ne pratique cette prestation, le moteur de disponibilité ne
+ * proposera aucun créneau pour elle » (`admin/components/service-staff-panel.tsx`).
+ * La vitrine porte la même condition, dans les mots de la cliente.
  *
  * C'est le sens de `staff` dans le contrat public : il ne liste que les
  * praticiens **actifs** de la prestation (`PUBLIC_SERVICE_SELECT`). Vide, il ne
  * veut donc pas seulement dire « personne n'est affecté », mais « personne ne
- * peut honorer ce soin » — ce que la mention dit sans promettre de créneau.
- *
- * L'information reste dans la ligne de méta, à la place exacte qu'occupaient les
- * noms : c'est la même information, dans son état vide, et non un avertissement
- * de plus à faire cohabiter avec le reste de la carte. Elle ne repose sur aucune
- * couleur — le texte porte le sens à lui seul (WCAG 1.4.1).
+ * peut honorer ce soin ». La mention ne repose sur aucune couleur — le texte
+ * porte le sens à lui seul (WCAG 1.4.1).
  *
  * ## Un catalogue vide ne donne plus d'ordre irréalisable (#773)
  *
  * L'état vide écrivait « Contactez-le directement pour connaître son offre »
  * sans distinguer le salon qui a publié un numéro de celui qui n'a rien publié
- * du tout — et, sur la vitrine auditée, la section d'en dessous répondait
- * précisément « Ce salon n'a pas encore publié ses coordonnées ». L'unique
- * action proposée n'avait donc aucun moyen de s'exercer (audit `d20260916-1`,
- * `ds:confiance`).
- *
- * L'instruction est désormais liée à ce qui la rend possible : quand le salon a
- * publié un moyen d'être joint, l'état vide porte l'action elle-même — un vrai
- * `tel:` ou `mailto:` (`salon-contact.ts`), comme le dessine
+ * du tout. L'instruction est désormais liée à ce qui la rend possible : quand le
+ * salon a publié un moyen d'être joint, l'état vide porte l'action elle-même —
+ * un vrai `tel:` ou `mailto:` (`salon-contact.ts`), comme le dessine
  * `docs/design/appointments/states.md` pour l'étape service. Sinon il se borne
- * au constat, et la section « informations pratiques » dit, une seule fois et à
- * sa place, que le salon n'a pas publié de coordonnées.
+ * au constat.
  */
 interface ServiceCatalogProps {
   readonly services: readonly PublicService[];
@@ -84,10 +106,24 @@ interface ServiceCatalogProps {
    * gérante est déjà chez elle. Son état vide reste donc le constat seul.
    */
   readonly contact?: SalonContactAction | null;
+  /**
+   * Chemin du tunnel de réservation, d'où partent les boutons « Choisir » (#1046).
+   *
+   * Facultatif pour la même raison que `contact` : l'aperçu du back-office rend
+   * le catalogue pour le montrer, pas pour y réserver. Sans lui, les lignes
+   * gardent leur prix et leur durée, sans action — exactement ce que la gérante
+   * regardait jusqu'ici.
+   */
+  readonly reservationPath?: string | null;
 }
 
-export function ServiceCatalog({ services, contact = null }: ServiceCatalogProps) {
+export function ServiceCatalog({
+  services,
+  contact = null,
+  reservationPath = null,
+}: ServiceCatalogProps) {
   const sections = groupServicesByCategory(services);
+  const onlySection = sections.length === 1 ? sections[0] : undefined;
 
   return (
     <section className="spa-salon__section" aria-labelledby={CATALOG_HEADING_ID}>
@@ -115,57 +151,106 @@ export function ServiceCatalog({ services, contact = null }: ServiceCatalogProps
             </a>
           )}
         </div>
+      ) : onlySection !== undefined ? (
+        // Une seule rubrique : son titre se lit, et aucun onglet n'est offert —
+        // un onglet unique n'ouvre aucun choix.
+        <section className="spa-salon__category" aria-labelledby={`rubrique-${onlySection.key}`}>
+          <h3 className="spa-salon__category-title" id={`rubrique-${onlySection.key}`}>
+            {onlySection.title}
+          </h3>
+          <ServiceList services={onlySection.services} reservationPath={reservationPath} />
+        </section>
       ) : (
-        sections.map((section) => (
-          <section
-            className="spa-salon__category"
-            key={section.key}
-            aria-labelledby={`rubrique-${section.key}`}
-          >
-            <h3 className="spa-salon__category-title" id={`rubrique-${section.key}`}>
-              {section.title}
-            </h3>
-
-            <ul className="spa-salon__services">
-              {section.services.map((service) => (
-                // L'ancre porte le slug de la prestation : c'est elle que les
-                // données structurées désignent dans l'`url` de chaque offre, et
-                // un lien profond vers une prestation doit aboutir quelque part.
-                <li className="spa-card spa-salon__service" id={service.slug} key={service.id}>
-                  <h4 className="spa-card__title">{service.name}</h4>
-
-                  {service.description === null ? null : (
-                    <p className="spa-card__body">{service.description}</p>
-                  )}
-
-                  <p className="spa-card__meta">
-                    <span>
-                      <span className="spa-visually-hidden">Durée : </span>
-                      {formatDuration(service.durationMinutes)}
-                    </span>
-                    {service.staff.length === 0 ? (
-                      // Pas de préfixe « Praticiens : » ici : la mention se
-                      // suffit, et le lecteur d'écran entendrait sinon
-                      // « Praticiens : aucun praticien ».
-                      <span>{UNSTAFFED_SERVICE_LABEL}</span>
-                    ) : (
-                      <span>
-                        <span className="spa-visually-hidden">Praticiens : </span>
-                        {service.staff.map((member) => member.displayName).join(', ')}
-                      </span>
-                    )}
-                  </p>
-
-                  <p className="spa-card__price">
-                    <span className="spa-visually-hidden">Tarif : </span>
-                    {formatMoney(service.price)}
-                  </p>
-                </li>
-              ))}
-            </ul>
-          </section>
-        ))
+        <CatalogCategories
+          idPrefix={CATEGORY_TABS_PREFIX}
+          panels={sections.map((section) => ({
+            id: section.key,
+            label: section.title,
+            count: section.services.length,
+            // Le panneau est nommé par son onglet (`aria-labelledby`) : un titre
+            // visible répéterait le mot qu'on vient de toucher. Il reste dans le
+            // document, masqué à l'œil, pour que la hiérarchie de titres — celle
+            // que lit un moteur et que parcourt un lecteur d'écran — ne perde
+            // pas ses rubriques.
+            content: (
+              <>
+                <h3 className="spa-visually-hidden">{section.title}</h3>
+                <ServiceList services={section.services} reservationPath={reservationPath} />
+              </>
+            ),
+          }))}
+        />
       )}
     </section>
+  );
+}
+
+interface ServiceListProps {
+  readonly services: readonly PublicService[];
+  readonly reservationPath: string | null;
+}
+
+function ServiceList({ services, reservationPath }: ServiceListProps) {
+  return (
+    <ul className="spa-salon__services">
+      {services.map((service) => {
+        // Une prestation que personne ne pratique n'a pas de créneau à offrir :
+        // pas de bouton, plutôt qu'un bouton qui mène à une impasse (#773).
+        const bookingHref =
+          reservationPath === null || service.staff.length === 0
+            ? null
+            : serviceBookingHref(reservationPath, service.id);
+
+        return (
+          // L'ancre porte le slug de la prestation : c'est elle que les données
+          // structurées désignent dans l'`url` de chaque offre, et un lien
+          // profond vers une prestation doit aboutir quelque part.
+          <li className="spa-salon-service" id={service.slug} key={service.id}>
+            <div className="spa-salon-service__main">
+              <h4 className="spa-salon-service__name">{service.name}</h4>
+
+              <p className="spa-salon-service__meta">
+                <span>
+                  <span className="spa-visually-hidden">Durée : </span>
+                  {formatDuration(service.durationMinutes)}
+                </span>
+                {service.staff.length === 0 ? (
+                  // Pas de préfixe « Praticiens : » ici : la mention se suffit,
+                  // et le lecteur d'écran entendrait sinon « Praticiens : aucun
+                  // praticien ».
+                  <span>{UNSTAFFED_SERVICE_LABEL}</span>
+                ) : (
+                  <span>
+                    <span className="spa-visually-hidden">Praticiens : </span>
+                    {service.staff.map((member) => member.displayName).join(', ')}
+                  </span>
+                )}
+              </p>
+
+              {service.description === null ? null : (
+                <p className="spa-salon-service__description">{service.description}</p>
+              )}
+            </div>
+
+            <div className="spa-salon-service__aside">
+              <p className="spa-salon-service__price">
+                <span className="spa-visually-hidden">Tarif : </span>
+                {formatMoney(service.price)}
+              </p>
+
+              {bookingHref === null ? null : (
+                // Le nom accessible porte la prestation : une page de vingt
+                // liens tous nommés « Choisir » ne se navigue pas au clavier
+                // ni au lecteur d'écran (WCAG 2.4.4).
+                <Link className="spa-button spa-button--neutral spa-salon-service__action" href={bookingHref}>
+                  Choisir
+                  <span className="spa-visually-hidden"> — {service.name}</span>
+                </Link>
+              )}
+            </div>
+          </li>
+        );
+      })}
+    </ul>
   );
 }

@@ -1,90 +1,64 @@
-import type { PostalAddress, PublicTenant } from '@spa/shared';
+import type { PublicTenant } from '@spa/shared';
 
-import { formatOpeningRange, groupOpeningHoursByDay } from './opening-hours';
+import { Icon } from '@/components/ui/icon';
+
+import { formatOpeningRange, salonClock, weekSchedule } from './opening-hours';
+import { addressLines, directionsUrl } from './salon-address';
 import { telUri } from './salon-contact';
 
-/** Identifiant du titre de section, repris par `aria-labelledby`. */
-export const INFO_HEADING_ID = 'informations-pratiques';
+/** Identifiant du titre de la carte « Horaires », repris par `aria-labelledby`. */
+export const HOURS_HEADING_ID = 'horaires';
+
+/** Identifiant du titre de la carte « Nous trouver ». */
+export const PLACE_HEADING_ID = 'nous-trouver';
 
 /**
- * Le fuseau de l'établissement, écrit pour un humain : « Indian/Antananarivo »
- * devient « Indian/Antananarivo » sans ses tirets bas.
+ * Informations pratiques du salon (#43, complété par #343, remis en forme par
+ * #1046).
  *
- * Ce n'est pas `timeZoneMention` de `lib/format.ts` : celle-ci compare le fuseau
- * du salon à **celui du visiteur**, lu d'`Intl` — donc, dans un Server
- * Component, celui du serveur. La mention serait décidée par le fuseau d'une
- * machine d'AWS et non par celui de la personne qui lit la page.
- */
-function humanTimeZone(timezone: string): string {
-  return timezone.replace(/_/g, ' ');
-}
-
-/**
- * L'adresse en lignes d'affichage.
+ * ## Ce qu'elles étaient
  *
- * Ni virgules ni format national : une adresse postale se lit en lignes, et
- * c'est ce que rend une pile de `<span>`. Le code postal et la ville partagent
- * la leur, comme sur une enveloppe ; le pays reste à part.
+ * « Une liste de définitions brute, jusqu'à une ligne “Fuseau horaire
+ * Europe/Paris” » (audit `d20260918-1`). Deux cartes la remplacent, celles que
+ * le marché pose au même endroit : **Horaires** (BM-VITRINE-03) et **Nous
+ * trouver** (BM-VITRINE-07). Elles vivent dans la colonne latérale de la
+ * vitrine, collante au-delà de 64 rem, et repassent sous le catalogue au pouce.
  *
- * Le pays est rendu **en toutes lettres** quand l'environnement sait le
- * traduire, et en code sinon. `Intl.DisplayNames` fait partie d'ECMA-402 et est
- * disponible dans Node comme dans tous les navigateurs visés ; le repli existe
- * pour ne jamais rendre une chaîne vide si un code inconnu passait.
- */
-export function addressLines(address: PostalAddress): readonly string[] {
-  const locality = [address.postalCode, address.city].filter((part) => part !== undefined);
-
-  return [
-    address.line1,
-    ...(address.line2 === undefined ? [] : [address.line2]),
-    locality.join(' '),
-    countryName(address.country),
-  ];
-}
-
-function countryName(code: string): string {
-  try {
-    return new Intl.DisplayNames(['fr'], { type: 'region' }).of(code) ?? code;
-  } catch {
-    return code;
-  }
-}
-
-/**
- * Informations pratiques du salon (#43, complété par #343).
+ * ## Les horaires disent la semaine entière, fermetures comprises
  *
- * ## Ce que l'API expose
+ * BM-VITRINE-03 : « sept lignes “Lundi … 10:00 - 20:00” ; un jour fermé porte
+ * “Fermé” au lieu d'être omis ; le jour courant est mis en évidence. » Le jour
+ * courant est calculé dans le fuseau **du salon** et porte, en plus de sa
+ * graisse, un « (aujourd'hui) » en lecture d'écran : la mise en évidence ne
+ * repose pas sur la seule apparence (WCAG 1.4.1).
  *
- * Le critère d'acceptation demande « adresse, horaires, contact ». Les trois
- * sont désormais servis : `publicTenantSchema` porte `contactEmail`,
- * `contactPhone`, `address` et `openingHours` (#343). Les trois sont
- * **facultatifs** — un salon fraîchement inscrit n'a rien saisi, et sa page doit
- * rester servie.
+ * La règle qui autorise à écrire « Fermé » est dans `weekSchedule` : un salon
+ * qui n'a publié **aucune** plage n'a pas de carte « Horaires » du tout, et la
+ * question « fermé, ou pas encore saisi ? » ne se pose donc jamais.
+ *
+ * ## La ligne « Fuseau horaire » a disparu
+ *
+ * Elle occupait une ligne de la page publique pour une information
+ * d'exploitation. Le fuseau reste nommé **là où il sert** — sous les horaires,
+ * qui sont les seules heures de cette page — conformément à BM-RDV-06 : « le
+ * fuseau est nommé quand la cliente pourrait se trouver ailleurs ». Le comparer
+ * au fuseau de la visiteuse demanderait de le lire dans son navigateur ;
+ * `timeZoneMention` de `lib/format.ts` le fait, et n'a rien à faire dans un
+ * Server Component, où elle comparerait au fuseau d'une machine d'AWS.
  *
  * ## Ce qui ne s'invente pas
  *
- * Une ligne n'apparaît que si l'API a rendu la donnée. Un jour de la semaine
- * absent des horaires n'affiche pas « fermé » : l'API omet les horaires plutôt
- * que de rendre une semaine vide, et rien ne permet donc de distinguer « le
- * salon ferme le lundi » de « le salon n'a pas encore saisi ses horaires ».
- * Afficher le premier quand c'est le second enverrait une cliente devant une
- * porte ouverte.
- *
- * Quand rien n'est renseigné, la section rend son état vide plutôt que de
- * disparaître : une page sans « informations pratiques » se lit comme une page
- * incomplète, là où un état vide explicite dit ce qu'il en est.
+ * Une carte n'apparaît que si l'API a rendu de quoi la remplir. Quand rien n'est
+ * renseigné, la section rend son état vide plutôt que de disparaître : une page
+ * sans informations pratiques se lit comme une page incomplète, là où un état
+ * vide explicite dit ce qu'il en est.
  *
  * ## Le lot de consolation n'est plus affirmé à tort (#773)
  *
  * Cet état vide rassurait d'un « La réservation en ligne reste ouverte » écrit
  * en toutes circonstances. Sur la vitrine d'un salon qui n'a **ni** coordonnées
  * **ni** prestation, c'était faux : le tunnel refusait de démarrer deux clics
- * plus loin. Trois messages se contredisaient alors sur un seul écran de 360 px
- * (audit `d20260916-1`, `ds:confiance`).
- *
- * La phrase n'est donc plus dite que quand elle est vraie. Le constat qui la
- * précède, lui, ne bouge pas : il est exact dans les deux cas, et c'est la seule
- * place de la page où l'absence de coordonnées est énoncée.
+ * plus loin. La phrase n'est donc plus dite que quand elle est vraie.
  */
 interface SalonInfoProps {
   readonly tenant: PublicTenant;
@@ -96,107 +70,128 @@ interface SalonInfoProps {
    * déjà, elle le lui dit.
    */
   readonly bookable: boolean;
+  /**
+   * L'instant auquel « aujourd'hui » est déterminé — voir `SalonHeader` (#1046).
+   */
+  readonly now?: Date;
 }
 
-export function SalonInfo({ tenant, bookable }: SalonInfoProps) {
-  const openingDays = groupOpeningHoursByDay(tenant.openingHours ?? []);
-  const hasInfo =
-    tenant.contactEmail !== undefined ||
-    tenant.contactPhone !== undefined ||
+export function SalonInfo({ tenant, bookable, now = new Date() }: SalonInfoProps) {
+  const week = weekSchedule(tenant.openingHours ?? []);
+  const today = salonClock(tenant.timezone, now)?.weekday ?? null;
+  const hasPlace =
     tenant.address !== undefined ||
-    openingDays.length > 0;
+    tenant.contactPhone !== undefined ||
+    tenant.contactEmail !== undefined;
+
+  if (week.length === 0 && !hasPlace) {
+    return (
+      <div className="spa-card spa-card--empty">
+        <p className="spa-empty-state__title">Informations non communiquées</p>
+        <p className="spa-empty-state__description">
+          {bookable
+            ? 'Ce salon n’a pas encore publié ses coordonnées, son adresse ni ses horaires. La réservation en ligne reste ouverte.'
+            : 'Ce salon n’a pas encore publié ses coordonnées, son adresse ni ses horaires.'}
+        </p>
+      </div>
+    );
+  }
 
   return (
-    <section className="spa-salon__section" aria-labelledby={INFO_HEADING_ID}>
-      <h2 className="spa-salon__section-title" id={INFO_HEADING_ID}>
-        Informations pratiques
-      </h2>
+    <>
+      {week.length === 0 ? null : (
+        <section className="spa-salon-card" aria-labelledby={HOURS_HEADING_ID}>
+          <h2 className="spa-salon-card__title" id={HOURS_HEADING_ID}>
+            <Icon name="clock" />
+            Horaires
+          </h2>
 
-      {hasInfo ? (
-        <dl className="spa-salon__info">
-          {tenant.address === undefined ? null : (
-            <div className="spa-salon__info-row">
-              <dt className="spa-salon__info-term">Adresse</dt>
-              <dd className="spa-salon__info-value">
-                <address className="spa-salon__address">
-                  {/* Clé positionnelle, et non le texte de la ligne : deux
-                      lignes d'une même adresse peuvent coïncider — un
-                      complément qui reprend la voie —, et React n'admet pas
-                      deux clés identiques entre frères. La liste est de longueur
-                      fixe et sans réordonnancement, l'index y est stable. */}
-                  {addressLines(tenant.address).map((line, index) => (
-                    <span className="spa-salon__address-line" key={index}>
-                      {line}
-                    </span>
-                  ))}
-                </address>
-              </dd>
-            </div>
-          )}
-
-          {openingDays.length === 0 ? null : (
-            <div className="spa-salon__info-row">
-              <dt className="spa-salon__info-term">Horaires d’ouverture</dt>
-              <dd className="spa-salon__info-value">
-                <ul className="spa-salon__hours">
-                  {openingDays.map((day) => (
-                    <li className="spa-salon__hours-row" key={day.weekday}>
-                      <span className="spa-salon__hours-day">{day.label}</span>
-                      <span className="spa-salon__hours-ranges">
-                        {day.ranges.map((range) => formatOpeningRange(range)).join(', ')}
-                      </span>
-                    </li>
-                  ))}
-                </ul>
-                <span className="spa-salon__hint">
-                  Horaires donnés dans le fuseau du salon.
+          <ul className="spa-salon-hours">
+            {week.map((day) => (
+              <li
+                aria-current={day.weekday === today ? 'date' : undefined}
+                className="spa-salon-hours__row"
+                key={day.weekday}
+              >
+                <span className="spa-salon-hours__day">
+                  {day.label}
+                  {day.weekday === today ? (
+                    <span className="spa-visually-hidden"> (aujourd’hui)</span>
+                  ) : null}
                 </span>
-              </dd>
-            </div>
-          )}
+                <span className="spa-salon-hours__ranges">
+                  {day.ranges.length === 0
+                    ? 'Fermé'
+                    : day.ranges.map((range) => formatOpeningRange(range)).join(', ')}
+                </span>
+              </li>
+            ))}
+          </ul>
 
-          {tenant.contactEmail === undefined ? null : (
-            <div className="spa-salon__info-row">
-              <dt className="spa-salon__info-term">E-mail</dt>
-              <dd className="spa-salon__info-value">
-                <a href={`mailto:${tenant.contactEmail}`}>{tenant.contactEmail}</a>
-              </dd>
-            </div>
+          <p className="spa-salon-card__hint">
+            Heures données dans le fuseau du salon ({humanTimeZone(tenant.timezone)}).
+          </p>
+        </section>
+      )}
+
+      {hasPlace ? (
+        <section className="spa-salon-card" aria-labelledby={PLACE_HEADING_ID}>
+          <h2 className="spa-salon-card__title" id={PLACE_HEADING_ID}>
+            <Icon name="pin" />
+            Nous trouver
+          </h2>
+
+          {tenant.address === undefined ? null : (
+            <>
+              <address className="spa-salon-card__address">
+                {/* Clé positionnelle, et non le texte de la ligne : deux lignes
+                    d'une même adresse peuvent coïncider — un complément qui
+                    reprend la voie —, et React n'admet pas deux clés identiques
+                    entre frères. La liste est de longueur fixe et sans
+                    réordonnancement, l'index y est stable. */}
+                {addressLines(tenant.address).map((line, index) => (
+                  <span key={index}>{line}</span>
+                ))}
+              </address>
+              <a
+                className="spa-salon-card__link"
+                href={directionsUrl(tenant.name, tenant.address)}
+                rel="noopener noreferrer"
+                target="_blank"
+              >
+                <Icon name="external" />
+                Itinéraire
+                <span className="spa-visually-hidden"> (nouvel onglet)</span>
+              </a>
+            </>
           )}
 
           {tenant.contactPhone === undefined ? null : (
-            <div className="spa-salon__info-row">
-              <dt className="spa-salon__info-term">Téléphone</dt>
-              <dd className="spa-salon__info-value">
-                {/* Le texte garde l'écriture du salon ; la destination, elle,
-                    passe par `telUri` — `storedPhoneSchema` conserve espaces et
-                    parenthèses, que RFC 3966 n'admet pas (#773). */}
-                <a href={telUri(tenant.contactPhone)}>{tenant.contactPhone}</a>
-              </dd>
-            </div>
+            // Le texte garde l'écriture du salon ; la destination, elle, passe
+            // par `telUri` — `storedPhoneSchema` conserve espaces et
+            // parenthèses, que RFC 3966 n'admet pas (#773).
+            <a className="spa-salon-card__link" href={telUri(tenant.contactPhone)}>
+              <Icon name="phone" />
+              {tenant.contactPhone}
+            </a>
           )}
 
-          <div className="spa-salon__info-row">
-            <dt className="spa-salon__info-term">Fuseau horaire</dt>
-            <dd className="spa-salon__info-value">
-              {humanTimeZone(tenant.timezone)}
-              <span className="spa-salon__hint">
-                {' '}
-                — les horaires de rendez-vous sont donnés dans ce fuseau.
-              </span>
-            </dd>
-          </div>
-        </dl>
-      ) : (
-        <div className="spa-card spa-card--empty">
-          <p className="spa-empty-state__title">Informations non communiquées</p>
-          <p className="spa-empty-state__description">
-            {bookable
-              ? 'Ce salon n’a pas encore publié ses coordonnées, son adresse ni ses horaires. La réservation en ligne reste ouverte.'
-              : 'Ce salon n’a pas encore publié ses coordonnées, son adresse ni ses horaires.'}
-          </p>
-        </div>
-      )}
-    </section>
+          {tenant.contactEmail === undefined ? null : (
+            <a className="spa-salon-card__link" href={`mailto:${tenant.contactEmail}`}>
+              <Icon name="mail" />
+              {tenant.contactEmail}
+            </a>
+          )}
+        </section>
+      ) : null}
+    </>
   );
+}
+
+/**
+ * Le fuseau de l'établissement, écrit pour un humain : « Indian/Antananarivo »
+ * perd ses tirets bas.
+ */
+function humanTimeZone(timezone: string): string {
+  return timezone.replace(/_/g, ' ');
 }
