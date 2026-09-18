@@ -386,6 +386,41 @@ describe('la progression est portée par l’adresse (#733)', () => {
     expect(await screen.findByLabelText(/Prénom/)).toHaveProperty('value', 'Camille');
   });
 
+  /**
+   * L'entrée qu'on quitte décrit l'étape telle qu'on l'a **laissée** (#947).
+   *
+   * Elle avait été écrite en y arrivant, avant que le choix qu'on y fait
+   * n'existe : l'entrée de l'étape « Créneau » ne portait donc pas le créneau,
+   * qui n'est retenu qu'au clic qui la quitte. Le geste retour rendait une étape
+   * amnésique, et la barre de résumé perdait sa date — l'inverse de ce que
+   * `BM-TUNNEL-08` décrit : « la cliente retrouve la même étape avec les mêmes
+   * choix ».
+   */
+  it('rend l’étape « Créneau » avec le créneau qu’on y avait retenu', async () => {
+    const user = renderTunnel();
+
+    await choisirLaPrestation(user);
+    await user.click(screen.getByRole('button', { name: 'Choisir un créneau' }));
+    await user.click(await screen.findByRole('button', { name: '09 h 00' }));
+
+    await waitFor(() => {
+      expect(query().get('etape')).toBe('coordonnees');
+    });
+
+    await retourNavigateur();
+
+    expect(await screen.findByRole('button', { name: '09 h 00' })).toBeDefined();
+    expect(query().get('etape')).toBe('creneau');
+    expect(query().get('creneau')).toBe(MATIN);
+
+    // Ce que la cliente voit du choix retrouvé : la barre de résumé le redit,
+    // là où elle n'affichait plus que la prestation et son prix.
+    const barre = screen.getByRole('complementary', { name: 'Votre réservation' });
+
+    expect(barre.textContent).toContain('1 septembre 2026');
+    expect(barre.textContent).toContain('09:00');
+  });
+
   it('n’empile pas une entrée par praticien essayé', async () => {
     const user = renderTunnel();
 
