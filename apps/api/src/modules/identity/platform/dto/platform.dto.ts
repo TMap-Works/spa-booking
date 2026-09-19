@@ -1,6 +1,7 @@
 import { ApiProperty, ApiPropertyOptional, PickType } from '@nestjs/swagger';
 import {
   DNS_LABEL_PATTERN,
+  LOCALES,
   PLATFORM_NOTE_MAX_LENGTH,
   PLATFORM_STATUS_REASON_MAX_LENGTH,
   PLATFORM_STATUS_REASON_MIN_LENGTH,
@@ -15,6 +16,7 @@ import {
   type PlatformTenantEvent,
   type PlatformTenantOrigin,
   type PlatformTenantState,
+  type Locale,
   type TenantBillingStatus,
   isValidTimeZone,
 } from '@spa/shared';
@@ -283,6 +285,35 @@ export class CreateTenantDto {
   @IsString()
   @Matches(/^[A-Z]{3}$/, { message: 'defaultCurrency : code devise ISO 4217 attendu (« EUR »)' })
   public defaultCurrency!: string;
+
+  /**
+   * La langue dans laquelle le salon s'ouvre — **facultative**, `en` sinon
+   * (#844, troisième critère d'acceptation).
+   *
+   * Facultative parce que c'est un défaut du système et non une question à
+   * poser : la clientèle du produit est nord-américaine (décision du PO du
+   * 2026-09-19), et l'ouverture d'un salon est l'écran qu'on veut le plus court.
+   * Le salon qui parle français le dit ici, ou le changera dans ses réglages.
+   *
+   * Le défaut est posé par le **service** (`PlatformService.provisionTenant`),
+   * pas ici : un `?? 'en'` dans le contrôleur en aurait fait un second avis, à
+   * côté de celui de l'inscription libre-service.
+   */
+  @ApiPropertyOptional({
+    enum: LOCALES,
+    example: 'en',
+    description:
+      'Langue par défaut du salon. Facultative — `en` par défaut. La casse est ' +
+      'normalisée ; toute valeur hors `fr`/`en` est refusée en 400.',
+  })
+  @IsOptional()
+  @Transform(({ value }: { value: unknown }) =>
+    typeof value === 'string' ? value.trim().toLowerCase() : value,
+  )
+  @IsIn(LOCALES as readonly string[], {
+    message: `defaultLocale : langue attendue parmi ${LOCALES.join(', ')}`,
+  })
+  public defaultLocale?: Locale;
 
   @ApiProperty({ example: 'FR', description: 'Pays en ISO 3166-1 alpha-2, en majuscules.' })
   @Transform(({ value }: { value: unknown }) =>

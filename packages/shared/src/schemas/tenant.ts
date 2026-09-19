@@ -22,6 +22,7 @@ import {
 } from '../common/identifiers';
 import { currencyCodeSchema } from '../common/money';
 import { localTimeSchema, timeZoneSchema } from '../common/time';
+import { localeSchema, submittedLocaleSchema } from '../locale/index';
 import {
   ADDRESS_LINE_MAX_LENGTH,
   CITY_MAX_LENGTH,
@@ -212,6 +213,20 @@ export const publicTenantSchema = z.object({
   name: displayNameSchema,
   timezone: timeZoneSchema,
   defaultCurrency: currencyCodeSchema,
+  /**
+   * La langue dans laquelle le salon s'annonce — #844.
+   *
+   * **Toujours présente**, comme `timezone` et `defaultCurrency` et pour la même
+   * raison : la colonne est `NOT NULL` avec un défaut (`en`), il n'existe donc
+   * aucun établissement qui n'en ait pas. La déclarer facultative aurait obligé
+   * chaque écran du parcours public à réinventer le repli de son côté — c'est
+   * l'arbitrage déjà rendu pour `receiptPrefix` et `taxRateBps`.
+   *
+   * Elle est sur la **vitrine**, non sur la seule vue back-office : c'est la
+   * page publique qui en a le plus besoin, puisqu'elle s'affiche avant toute
+   * authentification et qu'aucun compte ne peut alors dire sa préférence.
+   */
+  defaultLocale: localeSchema,
   contactEmail: emailSchema.optional(),
   contactPhone: storedPhoneSchema.optional(),
   address: postalAddressSchema.optional(),
@@ -393,6 +408,23 @@ export const updateTenantRequestSchema = z
     name: displayNameSchema,
     timezone: timeZoneSchema,
     defaultCurrency: currencyCodeSchema,
+    /**
+     * La langue par défaut du salon — #844, réservée au rôle `ADMIN` comme tout
+     * le reste de cette charge utile.
+     *
+     * **Pas `.nullable()`**, à la différence des contacts : la colonne est
+     * `NOT NULL`, et « efface la langue » ne veut rien dire — une vitrine doit
+     * toujours savoir en quelle langue s'ouvrir. Pour revenir au défaut du
+     * système, on repose `en`.
+     *
+     * `submittedLocaleSchema` et non `localeSchema` : une étiquette de langue se
+     * recopie d'un en-tête ou d'un sélecteur de navigateur, où la casse n'est pas
+     * normalisée, et `« FR »` désigne la même langue que `« fr »`. Même
+     * arbitrage que le code pays d'une adresse et que `submittedLegalIdTypeSchema`.
+     * Une valeur hors vocabulaire, elle, est refusée — 400, code
+     * `VALIDATION_ERROR`, champ nommé.
+     */
+    defaultLocale: submittedLocaleSchema,
     contactEmail: emailSchema.nullable(),
     contactPhone: phoneSchema.nullable(),
     /**

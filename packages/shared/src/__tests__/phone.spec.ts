@@ -319,6 +319,8 @@ const STORED_SURFACES = [
         firstName: 'Camille',
         lastName: 'Rakoto',
         phone,
+        // Toujours émise depuis #844, `null` quand aucune préférence.
+        locale: null,
       }),
   },
   {

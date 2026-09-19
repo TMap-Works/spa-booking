@@ -53,6 +53,7 @@ const CONTACT: ClientContact = {
   lastName: 'Rakoto',
   email: 'camille@example.test',
   phone: '+261 34 12 345 67',
+  locale: null,
 };
 
 /** L'établissement courant, pour les deux battants de la porte. */
@@ -64,6 +65,8 @@ interface UserRow {
   role: string;
   /** `anonymized_at IS NOT NULL`, tel que le `SELECT` le réduit (#81). */
   anonymized?: boolean;
+  /** La préférence de langue déjà enregistrée, `null` quand il n'y en a pas (#844). */
+  locale?: string | null;
 }
 
 interface Scope {
@@ -74,6 +77,8 @@ interface Scope {
   values(): unknown[];
   /** Les charges utiles de création, dans l'ordre. */
   writes(): Record<string, unknown>[];
+  /** Les mises à jour émises — la seule est celle de la langue (#844). */
+  updates(): { sql: string; values: unknown[] }[];
 }
 
 /**
@@ -92,11 +97,21 @@ function scopeWith(options: { found?: UserRow | null; onCreate?: Error } = {}): 
   const sql: string[] = [];
   const values: unknown[] = [];
   const writes: Record<string, unknown>[] = [];
+  const updates: { sql: string; values: unknown[] }[] = [];
 
   const queryRaw = jest.fn(async (strings: TemplateStringsArray, ...bound: unknown[]) => {
     sql.push(strings.join('?'));
     values.push(...bound);
     return options.found === undefined || options.found === null ? [] : [options.found];
+  });
+
+  // La seule écriture que la résolution fasse sur une fiche **existante** : la
+  // langue posée sur un trou (#844). Elle passe par `$executeRaw` et non par le
+  // client typé, comme sa lecture jumelle — le gabarit se recolle donc de la
+  // même façon.
+  const executeRaw = jest.fn(async (strings: TemplateStringsArray, ...bound: unknown[]) => {
+    updates.push({ sql: strings.join('?'), values: bound });
+    return 1;
   });
 
   const user = {
@@ -110,10 +125,11 @@ function scopeWith(options: { found?: UserRow | null; onCreate?: Error } = {}): 
   };
 
   return {
-    scope: { $queryRaw: queryRaw, user } as unknown as ClientDirectoryScope,
+    scope: { $queryRaw: queryRaw, $executeRaw: executeRaw, user } as unknown as ClientDirectoryScope,
     sql: () => sql,
     values: () => values,
     writes: () => writes,
+    updates: () => updates,
   };
 }
 
@@ -140,13 +156,103 @@ describe('ClientDirectoryService.resolveWithin', () => {
   }
 
   it('rend la fiche cliente existante, sans rien écrire', async () => {
-    const target = scopeWith({ found: { id: 'fiche-connue', role: 'CLIENT' } });
+    const target = scopeWith({ found: { id: 'fiche-connue', role: 'CLIENT', locale: null } });
 
     await expect(resolveWithin(target)).resolves.toBe('fiche-connue');
 
     // Aucune mise à jour : un appel public ne réécrit ni le nom ni le numéro
     // d'une cliente déjà fichée.
     expect(target.writes()).toEqual([]);
+    // Et pas davantage la langue : la demande n'en portait pas (`CONTACT.locale`
+    // vaut `null`), il n'y a donc rien à combler.
+    expect(target.updates()).toEqual([]);
+  });
+
+  describe('la langue comble un trou, et n’écrase jamais — #844', () => {
+    const enAnglais: ClientContact = { ...CONTACT, locale: 'en' };
+
+    it('pose la langue sur une fiche qui n’en a pas', async () => {
+      // Le huitième critère d'acceptation. `locale` nulle se lit « aucune
+      // préférence enregistrée » ; la visiteuse vient d'en exprimer une en
+      // réservant depuis une page anglaise. La poser ne remplace rien.
+      const target = scopeWith({ found: { id: 'fiche-connue', role: 'CLIENT', locale: null } });
+
+      await expect(resolveWithin(target, enAnglais)).resolves.toBe('fiche-connue');
+
+      expect(target.updates()).toHaveLength(1);
+      expect(target.updates()[0]?.sql).toMatch(/UPDATE "users"/);
+      expect(target.updates()[0]?.values).toContain('en');
+      // Rien d'autre que la langue : ni le nom, ni le numéro.
+      expect(target.updates()[0]?.sql).not.toMatch(/"first_name"|"last_name"|"phone"/);
+    });
+
+    it('verrouille la ligne en exclusif dès qu’une langue est portée — jamais d’élévation', async () => {
+      // Le verrou consultatif d'agenda est keyé `(tenant_id, staff_id)` : deux
+      // réservations de la **même** adresse chez deux praticiennes différentes ne
+      // sont pas sérialisées. Si la lecture prenait `FOR SHARE` — partagé, donc
+      // accordé aux deux — puis que chacune demandait l'exclusif pour écrire la
+      // langue, PostgreSQL en abattrait une en `40P01` et le tunnel rendrait 500.
+      //
+      // La parade n'est pas dans le `WHERE … IS NULL` de la mise à jour, qui ne
+      // protège que de la perte d'écriture : c'est de prendre d'emblée le verrou
+      // le plus fort que cette transaction puisse avoir besoin.
+      const target = scopeWith({ found: { id: 'fiche-connue', role: 'CLIENT', locale: null } });
+
+      await resolveWithin(target, enAnglais);
+
+      expect(target.sql()[0]).toMatch(/FOR UPDATE/);
+      expect(target.sql()[0]).not.toMatch(/FOR SHARE/);
+    });
+
+    it('garde le verrou partagé quand l’appel n’a aucune langue à écrire', async () => {
+      // Le cas dominant, et le comportement d'avant #844 : la lecture ne fait
+      // que juger. Élever tout le monde en exclusif ferait s'attendre des
+      // réservations qui n'ont rien à se disputer.
+      const target = scopeWith({ found: { id: 'fiche-connue', role: 'CLIENT', locale: null } });
+
+      await resolveWithin(target);
+
+      expect(target.sql()[0]).toMatch(/FOR SHARE/);
+      expect(target.updates()).toEqual([]);
+    });
+
+    it('n’écrase pas une préférence déjà enregistrée', async () => {
+      // L'autre sens, et c'est l'abus qu'on ferme : sans cette garde, un appel
+      // public suffirait à basculer la langue des notifications de n'importe
+      // quelle cliente dont on connaît l'adresse.
+      const target = scopeWith({ found: { id: 'fiche-connue', role: 'CLIENT', locale: 'fr' } });
+
+      await expect(resolveWithin(target, enAnglais)).resolves.toBe('fiche-connue');
+
+      expect(target.updates()).toEqual([]);
+    });
+
+    it('borne la mise à jour au tenant courant et à une langue encore nulle', async () => {
+      // Deux prédicats, deux risques distincts. `tenant_id` : le SQL brut ne
+      // repasse pas par l'extension de scoping (ADR 0006), le filtre doit donc
+      // être écrit. `locale IS NULL` : deux réservations concurrentes sur la même
+      // adresse ne peuvent pas se voler la préférence — la seconde ne trouve plus
+      // de ligne à mettre à jour.
+      const target = scopeWith({ found: { id: 'fiche-connue', role: 'CLIENT', locale: null } });
+
+      await resolveWithin(target, enAnglais);
+
+      const update = target.updates()[0];
+      expect(update?.sql).toMatch(/"tenant_id"\s*=/);
+      expect(update?.sql).toMatch(/"locale"\s+IS\s+NULL/i);
+      expect(update?.values).toContain(TENANT_ID);
+    });
+
+    it('écrit la langue sur la fiche qu’elle crée', async () => {
+      // Sur une fiche qui naît, il n'y a rien à protéger : aucune préférence ne
+      // peut être écrasée.
+      const target = scopeWith();
+
+      await expect(resolveWithin(target, enAnglais)).resolves.toBe('fiche-creee');
+
+      expect(target.writes()[0]).toMatchObject({ locale: 'en' });
+      expect(target.updates()).toEqual([]);
+    });
   });
 
   it('cherche sur la seule adresse, sans filtre de rôle', async () => {
@@ -223,6 +329,9 @@ describe('ClientDirectoryService.resolveWithin', () => {
     expect(target.writes()[0]).toEqual({
       email: 'camille@example.test',
       role: 'CLIENT',
+      // `null` : la demande ne portait pas de langue (#844). La colonne est
+      // nullable exactement pour cela — « aucune préférence enregistrée ».
+      locale: null,
       // La colonne est nullable exactement pour cela : la fiche existe pour être
       // jointe à un rendez-vous, pas pour ouvrir une session.
       passwordHash: null,

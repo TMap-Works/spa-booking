@@ -22,6 +22,10 @@ const tenant: Tenant = {
   name: 'Spa Lumière',
   timezone: 'Indian/Antananarivo',
   defaultCurrency: 'MGA',
+  // Toujours présente depuis #844, pour la même raison que les deux champs
+  // ci-dessous : la colonne est `NOT NULL` avec un défaut. Le sélecteur de
+  // langue du formulaire vient avec son propre ticket de l'épique #843.
+  defaultLocale: 'en',
   isActive: true,
   // Toujours présents depuis #913 : leurs colonnes sont `NOT NULL` avec un
   // défaut, si bien qu'aucun établissement n'en est dépourvu. Le formulaire ne

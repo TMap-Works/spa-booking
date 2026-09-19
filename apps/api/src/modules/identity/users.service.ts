@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import type { Locale } from '@spa/shared';
 
 import { BusinessRuleError, NotFoundError } from '../../common/errors';
 import { normalizeEmail } from './email';
@@ -122,6 +123,11 @@ export class UsersService {
       firstName: input.firstName.trim(),
       lastName: input.lastName.trim(),
       phone,
+      // `null` pour la même raison, et elle est plus littérale encore (#844) :
+      // l'administrateur qui invite ne connaît pas la langue de la personne
+      // qu'il invite. La deviner depuis la sienne poserait une préférence que
+      // l'autre n'a pas donnée — et `null` se lit précisément « aucune ».
+      locale: null,
       // `null`, et ce n'est pas un oubli : personne n'a coché de case ici. Le
       // compte est créé **par l'établissement** pour un membre de son personnel,
       // et la base légale d'un compte professionnel n'est pas le consentement de
@@ -309,7 +315,12 @@ export class UsersService {
    */
   public async updateStaffContactDetails(input: {
     userId: string;
-    changes: { firstName?: string; lastName?: string; phone?: string | null };
+    changes: {
+      firstName?: string;
+      lastName?: string;
+      phone?: string | null;
+      locale?: Locale | null;
+    };
   }): Promise<UserProfile> {
     const current = await this.repository.findStaffAccountById(input.userId);
     if (current === null) {
@@ -452,7 +463,12 @@ export class UsersService {
    */
   public async updateOwnContactDetails(input: {
     userId: string;
-    changes: { firstName?: string; lastName?: string; phone?: string | null };
+    changes: {
+      firstName?: string;
+      lastName?: string;
+      phone?: string | null;
+      locale?: Locale | null;
+    };
   }): Promise<UserProfile> {
     const current = await this.repository.findUserById(input.userId);
     if (current === null) {
@@ -496,7 +512,13 @@ export class UsersService {
     firstName?: string;
     lastName?: string;
     phone?: string | null;
-  }): Promise<{ firstName?: string; lastName?: string; phone?: string | null }> {
+    locale?: Locale | null;
+  }): Promise<{
+    firstName?: string;
+    lastName?: string;
+    phone?: string | null;
+    locale?: Locale | null;
+  }> {
     if (changes.phone === undefined) {
       return changes;
     }

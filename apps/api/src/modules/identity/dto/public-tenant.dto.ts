@@ -1,5 +1,11 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { openingHoursEntrySchema, postalAddressSchema, publicTenantSchema } from '@spa/shared';
+import {
+  LOCALES,
+  type Locale,
+  openingHoursEntrySchema,
+  postalAddressSchema,
+  publicTenantSchema,
+} from '@spa/shared';
 import type { z } from 'zod';
 
 /**
@@ -152,6 +158,24 @@ export class PublicTenantDto {
 
   @ApiProperty({ example: 'EUR', description: 'Devise par défaut, ISO 4217.' })
   public defaultCurrency!: string;
+
+  /**
+   * La langue dans laquelle le salon s'annonce — #844, épique #843.
+   *
+   * **Toujours présente**, comme le fuseau et la devise : la colonne est
+   * `NOT NULL` avec un défaut, il n'existe donc pas d'établissement qui n'en ait
+   * pas. C'est sur la vitrine — et non sur la seule vue back-office — qu'elle a
+   * le plus de valeur : la page de réservation s'affiche avant toute
+   * authentification, et aucun compte ne peut alors dire sa préférence.
+   */
+  @ApiProperty({
+    enum: LOCALES,
+    example: 'en',
+    description:
+      'Langue par défaut de l’établissement. `en` pour tout salon qui n’a rien ' +
+      'choisi — la langue par défaut du système.',
+  })
+  public defaultLocale!: Locale;
 
   /**
    * Contacts **omis** plutôt que rendus à `null` quand l'établissement n'en a

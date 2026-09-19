@@ -2,7 +2,7 @@
 // de l'historique d'une cliente y portent les mêmes deux mots, dans la même
 // casse — c'est le seul vocabulaire de ce module qui échappe à la divergence de
 // casse de l'énumération PostgreSQL, parce qu'aucune colonne ne le stocke.
-import type { AppointmentScope } from '@spa/shared';
+import type { AppointmentScope, Locale } from '@spa/shared';
 
 import type { UserRole } from '../identity/roles';
 import type { AppointmentCancelledBy, AppointmentStatus } from './appointment-status';
@@ -266,6 +266,15 @@ export interface GuestContact {
   /** Canonisée — élaguée, en minuscules — avant d'atteindre ce type. */
   readonly email: string;
   readonly phone: string | null;
+  /**
+   * La langue du tunnel, ou `null` quand l'appelant n'en a pas donné (#844).
+   *
+   * Elle n'est pas une coordonnée de plus : elle ne sert qu'à **combler**
+   * l'absence de préférence sur la fiche que cette réservation joint, et le
+   * module `crm` est seul à décider de l'écrire (`resolveClientWithin`). Une
+   * fiche qui a déjà une préférence la garde.
+   */
+  readonly locale: Locale | null;
 }
 
 /**

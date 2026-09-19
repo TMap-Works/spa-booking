@@ -57,6 +57,9 @@ export class SignupController {
       name: body.name,
       timezone: body.timezone,
       defaultCurrency: body.defaultCurrency,
+      // Facultative dans le corps : le salon qui ne se prononce pas s'ouvre en
+      // anglais (#844).
+      defaultLocale: body.defaultLocale,
       countryCode: body.countryCode,
       addressLine1: body.addressLine1,
       addressLine2: body.addressLine2 ?? null,

@@ -1,5 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
+import type { Locale } from '@spa/shared';
+
 import { ConflictError, InvalidStateTransitionError, NotFoundError } from '../../../common/errors';
 import type { StructuredLogger } from '../../../common/logging/structured-logger';
 import { getTenantId } from '../../../common/tenant';
@@ -177,6 +179,14 @@ interface StoredClient {
    * l'ignorerait ferait passer pour vert exactement le cas que #313 tranche.
    */
   role: UserRole;
+  /**
+   * La préférence de langue de la fiche — `null` pour « aucune » (#844).
+   *
+   * Portée par le stock parce que la résolution la **juge** : la langue du
+   * tunnel comble un trou et n'écrase jamais une préférence déjà posée. Un
+   * double qui l'ignorerait ferait passer pour vert le seul cas qui compte.
+   */
+  locale: Locale | null;
 }
 
 /**
@@ -240,6 +250,8 @@ export class FakeAppointmentsRepository {
     lastName?: string;
     phone?: string | null;
     role?: UserRole;
+    /** `null` par défaut — « aucune préférence enregistrée » (#844). */
+    locale?: Locale | null;
   }): StoredClient {
     const client: StoredClient = {
       tenantId: input.tenantId,
@@ -249,6 +261,7 @@ export class FakeAppointmentsRepository {
       lastName: input.lastName ?? 'Fidèle',
       phone: input.phone ?? null,
       role: input.role ?? 'CLIENT',
+      locale: input.locale ?? null,
     };
     this.clients.push(client);
     return client;
@@ -894,6 +907,13 @@ export class FakeAppointmentsRepository {
       if (existing.role !== 'CLIENT') {
         throw new ClientEmailNotBookableError();
       }
+      // La seule écriture que la résolution fasse sur une fiche existante, et
+      // elle ne comble qu'un **trou** (#844). Le `WHERE "locale" IS NULL` du
+      // vrai SQL se lit ici comme cette condition : une préférence déjà posée
+      // n'est jamais remplacée par un appel public.
+      if (existing.locale === null && contact.locale !== null) {
+        existing.locale = contact.locale;
+      }
       return { id: existing.id, created: false };
     }
 
@@ -905,6 +925,9 @@ export class FakeAppointmentsRepository {
       lastName: contact.lastName,
       phone: contact.phone,
       role: 'CLIENT',
+      // Sur une fiche qui naît, rien à protéger : aucune préférence ne peut
+      // être écrasée.
+      locale: contact.locale,
     };
     this.clients.push(created);
     return { id: created.id, created: true };

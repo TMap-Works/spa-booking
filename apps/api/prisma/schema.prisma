@@ -331,6 +331,35 @@ model Tenant {
   /// non.
   defaultCurrency String @map("default_currency") @db.Char(3)
 
+  /// Langue par défaut de l'établissement — `fr` ou `en` (#844, épique #843).
+  ///
+  /// `NOT NULL` avec défaut `en`, et les deux moitiés de cette phrase sont des
+  /// décisions distinctes.
+  ///
+  /// **Non nulle**, parce qu'une vitrine doit savoir en quelle langue s'ouvrir
+  /// avant que quiconque se soit prononcé, et qu'une notification doit savoir en
+  /// quelle langue partir. Un `NULL` aurait obligé chaque lecteur — page
+  /// publique, back-office, producteur de notification — à inventer son propre
+  /// repli, c'est-à-dire à en inventer trois.
+  ///
+  /// **`en` et non `fr`**, décision du PO du 2026-09-19 : la clientèle du
+  /// produit est nord-américaine, et l'anglais est la langue par défaut du
+  /// système. Les établissements déjà en base la reçoivent aussi — le `DEFAULT`
+  /// de l'`ADD COLUMN` les remplit, ce qui rend la migration purement additive.
+  /// Le français reste une option que l'établissement choisit, jamais un défaut
+  /// qu'il subit.
+  ///
+  /// Une chaîne bornée par `tenants_default_locale_check` plutôt qu'un type
+  /// énuméré PostgreSQL, à la différence de `UserRole` ou de
+  /// `TenantBillingStatus` : le contrat partagé nomme ces langues `fr` et `en`
+  /// en **minuscules** (`LOCALES`, `packages/shared/src/locale/locale.ts`), là
+  /// où Prisma génère les valeurs d'énumération en majuscules. La casse
+  /// divergente des rôles coûte au module une conversion de frontière
+  /// (`receivedUserRoleSchema`, #510) qu'il n'y a aucune raison de refaire ici —
+  /// la colonne porte donc exactement la valeur du contrat, et la contrainte dit
+  /// lesquelles.
+  defaultLocale String @default("en") @map("default_locale") @db.VarChar(5)
+
   contactEmail String? @map("contact_email") @db.VarChar(320)
   contactPhone String? @map("contact_phone") @db.VarChar(32)
 
@@ -551,6 +580,30 @@ model User {
   firstName String  @map("first_name") @db.VarChar(80)
   lastName  String  @map("last_name") @db.VarChar(80)
   phone     String? @db.VarChar(32)
+
+  /// Langue préférée de la personne — `fr`, `en`, ou **rien** (#844).
+  ///
+  /// Nullable, et c'est le sens du champ : `NULL` se lit « aucune préférence
+  /// enregistrée », jamais « français » ni « anglais ». Un lecteur qui ne trouve
+  /// rien ici retombe sur `tenants.default_locale`, qui est toujours renseignée.
+  ///
+  /// Le distinguo importe pour la règle du huitième critère d'acceptation : la
+  /// langue de l'interface est **posée** sur un compte qui n'en a pas encore —
+  /// à l'inscription, à la réservation —, et une préférence déjà exprimée n'est
+  /// jamais écrasée. Un `NOT NULL DEFAULT 'en'` aurait rendu cette règle
+  /// inexprimable : tout compte aurait porté une préférence que personne n'a
+  /// donnée, et le premier passage de quelqu'un sur une page anglaise aurait
+  /// paru la confirmer.
+  ///
+  /// Portée par `users` et non par une table de préférences : une fiche cliente
+  /// **est** une ligne `users`, et la question — « dans quelle langue écrire à
+  /// cette personne ? » — se pose exactement là où son adresse est écrite. C'est
+  /// le raisonnement qui a déjà porté `internal_note`, `marketing_consent` et
+  /// `email_suppressed_at` ici plutôt qu'ailleurs.
+  ///
+  /// Bornée par `users_locale_check`, au même vocabulaire et pour la même raison
+  /// que `tenants.default_locale`.
+  locale String? @db.VarChar(5)
 
   isActive    Boolean   @default(true) @map("is_active")
   lastLoginAt DateTime? @map("last_login_at") @db.Timestamptz(6)

@@ -24,6 +24,7 @@ import {
 import { currencyCodeSchema, nonNegativeMoneySchema } from '../common/money';
 import { calendarDateSchema, timeZoneSchema, utcInstantSchema } from '../common/time';
 import { ADDRESS_LINE_MAX_LENGTH, CITY_MAX_LENGTH, POSTAL_CODE_MAX_LENGTH } from '../constants/limits';
+import { submittedLocaleSchema } from '../locale/index';
 import { tenantBillingStatusSchema } from './billing';
 
 /** Bornes du mot de passe d'un opérateur — `PLATFORM_PASSWORD_*` côté API. */
@@ -82,6 +83,25 @@ export const createTenantRequestSchema = z
     name: displayNameSchema,
     timezone: timeZoneSchema,
     defaultCurrency: currencyCodeSchema,
+    /**
+     * La langue dans laquelle le salon s'ouvre — **facultative**, `en` sinon
+     * (#844, troisième critère d'acceptation).
+     *
+     * Facultative parce que c'est un défaut du système et non une question à
+     * poser : la clientèle du produit est nord-américaine (décision du PO du
+     * 2026-09-19), et un formulaire d'ouverture qui exigerait de choisir sa
+     * langue ajouterait un champ obligatoire à la seule étape qu'on veut courte.
+     * Le salon qui parle français le dit ici, ou le changera dans ses réglages.
+     *
+     * Le défaut est posé **côté serveur**, jamais par ce schéma : un `.default()`
+     * ici l'aurait aussi appliqué dans le navigateur de la console, et deux
+     * endroits auraient eu un avis sur la langue d'un salon.
+     *
+     * Ce champ vaut aussi pour l'inscription libre-service (ADR 0016), qui étend
+     * ce schéma (`salonSignupRequestSchema`) : les deux portes d'ouverture d'un
+     * établissement doivent accepter la même chose.
+     */
+    defaultLocale: submittedLocaleSchema.optional(),
     countryCode: countryCodeSchema,
     addressLine1: z.string().trim().min(1, { message: 'adresse requise' }).max(ADDRESS_LINE_MAX_LENGTH),
     addressLine2: optionalText(ADDRESS_LINE_MAX_LENGTH),

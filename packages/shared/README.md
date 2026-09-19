@@ -8,6 +8,7 @@ src/
   common/     primitives transverses — montants, instants UTC, identifiants, pagination
   constants/  statuts de RDV, rôles, canaux de notification, bornes de champs
   errors/     codes d'erreur stables et enveloppe de réponse en échec
+  locale/     les deux langues du produit — `fr` et `en`, et leur seule définition
   schemas/    entités et DTO, en schémas Zod dont les types sont inférés
   index.ts    baril racine — tout ce qu'expose `@spa/shared`
 ```

@@ -266,6 +266,7 @@ export class PlatformRepository {
             name: input.name,
             timezone: input.timezone,
             defaultCurrency: input.defaultCurrency,
+            defaultLocale: input.defaultLocale,
             addressLine1: input.addressLine1,
             addressLine2: input.addressLine2,
             postalCode: input.postalCode,

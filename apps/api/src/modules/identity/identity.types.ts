@@ -1,4 +1,4 @@
-import type { TenantBillingStatus } from '@spa/shared';
+import type { Locale, TenantBillingStatus } from '@spa/shared';
 
 import type { UserRole } from './roles';
 
@@ -55,6 +55,15 @@ export interface UserProfile {
   readonly firstName: string;
   readonly lastName: string;
   readonly phone: string | null;
+  /**
+   * La langue préférée du compte, ou `null` — « aucune préférence
+   * enregistrée » (#844).
+   *
+   * `null` n'est pas un défaut déguisé : c'est `tenants.default_locale` qui
+   * tranche alors, et cette colonne-là est toujours renseignée. Les confondre
+   * ferait paraître choisie une langue que personne n'a demandée.
+   */
+  readonly locale: Locale | null;
 }
 
 /**

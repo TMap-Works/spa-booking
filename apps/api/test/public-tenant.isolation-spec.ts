@@ -147,6 +147,7 @@ describe('Isolation inter-tenant — résolution publique du tenant', () => {
         'contactEmail',
         'contactPhone',
         'defaultCurrency',
+        'defaultLocale',
         'id',
         'name',
         'slug',
@@ -165,6 +166,7 @@ describe('Isolation inter-tenant — résolution publique du tenant', () => {
 
       expect(Object.keys(response.body).sort()).toEqual([
         'defaultCurrency',
+        'defaultLocale',
         'id',
         'name',
         'slug',

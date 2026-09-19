@@ -98,6 +98,7 @@ import {
   APPOINTMENT_REFERENCE_GROUP_LENGTH,
   APPOINTMENT_REFERENCE_PREFIX,
   APPOINTMENT_REFERENCE_SUFFIX_LENGTH,
+  DEFAULT_LOCALE,
   type LegalIdType,
 } from '@spa/shared';
 import { hash } from 'bcryptjs';
@@ -937,6 +938,12 @@ async function seedTenant(prisma: PrismaClient, fixture: TenantFixture): Promise
       name: fixture.name,
       timezone: fixture.timezone,
       defaultCurrency: fixture.currency,
+      // Les deux salons de démonstration s'ouvrent en **anglais**, comme tout
+      // établissement du produit — décision du PO du 2026-09-19, #844. Posé
+      // explicitement plutôt que laissé au `DEFAULT` de la colonne : le seed est
+      // ce qu'on relit pour savoir à quoi ressemble un établissement complet, et
+      // un champ absent s'y lit « pas encore décidé ».
+      defaultLocale: DEFAULT_LOCALE,
       contactEmail: `contact@${fixture.slug}.test`,
       contactPhone: fixture.slug === 'spa-lumiere' ? '+33472000000' : '+261200000000',
       addressLine1: fixture.address.line1,
@@ -953,6 +960,9 @@ async function seedTenant(prisma: PrismaClient, fixture: TenantFixture): Promise
       name: fixture.name,
       timezone: fixture.timezone,
       defaultCurrency: fixture.currency,
+      // Reposé à chaque passage, comme le fuseau et la devise : le seed est
+      // idempotent et décrit un établissement **entier**, pas un delta.
+      defaultLocale: DEFAULT_LOCALE,
       addressLine1: fixture.address.line1,
       postalCode: fixture.address.postalCode,
       city: fixture.address.city,

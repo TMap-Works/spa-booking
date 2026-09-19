@@ -3,10 +3,12 @@ import {
   LEGAL_ID_MAX_LENGTH,
   LEGAL_ID_TYPES,
   LEGAL_NAME_MAX_LENGTH,
+  LOCALES,
   MAX_TAX_RATE_BPS,
   RECEIPT_FOOTER_MAX_LENGTH,
   RECEIPT_PREFIX_PATTERN,
   type LegalIdType,
+  type Locale,
   isValidTimeZone,
   isValidVatNumber,
   tenantSchema,
@@ -352,6 +354,43 @@ export class UpdateTenantDto {
   @IsString()
   @Matches(/^[A-Z]{3}$/, { message: 'defaultCurrency : code devise ISO 4217 attendu (« EUR »)' })
   public defaultCurrency?: string;
+
+  /**
+   * La langue par défaut de l'établissement — #844, sixième critère
+   * d'acceptation.
+   *
+   * `null` n'est **pas** accepté, à la différence des contacts : la colonne est
+   * `NOT NULL`, et « efface la langue » ne veut rien dire — une vitrine doit
+   * toujours savoir en quelle langue s'ouvrir. Pour revenir au défaut du
+   * système, on repose `en`.
+   *
+   * La casse est normalisée avant d'être jugée, comme celle du code devise
+   * au-dessus : `« EN »` et `« en »` désignent la même langue, et une étiquette
+   * BCP 47 se recopie d'un en-tête ou d'un sélecteur où rien ne la normalise.
+   * Une valeur hors vocabulaire, elle, est refusée en **400** nommant le champ —
+   * le code `VALIDATION_ERROR` du contrat partagé, jamais une violation de
+   * contrainte remontée en 500.
+   *
+   * Le seuil est celui du contrôleur : `ADMIN` en lecture comme en écriture. La
+   * langue du salon est une décision d'identité de l'établissement, au même
+   * titre que son nom, son fuseau et sa devise — que la même charge utile porte.
+   */
+  @ApiPropertyOptional({
+    enum: LOCALES,
+    example: 'en',
+    description:
+      'Langue par défaut de l’établissement. La casse est normalisée en ' +
+      'minuscules ; toute valeur hors `fr`/`en` est refusée en 400. `null` n’est ' +
+      'pas accepté — la colonne est obligatoire.',
+  })
+  @OptionalPresent()
+  @Transform(({ value }: { value: unknown }) =>
+    typeof value === 'string' ? value.trim().toLowerCase() : value,
+  )
+  @IsIn(LOCALES as readonly string[], {
+    message: `defaultLocale : langue attendue parmi ${LOCALES.join(', ')}`,
+  })
+  public defaultLocale?: Locale;
 
   /** `null` efface l'adresse e-mail publiée. */
   @ApiPropertyOptional({ type: String, nullable: true })

@@ -623,6 +623,7 @@ describe('Isolation inter-tenant — module catalog', () => {
           firstName: 'Alice',
           lastName: 'Durand',
           phone: null,
+          locale: null,
           isActive: true,
         })),
       );

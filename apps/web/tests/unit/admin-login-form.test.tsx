@@ -40,6 +40,7 @@ const account = (role: UserRole): SessionUser => ({
   firstName: 'Claire',
   lastName: 'Ravelo',
   phone: null,
+  locale: null,
 });
 
 /** Saisit des identifiants valides et soumet — le geste que toutes ces vérifications partagent. */

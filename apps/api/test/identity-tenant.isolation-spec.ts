@@ -177,6 +177,7 @@ describe('Isolation inter-tenant — module identity', () => {
       'firstName',
       'id',
       'lastName',
+      'locale',
       'permissions',
       'phone',
       'role',

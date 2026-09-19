@@ -148,10 +148,13 @@ describe('tenant', () => {
       name: 'Salon Lumière',
       timezone: 'Europe/Paris',
       defaultCurrency: 'eur',
+      defaultLocale: 'en',
     });
 
     expect(parsed.timezone).toBe('Europe/Paris');
     expect(parsed.defaultCurrency).toBe('EUR');
+    // Toujours présente depuis #844 : la colonne est `NOT NULL` avec un défaut.
+    expect(parsed.defaultLocale).toBe('en');
   });
 
   it('refuse un slug qui n’est pas un label DNS valide', () => {
@@ -160,6 +163,7 @@ describe('tenant', () => {
       name: 'Salon Lumière',
       timezone: 'Europe/Paris',
       defaultCurrency: 'EUR',
+      defaultLocale: 'en',
     };
 
     expect(publicTenantSchema.safeParse({ ...base, slug: '-salon' }).success).toBe(false);
@@ -180,6 +184,7 @@ describe('tenant', () => {
     name: 'Salon Lumière',
     timezone: 'Europe/Paris',
     defaultCurrency: 'EUR',
+    defaultLocale: 'en',
   };
 
   it('sert une vitrine sans adresse ni horaires', () => {
@@ -311,6 +316,8 @@ describe('tenant', () => {
       name: 'Salon Lumière',
       timezone: 'Europe/Paris',
       defaultCurrency: 'EUR',
+      // Même régime, et même raison, que les deux champs ci-dessous (#844).
+      defaultLocale: 'en',
       isActive: true,
     };
 
@@ -967,6 +974,7 @@ describe('espace client — #47', () => {
         firstName: 'Alice',
         lastName: 'Martin',
         phone: null,
+        locale: null,
       },
       refreshToken: 'ne-doit-pas-ressortir',
     });
@@ -982,6 +990,7 @@ describe('espace client — #47', () => {
       firstName: 'Alice',
       lastName: 'Martin',
       phone: '+261 34 12 345 67',
+      locale: null,
       passwordHash: 'argon2id$…',
       tenantId: OTHER_UUID,
       isActive: false,
@@ -1003,6 +1012,7 @@ describe('espace client — #47', () => {
       firstName: 'Léa',
       lastName: 'Rakoto',
       phone: null,
+      locale: null,
       isActive: false,
     });
 
@@ -1015,6 +1025,7 @@ describe('espace client — #47', () => {
         firstName: 'Léa',
         lastName: 'Rakoto',
         phone: null,
+        locale: null,
       }).success,
     ).toBe(false);
   });
@@ -1030,6 +1041,7 @@ describe('espace client — #47', () => {
       firstName: 'Alice',
       lastName: 'Martin',
       phone: null,
+      locale: null,
     });
 
     expect(parsed.role).toBe('client');
@@ -1041,6 +1053,7 @@ describe('espace client — #47', () => {
         firstName: 'Alice',
         lastName: 'Martin',
         phone: null,
+        locale: null,
       }).success,
     ).toBe(false);
   });

@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import type { Locale } from '@spa/shared';
 
 import type { ScopedPrismaClient } from '../../infrastructure/database/prisma-clients';
 // La **même** canonisation que `/auth/login`, que l'invitation du personnel et
@@ -53,6 +54,15 @@ export interface ClientContact {
   readonly lastName: string;
   readonly email: string;
   readonly phone: string | null;
+  /**
+   * La langue de l'interface d'où vient la demande, ou `null` — #844.
+   *
+   * Elle n'est pas une coordonnée : elle ne décrit pas la personne mais la page
+   * qu'elle avait sous les yeux. Son traitement est asymétrique, et c'est
+   * délibéré — voir `resolveWithin` : elle **comble** l'absence de préférence
+   * sur une fiche, elle n'en remplace jamais une.
+   */
+  readonly locale: Locale | null;
 }
 
 /**
@@ -125,6 +135,23 @@ export class ClientDirectoryService {
    * Le reste des coordonnées traverse **tel quel** : le prénom, le nom et le
    * numéro sont validés et élagués par la surface qui les reçoit, et cette porte
    * n'a pas de règle de saisie propre à imposer.
+   *
+   * ## La langue est le seul champ que cette porte écrit sur une fiche existante
+   *
+   * Et elle ne l'écrit que sur un **trou** (#844, huitième critère
+   * d'acceptation). Une fiche trouvée est rendue telle quelle — c'est la règle
+   * de `resolveClientWithin`, et elle protège le dossier du salon d'un appel
+   * public. `users.locale` fait exception dans un seul sens : `NULL` y signifie
+   * « aucune préférence enregistrée », et une visiteuse qui réserve depuis une
+   * page anglaise vient d'en exprimer une. La poser ne remplace donc rien ; elle
+   * répond à une question qui n'avait pas de réponse.
+   *
+   * L'autre sens reste fermé : une préférence déjà enregistrée n'est **jamais**
+   * écrasée par cette porte. Sans cela, un appel public suffirait à basculer la
+   * langue des notifications de n'importe quelle cliente dont on connaît
+   * l'adresse — le même abus que celui contre lequel le prénom et le numéro sont
+   * protégés. Changer sa langue relève de l'espace client (`PATCH /users/me`) ou
+   * du back-office.
    *
    * ## Le rôle est jugé sous verrou de ligne (#468)
    *

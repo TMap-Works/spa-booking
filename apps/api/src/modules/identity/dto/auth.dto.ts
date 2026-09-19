@@ -2,10 +2,12 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
   EMAIL_ADDRESS_MAX_LENGTH,
   NAME_MAX_LENGTH,
+  LOCALES,
   PASSWORD_MIN_LENGTH,
   PERMISSIONS,
   PHONE_MAX_LENGTH,
   SLUG_MAX_LENGTH,
+  type Locale,
   type PasswordResetRequest,
   type Permission,
   type TenantBillingStatus,
@@ -216,6 +218,26 @@ export class RegisterDto extends TenantScopedRequest {
       'est refusé par le `.strict()` du contrat.',
   })
   public dataConsent!: boolean;
+
+  /**
+   * La langue de l'interface au moment de l'inscription — #844, huitième
+   * critère d'acceptation.
+   *
+   * Facultative, et c'est ce qui la distingue de tout le reste de ce corps :
+   * elle ne décrit pas une saisie, elle constate dans quelle langue la page
+   * était affichée. Absente, le compte naît sans préférence — ce qui se lit
+   * « aucune », jamais « anglais ».
+   */
+  @ApiPropertyOptional({
+    enum: LOCALES,
+    example: 'en',
+    description:
+      'Langue de l’interface au moment de l’inscription, enregistrée sur le ' +
+      'compte créé. Facultative : absente, le compte naît sans préférence et ' +
+      'retombe sur la langue de l’établissement. La casse est normalisée ; toute ' +
+      'valeur hors `fr`/`en` est refusée en 400.',
+  })
+  public locale?: Locale;
 }
 
 /**
@@ -352,6 +374,24 @@ export class UserProfileDto implements UserProfile {
       'numéro n’est renseigné.',
   })
   public phone!: string | null;
+
+  /**
+   * La langue préférée du compte — #844.
+   *
+   * `null` se lit « aucune préférence enregistrée », jamais « anglais » : c'est
+   * alors `defaultLocale` de l'établissement qui tranche. Toujours émis, comme
+   * `phone` et pour la même raison — un front qui distingue « absent » de
+   * « vide » finit par afficher `undefined`.
+   */
+  @ApiProperty({
+    nullable: true,
+    enum: LOCALES,
+    example: 'en',
+    description:
+      'Langue préférée du compte. `null` quand la personne n’en a jamais ' +
+      'exprimé — la langue de l’établissement (`defaultLocale`) s’applique alors.',
+  })
+  public locale!: Locale | null;
 }
 
 /**

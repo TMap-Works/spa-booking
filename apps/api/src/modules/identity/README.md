@@ -138,6 +138,42 @@ Deux précisions qui expliquent la forme retenue :
   d'accès vit quinze minutes : une rétrogradation se voit ainsi au prochain rendu
   du shell plutôt qu'à la prochaine connexion.
 
+## La langue — celle du salon, celle de la personne (#844)
+
+Deux colonnes, deux natures, et c'est leur différence qui porte la règle :
+
+| Colonne | Nullable | Ce que la valeur veut dire |
+|---|---|---|
+| `tenants.default_locale` | **non**, défaut `en` | la langue dans laquelle le salon s'annonce et écrit |
+| `users.locale` | **oui** | la préférence de la personne — `NULL` = aucune |
+
+`en` par défaut est une décision du PO (2026-09-19) : la clientèle du produit est
+nord-américaine, et les établissements déjà en base ont été migrés à cette
+valeur. Le français reste une option que l'établissement choisit.
+
+`users.locale` nullable n'est pas un relâchement : c'est ce qui rend exprimable
+la règle du huitième critère d'acceptation. L'inscription
+(`POST /auth/register`) et la réservation sans compte
+(`POST /public/:slug/appointments`) **posent** la langue de l'interface sur un
+compte qui n'en a pas, et n'écrasent **jamais** celle qui s'y trouve. Un
+`NOT NULL DEFAULT 'en'` aurait fabriqué sur chaque compte une préférence que
+personne n'a donnée, et il n'y aurait plus eu de trou à combler. Côté
+réservation, la garde est en base : le `UPDATE` de
+`CrmRepository.resolveClientWithin` porte `locale IS NULL` dans son `WHERE`, si
+bien que deux réservations concurrentes ne peuvent pas se voler la préférence.
+
+Le vocabulaire — `Locale`, `localeSchema`, `DEFAULT_LOCALE` — vit dans
+`packages/shared/src/locale/` et **nulle part ailleurs**. Les colonnes sont des
+`VARCHAR(5)` bornés par `CHECK` plutôt que des types énumérés PostgreSQL : le
+contrat nomme ces langues en minuscules, et un `enum` Prisma aurait rouvert la
+conversion de casse que les rôles traînent depuis #510. Une valeur hors
+vocabulaire est refusée **à la frontière**, en 400 `VALIDATION_ERROR` nommant le
+champ ; la contrainte de base est la garantie, la validation est le message.
+
+Qui lit quoi : `GET /public/:slug` et `GET /tenant` rendent `defaultLocale`,
+`PATCH /tenant` l'écrit (rôle `ADMIN`) ; `GET /auth/me`, les trois routes de
+session et `PATCH /users/me` rendent `locale`, ce dernier l'écrit et l'efface.
+
 ## Ce qui tient le modèle en place
 
 | Suite | Ce qu'elle protège |

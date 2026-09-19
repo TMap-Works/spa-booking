@@ -5,6 +5,7 @@ import {
   type BookGuestAppointmentRequest,
   EMAIL_ADDRESS_MAX_LENGTH,
   type GuestContact as GuestContactRequest,
+  LOCALES,
   LONG_TEXT_MAX_LENGTH,
   NAME_MAX_LENGTH,
   PHONE_MAX_LENGTH,
@@ -170,6 +171,29 @@ export class GuestContactDto {
     maxLength: PHONE_MAX_LENGTH,
   })
   public phone?: string;
+
+  /**
+   * La langue dans laquelle le tunnel a été suivi — #844, huitième critère
+   * d'acceptation.
+   *
+   * Facultative, et elle ne décrit pas une saisie : personne ne la tape, le
+   * tunnel la constate. Ce qu'elle produit est borné dans un seul sens — elle
+   * **comble** l'absence de préférence sur la fiche cliente, et n'écrase jamais
+   * celle qui s'y trouve. C'est la même règle que pour le prénom, le nom et le
+   * numéro, à ceci près que ceux-là ne sont jamais écrits sur une fiche
+   * existante du tout : un appel public ne réécrit pas le dossier d'une cliente
+   * dont on connaît l'adresse.
+   */
+  @ApiPropertyOptional({
+    enum: LOCALES,
+    example: 'en',
+    description:
+      'Langue de l’interface au moment de la réservation. Enregistrée sur la ' +
+      'fiche cliente **seulement si** celle-ci n’a pas encore de préférence — ' +
+      'une préférence existante n’est jamais écrasée. La casse est normalisée ; ' +
+      'toute valeur hors `fr`/`en` est refusée en 400.',
+  })
+  public locale?: string;
 }
 
 /**
@@ -419,5 +443,9 @@ export function toGuestContact(contact: GuestContactRequest): GuestContact {
     // Le contrat distingue « absent » de « vide » ; le domaine, lui, ne connaît
     // que `null` — c'est ce que la colonne `users.phone` accepte.
     phone: contact.phone ?? null,
+    // Même conversion, et même raison, pour la langue (#844) : `null` se lit
+    // « la visiteuse n'a pas dit dans quelle langue elle lisait », ce qui laisse
+    // la fiche sans préférence.
+    locale: contact.locale ?? null,
   };
 }

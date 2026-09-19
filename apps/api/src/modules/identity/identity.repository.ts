@@ -1,6 +1,6 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
-import type { LegalIdType, TenantBillingStatus } from '@spa/shared';
+import type { LegalIdType, Locale, TenantBillingStatus } from '@spa/shared';
 
 import {
   PRISMA,
@@ -9,6 +9,7 @@ import {
   type UnscopedPrismaClient,
 } from '../../infrastructure/database/prisma-clients';
 import { EmailAlreadyRegisteredError } from './identity.errors';
+import { toAccountLocale, toTenantLocale } from './locale';
 import type {
   StaffAccountState,
   TenantBillingRecord,
@@ -39,6 +40,15 @@ export interface UserRecord {
   firstName: string;
   lastName: string;
   phone: string | null;
+  /**
+   * La préférence de langue du compte — `null` quand la personne n'en a jamais
+   * exprimé (#844).
+   *
+   * Typée `Locale | null` et non `string | null` : c'est ce que la colonne
+   * garantit (`users_locale_check`) et ce que le contrat attend. La conversion a
+   * lieu dans les projections de ce fichier, par `toAccountLocale`.
+   */
+  locale: Locale | null;
   isActive: boolean;
 }
 
@@ -63,6 +73,8 @@ export interface PublicTenantRecord {
   name: string;
   timezone: string;
   defaultCurrency: string;
+  /** La langue du salon — toujours renseignée, la colonne est `NOT NULL` (#844). */
+  defaultLocale: Locale;
   contactEmail: string | null;
   contactPhone: string | null;
   addressLine1: string | null;
@@ -125,6 +137,12 @@ export interface TenantSettingsChanges {
   name?: string;
   timezone?: string;
   defaultCurrency?: string;
+  /**
+   * La langue par défaut du salon (#844). Pas de `| null` : la colonne est
+   * `NOT NULL`, et « efface la langue » n'aurait aucun sens — une vitrine doit
+   * toujours savoir en quelle langue s'ouvrir.
+   */
+  defaultLocale?: Locale;
   contactEmail?: string | null;
   contactPhone?: string | null;
   addressLine1?: string | null;
@@ -221,6 +239,7 @@ const USER_SELECT = {
   firstName: true,
   lastName: true,
   phone: true,
+  locale: true,
   isActive: true,
 } as const;
 
@@ -245,6 +264,7 @@ const PROFILE_SELECT = {
   firstName: true,
   lastName: true,
   phone: true,
+  locale: true,
   isActive: true,
 } as const;
 
@@ -286,6 +306,10 @@ const PUBLIC_TENANT_SELECT = {
   name: true,
   timezone: true,
   defaultCurrency: true,
+  // La langue du salon (#844) : publiée comme le fuseau et la devise, et pour la
+  // même raison — la page de réservation s'affiche avant toute authentification,
+  // et rien d'autre ne peut lui dire en quelle langue s'ouvrir.
+  defaultLocale: true,
   contactEmail: true,
   contactPhone: true,
   // Adresse et horaires — #343. Publiés comme les contacts : facultatifs, omis
@@ -346,6 +370,22 @@ function withScopedTenant<T>(data: Omit<T, 'tenantId' | 'tenant'>): T {
 /** Code Prisma d'une violation de contrainte d'unicité. */
 const UNIQUE_VIOLATION = 'P2002';
 
+/**
+ * La ligne `users` telle que la base la rend, sa langue ramenée au vocabulaire
+ * du contrat (#844).
+ *
+ * Toutes les lectures de compte de ce fichier passent par ici : c'est le seul
+ * endroit où `users.locale`, un `VARCHAR(5)` pour Prisma, devient le
+ * `Locale | null` que le reste du module manipule. Écrit une fois plutôt que
+ * répété à chaque `select` — cinq conversions auraient fini par en oublier une,
+ * et la quatrième aurait été un `as` (voir `./locale`).
+ */
+function toUserRecord<T extends { locale: string | null }>(
+  row: T,
+): Omit<T, 'locale'> & { locale: Locale | null } {
+  return { ...row, locale: toAccountLocale(row.locale) };
+}
+
 /** `UserRecord` sans son empreinte — ce qui peut sortir du module. */
 export function toProfile(user: UserRecord): UserProfile {
   return {
@@ -355,6 +395,7 @@ export function toProfile(user: UserRecord): UserProfile {
     firstName: user.firstName,
     lastName: user.lastName,
     phone: user.phone,
+    locale: user.locale,
   };
 }
 
@@ -475,7 +516,11 @@ export class IdentityRepository {
    * publique est donc illisible tant que le slug n'a pas été résolu.
    */
   public async findCurrentPublicTenant(): Promise<PublicTenantRecord | null> {
-    return this.prisma.tenant.findFirst({ select: PUBLIC_TENANT_SELECT });
+    const tenant = await this.prisma.tenant.findFirst({ select: PUBLIC_TENANT_SELECT });
+
+    return tenant === null
+      ? null
+      : { ...tenant, defaultLocale: toTenantLocale(tenant.defaultLocale) };
   }
 
   /**
@@ -488,7 +533,11 @@ export class IdentityRepository {
    * décider — un champ ajouté à `TENANT_SELECT` n'atteint jamais la vitrine.
    */
   public async findCurrentTenant(): Promise<TenantRecord | null> {
-    return this.prisma.tenant.findFirst({ select: TENANT_SELECT });
+    const tenant = await this.prisma.tenant.findFirst({ select: TENANT_SELECT });
+
+    return tenant === null
+      ? null
+      : { ...tenant, defaultLocale: toTenantLocale(tenant.defaultLocale) };
   }
 
   /**
@@ -636,17 +685,21 @@ export class IdentityRepository {
    * unique, ce que `{ email, tenantId }` ne fait pas sous cette forme.
    */
   public async findUserByEmail(email: string): Promise<UserRecord | null> {
-    return this.prisma.user.findFirst({
+    const user = await this.prisma.user.findFirst({
       where: { email },
       select: USER_SELECT,
     });
+
+    return user === null ? null : toUserRecord(user);
   }
 
   public async findUserById(id: string): Promise<UserRecord | null> {
-    return this.prisma.user.findFirst({
+    const user = await this.prisma.user.findFirst({
       where: { id },
       select: USER_SELECT,
     });
+
+    return user === null ? null : toUserRecord(user);
   }
 
   /**
@@ -666,10 +719,12 @@ export class IdentityRepository {
    * choisir entre deux motifs de refus.
    */
   public async findStaffAccountById(id: string): Promise<UserRecord | null> {
-    return this.prisma.user.findFirst({
+    const user = await this.prisma.user.findFirst({
       where: { id, role: { in: [...STAFF_ROLES] } },
       select: USER_SELECT,
     });
+
+    return user === null ? null : toUserRecord(user);
   }
 
   /**
@@ -715,9 +770,21 @@ export class IdentityRepository {
      * n'en portent une (RGPD art. 7.1).
      */
     dataConsentAt: Date | null;
+    /**
+     * La langue de l'interface au moment de la création — `null` quand personne
+     * n'en a exprimé (#844).
+     *
+     * Obligatoire à l'appel comme `dataConsentAt`, et pour la même raison : les
+     * deux points de création de compte du module doivent **décider**. L'un la
+     * reçoit du corps d'inscription, l'autre — l'invitation d'un membre du
+     * personnel (#55) — passe `null` : un administrateur qui invite ne connaît
+     * pas la langue de qui va se connecter, et la deviner poserait une
+     * préférence que la personne n'a pas donnée.
+     */
+    locale: Locale | null;
   }): Promise<UserRecord> {
     try {
-      return await this.prisma.user.create({
+      const user = await this.prisma.user.create({
         data: withScopedTenant<Prisma.UserUncheckedCreateInput>({
           email: input.email,
           role: input.role,
@@ -725,6 +792,7 @@ export class IdentityRepository {
           firstName: input.firstName,
           lastName: input.lastName,
           phone: input.phone,
+          locale: input.locale,
           dataConsentAt: input.dataConsentAt,
         }),
         // `USER_SELECT` et non une projection élargie : la preuve s'écrit ici,
@@ -732,6 +800,8 @@ export class IdentityRepository {
         // surface d'`identity` n'a à la lire — voir l'en-tête de `USER_SELECT`.
         select: USER_SELECT,
       });
+
+      return toUserRecord(user);
     } catch (error: unknown) {
       if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === UNIQUE_VIOLATION) {
         throw new EmailAlreadyRegisteredError();
@@ -765,13 +835,15 @@ export class IdentityRepository {
    * l'aveugle.
    */
   public async listStaffAccounts(): Promise<StaffAccountState[]> {
-    return this.prisma.user.findMany({
+    const accounts = await this.prisma.user.findMany({
       where: { role: { in: [...STAFF_ROLES] } },
       select: PROFILE_SELECT,
       // Ordre stable : le rang d'abord, l'adresse pour départager. Sans `orderBy`,
       // PostgreSQL n'en garantit aucun et la liste change d'un appel à l'autre.
       orderBy: [{ role: 'asc' }, { email: 'asc' }],
     });
+
+    return accounts.map((account) => toUserRecord(account));
   }
 
   /**
@@ -1053,7 +1125,11 @@ export class IdentityRepository {
    */
   public async updateContactDetails(input: {
     userId: string;
-    changes: { firstName?: string; lastName?: string; phone?: string | null };
+    /**
+     * `locale` suit exactement le régime de `phone` (#844) : **absent** n'y
+     * touche pas, `null` efface la préférence, une valeur la pose.
+     */
+    changes: { firstName?: string; lastName?: string; phone?: string | null; locale?: Locale | null };
   }): Promise<boolean> {
     // Une demande vide n'est pas une erreur — c'est une modification sans effet.
     // L'écrire quand même ferait tourner `updated_at` pour rien.

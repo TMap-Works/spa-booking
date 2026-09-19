@@ -86,6 +86,7 @@ const LEA: StaffAccountState = {
   firstName: 'Léa',
   lastName: 'Praticienne',
   phone: null,
+  locale: null,
   isActive: true,
 };
 

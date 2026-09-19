@@ -129,6 +129,7 @@ export class PublicTenantService {
       name: tenant.name,
       timezone: tenant.timezone,
       defaultCurrency: tenant.defaultCurrency,
+      defaultLocale: tenant.defaultLocale,
       contactEmail: tenant.contactEmail ?? undefined,
       contactPhone: tenant.contactPhone ?? undefined,
       // Étalement conditionnel : la clé est **absente** de l'objet, et non

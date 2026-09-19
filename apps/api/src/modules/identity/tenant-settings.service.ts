@@ -105,6 +105,7 @@ export class TenantSettingsService {
       name: tenant.name,
       timezone: tenant.timezone,
       defaultCurrency: tenant.defaultCurrency,
+      defaultLocale: tenant.defaultLocale,
       contactEmail: tenant.contactEmail ?? undefined,
       contactPhone: tenant.contactPhone ?? undefined,
       ...(address === undefined ? {} : { address }),
@@ -170,6 +171,9 @@ export class TenantSettingsService {
       ...(changes.defaultCurrency === undefined
         ? {}
         : { defaultCurrency: changes.defaultCurrency }),
+      // Pas de `| null` à traiter : la colonne est `NOT NULL` et le DTO refuse
+      // `null` (#844). Absent vaut « ne touche pas », comme partout ici.
+      ...(changes.defaultLocale === undefined ? {} : { defaultLocale: changes.defaultLocale }),
       ...(changes.contactEmail === undefined ? {} : { contactEmail: changes.contactEmail }),
       ...(changes.contactPhone === undefined
         ? {}

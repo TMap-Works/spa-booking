@@ -27,6 +27,7 @@ const profile: SessionUser = {
   firstName: 'Camille',
   lastName: 'Rakoto',
   phone: '+261 34 12 345 67',
+  locale: null,
 };
 
 afterEach(() => {

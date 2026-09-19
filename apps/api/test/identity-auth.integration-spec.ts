@@ -106,6 +106,73 @@ describe('Authentification — parcours HTTP', () => {
       expect(refreshCookie(response)).toBeDefined();
     });
 
+    it('enregistre la langue de l’interface sur le compte créé — #844', async () => {
+      // Le huitième critère de #844 : la langue n'est pas saisie, elle est
+      // constatée. Elle n'écrase rien par construction — le compte est créé par
+      // cet appel, il n'avait donc pas de préférence antérieure.
+      const response = await request(server())
+        .post('/api/v1/auth/register')
+        .send({
+          tenantSlug: SLUG,
+          email: 'anglophone@example.test',
+          password: PASSWORD,
+          firstName: 'Nouvelle',
+          lastName: 'Cliente',
+          dataConsent: true,
+          // La casse se normalise, comme partout où une étiquette de langue se
+          // recopie d'un en-tête ou d'un sélecteur de navigateur.
+          locale: ' EN ',
+        })
+        .expect(201);
+
+      expect(response.body.user.locale).toBe('en');
+      expect(
+        harness.repository.users.find((user) => user.email === 'anglophone@example.test')?.locale,
+      ).toBe('en');
+    });
+
+    it('crée un compte sans préférence quand la langue n’est pas donnée — #844', async () => {
+      // Un appelant sans écran — un script, un test — n'a aucune langue à
+      // déclarer. `null` se lit « aucune préférence », jamais « anglais » : c'est
+      // alors `tenant.defaultLocale` qui tranche.
+      const response = await request(server())
+        .post('/api/v1/auth/register')
+        .send({
+          tenantSlug: SLUG,
+          email: 'sans-langue@example.test',
+          password: PASSWORD,
+          firstName: 'Nouvelle',
+          lastName: 'Cliente',
+          dataConsent: true,
+        })
+        .expect(201);
+
+      expect(response.body.user.locale).toBeNull();
+    });
+
+    it('refuse en 400 une langue hors vocabulaire, sans créer le compte — #844', async () => {
+      // Le neuvième critère : `VALIDATION_ERROR` et le champ nommé, jamais une
+      // violation de `users_locale_check` remontée en 500.
+      const response = await request(server())
+        .post('/api/v1/auth/register')
+        .send({
+          tenantSlug: SLUG,
+          email: 'germanophone@example.test',
+          password: PASSWORD,
+          firstName: 'Nouvelle',
+          lastName: 'Cliente',
+          dataConsent: true,
+          locale: 'de',
+        })
+        .expect(400);
+
+      expect(response.body.code).toBe('VALIDATION_ERROR');
+      expect(JSON.stringify(response.body)).toContain('locale');
+      expect(
+        harness.repository.users.find((user) => user.email === 'germanophone@example.test'),
+      ).toBeUndefined();
+    });
+
     it('refuse un mot de passe trop court', async () => {
       const response = await request(server())
         .post('/api/v1/auth/register')
