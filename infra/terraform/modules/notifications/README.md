@@ -479,9 +479,9 @@ en déployé.
 | `tenantId` | chaîne non vide — la portée du consommateur s'ouvre dessus, et rien ne la relit (#71) |
 | `dedupeKey` | chaîne non vide |
 | `recipientUserId` | chaîne non vide |
-| `type` | `BOOKING_CONFIRMATION`, `REMINDER_24H`, `CANCELLATION` ou `PASSWORD_RESET` |
+| `type` | `BOOKING_CONFIRMATION`, `REMINDER_24H`, `CANCELLATION`, `PASSWORD_RESET` ou `APPOINTMENT_CONFIRMED` (#800) |
 | `channel` | `EMAIL` ou `SMS` |
-| `appointmentId` | **obligatoire pour les trois messages du CDC §1.4** ; absent ou nul pour `PASSWORD_RESET`, qui n'annonce aucun rendez-vous (#809). Présent mais mal formé : refusé pour tous les types |
+| `appointmentId` | **obligatoire pour les quatre messages de rendez-vous** ; absent ou nul pour `PASSWORD_RESET`, qui n'annonce aucun rendez-vous (#809). Présent mais mal formé : refusé pour tous les types |
 | `scheduledFor` | absent, nul, ou une date analysable |
 | `passwordResetToken` | **`PASSWORD_RESET` uniquement**, et alors obligatoire — sans lui l'API ne rend rien (#809). La Lambda ne le valide pas : elle le **recopie sans le lire**, et surtout sans le journaliser. C'est la seule valeur de l'enveloppe qui ne soit pas un identifiant |
 

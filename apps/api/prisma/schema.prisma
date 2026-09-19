@@ -248,11 +248,18 @@ enum NotificationChannel {
 /// par cette chaîne parce qu'il n'y a qu'une chaîne d'envoi, et que la seule
 /// autre issue serait un appel direct à SES depuis le chemin de requête HTTP,
 /// que notifications §1 interdit.
+///
+/// `APPOINTMENT_CONFIRMED` est le cinquième (#800), et il appartient, lui, au
+/// CDC §1.4 : c'est la seconde moitié de la « confirmation automatique ». Le
+/// premier message dit « enregistré, à confirmer par le salon » ; celui-ci part
+/// quand le salon a confirmé. Il est en queue parce qu'`ADD VALUE` ajoute à la
+/// fin, pas parce qu'il serait accessoire.
 enum NotificationType {
   BOOKING_CONFIRMATION
   REMINDER_24H
   CANCELLATION
   PASSWORD_RESET
+  APPOINTMENT_CONFIRMED
 }
 
 enum NotificationStatus {

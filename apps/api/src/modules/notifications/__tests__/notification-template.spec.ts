@@ -264,9 +264,22 @@ describe('modèles — le coût d’un SMS', () => {
  * messages. Un défaut à deux segments doublerait la facture SMS du produit
  * entier, sans que personne ne s'en aperçoive avant le relevé.
  */
+/**
+ * Les messages qui annoncent un rendez-vous, et qui ont donc un défaut sur les
+ * deux canaux : les trois du CDC §1.4, et « votre rendez-vous est confirmé »
+ * (#800), qui est la seconde moitié de la confirmation. `PASSWORD_RESET` n'y
+ * est pas — il n'a de défaut que sur l'e-mail (#809).
+ */
+const APPOINTMENT_MESSAGES = [
+  'BOOKING_CONFIRMATION',
+  'REMINDER_24H',
+  'CANCELLATION',
+  'APPOINTMENT_CONFIRMED',
+] as const;
+
 describe('modèles — les défauts de la plateforme', () => {
   it('tiennent en un seul segment SMS, et en GSM-7', () => {
-    for (const type of ['BOOKING_CONFIRMATION', 'REMINDER_24H', 'CANCELLATION'] as const) {
+    for (const type of APPOINTMENT_MESSAGES) {
       const source = defaultTemplateFor(type, 'SMS');
       expect(source).not.toBeNull();
 
@@ -282,7 +295,7 @@ describe('modèles — les défauts de la plateforme', () => {
   });
 
   it('n’emploient que des variables du vocabulaire', () => {
-    for (const type of ['BOOKING_CONFIRMATION', 'REMINDER_24H', 'CANCELLATION'] as const) {
+    for (const type of APPOINTMENT_MESSAGES) {
       for (const channel of ['EMAIL', 'SMS'] as const) {
         const source = defaultTemplateFor(type, channel);
         const whole = [source?.subject, source?.html, source?.text].join('\n');
@@ -301,7 +314,7 @@ describe('modèles — les défauts de la plateforme', () => {
     // Quatrième critère d'acceptation : un e-mail qui n'a que du HTML est
     // pénalisé par les filtres anti-spam, et le rappel J-1 perd son intérêt s'il
     // finit en indésirables.
-    for (const type of ['BOOKING_CONFIRMATION', 'REMINDER_24H', 'CANCELLATION'] as const) {
+    for (const type of APPOINTMENT_MESSAGES) {
       const email = defaultTemplateFor(type, 'EMAIL');
 
       expect(email?.html.length ?? 0).toBeGreaterThan(0);
@@ -310,11 +323,11 @@ describe('modèles — les défauts de la plateforme', () => {
     }
   });
 
-  it('servent les trois messages du CDC §1.4, sur les deux canaux', () => {
+  it('servent les messages de rendez-vous, sur les deux canaux', () => {
     // #72 pose le dernier. Un couple sans modèle laisserait le renderer lever
     // `UnrenderableNotificationError`, donc la ligne en `FAILED` — ce qui était
     // le sort de l'avis d'annulation jusqu'ici.
-    for (const type of ['BOOKING_CONFIRMATION', 'REMINDER_24H', 'CANCELLATION'] as const) {
+    for (const type of APPOINTMENT_MESSAGES) {
       for (const channel of ['EMAIL', 'SMS'] as const) {
         expect({ type, channel, servi: defaultTemplateFor(type, channel) !== null }).toEqual({
           type,

@@ -628,6 +628,13 @@ export class AppointmentsService {
    * Chasser tout le cache de l'établissement à chaque confirmation ferait donc
    * recalculer l'agenda entier pour une écriture qui ne change aucune réponse.
    *
+   * ## La confirmation est annoncée (#800)
+   *
+   * `PENDING → CONFIRMED` publie `appointment.confirmed`. C'est le salon qui
+   * confirme, pas le système : la cliente a reçu à la réservation « à confirmer
+   * par le salon », et c'est cet événement qui lui fait savoir que c'est fait.
+   * Les autres transitions n'annoncent rien de plus qu'avant.
+   *
    * @throws {NotFoundError} rendez-vous inconnu ou d'un autre établissement.
    * @throws {InvalidStateTransitionError} le cycle de vie n'autorise pas ce
    * passage — 422.
@@ -686,6 +693,18 @@ export class AppointmentsService {
     // le filtre en base — elle ne peut donc pas diverger de lui.
     if (occupiesSlot(previous.status) && !occupiesSlot(input.status)) {
       await this.cache.invalidateCurrentTenant();
+    }
+
+    // Après l'écriture conditionnelle, jamais avant : si elle a perdu une course,
+    // elle a levé un 409 et rien n'a été confirmé par ce geste-ci (#800).
+    // `notifications` en fait le message « votre rendez-vous est confirmé ».
+    if (input.status === 'CONFIRMED') {
+      this.events.appointmentConfirmed({
+        tenantId: requireTenantId('Appointment', 'appointment.confirmed'),
+        appointmentId: previous.id,
+        clientId: previous.clientId,
+        staffId: previous.staffId,
+      });
     }
 
     return this.agendaById(previous.id);

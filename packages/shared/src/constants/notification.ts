@@ -13,6 +13,11 @@
  * aurait été un appel direct à SES depuis le chemin de requête HTTP, que
  * notifications §1 interdit.
  *
+ * La cinquième, `appointment_confirmed` (#800), est du CDC §1.4 : c'est la
+ * seconde moitié de la « confirmation automatique ». Tout rendez-vous naît à
+ * confirmer par le salon ; `booking_confirmation` le dit à la réservation, et
+ * `appointment_confirmed` part quand le salon a confirmé.
+ *
  * L'ordre compte : les trois messages du CDC §1.4 restent en tête, et c'est
  * l'ordre de déclaration de l'énumération PostgreSQL. Insérer une valeur au
  * milieu désaccorderait les deux.
@@ -27,6 +32,7 @@ export const NOTIFICATION_TYPES = [
   'reminder_24h',
   'cancellation',
   'password_reset',
+  'appointment_confirmed',
 ] as const;
 
 export type NotificationType = (typeof NOTIFICATION_TYPES)[number];

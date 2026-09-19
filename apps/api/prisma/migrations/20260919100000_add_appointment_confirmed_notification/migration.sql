@@ -1,0 +1,29 @@
+-- # `NotificationType.APPOINTMENT_CONFIRMED` — le message « votre rendez-vous est confirmé » (#800)
+--
+-- ## Le constat qu'elle referme
+--
+-- Tout rendez-vous naît `PENDING`, et c'est le salon qui le confirme — arbitrage
+-- du PO du 19/09. Le message de la réservation (`BOOKING_CONFIRMATION`) dit donc
+-- « enregistré, à confirmer par le salon » depuis #911. Mais quand le salon
+-- confirmait, rien ne partait : la cliente ne l'apprenait qu'en rouvrant son
+-- espace. Le CDC §1.4 demande une confirmation **automatique** dans sa ligne
+-- « Notifications » : c'est ce message-là qui manquait.
+--
+-- ## Une valeur de plus plutôt que la même envoyée deux fois
+--
+-- `notifications_live_once` n'admet qu'une ligne vivante par
+-- `(tenant_id, appointment_id, type, channel)`. Un second `BOOKING_CONFIRMATION`
+-- sur le même rendez-vous y serait refusé comme un doublon — et c'est bien ce
+-- qu'il faut pour le premier, que SQS peut livrer deux fois. Deux faits
+-- distincts, deux types : l'index garde sa garantie sur chacun.
+--
+-- ## En queue
+--
+-- `ALTER TYPE … ADD VALUE` ajoute **à la fin**, après `PASSWORD_RESET`, comme
+-- l'a fait `20260918140000_add_password_reset` : l'ordre de déclaration est celui
+-- que `notifications.types.spec.ts` compare à `NOTIFICATION_TYPES`, et le
+-- déplacer demanderait de réécrire le type. La valeur est additive et ne se
+-- retire pas sans cette réécriture.
+
+-- AlterEnum
+ALTER TYPE "NotificationType" ADD VALUE 'APPOINTMENT_CONFIRMED';
