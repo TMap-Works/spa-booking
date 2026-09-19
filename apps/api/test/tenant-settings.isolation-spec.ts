@@ -103,6 +103,7 @@ describe('Réglages de l’établissement — #343', () => {
         'contactEmail',
         'contactPhone',
         'defaultCurrency',
+        'defaultLocale',
         'id',
         'isActive',
         'name',
@@ -299,11 +300,111 @@ describe('Réglages de l’établissement — #343', () => {
         'contactEmail',
         'contactPhone',
         'defaultCurrency',
+        // Présente sur la vitrine depuis #844, et **toujours** : la colonne est
+        // `NOT NULL` avec un défaut, et c'est la page publique — affichée avant
+        // toute authentification — qui en a le plus besoin.
+        'defaultLocale',
         'id',
         'name',
         'slug',
         'timezone',
       ]);
+    });
+  });
+
+  describe('la langue de l’établissement ne franchit pas la frontière — #844', () => {
+    it('s’écrit chez l’appelant et laisse le voisin au défaut du système', async () => {
+      // Le risque est celui de toute colonne de `tenants` écrite par cette
+      // route : un `updateMany` dont le scoping ne poserait pas `tenant_id`
+      // basculerait la langue de tous les salons d'un coup — y compris celle de
+      // leurs notifications.
+      await request(server())
+        .patch(CHEMIN)
+        .set('Authorization', await harness.bearer('ADMIN'))
+        .send({ defaultLocale: 'fr' })
+        .expect(200);
+
+      const chezA = await request(server())
+        .get(CHEMIN)
+        .set('Authorization', await harness.bearer('ADMIN'))
+        .expect(200);
+      const chezB = await request(server())
+        .get(CHEMIN)
+        .set('Authorization', await harness.bearer('ADMIN', harness.b))
+        .expect(200);
+
+      expect(chezA.body.defaultLocale).toBe('fr');
+      // `en` — la langue par défaut du système (décision du PO du 2026-09-19),
+      // pas celle que le voisin vient de choisir.
+      expect(chezB.body.defaultLocale).toBe('en');
+    });
+
+    it('se voit sur la vitrine de son salon, et sur elle seule', async () => {
+      await request(server())
+        .patch(CHEMIN)
+        .set('Authorization', await harness.bearer('ADMIN'))
+        .send({ defaultLocale: 'fr' })
+        .expect(200);
+
+      const vitrineA = await request(server()).get(CHEMIN_PUBLIC(harness.a.slug)).expect(200);
+      const vitrineB = await request(server()).get(CHEMIN_PUBLIC(harness.b.slug)).expect(200);
+
+      expect(vitrineA.body.defaultLocale).toBe('fr');
+      expect(vitrineB.body.defaultLocale).toBe('en');
+    });
+
+    it('normalise la casse d’une étiquette de langue', async () => {
+      // « FR » et « fr » désignent la même langue, et une étiquette BCP 47 se
+      // recopie d'un en-tête ou d'un sélecteur où rien ne la normalise. La
+      // colonne, elle, ne connaît que la minuscule
+      // (`tenants_default_locale_check`) : sans normalisation à la frontière, la
+      // saisie serait refusée par une contrainte, donc en 500.
+      const admin = await harness.bearer('ADMIN');
+
+      await request(server())
+        .patch(CHEMIN)
+        .set('Authorization', admin)
+        .send({ defaultLocale: ' FR ' })
+        .expect(200);
+
+      const apres = await request(server()).get(CHEMIN).set('Authorization', admin).expect(200);
+      expect(apres.body.defaultLocale).toBe('fr');
+    });
+
+    it('refuse en 400 une langue hors du contrat, et n’écrit rien', async () => {
+      // Le neuvième critère d'acceptation : le refus est un **400** portant le
+      // code du contrat partagé, jamais une violation de `CHECK` remontée en
+      // 500 — et il tombe avant que le reste de la charge utile ne soit écrit.
+      const admin = await harness.bearer('ADMIN');
+
+      const refus = await request(server())
+        .patch(CHEMIN)
+        .set('Authorization', admin)
+        .send({ name: 'Salon repeint', defaultLocale: 'de' })
+        .expect(400);
+
+      expect(refus.body).toMatchObject({ code: 'VALIDATION_ERROR' });
+      expect(JSON.stringify(refus.body.details)).toContain('defaultLocale');
+
+      const apres = await request(server()).get(CHEMIN).set('Authorization', admin).expect(200);
+      expect(apres.body.name).toBe(harness.a.name);
+      expect(apres.body.defaultLocale).toBe('en');
+    });
+
+    it('refuse `null` : la colonne est obligatoire', async () => {
+      await request(server())
+        .patch(CHEMIN)
+        .set('Authorization', await harness.bearer('ADMIN'))
+        .send({ defaultLocale: null })
+        .expect(400);
+    });
+
+    it('refuse au rang manager — la langue du salon est une décision d’administration', async () => {
+      await request(server())
+        .patch(CHEMIN)
+        .set('Authorization', await harness.bearer('MANAGER'))
+        .send({ defaultLocale: 'fr' })
+        .expect(403);
     });
   });
 

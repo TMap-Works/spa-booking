@@ -50,6 +50,7 @@ const RENEWED: ApiSession = {
       firstName: 'Hasina',
       lastName: 'Rakoto',
       phone: null,
+      locale: null,
     },
   },
   refreshToken: 'jeton-de-rafraichissement-neuf',

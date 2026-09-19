@@ -36,6 +36,7 @@ const opened: ApiSession = {
       firstName: 'Alice',
       lastName: 'Marchand',
       phone: null,
+      locale: null,
     },
   },
   refreshToken: 'jeton-de-rafraichissement-de-test',

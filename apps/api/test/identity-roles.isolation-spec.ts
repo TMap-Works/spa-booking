@@ -218,6 +218,7 @@ describe('Rôles, permissions et isolation — #22', () => {
         'id',
         'isActive',
         'lastName',
+        'locale',
         'phone',
         'role',
       ]);
@@ -530,6 +531,9 @@ describe('Rôles, permissions et isolation — #22', () => {
         'firstName',
         'id',
         'lastName',
+        // Depuis #844, et **toujours** émise : `null` se lit « aucune préférence
+        // enregistrée », et c'est alors la langue du salon qui s'applique.
+        'locale',
         'phone',
         'role',
       ]);
@@ -558,6 +562,79 @@ describe('Rôles, permissions et isolation — #22', () => {
       const kept = harness.identity.users.find((user) => user.id === clientA);
       expect(kept?.role).toBe('CLIENT');
       expect(kept?.email).toBe('cliente@lilas.test');
+    });
+
+    it('enregistre, normalise et efface la langue préférée — #844', async () => {
+      // Le septième critère d'acceptation, et le régime exact de `phone` : une
+      // valeur la pose, `null` l'efface, l'absence n'y touche pas. La casse est
+      // normalisée — une étiquette de langue se recopie d'un en-tête où rien ne
+      // la met en minuscules, et la colonne ne connaît que `fr` et `en`.
+      const token = await tokenFor('CLIENT');
+
+      const posee = await request(server())
+        .patch('/api/v1/users/me')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ locale: ' FR ' })
+        .expect(200);
+      expect(posee.body.locale).toBe('fr');
+      expect(harness.identity.users.find((user) => user.id === clientA)?.locale).toBe('fr');
+
+      // Le champ absent n'efface rien : c'est ce que `partial` veut dire.
+      const intacte = await request(server())
+        .patch('/api/v1/users/me')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ firstName: 'Camille' })
+        .expect(200);
+      expect(intacte.body.locale).toBe('fr');
+
+      const effacee = await request(server())
+        .patch('/api/v1/users/me')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ locale: null })
+        .expect(200);
+      expect(effacee.body.locale).toBeNull();
+      expect(harness.identity.users.find((user) => user.id === clientA)?.locale).toBeNull();
+    });
+
+    it('rejette en 400 une langue hors du contrat, sans rien écrire — #844', async () => {
+      // Le neuvième critère : le refus porte le code du contrat partagé et nomme
+      // le champ, jamais une violation de `users_locale_check` remontée en 500.
+      const token = await tokenFor('CLIENT');
+
+      const refus = await request(server())
+        .patch('/api/v1/users/me')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ firstName: 'Camille', locale: 'de' })
+        .expect(400);
+
+      expect(refus.body.code).toBe('VALIDATION_ERROR');
+      expect(JSON.stringify(refus.body.details)).toContain('locale');
+
+      const kept = harness.identity.users.find((user) => user.id === clientA);
+      expect(kept?.firstName).toBe('Alice');
+      expect(kept?.locale).toBeNull();
+    });
+
+    it('ne pose la langue que sur son propre compte, jamais sur celui du voisin — #844', async () => {
+      // Même risque que pour le prénom, et il se lit mieux sur la langue : c'est
+      // elle qui décidera de la langue des notifications (#854). Un `updateMany`
+      // sans filtre de tenant basculerait celles de tout un salon voisin.
+      const token = await tokenFor('CLIENT');
+      const avant = harness.identity.users
+        .filter((user) => user.tenantId === harness.b.id)
+        .map((user) => user.locale);
+
+      await request(server())
+        .patch('/api/v1/users/me')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ locale: 'fr' })
+        .expect(200);
+
+      expect(
+        harness.identity.users
+          .filter((user) => user.tenantId === harness.b.id)
+          .map((user) => user.locale),
+      ).toEqual(avant);
     });
 
     it('rejette en 400 un prénom réduit à des espaces', async () => {

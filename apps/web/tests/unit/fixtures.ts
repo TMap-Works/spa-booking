@@ -13,6 +13,7 @@ export const tenant: PublicTenant = {
   name: 'Maison Lotus',
   timezone: 'Indian/Antananarivo',
   defaultCurrency: 'EUR',
+  defaultLocale: 'en',
 };
 
 export const service: PublicService = {

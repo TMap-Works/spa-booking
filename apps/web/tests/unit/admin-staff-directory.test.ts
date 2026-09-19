@@ -194,6 +194,9 @@ describe('les réponses que l’API rend', () => {
         firstName: 'Hasina',
         lastName: 'Rakoto',
         phone: null,
+        // Toujours émise depuis #844, et `null` ici : l'administrateur qui
+        // invite ne connaît pas la langue de la personne invitée.
+        locale: null,
       },
       invitationToken: 'jeton-opaque',
       expiresIn: 604_800,

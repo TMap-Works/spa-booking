@@ -43,6 +43,7 @@ const LEA: StaffAccount = {
   firstName: 'Léa',
   lastName: 'Praticienne',
   phone: null,
+  locale: null,
 };
 
 const HASINA: StaffAccount = {
@@ -52,6 +53,7 @@ const HASINA: StaffAccount = {
   firstName: 'Hasina',
   lastName: 'Rakoto',
   phone: null,
+  locale: null,
 };
 
 function renderForm(accounts: readonly StaffAccount[] = [LEA, HASINA]): void {

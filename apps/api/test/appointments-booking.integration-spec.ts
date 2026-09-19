@@ -175,6 +175,78 @@ describe('POST /api/v1/public/:tenantSlug/appointments', () => {
     expect(response.body.clientId).toBe(client?.id);
   });
 
+  describe('la langue du tunnel sur la fiche cliente — #844', () => {
+    it('la pose sur la fiche qui naît, casse normalisée', async () => {
+      // Le huitième critère de #844 : la langue n'est pas saisie, le tunnel la
+      // constate. `« EN »` et `« en »` désignent la même chose — une étiquette
+      // BCP 47 se recopie d'un sélecteur de navigateur, où rien ne la normalise.
+      await request(harness.server())
+        .post(BOOKING_PATH(harness.a.tenant.slug))
+        .send(body({ client: guest({ locale: ' EN ' }) }))
+        .expect(201);
+
+      expect(harness.appointments.clients[0]?.locale).toBe('en');
+    });
+
+    it('comble une fiche existante qui n’a aucune préférence', async () => {
+      // `NULL` se lit « aucune préférence enregistrée », et la visiteuse vient
+      // d'en exprimer une en réservant. La poser ne remplace rien.
+      const fiche = harness.appointments.seedClient({
+        tenantId: harness.a.tenant.id,
+        email: 'camille@example.test',
+      });
+
+      await request(harness.server())
+        .post(BOOKING_PATH(harness.a.tenant.slug))
+        .send(body({ client: guest({ locale: 'fr' }) }))
+        .expect(201);
+
+      expect(fiche.locale).toBe('fr');
+    });
+
+    it('n’écrase jamais une préférence déjà enregistrée', async () => {
+      // Sans cette dissymétrie, un appel public suffirait à basculer la langue
+      // des notifications de n'importe quelle cliente dont on connaît l'adresse.
+      // Changer sa langue relève de `PATCH /users/me` ou du back-office.
+      const fiche = harness.appointments.seedClient({
+        tenantId: harness.a.tenant.id,
+        email: 'camille@example.test',
+        locale: 'fr',
+      });
+
+      await request(harness.server())
+        .post(BOOKING_PATH(harness.a.tenant.slug))
+        .send(body({ client: guest({ locale: 'en' }) }))
+        .expect(201);
+
+      expect(fiche.locale).toBe('fr');
+    });
+
+    it('laisse la fiche sans préférence quand le tunnel n’en donne pas', async () => {
+      // Un appelant sans écran n'a aucune langue à déclarer, et l'absence ne se
+      // lit surtout pas « efface ».
+      await request(harness.server())
+        .post(BOOKING_PATH(harness.a.tenant.slug))
+        .send(body())
+        .expect(201);
+
+      expect(harness.appointments.clients[0]?.locale).toBeNull();
+    });
+
+    it('refuse en 400 une langue hors vocabulaire, sans créer de fiche', async () => {
+      // Le neuvième critère : `VALIDATION_ERROR` et le champ nommé, jamais une
+      // violation de `users_locale_check` remontée en 500.
+      const response = await request(harness.server())
+        .post(BOOKING_PATH(harness.a.tenant.slug))
+        .send(body({ client: guest({ locale: 'de' }) }))
+        .expect(400);
+
+      expect(response.body).toMatchObject({ code: 'VALIDATION_ERROR' });
+      expect(JSON.stringify(response.body)).toContain('locale');
+      expect(harness.appointments.clients).toHaveLength(0);
+    });
+  });
+
   it('ne crée qu’une fiche pour deux réservations de la même adresse', async () => {
     const second = bookableSlot();
     // Le créneau suivant sur la grille : quinze minutes plus loin, donc sans

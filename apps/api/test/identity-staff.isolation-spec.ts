@@ -137,6 +137,7 @@ describe('Gestion du personnel — #55', () => {
         'firstName',
         'id',
         'lastName',
+        'locale',
         'phone',
         'role',
       ]);

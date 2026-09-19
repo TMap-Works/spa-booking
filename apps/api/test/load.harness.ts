@@ -443,7 +443,7 @@ export function bookingDraft(
   email: string = salon.clientEmail,
 ): AppointmentDraft {
   return {
-    client: { contact: { firstName: 'Alice', lastName: 'Martin', email, phone: null } },
+    client: { contact: { firstName: 'Alice', lastName: 'Martin', email, phone: null, locale: null } },
     staffId,
     serviceId: salon.serviceId,
     startsAt,

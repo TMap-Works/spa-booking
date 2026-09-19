@@ -284,7 +284,7 @@ export function draft(
   email = fixture.clientEmail,
 ): AppointmentDraft {
   return {
-    client: { contact: { firstName: 'Alice', lastName: 'Martin', email, phone: null } },
+    client: { contact: { firstName: 'Alice', lastName: 'Martin', email, phone: null, locale: null } },
     staffId,
     serviceId: fixture.serviceId,
     startsAt,
