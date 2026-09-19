@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { isReservedTenantSlug, tenantPublicUrl } from '@spa/shared';
+import { DEFAULT_LOCALE, type Locale, isReservedTenantSlug, tenantPublicUrl } from '@spa/shared';
 
 import { NotFoundError } from '../../../common/errors';
 import { StructuredLogger } from '../../../common/logging/structured-logger';
@@ -141,6 +141,8 @@ export class PlatformService {
     name: string;
     timezone: string;
     defaultCurrency: string;
+    /** Absente : `en`, la langue par défaut du système (#844, ADR 0012). */
+    defaultLocale?: Locale | undefined;
     countryCode: string;
     addressLine1: string;
     addressLine2: string | null;
@@ -170,6 +172,9 @@ export class PlatformService {
         name: input.name,
         timezone: input.timezone,
         defaultCurrency: input.defaultCurrency,
+        // Le défaut est posé ici, comme à l'inscription libre-service, et pour
+        // la même raison : une seule écriture de la décision du PO (#844).
+        defaultLocale: input.defaultLocale ?? DEFAULT_LOCALE,
         countryCode: input.countryCode,
         addressLine1: input.addressLine1,
         addressLine2: input.addressLine2,

@@ -131,6 +131,10 @@ export class AuthController {
       // RGPD art. 7.1), et le `.strict()` du contrat refuse déjà tout
       // `dataConsentAt` glissé dans le corps.
       dataConsent: body.dataConsent,
+      // La langue de la page d'où l'inscription part (#844). Facultative : elle
+      // n'est pas saisie, elle est constatée — un appelant sans écran n'en a
+      // aucune à donner, et le compte naît alors sans préférence.
+      locale: body.locale,
     });
 
     return this.respondWithSession(response, result);

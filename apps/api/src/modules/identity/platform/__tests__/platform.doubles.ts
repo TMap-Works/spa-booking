@@ -39,6 +39,16 @@ export class FakePlatformRepository {
   /** Les rejeux d'idempotence observés — ce que le service a demandé deux fois. */
   public lastLoginTouched: string | null = null;
 
+  /**
+   * La dernière charge d'ouverture reçue, telle que le service l'a composée.
+   *
+   * Retenue parce que `TenantSummary` ne porte pas tout ce que l'écriture pose :
+   * `defaultLocale` (#844) se décide **dans le service** — un défaut résolu là
+   * et nulle part ailleurs — et c'est cette résolution-là qu'un test doit voir,
+   * pas la projection qu'en rend la console.
+   */
+  public lastProvisionInput: ProvisionTenantInput | null = null;
+
   public addOperator(input: {
     email: string;
     passwordHash: string;
@@ -108,6 +118,7 @@ export class FakePlatformRepository {
   }
 
   public async provisionTenant(input: ProvisionTenantInput): Promise<ProvisionedTenantRecord> {
+    this.lastProvisionInput = input;
     for (const tenant of this.tenants.values()) {
       if (tenant.slug === input.slug) {
         throw new TenantSlugTakenError(input.slug);

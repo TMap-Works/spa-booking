@@ -36,6 +36,9 @@ const FICHE: TenantRecord = {
   name: 'Salon des Lilas',
   timezone: 'Europe/Paris',
   defaultCurrency: 'EUR',
+  // La langue par défaut du système (#844), celle que la migration pose sur tout
+  // établissement déjà en base.
+  defaultLocale: 'en',
   contactEmail: 'contact@salon-des-lilas.test',
   contactPhone: '+33100000000',
   addressLine1: null,
@@ -161,6 +164,7 @@ describe('TenantSettingsService', () => {
       'contactEmail',
       'contactPhone',
       'defaultCurrency',
+      'defaultLocale',
       'id',
       'isActive',
       'name',

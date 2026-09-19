@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import type { Locale } from '@spa/shared';
 
 import { BusinessRuleError, ConflictError, NotFoundError } from '../../common/errors';
 import { getTenantId, setRequestTenantId } from '../../common/tenant';
@@ -211,6 +212,14 @@ export class AuthService {
     lastName: string;
     phone?: string | undefined;
     dataConsent: boolean;
+    /**
+     * La langue de l'interface au moment de l'inscription — #844.
+     *
+     * Absente, le compte naît sans préférence (`users.locale` à `NULL`). Il n'y
+     * a rien à protéger contre l'écrasement ici : la ligne est créée par cet
+     * appel, elle n'avait donc pas de préférence antérieure.
+     */
+    locale?: Locale | undefined;
   }): Promise<AuthenticationResult> {
     if (!input.dataConsent) {
       // Une seconde barrière derrière celle du contrat, et elle n'est pas
@@ -251,6 +260,7 @@ export class AuthService {
       firstName: input.firstName.trim(),
       lastName: input.lastName.trim(),
       phone,
+      locale: input.locale ?? null,
       dataConsentAt: new Date(),
     });
 

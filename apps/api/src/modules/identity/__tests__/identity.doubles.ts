@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
-import { DEFAULT_RECEIPT_PREFIX, type TenantBillingStatus } from '@spa/shared';
+import { DEFAULT_LOCALE, DEFAULT_RECEIPT_PREFIX, type Locale, type TenantBillingStatus } from '@spa/shared';
 
 import { getTenantId } from '../../../common/tenant';
 import type { StructuredLogger } from '../../../common/logging/structured-logger';
@@ -167,6 +167,9 @@ export class FakeIdentityRepository {
       name: `Établissement ${slug}`,
       timezone: 'Europe/Paris',
       defaultCurrency: 'EUR',
+      // La langue par défaut du système (#844) : c'est ce que la colonne
+      // `NOT NULL DEFAULT 'en'` pose sur tout établissement.
+      defaultLocale: DEFAULT_LOCALE,
       contactEmail: `contact@${slug}.test`,
       contactPhone: '+33100000000',
       // Adresse et horaires **absents** par défaut (#343) : c'est l'état d'un
@@ -225,6 +228,11 @@ export class FakeIdentityRepository {
      * antérieur à la colonne, et c'est le bon défaut.
      */
     dataConsentAt?: Date | null;
+    /**
+     * La préférence de langue, `null` par défaut (#844) — « aucune préférence »,
+     * l'état de la quasi-totalité des comptes semés par les suites.
+     */
+    locale?: Locale | null;
   }): StoredUser {
     const user: StoredUser = {
       id: randomUUID(),
@@ -235,6 +243,7 @@ export class FakeIdentityRepository {
       firstName: 'Alice',
       lastName: 'Durand',
       phone: null,
+      locale: input.locale ?? null,
       isActive: input.isActive ?? true,
       dataConsentAt: input.dataConsentAt ?? null,
     };
@@ -424,6 +433,8 @@ export class FakeIdentityRepository {
     firstName: string;
     lastName: string;
     phone: string | null;
+    /** Comme le vrai (#844) : posé par l'appelant, `null` quand aucune préférence. */
+    locale: Locale | null;
     /** Comme le vrai (#880) : posé par l'appelant, `null` quand rien n'a été coché. */
     dataConsentAt: Date | null;
   }): Promise<UserRecord> {
@@ -437,6 +448,7 @@ export class FakeIdentityRepository {
       firstName: input.firstName,
       lastName: input.lastName,
       phone: input.phone,
+      locale: input.locale,
       isActive: true,
       dataConsentAt: input.dataConsentAt,
     };
@@ -700,7 +712,12 @@ export class FakeIdentityRepository {
    */
   public async updateContactDetails(input: {
     userId: string;
-    changes: { firstName?: string; lastName?: string; phone?: string | null };
+    changes: {
+      firstName?: string;
+      lastName?: string;
+      phone?: string | null;
+      locale?: Locale | null;
+    };
   }): Promise<boolean> {
     const tenantId = this.requireTenant();
 
@@ -730,6 +747,11 @@ export class FakeIdentityRepository {
     }
     if (input.changes.phone !== undefined) {
       user.phone = input.changes.phone;
+    }
+    // Même régime que `phone` (#844) : `null` efface la préférence, l'absence n'y
+    // touche pas.
+    if (input.changes.locale !== undefined) {
+      user.locale = input.changes.locale;
     }
     return true;
   }

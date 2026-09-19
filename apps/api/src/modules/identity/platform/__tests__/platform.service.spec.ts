@@ -241,6 +241,37 @@ describe('Ouverture d’un établissement', () => {
     expect(provisioned.links.invitationExpiresIn).toBeGreaterThan(0);
   });
 
+  it('ouvre le salon en anglais quand la console ne se prononce pas — #844', async () => {
+    // Le troisième critère de #844 : `en` est le défaut du **système**, résolu
+    // côté serveur et à un seul endroit. Un `?? 'en'` dans le contrôleur ou dans
+    // le dépôt en aurait fait un second avis, à côté de celui de l'inscription
+    // libre-service, et les deux auraient divergé le jour où la décision change.
+    const { service, repository, operator } = await fixture();
+
+    await service.provisionTenant({
+      operator,
+      idempotencyKey: CLE,
+      ...tenantPayload('maison-lotus'),
+    });
+
+    expect(repository.lastProvisionInput?.defaultLocale).toBe('en');
+  });
+
+  it('respecte la langue choisie à l’ouverture — #844', async () => {
+    // Le salon qui parle français le dit ici, ou le changera dans ses réglages :
+    // le français reste une option qu'on choisit, jamais un défaut qu'on subit.
+    const { service, repository, operator } = await fixture();
+
+    await service.provisionTenant({
+      operator,
+      idempotencyKey: CLE,
+      ...tenantPayload('maison-lotus'),
+      defaultLocale: 'fr',
+    });
+
+    expect(repository.lastProvisionInput?.defaultLocale).toBe('fr');
+  });
+
   it('journalise qui, quand et quel établissement — **sans** le jeton', async () => {
     const { service, operator, logs } = await fixture();
 

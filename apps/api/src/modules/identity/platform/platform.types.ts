@@ -1,4 +1,5 @@
 import type {
+  Locale,
   Money,
   PlatformSignupWeek,
   PlatformTenantEventKind,
@@ -74,6 +75,8 @@ export interface ProvisionTenantInput {
   readonly name: string;
   readonly timezone: string;
   readonly defaultCurrency: string;
+  /** Résolue par le service — jamais facultative ici (#844). Voir `SelfServiceTenantInput`. */
+  readonly defaultLocale: Locale;
   readonly countryCode: string;
   readonly addressLine1: string;
   readonly addressLine2: string | null;

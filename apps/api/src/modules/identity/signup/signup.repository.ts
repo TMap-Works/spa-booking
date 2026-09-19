@@ -1,5 +1,6 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
+import type { Locale } from '@spa/shared';
 
 import {
   PRISMA_UNSCOPED,
@@ -33,6 +34,16 @@ export interface SelfServiceTenantInput {
   readonly name: string;
   readonly timezone: string;
   readonly defaultCurrency: string;
+  /**
+   * La langue d'ouverture du salon — **résolue** par le service, jamais
+   * facultative ici (#844).
+   *
+   * Le défaut (`en`) se décide en un seul endroit, et ce n'est pas celui-ci : un
+   * `?? DEFAULT_LOCALE` dans le dépôt en aurait fait un second avis sur la
+   * question, à côté de celui du service, et les deux auraient divergé le jour
+   * où la décision du PO change.
+   */
+  readonly defaultLocale: Locale;
   readonly countryCode: string;
   readonly addressLine1: string;
   readonly addressLine2: string | null;
@@ -78,6 +89,7 @@ export class SignupRepository {
             name: input.name,
             timezone: input.timezone,
             defaultCurrency: input.defaultCurrency,
+            defaultLocale: input.defaultLocale,
             addressLine1: input.addressLine1,
             addressLine2: input.addressLine2,
             postalCode: input.postalCode,

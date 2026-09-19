@@ -1,4 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { LOCALES, type Locale } from '@spa/shared';
 import { Transform } from 'class-transformer';
 import {
   IsBoolean,
@@ -301,6 +302,44 @@ export class UpdateContactDetailsDto {
   @MaxLength(PHONE_MAX_LENGTH)
   @Matches(PHONE_PATTERN, { message: 'phone : numéro de téléphone invalide' })
   public phone?: string | null;
+
+  /**
+   * La langue préférée de la personne — #844, septième critère d'acceptation.
+   *
+   * Même régime que `phone`, et pour la même raison : la colonne `users.locale`
+   * est nullable, `null` **est** donc une valeur — c'est ainsi qu'on retire sa
+   * préférence pour retomber sur la langue de l'établissement —, et le champ
+   * absent ne touche à rien.
+   *
+   * La casse est normalisée avant d'être jugée : une étiquette de langue se
+   * recopie d'un en-tête `Accept-Language` ou d'un sélecteur de navigateur, où
+   * `« EN »` et `« en »` désignent la même chose. Une valeur hors vocabulaire est
+   * refusée en 400 nommant le champ, jamais écrite puis rejetée par la
+   * contrainte `users_locale_check`.
+   *
+   * Ce champ est porté par le DTO commun à `PATCH /users/me` et
+   * `PATCH /users/:id`, comme les trois autres : ce sont les mêmes coordonnées,
+   * et c'est la garde qui décide de *qui* peut les modifier et *sur quel
+   * compte*.
+   */
+  @ApiPropertyOptional({
+    enum: LOCALES,
+    nullable: true,
+    example: 'fr',
+    description:
+      '`null` efface la préférence — la langue de l’établissement s’applique ' +
+      'alors ; le champ absent la laisse telle quelle. La casse est normalisée ' +
+      'en minuscules, et toute valeur hors `fr`/`en` est refusée en 400.',
+  })
+  // `null` traverse : c'est la valeur par laquelle on retire sa préférence.
+  @ValidateIf((_object: unknown, value: unknown) => value !== undefined && value !== null)
+  @Transform(({ value }: { value: unknown }) =>
+    typeof value === 'string' ? value.trim().toLowerCase() : value,
+  )
+  @IsIn(LOCALES as readonly string[], {
+    message: `locale : langue attendue parmi ${LOCALES.join(', ')}`,
+  })
+  public locale?: Locale | null;
 }
 
 /**
@@ -317,10 +356,12 @@ export function toProfileChanges(dto: UpdateContactDetailsDto): {
   firstName?: string;
   lastName?: string;
   phone?: string | null;
+  locale?: Locale | null;
 } {
   return {
     ...(dto.firstName === undefined ? {} : { firstName: dto.firstName }),
     ...(dto.lastName === undefined ? {} : { lastName: dto.lastName }),
     ...(dto.phone === undefined ? {} : { phone: dto.phone }),
+    ...(dto.locale === undefined ? {} : { locale: dto.locale }),
   };
 }

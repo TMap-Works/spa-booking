@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { isReservedTenantSlug } from '@spa/shared';
+import { DEFAULT_LOCALE, type Locale, isReservedTenantSlug } from '@spa/shared';
 
 import { BusinessRuleError } from '../../../common/errors';
 import { StructuredLogger } from '../../../common/logging/structured-logger';
@@ -35,6 +35,8 @@ export class SignupService {
     name: string;
     timezone: string;
     defaultCurrency: string;
+    /** Absente : `en`, la langue par défaut du système (#844, ADR 0016). */
+    defaultLocale?: Locale | undefined;
     countryCode: string;
     addressLine1: string;
     addressLine2: string | null;
@@ -65,6 +67,11 @@ export class SignupService {
       name: input.name,
       timezone: input.timezone,
       defaultCurrency: input.defaultCurrency,
+      // Le défaut est posé **ici**, côté serveur, et non par le schéma partagé :
+      // un `.default()` dans le contrat l'aurait aussi appliqué dans le
+      // navigateur, et deux endroits auraient eu un avis sur la langue d'un
+      // salon (#844, troisième critère).
+      defaultLocale: input.defaultLocale ?? DEFAULT_LOCALE,
       countryCode: input.countryCode,
       addressLine1: input.addressLine1,
       addressLine2: input.addressLine2,

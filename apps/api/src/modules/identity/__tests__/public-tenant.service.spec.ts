@@ -28,6 +28,9 @@ const FICHE: PublicTenantRecord = {
   name: 'Salon des Lilas',
   timezone: 'Europe/Paris',
   defaultCurrency: 'EUR',
+  // La langue par défaut du système (#844), celle que la migration pose sur tout
+  // établissement déjà en base.
+  defaultLocale: 'en',
   contactEmail: 'contact@salon-des-lilas.test',
   contactPhone: '+33100000000',
   addressLine1: null,
@@ -64,6 +67,10 @@ describe('PublicTenantService', () => {
       name: FICHE.name,
       timezone: FICHE.timezone,
       defaultCurrency: FICHE.defaultCurrency,
+      // Publiée comme le fuseau et la devise (#844) : la page de réservation
+      // s'affiche avant toute authentification, rien d'autre ne peut lui dire en
+      // quelle langue s'ouvrir.
+      defaultLocale: FICHE.defaultLocale,
       contactEmail: FICHE.contactEmail,
       contactPhone: FICHE.contactPhone,
     });
@@ -92,6 +99,7 @@ describe('PublicTenantService', () => {
       'contactEmail',
       'contactPhone',
       'defaultCurrency',
+      'defaultLocale',
       'id',
       'name',
       'openingHours',
@@ -118,6 +126,7 @@ describe('PublicTenantService', () => {
       name: FICHE.name,
       timezone: FICHE.timezone,
       defaultCurrency: FICHE.defaultCurrency,
+      defaultLocale: FICHE.defaultLocale,
     });
   });
 

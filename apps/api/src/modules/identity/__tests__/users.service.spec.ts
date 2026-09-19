@@ -126,6 +126,7 @@ describe('UsersService', () => {
         'id',
         'isActive',
         'lastName',
+        'locale',
         'phone',
         'role',
       ]);
@@ -390,6 +391,7 @@ describe('UsersService', () => {
         'firstName',
         'id',
         'lastName',
+        'locale',
         'phone',
         'role',
       ]);
@@ -581,6 +583,7 @@ describe('UsersService', () => {
         'firstName',
         'id',
         'lastName',
+        'locale',
         'phone',
         'role',
       ]);

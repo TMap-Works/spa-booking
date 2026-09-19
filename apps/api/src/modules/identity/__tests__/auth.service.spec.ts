@@ -87,6 +87,7 @@ describe('AuthService', () => {
         'firstName',
         'id',
         'lastName',
+        'locale',
         'phone',
         'role',
       ]);
