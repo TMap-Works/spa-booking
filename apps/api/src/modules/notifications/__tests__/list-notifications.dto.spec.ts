@@ -62,6 +62,9 @@ describe('notifications — les deux vocabulaires se correspondent terme à term
       // d'envois comme les trois autres, et le filtre doit donc exister : sans
       // lui, le back-office ne pourrait pas isoler ces messages de la liste.
       'password_reset',
+      // « Votre rendez-vous est confirmé » (#800) : le comptoir doit pouvoir
+      // vérifier que la cliente a bien été prévenue de sa confirmation.
+      'appointment_confirmed',
     ]);
     expect(NOTIFICATION_CHANNEL_FILTERS).toEqual(['email', 'sms']);
     expect(NOTIFICATION_STATUS_FILTERS).toEqual(['pending', 'sent', 'failed']);

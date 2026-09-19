@@ -92,6 +92,10 @@ import type {
  * réservation — ni l'avis d'annulation, dont l'objet même est un rendez-vous qui
  * n'occupe plus rien.
  *
+ * `APPOINTMENT_CONFIRMED` (#800) a la sienne, `confirmationStillTrue`, pour la
+ * même raison et avec une autre question : il **affirme** un statut, et un
+ * statut peut changer entre la publication et l'envoi.
+ *
  * Le rendu, lui, ne juge toujours pas du statut : il lit le rendez-vous pour son
  * heure et sa prestation, c'est une lecture d'affichage.
  *
@@ -135,6 +139,17 @@ export class NotificationDispatchService {
       if (
         message.appointmentId === null ||
         !(await this.reminderStillDue(message.appointmentId, message.channel, now))
+      ) {
+        return 'skipped';
+      }
+    }
+
+    // Même régime pour « votre rendez-vous est confirmé » (#800), avec sa propre
+    // question : le rendez-vous est-il **encore** confirmé, et encore à venir ?
+    if (message.type === 'APPOINTMENT_CONFIRMED') {
+      if (
+        message.appointmentId === null ||
+        !(await this.confirmationStillTrue(message.appointmentId, message.channel, now))
       ) {
         return 'skipped';
       }
@@ -321,6 +336,64 @@ export class NotificationDispatchService {
         appointmentId,
         channel,
         timing,
+      });
+      return false;
+    }
+
+    return true;
+  }
+
+  /**
+   * « Votre rendez-vous est confirmé » est-il encore vrai — **au moment de
+   * l'envoi** ? (#800)
+   *
+   * Ce message affirme un fait, et c'est ce qui le distingue de la confirmation
+   * de réservation : « enregistré » reste vrai d'un rendez-vous annulé ensuite,
+   * « confirmé » ne l'est plus. Entre la publication et l'envoi il y a une file,
+   * une Lambda et jusqu'à cinq réceptions — assez pour qu'un salon confirme puis
+   * annule, et que la cliente reçoive « confirmé » **après** « annulé ».
+   *
+   * Même place que `reminderStillDue`, et pour la même raison : avant la prise de
+   * droit, pour qu'un message devenu faux ne laisse aucune ligne `FAILED` au
+   * comptoir.
+   *
+   * | Ce que la relecture trouve | Pourquoi rien ne part |
+   * |---|---|
+   * | plus de rendez-vous | supprimé ou anonymisé |
+   * | un statut autre que `CONFIRMED` | annulé entre-temps, ou déjà honoré — ce qui arrive quand le salon confirme au moment où la cliente arrive |
+   * | un début déjà passé | la cliente est venue, ou non : lui écrire qu'on l'attend n'a plus de sens |
+   *
+   * La lecture est celle du rappel J-1 — statut et début, deux colonnes —, et
+   * c'est voulu : les deux messages posent la même question à la même ligne.
+   */
+  private async confirmationStillTrue(
+    appointmentId: string,
+    channel: NotificationChannel,
+    now: Date,
+  ): Promise<boolean> {
+    const eligibility = await this.repository.findReminderEligibility(appointmentId);
+
+    if (eligibility === null) {
+      this.logger.log('confirmation sans objet, rendez-vous introuvable', {
+        appointmentId,
+        channel,
+      });
+      return false;
+    }
+
+    if (eligibility.status !== 'CONFIRMED') {
+      this.logger.log("confirmation supprimée, le rendez-vous n'est plus confirmé", {
+        appointmentId,
+        channel,
+        status: eligibility.status,
+      });
+      return false;
+    }
+
+    if (eligibility.startsAt.getTime() <= now.getTime()) {
+      this.logger.log('confirmation supprimée, le rendez-vous a déjà commencé', {
+        appointmentId,
+        channel,
       });
       return false;
     }

@@ -40,13 +40,20 @@ describe('notifications — vocabulaire et colonnes', () => {
     // et que la seule autre issue serait un appel direct à SES depuis le chemin
     // de requête HTTP (notifications §1).
     //
-    // Un **cinquième** type serait, lui, à instruire de la même façon : c'est
-    // toujours une issue, et jamais une ligne (CLAUDE.md, contrainte 1).
+    // `APPOINTMENT_CONFIRMED` est le cinquième, instruit de la même façon — une
+    // issue, #800 — et il est, lui, du CDC §1.4 : la seconde moitié de la
+    // « confirmation automatique ». Tout rendez-vous naît à confirmer par le
+    // salon ; `BOOKING_CONFIRMATION` le dit à la réservation, celui-ci part
+    // quand le salon a confirmé. En queue parce qu'`ADD VALUE` ajoute à la fin.
+    //
+    // Un **sixième** type serait à instruire de la même façon : c'est toujours
+    // une issue, et jamais une ligne (CLAUDE.md, contrainte 1).
     expect(NOTIFICATION_TYPES).toEqual([
       'BOOKING_CONFIRMATION',
       'REMINDER_24H',
       'CANCELLATION',
       'PASSWORD_RESET',
+      'APPOINTMENT_CONFIRMED',
     ]);
   });
 

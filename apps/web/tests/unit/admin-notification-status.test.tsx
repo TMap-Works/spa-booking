@@ -154,10 +154,31 @@ describe('le statut d’envoi est visible dans le back-office', () => {
 
     renderPanel();
 
-    expect(await screen.findByText(/Confirmation · SMS/)).toBeDefined();
-    expect(screen.getByText(/Confirmation · E-mail/)).toBeDefined();
+    expect(await screen.findByText(/Réservation enregistrée · SMS/)).toBeDefined();
+    expect(screen.getByText(/Réservation enregistrée · E-mail/)).toBeDefined();
     expect(screen.getByText('Échec')).toBeDefined();
     expect(screen.getByText('Envoyé')).toBeDefined();
+  });
+
+  it('distingue le message de la réservation de celui de la confirmation (#800)', async () => {
+    // Deux messages sur le même rendez-vous : « à confirmer par le salon » à la
+    // réservation, « confirmé » quand le salon a confirmé. Les nommer tous deux
+    // « Confirmation » aurait fait croire au comptoir que la cliente avait été
+    // prévenue de la confirmation dès sa réservation.
+    loadAppointmentNotificationsAction.mockResolvedValue({
+      ok: true,
+      data: {
+        notifications: [
+          EMAIL_ENVOYE,
+          { ...EMAIL_ENVOYE, id: 'confirme-email', type: 'appointment_confirmed' },
+        ],
+      },
+    });
+
+    renderPanel();
+
+    expect(await screen.findByText(/Réservation enregistrée · E-mail/)).toBeDefined();
+    expect(screen.getByText(/Rendez-vous confirmé · E-mail/)).toBeDefined();
   });
 
   it('montre le motif d’échec — sans quoi la seule trace est la cliente absente', async () => {

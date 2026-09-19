@@ -401,6 +401,86 @@ describe('notifications — le rappel J-1 se revérifie au moment de l’envoi',
 });
 
 /**
+ * « Votre rendez-vous est confirmé » se revérifie aussi au moment de l'envoi —
+ * #800.
+ *
+ * Il affirme un statut, et un statut peut changer entre la publication et
+ * l'envoi : un salon qui confirme puis annule dans la minute ne doit pas faire
+ * recevoir « confirmé » après « annulé ».
+ */
+describe('notifications — la confirmation du salon se revérifie au moment de l’envoi', () => {
+  const NOW = new Date('2026-09-07T09:00:00.000Z');
+  const tomorrow = new Date(NOW.getTime() + 24 * 3_600_000);
+
+  it('envoie quand le rendez-vous est toujours confirmé et à venir', async () => {
+    const { service, sender, repository } = build();
+    repository.reminder = { status: 'CONFIRMED', startsAt: tomorrow };
+
+    await expect(service.dispatch(message('APPOINTMENT_CONFIRMED'), NOW)).resolves.toBe('sent');
+
+    expect(sender.calls).toHaveLength(1);
+  });
+
+  it('envoie aussi pour un rendez-vous de ce soir — aucune fenêtre ne le borne', async () => {
+    // À la différence du rappel J-1 : la confirmation n'a pas d'échéance à
+    // respecter, seulement un rendez-vous qui n'a pas encore commencé.
+    const { service, sender, repository } = build();
+    repository.reminder = { status: 'CONFIRMED', startsAt: new Date(NOW.getTime() + 3_600_000) };
+
+    await expect(service.dispatch(message('APPOINTMENT_CONFIRMED'), NOW)).resolves.toBe('sent');
+
+    expect(sender.calls).toHaveLength(1);
+  });
+
+  it.each([['CANCELLED'], ['NO_SHOW'], ['COMPLETED'], ['PENDING']])(
+    'n’envoie rien quand le rendez-vous est %s au moment de l’envoi',
+    async (status) => {
+      const { service, sender, repository } = build();
+      repository.reminder = { status, startsAt: tomorrow };
+
+      await expect(service.dispatch(message('APPOINTMENT_CONFIRMED'), NOW)).resolves.toBe(
+        'skipped',
+      );
+
+      expect(sender.calls).toEqual([]);
+      // Aucune ligne : un message devenu faux n'est pas un envoi échoué.
+      expect(repository.rows).toEqual([]);
+    },
+  );
+
+  it('n’envoie rien pour un rendez-vous déjà commencé', async () => {
+    const { service, sender, repository } = build();
+    repository.reminder = { status: 'CONFIRMED', startsAt: new Date(NOW.getTime() - 60_000) };
+
+    await expect(service.dispatch(message('APPOINTMENT_CONFIRMED'), NOW)).resolves.toBe('skipped');
+
+    expect(sender.calls).toEqual([]);
+    expect(repository.rows).toEqual([]);
+  });
+
+  it('n’envoie rien quand le rendez-vous a disparu sous la livraison', async () => {
+    const { service, sender, repository } = build();
+    repository.reminder = null;
+
+    await expect(service.dispatch(message('APPOINTMENT_CONFIRMED'), NOW)).resolves.toBe('skipped');
+
+    expect(sender.calls).toEqual([]);
+  });
+
+  it('se distingue de la confirmation de réservation, sur le même rendez-vous', async () => {
+    // Deux types, donc deux places dans `notifications_live_once` : le message
+    // de la réservation déjà parti n'empêche pas celui de la confirmation.
+    const { service, sender, repository } = build();
+    repository.reminder = { status: 'CONFIRMED', startsAt: tomorrow };
+
+    await service.dispatch(message('BOOKING_CONFIRMATION'), NOW);
+    await expect(service.dispatch(message('APPOINTMENT_CONFIRMED'), NOW)).resolves.toBe('sent');
+
+    expect(sender.calls).toHaveLength(2);
+  });
+});
+
+/**
  * La suppression relue **au moment de l'envoi** — #73, deuxième critère
  * d'acceptation : « une adresse en hard bounce passe en supprimé et n'est plus
  * jamais sollicitée ».
@@ -439,7 +519,12 @@ describe('notifications — une adresse supprimée n’est plus sollicitée', ()
     const { service, sender, repository } = build();
     repository.emailSuppressed = true;
 
-    for (const type of ['BOOKING_CONFIRMATION', 'REMINDER_24H', 'CANCELLATION'] as const) {
+    for (const type of [
+      'BOOKING_CONFIRMATION',
+      'REMINDER_24H',
+      'CANCELLATION',
+      'APPOINTMENT_CONFIRMED',
+    ] as const) {
       await expect(service.dispatch(message(type, { channel: 'EMAIL' }))).resolves.toBe('skipped');
     }
 

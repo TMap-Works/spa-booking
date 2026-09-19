@@ -149,6 +149,8 @@ describe('notifications et paiements', () => {
       'reminder_24h',
       'cancellation',
       'password_reset',
+      // « Votre rendez-vous est confirmé », quand le salon confirme (#800).
+      'appointment_confirmed',
     ]);
     expect(isNotificationChannel('email')).toBe(true);
     expect(isNotificationChannel('push')).toBe(false);

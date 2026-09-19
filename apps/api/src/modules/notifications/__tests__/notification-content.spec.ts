@@ -242,13 +242,58 @@ describe('notifications — ce que la confirmation affirme', () => {
     expect(text).not.toContain('est confirmé');
   });
 
-  it('ne promet aucun message de suite, qu’aucun type du MVP ne servirait', () => {
-    // Rien ne part à la confirmation : les trois types du MVP sont
-    // `BOOKING_CONFIRMATION`, `REMINDER_24H` et `CANCELLATION` (CDC §1.4).
-    // Remplacer une phrase fausse par une promesse creuse n'aurait rien réglé.
-    const { text } = renderBookingConfirmationEmail(PARIS, CANCEL_URL);
+  it('annonce le message qui suivra la confirmation, que `APPOINTMENT_CONFIRMED` tient', () => {
+    // Jusqu'à #800, rien ne partait à la confirmation et la phrase aurait été
+    // une promesse creuse. `APPOINTMENT_CONFIRMED` part désormais quand le salon
+    // confirme : la promesse est tenue, et la dire évite à la cliente de
+    // surveiller son espace.
+    const { html, text } = renderBookingConfirmationEmail(PARIS, CANCEL_URL);
 
-    expect(text).not.toContain('vous recevrez');
+    expect(text).toContain('vous recevrez un message dès que ce sera fait');
+    expect(html).toContain('vous recevrez un message dès que ce sera fait');
+    expect(defaultTemplateFor('APPOINTMENT_CONFIRMED', 'EMAIL')).not.toBeNull();
+  });
+});
+
+/**
+ * « Votre rendez-vous est confirmé » — #800.
+ *
+ * Le pendant de ce qui précède : ce message part quand le salon confirme, et il
+ * dit l'inverse du premier. Ces assertions pincent le fait annoncé — confirmé,
+ * par le salon — et ce que la cliente doit y retrouver pour s'en servir le
+ * jour J : la référence, l'heure dans le fuseau du salon, le lien.
+ */
+describe('notifications — le salon a confirmé', () => {
+  it('dit que le salon a confirmé, et plus « à confirmer »', () => {
+    const { subject, html, text } = renderDefault('APPOINTMENT_CONFIRMED', 'EMAIL', PARIS, CANCEL_URL);
+
+    expect(subject).toContain('Rendez-vous confirmé');
+    expect(subject).toContain('Maison Lotus');
+    expect(text).toContain('Maison Lotus a confirmé votre rendez-vous');
+    expect(html).toContain('Maison Lotus a confirmé votre rendez-vous');
+    expect(`${subject}
+${html}
+${text}`.toLowerCase()).not.toContain('à confirmer');
+  });
+
+  it('porte la référence, l’heure du salon et le lien pour modifier', () => {
+    const { subject, html, text } = renderDefault('APPOINTMENT_CONFIRMED', 'EMAIL', PARIS, CANCEL_URL);
+
+    // 12:30 UTC vaut 14:30 à Paris en septembre : l'instant UTC affiché tel quel
+    // avancerait le rendez-vous de deux heures (CLAUDE.md, sévérité haute).
+    expect(subject).toContain('14:30');
+    expect(text).toContain('RDV-8F3K-27');
+    expect(text).toContain(CANCEL_URL);
+    expect(html).toContain(CANCEL_URL);
+    expect(text).not.toContain('<');
+  });
+
+  it('a son SMS, qui dit la même chose en une phrase', () => {
+    const { text } = renderDefault('APPOINTMENT_CONFIRMED', 'SMS', PARIS, '');
+
+    expect(text).toContain('Maison Lotus');
+    expect(text).toContain('14:30');
+    expect(text).toContain('est confirmé');
   });
 });
 

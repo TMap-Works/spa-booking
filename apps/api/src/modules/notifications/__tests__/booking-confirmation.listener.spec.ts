@@ -1,6 +1,10 @@
 import { getTenantId } from '../../../common/tenant/tenant-context';
 import { TenantContextService } from '../../../common/tenant/tenant-context.service';
 import {
+  APPOINTMENT_CONFIRMED,
+  type AppointmentConfirmedEvent,
+} from '../../appointments/events/appointment-confirmed.event';
+import {
   APPOINTMENT_CREATED,
   type AppointmentCreatedEvent,
 } from '../../appointments/events/appointment-created.event';
@@ -56,6 +60,20 @@ function event(overrides: Partial<AppointmentCreatedEvent> = {}): AppointmentCre
     startsAt: '2026-09-08T12:30:00.000Z',
     endsAt: '2026-09-08T13:30:00.000Z',
     occurredAt: '2026-09-06T09:00:00.000Z',
+    ...overrides,
+  };
+}
+
+function confirmedEvent(
+  overrides: Partial<AppointmentConfirmedEvent> = {},
+): AppointmentConfirmedEvent {
+  return {
+    name: APPOINTMENT_CONFIRMED,
+    tenantId: TENANT,
+    appointmentId: APPOINTMENT,
+    clientId: CLIENT,
+    staffId: '44444444-4444-4444-8444-444444444444',
+    occurredAt: '2026-09-06T10:00:00.000Z',
     ...overrides,
   };
 }
@@ -216,6 +234,103 @@ describe('notifications — les canaux suivent ce dont la cliente dispose', () =
 
     expect(sender.calls).toHaveLength(0);
     expect(logger.entries.some((entry) => entry.level === 'warn')).toBe(true);
+  });
+});
+
+/**
+ * « Votre rendez-vous est confirmé » — #800.
+ *
+ * Même abonné, même conduite, autre événement : c'est le salon qui confirme, et
+ * `appointment.confirmed` est ce qui le fait savoir à la cliente.
+ */
+describe('notifications — la confirmation du salon naît de `appointment.confirmed`', () => {
+  it('publie `APPOINTMENT_CONFIRMED` sur chaque canal joignable', async () => {
+    const { listener, sender } = build();
+
+    await listener.handleConfirmed(confirmedEvent());
+
+    expect(sender.calls.map((call) => `${call.type}/${call.channel}`)).toEqual([
+      'APPOINTMENT_CONFIRMED/EMAIL',
+      'APPOINTMENT_CONFIRMED/SMS',
+    ]);
+  });
+
+  it('reçoit bien ce que le bus publie', async () => {
+    const { events, sender } = build();
+
+    events.appointmentConfirmed({
+      tenantId: TENANT,
+      appointmentId: APPOINTMENT,
+      clientId: CLIENT,
+      staffId: '44444444-4444-4444-8444-444444444444',
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(sender.calls.map((call) => call.type)).toEqual([
+      'APPOINTMENT_CONFIRMED',
+      'APPOINTMENT_CONFIRMED',
+    ]);
+  });
+
+  it('compose ses propres clés : le message de la réservation ne l’étouffe pas', async () => {
+    const { listener, repository, sender } = build();
+
+    await listener.handle(event());
+    await listener.handleConfirmed(confirmedEvent());
+
+    expect(repository.rows.map((row) => row.dedupeKey)).toEqual([
+      `appointment:${APPOINTMENT}:BOOKING_CONFIRMATION:EMAIL`,
+      `appointment:${APPOINTMENT}:BOOKING_CONFIRMATION:SMS`,
+      `appointment:${APPOINTMENT}:APPOINTMENT_CONFIRMED:EMAIL`,
+      `appointment:${APPOINTMENT}:APPOINTMENT_CONFIRMED:SMS`,
+    ]);
+    expect(sender.calls).toHaveLength(4);
+  });
+
+  it('rejoué, ne prévient pas deux fois', async () => {
+    const { listener, sender } = build();
+
+    await listener.handleConfirmed(confirmedEvent());
+    await listener.handleConfirmed(confirmedEvent());
+
+    expect(sender.calls).toHaveLength(2);
+  });
+
+  it('ouvre la portée de tenant que l’événement nomme', async () => {
+    const { listener, repository } = build();
+    const seen: (string | undefined)[] = [];
+    jest.spyOn(repository.repository, 'findRecipientContact').mockImplementation(() => {
+      seen.push(getTenantId());
+      return Promise.resolve({ hasEmail: true, hasSms: false });
+    });
+
+    await listener.handleConfirmed(confirmedEvent());
+
+    expect(seen).toEqual([TENANT]);
+  });
+
+  it('se retire du bus à l’arrêt du module', async () => {
+    const { listener, events, sender } = build();
+
+    listener.onModuleDestroy();
+    events.appointmentConfirmed({
+      tenantId: TENANT,
+      appointmentId: APPOINTMENT,
+      clientId: CLIENT,
+      staffId: '44444444-4444-4444-8444-444444444444',
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(sender.calls).toHaveLength(0);
+  });
+
+  it('ne lève pas quand l’expédition échoue', async () => {
+    const { listener, repository } = build();
+    jest
+      .spyOn(repository.repository, 'findRecipientContact')
+      .mockRejectedValue(new Error('base indisponible'));
+
+    await expect(listener.handleConfirmed(confirmedEvent())).resolves.toBeUndefined();
   });
 });
 

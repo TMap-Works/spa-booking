@@ -335,6 +335,8 @@ describe('ce que l’écran demande de faire de lui', () => {
     expect(ligne).toContain('e-mail récapitulatif');
     expect(ligne).not.toContain('e-mail de confirmation');
     expect(ligne).toContain('camille@example.test');
+    // Et le second message, qui part quand le salon confirme (#800).
+    expect(ligne).toContain('un second quand le salon aura confirmé');
     // La condition reste dite : une réservation d'invitée crée une fiche sans
     // mot de passe, et l'espace client n'est pas promis à qui n'a pas de compte.
     expect(ligne).toContain('compte client');

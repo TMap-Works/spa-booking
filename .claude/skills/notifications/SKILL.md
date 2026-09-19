@@ -9,6 +9,13 @@ Le CDC §1.4 limite le MVP à trois messages : **confirmation** à la réservati
 **rappel 24 h avant**, **avis d'annulation** au client et au staff. Rien d'autre —
 le marketing et les campagnes sont post-MVP.
 
+La confirmation se fait **en deux temps** (#800), parce que c'est le salon qui
+confirme un rendez-vous — arbitrage du PO du 19/09 : tout rendez-vous naît
+`PENDING`. `BOOKING_CONFIRMATION` part sur `appointment.created` et dit
+« enregistré, à confirmer par le salon » ; `APPOINTMENT_CONFIRMED` part sur
+`appointment.confirmed`, quand le salon a confirmé (administratrice, gérante, ou
+praticien sur ses propres rendez-vous).
+
 ## 1. Architecture (CDC §4.8)
 
 ```

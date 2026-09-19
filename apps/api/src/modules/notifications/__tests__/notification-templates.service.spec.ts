@@ -116,12 +116,14 @@ describe('modèles — la résolution du modèle effectif', () => {
 });
 
 describe('modèles — la liste du back-office', () => {
-  it('rend les sept modèles servis par défaut, et saute le couple qui n’en a pas', async () => {
+  it('rend les neuf modèles servis par défaut, et saute le couple qui n’en a pas', async () => {
     // Quatre jusqu'à #72, qui a livré l'avis d'annulation ; six ensuite ; sept
-    // depuis #809. L'ordre est celui des énumérations : une liste de
-    // configuration qui change d'ordre fait bouger les lignes sous la souris.
+    // depuis #809 ; neuf depuis #800, qui ajoute « votre rendez-vous est
+    // confirmé » sur les deux canaux. L'ordre est celui des énumérations : une
+    // liste de configuration qui change d'ordre fait bouger les lignes sous la
+    // souris.
     //
-    // **Sept et non huit** : `PASSWORD_RESET` n'a de modèle de plateforme que
+    // **Neuf et non dix** : `PASSWORD_RESET` n'a de modèle de plateforme que
     // sur le canal e-mail, et c'est le quatrième critère d'acceptation de #809.
     // Le couple `PASSWORD_RESET/SMS` n'apparaît donc pas — « la liste répond à
     // "que reçoit ma cliente ?", et la réponse pour ce message est "rien" ».
@@ -140,6 +142,8 @@ describe('modèles — la liste du back-office', () => {
       'CANCELLATION/EMAIL',
       'CANCELLATION/SMS',
       'PASSWORD_RESET/EMAIL',
+      'APPOINTMENT_CONFIRMED/EMAIL',
+      'APPOINTMENT_CONFIRMED/SMS',
     ]);
     expect(list.every((item) => item.origin === 'PLATFORM')).toBe(true);
   });

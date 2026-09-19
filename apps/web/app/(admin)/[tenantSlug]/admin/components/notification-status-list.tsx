@@ -48,6 +48,12 @@ interface NotificationStatusListProps {
 /**
  * Les messages que la chaîne d'envoi porte, en clair.
  *
+ * Depuis #800, un rendez-vous en laisse **deux** à la confirmation : « Réservation
+ * enregistrée » part à la réservation — le rendez-vous est alors à confirmer par
+ * le salon —, « Rendez-vous confirmé » quand le salon l'a confirmé. Le premier
+ * s'appelait « Confirmation » quand il était seul, et le libellé aurait nommé
+ * du même mot deux messages qui disent l'inverse l'un de l'autre.
+ *
  * Les trois premiers sont ceux du CDC §1.4. Le quatrième est le lien de
  * réinitialisation d'un mot de passe (#809) : il n'annonce aucun rendez-vous,
  * mais il passe par la même chaîne et laisse donc une ligne dans ce journal —
@@ -59,10 +65,11 @@ interface NotificationStatusListProps {
  * `NOTIFICATION_TYPES`, plutôt que d'afficher une cellule vide au comptoir.
  */
 const TYPE_LABELS: Readonly<Record<NotificationTrace['type'], string>> = {
-  booking_confirmation: 'Confirmation',
+  booking_confirmation: 'Réservation enregistrée',
   reminder_24h: 'Rappel J-1',
   cancellation: 'Avis d’annulation',
   password_reset: 'Mot de passe oublié',
+  appointment_confirmed: 'Rendez-vous confirmé',
 };
 
 const CHANNEL_LABELS: Readonly<Record<NotificationTrace['channel'], string>> = {

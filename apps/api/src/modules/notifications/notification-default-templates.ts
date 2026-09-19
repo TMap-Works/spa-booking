@@ -132,11 +132,19 @@ const TEXT_SUMMARY = [
  * confirmation est attendue du salon — c'est ce qui nomme l'acteur, pour que la
  * cliente ne se croie pas redevable d'un geste.
  *
- * Il ne dit **rien de plus** : ni délai de confirmation, ni « vous recevrez un
- * message dès que ce sera fait ». L'API n'expose aucun délai, et aucun message
- * ne part à la confirmation — les trois types du MVP sont `BOOKING_CONFIRMATION`,
- * `REMINDER_24H` et `CANCELLATION` (CDC §1.4). Promettre l'un ou l'autre serait
- * remplacer une phrase fausse par une autre.
+ * ## Il annonce le second message, depuis #800
+ *
+ * « Vous recevrez un message dès que ce sera fait » n'était pas écrit tant
+ * qu'aucun message ne partait à la confirmation : c'eût été remplacer une phrase
+ * fausse par une autre. `APPOINTMENT_CONFIRMED` part désormais quand le salon
+ * confirme, et la phrase est devenue vraie — elle dit à la cliente qu'elle n'a
+ * rien à surveiller.
+ *
+ * Il ne promet toujours **aucun délai** : l'API n'en expose pas, et le salon
+ * confirme quand il le fait.
+ *
+ * Le SMS, lui, ne l'annonce pas : il coûte déjà 152 septets sur 160, et la
+ * phrase le ferait passer à deux segments. Le second message suffit à la dire.
  */
 const BOOKING_CONFIRMATION_EMAIL: NotificationTemplateSource = {
   subject: 'À confirmer par le salon : votre rendez-vous du {{date}} — {{salon}}',
@@ -144,7 +152,8 @@ const BOOKING_CONFIRMATION_EMAIL: NotificationTemplateSource = {
     '<!DOCTYPE html>',
     '<html lang="fr"><body>',
     '<p>Bonjour {{client}},</p>',
-    '<p>Votre rendez-vous chez {{salon}} est enregistré. Il reste à confirmer par le salon.</p>',
+    '<p>Votre rendez-vous chez {{salon}} est enregistré. Il reste à confirmer par le salon : ' +
+      'vous recevrez un message dès que ce sera fait.</p>',
     `<table role="presentation">${HTML_SUMMARY}</table>`,
     '<p>Les horaires sont donnés à l’heure de {{fuseau}}.</p>',
     '<p><a href="{{lien_annulation}}">Modifier ou annuler mon rendez-vous</a></p>',
@@ -154,7 +163,7 @@ const BOOKING_CONFIRMATION_EMAIL: NotificationTemplateSource = {
   text: [
     'Bonjour {{client}},',
     '',
-    'Votre rendez-vous chez {{salon}} est enregistré. Il reste à confirmer par le salon.',
+    'Votre rendez-vous chez {{salon}} est enregistré. Il reste à confirmer par le salon : vous recevrez un message dès que ce sera fait.',
     '',
     TEXT_SUMMARY,
     'Les horaires sont donnés à l’heure de {{fuseau}}.',
@@ -214,6 +223,74 @@ const BOOKING_CONFIRMATION_SMS: NotificationTemplateSource = {
   subject: '',
   html: '',
   text: '{{salon}} : rendez-vous du {{date}} ({{fuseau}}) enregistré, à confirmer par le salon.',
+};
+
+/**
+ * « Votre rendez-vous est confirmé » — #800.
+ *
+ * Le pendant de `BOOKING_CONFIRMATION`, et il dit ce que l'autre ne pouvait pas
+ * dire : le salon a regardé la demande, et il attend la cliente. C'est ce que la
+ * cliente attendait depuis la réservation, et la seule chose que ce message a à
+ * lui apprendre — le reste, elle l'a déjà reçu.
+ *
+ * Il porte pourtant le récapitulatif entier, référence en tête, pour la raison
+ * qui le fait porter au rappel J-1 : c'est ce message-ci que la cliente
+ * gardera, parce que c'est celui qui dit « confirmé ». Le premier, qui dit « à
+ * confirmer », cesse d'être vrai à l'instant où celui-ci part.
+ *
+ * ## Il nomme le salon comme auteur
+ *
+ * « {{salon}} a confirmé » et non « votre rendez-vous a été confirmé » : le
+ * premier message a nommé le salon comme celui qui confirmerait, celui-ci dit
+ * que c'est fait, par lui. Un passif aurait laissé croire à une validation
+ * automatique, ce qu'elle n'est pas.
+ *
+ * ## Il est relu avant de partir
+ *
+ * `NotificationDispatchService` ne l'expédie que si le rendez-vous est encore
+ * `CONFIRMED` et pas encore commencé. Une confirmation suivie d'une annulation
+ * dans la minute ne fait donc pas partir « confirmé » après « annulé ».
+ */
+const APPOINTMENT_CONFIRMED_EMAIL: NotificationTemplateSource = {
+  subject: 'Rendez-vous confirmé : le {{date}} — {{salon}}',
+  html: [
+    '<!DOCTYPE html>',
+    '<html lang="fr"><body>',
+    '<p>Bonjour {{client}},</p>',
+    '<p>{{salon}} a confirmé votre rendez-vous. Nous vous attendons le {{date}}.</p>',
+    `<table role="presentation">${HTML_SUMMARY}</table>`,
+    '<p>Les horaires sont donnés à l’heure de {{fuseau}}.</p>',
+    '<p><a href="{{lien_annulation}}">Modifier ou annuler mon rendez-vous</a></p>',
+    '<p>À bientôt,<br />{{salon}}</p>',
+    '</body></html>',
+  ].join(''),
+  text: [
+    'Bonjour {{client}},',
+    '',
+    '{{salon}} a confirmé votre rendez-vous. Nous vous attendons le {{date}}.',
+    '',
+    TEXT_SUMMARY,
+    'Les horaires sont donnés à l’heure de {{fuseau}}.',
+    '',
+    'Modifier ou annuler mon rendez-vous : {{lien_annulation}}',
+    '',
+    'À bientôt,',
+    '{{salon}}',
+  ].join('\n'),
+};
+
+/**
+ * Le SMS de confirmation par le salon — l'avis, et rien d'autre, comme les
+ * trois autres.
+ *
+ * Tout y est en GSM-7 — le `é` de « confirmé » compris —, et il tient en un
+ * segment sur `SMS_REFERENCE_VARIABLES` : `notification-template.spec.ts` le
+ * mesure plutôt que de l'espérer.
+ */
+const APPOINTMENT_CONFIRMED_SMS: NotificationTemplateSource = {
+  subject: '',
+  html: '',
+  text: '{{salon}} : votre rendez-vous du {{date}} ({{fuseau}}) est confirmé.',
 };
 
 /**
@@ -421,8 +498,8 @@ const CANCELLATION_SMS: NotificationTemplateSource = {
  * ## Aucun `{{fuseau}}`
  *
  * Il n'annonce aucune heure, donc il n'a pas à nommer de fuseau. C'est le seul
- * des quatre messages dans ce cas, et c'est ce qui le distingue le plus
- * nettement des trois autres : il ne parle pas d'un rendez-vous.
+ * des cinq messages dans ce cas, et c'est ce qui le distingue le plus
+ * nettement des quatre autres : il ne parle pas d'un rendez-vous.
  */
 const PASSWORD_RESET_EMAIL: NotificationTemplateSource = {
   subject: 'Réinitialisation de votre mot de passe — {{salon}}',
@@ -489,6 +566,7 @@ export const DEFAULT_TEMPLATES: Readonly<
   // l'acceptera, et `SMS_REFERENCE_VARIABLES.lien_mot_de_passe` est là pour que
   // la mesure de coût le refuse s'il dépasse trois segments.
   PASSWORD_RESET: { EMAIL: PASSWORD_RESET_EMAIL },
+  APPOINTMENT_CONFIRMED: { EMAIL: APPOINTMENT_CONFIRMED_EMAIL, SMS: APPOINTMENT_CONFIRMED_SMS },
 };
 
 /** Le modèle de plateforme pour ce message, s'il en existe un. */

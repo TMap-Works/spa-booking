@@ -55,6 +55,11 @@ export const NOTIFICATION_TYPES = [
   // `schema.prisma` pour ce que ce message n'est pas — il n'annonce aucun
   // rendez-vous, et n'élargit donc pas le périmètre des notifications.
   'PASSWORD_RESET',
+  // « Votre rendez-vous est confirmé » (#800) — la seconde moitié de la
+  // confirmation du CDC §1.4. `BOOKING_CONFIRMATION` part à la réservation et
+  // dit « à confirmer par le salon » ; celui-ci part quand le salon confirme. En
+  // queue, comme dans l'énumération PostgreSQL, qui n'ajoute qu'à la fin.
+  'APPOINTMENT_CONFIRMED',
 ] as const;
 
 export type NotificationType = (typeof NOTIFICATION_TYPES)[number];

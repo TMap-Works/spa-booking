@@ -348,11 +348,15 @@ export function ConfirmationStep({
            cette même adresse (`EMAIL_ALREADY_REGISTERED`). « Avec un compte
            client chez … » est donc la condition que la phrase porte, et non un
            détail de style — l'annulation de cet écran reste offerte plus bas,
-           tant que l'onglet vit, pour celles qui n'ont pas de compte. */
+           tant que l'onglet vit, pour celles qui n'ont pas de compte.
+
+           « Un second quand le salon aura confirmé » depuis #800 : c'est le salon
+           qui confirme, et `APPOINTMENT_CONFIRMED` part à ce moment-là. Le dire
+           évite à la cliente de revenir guetter la pastille. */
         <p className="spa-booking__sent">
-          Un e-mail récapitulatif part vers <strong>{contact.email}</strong>. Avec un compte client
-          chez {tenant.name}, ce rendez-vous se retrouve dans votre espace, d’où il se reporte et
-          s’annule.
+          Un e-mail récapitulatif part vers <strong>{contact.email}</strong>, et un second quand le
+          salon aura confirmé. Avec un compte client chez {tenant.name}, ce rendez-vous se retrouve
+          dans votre espace, d’où il se reporte et s’annule.
         </p>
       )}
 

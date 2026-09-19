@@ -7,6 +7,10 @@ import {
   APPOINTMENT_CANCELLED,
   type AppointmentCancelledEvent,
 } from './appointment-cancelled.event';
+import {
+  APPOINTMENT_CONFIRMED,
+  type AppointmentConfirmedEvent,
+} from './appointment-confirmed.event';
 import { APPOINTMENT_CREATED, type AppointmentCreatedEvent } from './appointment-created.event';
 import {
   APPOINTMENT_RESCHEDULED,
@@ -16,7 +20,7 @@ import {
 /**
  * Tout ce que ce bus publie.
  *
- * Une union plutôt qu'une interface commune : les trois événements ne partagent
+ * Une union plutôt qu'une interface commune : les quatre événements ne partagent
  * que leur enveloppe — nom, tenant, rendez-vous, instant d'émission — et une
  * classe de base les ferait diverger par héritage plutôt que par contrat. Ce que
  * la publication a besoin de savoir tient dans ces quatre champs, et c'est
@@ -24,6 +28,7 @@ import {
  */
 export type AppointmentDomainEvent =
   | AppointmentCreatedEvent
+  | AppointmentConfirmedEvent
   | AppointmentRescheduledEvent
   | AppointmentCancelledEvent;
 
@@ -88,6 +93,22 @@ export class AppointmentEvents {
   }
 
   /**
+   * Publie `appointment.confirmed` (#800).
+   *
+   * Appelé **après** l'écriture conditionnelle de `PENDING → CONFIRMED`, jamais
+   * avant : une confirmation perdue dans une course n'a rien confirmé, et le
+   * message « votre rendez-vous est confirmé » partirait pour une transition
+   * qu'un autre geste a devancée.
+   */
+  public appointmentConfirmed(event: Omit<AppointmentConfirmedEvent, 'name' | 'occurredAt'>): void {
+    this.publish({
+      ...event,
+      name: APPOINTMENT_CONFIRMED,
+      occurredAt: new Date().toISOString(),
+    });
+  }
+
+  /**
    * Publie `appointment.rescheduled` (#39).
    *
    * Appelé **après** la validation de la transaction de report, jamais dedans :
@@ -129,6 +150,14 @@ export class AppointmentEvents {
    */
   public onAppointmentCreated(listener: (event: AppointmentCreatedEvent) => void): () => void {
     return this.subscribe(APPOINTMENT_CREATED, listener);
+  }
+
+  /**
+   * Abonne un écouteur à `appointment.confirmed` — même contrat, même
+   * enveloppe.
+   */
+  public onAppointmentConfirmed(listener: (event: AppointmentConfirmedEvent) => void): () => void {
+    return this.subscribe(APPOINTMENT_CONFIRMED, listener);
   }
 
   /**

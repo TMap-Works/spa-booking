@@ -16,6 +16,7 @@ canaux, rien de plus — le marketing et les campagnes sont hors périmètre MVP
 | #534 | Les **deux publics** de l'avis d'annulation — l'index d'idempotence remplacé pour porter le destinataire, la parité du dépôt avec sa nouvelle définition, la résolution de deux destinataires, et le CTA du modèle e-mail réservé à la cliente |
 | #493 | La preuve **comportementale** de l'idempotence — huit `claim()` parallèles contre un vrai PostgreSQL, jouées par `npm run test:concurrency` |
 | #799 | Les **passerelles SES et SNS** — l'expéditeur réel derrière `NOTIFICATION_SENDER`, la publication des abonnés du bus sur SQS au lieu d'une expédition en processus, et `POST /api/v1/interne/notifications/dispatch`, la route que la Lambda d'envoi appelle |
+| #800 | **« Votre rendez-vous est confirmé »** — tout rendez-vous naît à confirmer par le salon, et le message de la réservation le dit. Celui-ci part quand le salon confirme : abonnement à `appointment.confirmed` (émis par `PENDING → CONFIRMED`), type `APPOINTMENT_CONFIRMED`, modèles e-mail et SMS, et revérification au moment de l'envoi — encore confirmé, pas encore commencé |
 
 ## La chaîne complète, depuis #799
 
@@ -703,7 +704,7 @@ la relecture et l'écriture, et c'est `notifications_live_once` qui l'arrête.
 | `notification-templates.repository.ts` | Les personnalisations en base, toujours par le client scopé |
 | `notification-templates.service.ts` | La résolution du modèle effectif et la validation d'un modèle soumis |
 | `notification-templates.controller.ts` | Les quatre routes de personnalisation |
-| `booking-confirmation.listener.ts` | L'abonné à `appointment.created` |
+| `booking-confirmation.listener.ts` | L'abonné à `appointment.created` (« enregistré, à confirmer par le salon ») et à `appointment.confirmed` (« confirmé », #800) |
 | `cancellation-notice.listener.ts` | L'abonné à `appointment.cancelled`, et le choix du destinataire |
 | `notifications.service.ts` | La lecture du journal, et son plafond |
 | `notifications.controller.ts` | `GET /notifications` et la route interne de balayage |

@@ -2,6 +2,7 @@ import { Inject, Injectable, type OnModuleDestroy, type OnModuleInit } from '@ne
 
 import { StructuredLogger } from '../../common/logging/structured-logger';
 import { TenantContextService } from '../../common/tenant/tenant-context.service';
+import type { AppointmentConfirmedEvent } from '../appointments/events/appointment-confirmed.event';
 import type { AppointmentCreatedEvent } from '../appointments/events/appointment-created.event';
 import { AppointmentEvents } from '../appointments/events/appointment-events';
 import { NOTIFICATION_PUBLISHER, type NotificationPublisher } from './notification-publisher';
@@ -11,6 +12,7 @@ import {
   reachableChannels,
   type NotificationChannel,
   type NotificationMessage,
+  type NotificationType,
 } from './notifications.types';
 
 /**
@@ -71,6 +73,20 @@ import {
  * requête ni aucun `AsyncLocalStorage` à hériter, et c'est exactement pourquoi
  * `AppointmentCreatedEvent` porte `tenantId`. `runWithTenant` le pose ici, une
  * fois, autour de tout ce qui touche la base.
+ *
+ * ## Deux messages depuis #800, et deux événements
+ *
+ * Tout rendez-vous naît `PENDING` : c'est le salon qui le confirme. Le message
+ * de la réservation dit donc « enregistré, à confirmer par le salon »
+ * (`BOOKING_CONFIRMATION`, sur `appointment.created`), et il n'avait pas de
+ * suite — la cliente n'apprenait jamais que le salon avait confirmé.
+ *
+ * `appointment.confirmed` publie désormais la suite, `APPOINTMENT_CONFIRMED`.
+ * Les deux vivent dans ce fichier parce qu'ils sont les deux moitiés de la même
+ * confirmation du CDC §1.4 et qu'ils suivent **exactement** la même conduite :
+ * mêmes canaux, même enveloppe, même absorption des échecs. Seuls l'événement
+ * écouté et le type publié diffèrent. Deux abonnés recopiés auraient divergé à
+ * la première correction.
  */
 @Injectable()
 export class BookingConfirmationListener implements OnModuleInit, OnModuleDestroy {
@@ -92,15 +108,23 @@ export class BookingConfirmationListener implements OnModuleInit, OnModuleDestro
     private readonly logger: StructuredLogger,
   ) {}
 
+  /** Le désabonnement de `appointment.confirmed` — même raison que le précédent. */
+  private unsubscribeConfirmed: (() => void) | null = null;
+
   public onModuleInit(): void {
     this.unsubscribe = this.events.onAppointmentCreated((event) => {
       void this.handle(event);
+    });
+    this.unsubscribeConfirmed = this.events.onAppointmentConfirmed((event) => {
+      void this.handleConfirmed(event);
     });
   }
 
   public onModuleDestroy(): void {
     this.unsubscribe?.();
     this.unsubscribe = null;
+    this.unsubscribeConfirmed?.();
+    this.unsubscribeConfirmed = null;
   }
 
   /**
@@ -110,6 +134,23 @@ export class BookingConfirmationListener implements OnModuleInit, OnModuleDestro
    * doit pas être rapporté comme un échec parce qu'un SMS n'est pas parti.
    */
   public async handle(event: AppointmentCreatedEvent): Promise<void> {
+    await this.announce(event, 'BOOKING_CONFIRMATION');
+  }
+
+  /**
+   * Traite un `appointment.confirmed` : « votre rendez-vous est confirmé », un
+   * message par canal retenu (#800).
+   *
+   * Ne lève jamais, pour la même raison que `handle` : la confirmation est
+   * écrite en base quand cet événement part, et un SMS manqué ne doit pas la
+   * faire passer pour un échec au comptoir.
+   */
+  public async handleConfirmed(event: AppointmentConfirmedEvent): Promise<void> {
+    await this.announce(event, 'APPOINTMENT_CONFIRMED');
+  }
+
+  /** Ce que les deux événements déclenchent — voir l'en-tête. */
+  private async announce(event: AnnouncedAppointment, type: AnnouncementType): Promise<void> {
     try {
       await this.tenants.runWithTenant(event.tenantId, async () => {
         const channels = await this.resolveChannels(event.clientId);
@@ -120,6 +161,7 @@ export class BookingConfirmationListener implements OnModuleInit, OnModuleDestro
           // par lequel une réservation ne produirait aucune trace d'envoi.
           this.logger.warn('confirmation sans canal joignable', {
             appointmentId: event.appointmentId,
+            type,
           });
           return;
         }
@@ -129,11 +171,11 @@ export class BookingConfirmationListener implements OnModuleInit, OnModuleDestro
         // dépendre l'ordre des lignes de l'ordonnancement, ce que le journal du
         // back-office affiche.
         for (const channel of channels) {
-          await this.publishOne(event, channel);
+          await this.publishOne(event, type, channel);
         }
       });
     } catch (error: unknown) {
-      this.failed(event, error);
+      this.failed(event, type, error);
     }
   }
 
@@ -170,7 +212,8 @@ export class BookingConfirmationListener implements OnModuleInit, OnModuleDestro
    * le rappel J-1, qui est le seul message planifié du MVP.
    */
   private async publishOne(
-    event: AppointmentCreatedEvent,
+    event: AnnouncedAppointment,
+    type: AnnouncementType,
     channel: NotificationChannel,
   ): Promise<void> {
     const message: NotificationMessage = {
@@ -180,10 +223,10 @@ export class BookingConfirmationListener implements OnModuleInit, OnModuleDestro
       // sa portée de tenant. Depuis #799, ce champ n'est plus une prévoyance —
       // il est ce que la route interne emploie pour ouvrir la sienne.
       tenantId: event.tenantId,
-      dedupeKey: appointmentDedupeKey(event.appointmentId, 'BOOKING_CONFIRMATION', channel),
+      dedupeKey: appointmentDedupeKey(event.appointmentId, type, channel),
       appointmentId: event.appointmentId,
       recipientUserId: event.clientId,
-      type: 'BOOKING_CONFIRMATION',
+      type,
       channel,
       scheduledFor: null,
     };
@@ -191,7 +234,7 @@ export class BookingConfirmationListener implements OnModuleInit, OnModuleDestro
     try {
       await this.publisher.publish(message);
     } catch (error: unknown) {
-      this.failed(event, error, channel);
+      this.failed(event, type, error, channel);
     }
   }
 
@@ -202,14 +245,25 @@ export class BookingConfirmationListener implements OnModuleInit, OnModuleDestro
    * message de l'erreur — pas sa pile (notifications §7).
    */
   private failed(
-    event: AppointmentCreatedEvent,
+    event: AnnouncedAppointment,
+    type: AnnouncementType,
     error: unknown,
     channel?: NotificationChannel,
   ): void {
     this.logger.error("confirmation de réservation non remise à la chaîne d'envoi", {
       appointmentId: event.appointmentId,
+      type,
       ...(channel === undefined ? {} : { channel }),
       error: error instanceof Error ? error.message : `erreur non standard (${typeof error})`,
     });
   }
 }
+
+/** Les deux messages que cet abonné publie — voir l'en-tête. */
+type AnnouncementType = Extract<NotificationType, 'BOOKING_CONFIRMATION' | 'APPOINTMENT_CONFIRMED'>;
+
+/** Ce que les deux événements ont en commun, et tout ce dont l'annonce a besoin. */
+type AnnouncedAppointment = Pick<
+  AppointmentCreatedEvent | AppointmentConfirmedEvent,
+  'tenantId' | 'appointmentId' | 'clientId'
+>;

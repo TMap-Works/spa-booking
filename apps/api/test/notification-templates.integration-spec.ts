@@ -65,7 +65,9 @@ describe('Modèles de messages — routes du back-office', () => {
       // lien de réinitialisation d'un mot de passe — sur le canal e-mail
       // seulement, et c'est son quatrième critère d'acceptation. Le couple
       // `password_reset/sms` n'a pas de modèle de plateforme et n'apparaît donc
-      // pas : la liste répond à « que reçoit ma cliente ? ».
+      // pas : la liste répond à « que reçoit ma cliente ? ». **Neuf depuis
+      // #800** : « votre rendez-vous est confirmé », sur les deux canaux, que le
+      // salon peut réécrire comme les autres.
       expect(body.items.map((item) => `${item.type}/${item.channel}`)).toEqual([
         'booking_confirmation/email',
         'booking_confirmation/sms',
@@ -74,6 +76,8 @@ describe('Modèles de messages — routes du back-office', () => {
         'cancellation/email',
         'cancellation/sms',
         'password_reset/email',
+        'appointment_confirmed/email',
+        'appointment_confirmed/sms',
       ]);
       expect(body.items.every((item) => item.origin === 'platform')).toBe(true);
       expect(body.variables).toEqual([...TEMPLATE_VARIABLES]);
