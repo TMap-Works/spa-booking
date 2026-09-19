@@ -29,6 +29,7 @@ import {
   uuidSchema,
 } from '../common/identifiers';
 import { utcInstantSchema } from '../common/time';
+import { localeSchema, submittedLocaleSchema } from '../locale/index';
 import { tenantBillingSchema } from './billing';
 import { PERMISSIONS } from '../constants/permissions';
 import { USER_ROLES } from '../constants/roles';
@@ -125,6 +126,22 @@ export const registerRequestSchema = z
     lastName: nameSchema,
     phone: phoneSchema.optional(),
     dataConsent: accountDataConsentSchema,
+    /**
+     * La langue de l'interface au moment où le compte se crée — #844, huitième
+     * critère d'acceptation.
+     *
+     * **Facultative**, et c'est ce qui la distingue de tous les autres champs de
+     * ce corps : elle ne décrit pas ce que la personne a saisi, elle constate
+     * dans quelle langue elle était en train de lire. Un client d'API qui n'a
+     * pas de page — un script, un test — n'a aucune langue à déclarer, et
+     * l'exiger l'obligerait à en inventer une. Absente, le compte naît sans
+     * préférence (`users.locale` à `NULL`), ce qui se lit « aucune », jamais
+     * « anglais ».
+     *
+     * Elle n'écrase jamais rien, par construction : le compte est créé par cette
+     * route, il n'avait donc pas de préférence antérieure.
+     */
+    locale: submittedLocaleSchema.optional(),
   })
   .strict();
 
@@ -188,6 +205,20 @@ export const updateProfileRequestSchema = z
     firstName: nameSchema,
     lastName: nameSchema,
     phone: phoneSchema.nullable(),
+    /**
+     * La langue préférée du compte — #844, septième critère d'acceptation.
+     *
+     * `.nullable()` comme `phone`, et pour la même raison : `null` **efface** la
+     * préférence, et la personne retombe sur la langue de l'établissement. C'est
+     * une valeur, pas une absence — la colonne `users.locale` est nullable, et
+     * `NULL` y signifie « aucune préférence enregistrée ». Un champ absent, lui,
+     * ne touche à rien : c'est la distinction que le `.partial()` sur un objet
+     * `.strict()` porte pour les trois champs.
+     *
+     * `submittedLocaleSchema` pour la raison de `updateTenantRequestSchema` : la
+     * casse d'une étiquette de langue se normalise, sa valeur se refuse.
+     */
+    locale: submittedLocaleSchema.nullable(),
   })
   .strict()
   .partial();
@@ -246,6 +277,19 @@ export const sessionUserSchema = z.object({
   firstName: nameSchema,
   lastName: nameSchema,
   phone: storedPhoneSchema.nullable(),
+  /**
+   * La langue préférée du compte, ou `null` quand la personne n'en a jamais
+   * exprimé — #844.
+   *
+   * `.nullable()` et non `.optional()`, comme `phone` et pour la même raison :
+   * l'API émet **toujours** le champ, à `null` quand il n'est pas renseigné. Un
+   * front qui distingue « absent » de « vide » finit par afficher `undefined`.
+   *
+   * `null` n'est pas un défaut déguisé : il se lit « aucune préférence », et
+   * c'est `tenant.defaultLocale` qui tranche alors. Confondre les deux ferait
+   * paraître choisie une langue que personne n'a demandée.
+   */
+  locale: localeSchema.nullable(),
 });
 
 export type SessionUser = z.infer<typeof sessionUserSchema>;

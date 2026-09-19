@@ -60,6 +60,7 @@ import {
   normalizeAppointmentReference,
 } from '../constants/appointment';
 import { MAX_APPOINTMENT_RANGE_DAYS } from '../constants/limits';
+import { submittedLocaleSchema } from '../locale/index';
 
 import { serviceSummarySchema, staffMemberSummarySchema } from './catalog';
 import { userSummarySchema } from './identity';
@@ -364,6 +365,23 @@ export function guestContactSchemaFor(defaultCountry?: string | null) {
       lastName: nameSchema,
       email: emailSchema,
       phone: e164PhoneSchemaFor(defaultCountry).optional(),
+      /**
+       * La langue dans laquelle le tunnel a été suivi — #844, huitième critère
+       * d'acceptation.
+       *
+       * **Facultative**, et elle ne décrit pas une saisie : personne ne la tape,
+       * le tunnel la constate. Absente, la fiche cliente reste sans préférence.
+       *
+       * Ce qu'elle produit en base est borné par une règle que le serveur tient
+       * seul : la langue est **posée** sur une fiche qui n'en a pas, et une
+       * préférence déjà enregistrée n'est **jamais** écrasée. La nuance est
+       * celle qui protège déjà le prénom, le nom et le numéro d'une fiche
+       * existante (`CrmRepository.resolveClientWithin`, « ce que cette méthode
+       * ne fait pas : mettre à jour ») : un appel public ne réécrit pas le
+       * dossier d'une cliente dont on connaît l'adresse. La langue fait exception
+       * dans un seul sens — combler un trou —, jamais dans l'autre.
+       */
+      locale: submittedLocaleSchema.optional(),
     })
     .strict();
 }

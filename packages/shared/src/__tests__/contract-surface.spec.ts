@@ -23,6 +23,7 @@ import * as commonFamily from '../common/index';
 import * as constantsFamily from '../constants/index';
 import * as errorsFamily from '../errors/index';
 import * as contract from '../index';
+import * as localeFamily from '../locale/index';
 import * as schemasFamily from '../schemas/index';
 
 const REPO_ROOT = resolve(__dirname, '..', '..', '..', '..');
@@ -68,6 +69,11 @@ const EXPECTED_EXPORTS = [
   'isKnownErrorCode',
   'apiErrorSchema',
   'errorCodeOf',
+  // locale
+  'LOCALES',
+  'localeSchema',
+  'DEFAULT_LOCALE',
+  'isLocale',
   // schemas
   'appointmentSchema',
   'createAppointmentRequestSchema',
@@ -86,13 +92,14 @@ const EXPECTED_EXPORTS = [
 ] as const;
 
 /**
- * Les quatre familles réexportées par `src/index.ts`, sous la forme où la
+ * Les cinq familles réexportées par `src/index.ts`, sous la forme où la
  * collision se constate : leurs jeux de noms.
  */
 const FAMILIES: ReadonlyArray<readonly [string, Record<string, unknown>]> = [
   ['common', commonFamily],
   ['constants', constantsFamily],
   ['errors', errorsFamily],
+  ['locale', localeFamily],
   ['schemas', schemasFamily],
 ];
 
