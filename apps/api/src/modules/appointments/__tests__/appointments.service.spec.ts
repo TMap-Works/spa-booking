@@ -258,6 +258,7 @@ function bookingInput(overrides: Partial<BookAppointmentInput> = {}): BookAppoin
       lastName: 'Rakoto',
       email: 'camille@example.test',
       phone: '+261 34 12 345 67',
+      locale: null,
     },
     clientNote: null,
     // La case cochée — le cas normal du tunnel, et le seul que le contrat

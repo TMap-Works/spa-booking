@@ -284,6 +284,14 @@ interface LockedClientRow {
   id: string;
   role: string;
   anonymized: boolean;
+  /**
+   * La préférence de langue déjà enregistrée, ou `null` — #844.
+   *
+   * Lue **sous le même verrou** que le rôle, et pour la même raison : c'est elle
+   * qui décide si la langue de la demande a le droit d'être écrite, et une
+   * décision prise hors verrou serait périmée avant d'avoir servi.
+   */
+  locale: string | null;
 }
 
 /** Champs modifiables d'une fiche — tous facultatifs, aucun ne l'est tous. */
@@ -651,10 +659,16 @@ export class CrmRepository {
    * ## L'ordre des verrous, et pourquoi il n'ajoute aucun cycle d'attente
    *
    * `AppointmentsRepository.insert` prend d'abord le verrou consultatif
-   * d'agenda, **puis** appelle cette porte : le `FOR SHARE` arrive donc toujours
-   * après lui, exactement comme celui du comptoir. Les deux chemins acquièrent
-   * dans le même ordre, et aucun ne détient de verrou de ligne `users` avant
-   * l'agenda (ADR 0006).
+   * d'agenda, **puis** appelle cette porte : le verrou de ligne arrive donc
+   * toujours après lui, exactement comme celui du comptoir. Les deux chemins
+   * acquièrent dans le même ordre, et aucun ne détient de verrou de ligne
+   * `users` avant l'agenda (ADR 0006).
+   *
+   * Son **mode** varie depuis #844 — `FOR SHARE` quand l'appel n'a rien à
+   * écrire, `FOR UPDATE` dès qu'il porte une langue susceptible de combler un
+   * trou. Ce qui ne varie pas, et qui est ce qui compte : le verrou est pris une
+   * fois, au mode définitif, jamais élevé en cours de transaction. Voir le
+   * raisonnement au-dessus de la lecture.
    *
    * ## Ce que le prédicat ne regarde pas : `is_active`
    *
@@ -695,12 +709,48 @@ export class CrmRepository {
 
     // `(tenant_id, email)` est l'index unique du schéma : ce couple de prédicats
     // le sert tel quel, et rend au plus une ligne.
-    const rows = await scope.$queryRaw<LockedClientRow[]>`
-      SELECT "id"::text AS id, "role"::text AS role, "anonymized_at" IS NOT NULL AS anonymized
-      FROM "users"
-      WHERE "email" = ${contact.email} AND "tenant_id" = ${tenantId}::uuid
-      FOR SHARE
-    `;
+    //
+    // ## Le mode du verrou dépend de ce que l'appel peut écrire (#844)
+    //
+    // `FOR SHARE` quand la demande ne porte pas de langue — c'est le cas
+    // dominant, et le comportement d'avant #844 : la lecture ne fait que
+    // **juger**, deux réservations de la même cliente chez deux praticiennes
+    // différentes n'ont aucune raison de s'attendre.
+    //
+    // `FOR UPDATE` dès que la demande en porte une, parce qu'alors cette
+    // transaction est susceptible d'écrire sur cette ligne. Prendre d'emblée le
+    // verrou le plus fort est ce qui interdit l'**élévation** en cours de
+    // transaction, et l'élévation est précisément ce qui interbloque : le verrou
+    // consultatif d'agenda est keyé `(tenant_id, staff_id)`
+    // (`AppointmentsRepository.insert`), si bien que deux réservations de la
+    // même adresse chez deux praticiennes différentes ne sont pas sérialisées.
+    // Toutes deux obtiendraient le `FOR SHARE` — il est partagé —, puis
+    // demanderaient l'exclusif que l'autre détient déjà : PostgreSQL en abat une
+    // en `40P01` au bout de `deadlock_timeout`, et le tunnel rend 500 au lieu de
+    // 201. Le `WHERE … IS NULL` de la mise à jour protège de la perte
+    // d'écriture, jamais de l'interblocage.
+    //
+    // Ce que ce mode coûte : deux réservations **simultanées** de la même
+    // cliente, toutes deux porteuses d'une langue, s'attendent le temps d'une
+    // ligne. La seconde trouve alors `locale` renseignée et n'écrit rien. Aucun
+    // autre appel n'est ralenti, et la contention disparaît dès la première
+    // préférence posée.
+    const rows =
+      contact.locale === null
+        ? await scope.$queryRaw<LockedClientRow[]>`
+            SELECT "id"::text AS id, "role"::text AS role, "anonymized_at" IS NOT NULL AS anonymized,
+                   "locale" AS locale
+            FROM "users"
+            WHERE "email" = ${contact.email} AND "tenant_id" = ${tenantId}::uuid
+            FOR SHARE
+          `
+        : await scope.$queryRaw<LockedClientRow[]>`
+            SELECT "id"::text AS id, "role"::text AS role, "anonymized_at" IS NOT NULL AS anonymized,
+                   "locale" AS locale
+            FROM "users"
+            WHERE "email" = ${contact.email} AND "tenant_id" = ${tenantId}::uuid
+            FOR UPDATE
+          `;
 
     // Le rôle est lu **pour être jugé**, jamais rendu : c'est la seule
     // information dont la décision a besoin, et elle ne quitte pas ce fichier.
@@ -718,6 +768,33 @@ export class CrmRepository {
       if (existing.role !== CUSTOMER_ROLE || existing.anonymized) {
         throw new ClientEmailNotBookableError();
       }
+
+      // La seule écriture que cette méthode fasse sur une fiche existante, et
+      // elle ne comble qu'un **trou** (#844). `locale` nulle se lit « aucune
+      // préférence enregistrée », et la visiteuse vient d'en exprimer une en
+      // réservant depuis une page. Le `IS NULL` du `WHERE` est ce qui rend la
+      // règle vraie même en course : deux réservations concurrentes sur la même
+      // adresse ne peuvent pas se voler la préférence, la seconde ne trouvant
+      // plus de ligne à mettre à jour.
+      //
+      // La ligne est déjà tenue en exclusif quand on arrive ici — la lecture
+      // ci-dessus a pris `FOR UPDATE` dès que `contact.locale` n'était pas nul.
+      // Cette mise à jour n'élève donc aucun verrou, et ne peut pas interbloquer
+      // avec une réservation concurrente de la même cliente.
+      //
+      // L'autre sens reste fermé — une préférence déjà posée n'est jamais
+      // remplacée par un appel public. Le prénom, le nom et le numéro, eux, ne
+      // sont pas écrits du tout : ils *ont* une valeur, et la corriger relève du
+      // back-office sous garde.
+      if (existing.locale === null && contact.locale !== null) {
+        await scope.$executeRaw`
+          UPDATE "users"
+          SET "locale" = ${contact.locale}, "updated_at" = now()
+          WHERE "id" = ${existing.id}::uuid AND "tenant_id" = ${tenantId}::uuid
+            AND "locale" IS NULL
+        `;
+      }
+
       return existing.id;
     }
 
@@ -732,6 +809,9 @@ export class CrmRepository {
           firstName: contact.firstName,
           lastName: contact.lastName,
           phone: contact.phone,
+          // La langue du tunnel, ou `null` (#844). Sur une fiche qui naît, il n'y
+          // a rien à protéger : aucune préférence ne peut être écrasée.
+          locale: contact.locale,
           // Aucune note interne : le dossier du salon ne s'écrit pas depuis une
           // surface publique. `ClientContact` n'a d'ailleurs pas de champ pour.
         }),

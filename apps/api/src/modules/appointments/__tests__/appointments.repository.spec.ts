@@ -38,6 +38,8 @@ const CONTACT = {
   lastName: 'Rakoto',
   email: 'camille@example.test',
   phone: null,
+  // `null` : le tunnel n'a pas dit dans quelle langue il s'affichait (#844).
+  locale: null,
 } as const;
 
 const DRAFT: AppointmentDraft = {
