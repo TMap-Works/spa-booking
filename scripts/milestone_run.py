@@ -1416,7 +1416,8 @@ def live_worktrees(claims=None):
             if number is not None and path:
                 found.setdefault(number, {
                     "path": path, "branch": branch,
-                    "locked": current.get("locked", False)})
+                    "locked": current.get("locked", False),
+                    "lock_pid": current.get("lock_pid")})
             current = {}
             continue
         key, _, value = line.partition(" ")
@@ -1426,7 +1427,55 @@ def live_worktrees(claims=None):
             current["branch"] = value.replace("refs/heads/", "")
         elif key == "locked":
             current["locked"] = True
+            # Claude Code signe le verrou de l'agent qu'il loge :
+            # « claude agent agent-<aléa> (pid 25188) ». Ce PID est celui du
+            # `claude -p` qui porte l'agent — le seul témoin qui ne dépende pas
+            # du journal (voir `held_by_live_agent`).
+            match = LOCK_PID_RE.search(value)
+            current["lock_pid"] = int(match.group(1)) if match else None
     return found
+
+
+LOCK_PID_RE = re.compile(r"\(pid (\d+)\)")
+
+
+def process_is_claude(pid):
+    """Le PID désigne-t-il un Claude Code **vivant** ?
+
+    Le nom compte autant que la vie : Windows recycle les PID, et un verrou
+    laissé par une étape morte peut désigner, des heures plus tard, un tout
+    autre programme. Une sonde en échec répond non — c'est rendre la décision
+    au journal, comme avant ce témoin, et non figer un ticket sur un doute.
+    """
+    if not pid:
+        return False
+    try:
+        if os.name == "nt":
+            proc = subprocess.run(
+                ["tasklist", "/FI", f"PID eq {pid}", "/FO", "CSV", "/NH"],
+                capture_output=True, text=True, encoding="utf-8",
+                errors="replace", timeout=30)
+            row = proc.stdout.strip().lower()
+            return row.startswith('"claude') and f'"{pid}"' in row
+        proc = subprocess.run(["ps", "-p", str(pid), "-o", "comm="],
+                              capture_output=True, text=True, encoding="utf-8",
+                              errors="replace", timeout=30)
+        return "claude" in proc.stdout.lower()
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+def held_by_live_agent(worktree):
+    """Le verrou du worktree est-il tenu par un `claude -p` encore vivant ?
+
+    Le journal seul ne suffit pas à déclarer un agent mort (2026-09-19, #844) :
+    une étape que son superviseur croyait arrêtée a continué de travailler, et
+    l'étape suivante, ne lisant aucun battement depuis sa propre ouverture, a
+    lancé un second agent sur la même branche. Le verrou portait pourtant le
+    PID de l'étape survivante, bien vivante. Un agent logé par un processus
+    vivant tient son ticket, quel que soit le silence de son journal.
+    """
+    return bool(worktree) and process_is_claude(worktree.get("lock_pid"))
 
 
 def pr_by_issue(prs):
@@ -1560,7 +1609,8 @@ def cmd_reconcile(args):
             # repartirait indéfiniment sans que personne soit consulté. C'est
             # `retry N` qui le remet en file, et lui seul.
             target, why = ticket["status"], "ticket tombé — worktree conservé"
-        elif worktree and abandonne(number):
+        elif (worktree and abandonne(number)
+              and not held_by_live_agent(worktree)):
             # Personne ne tient plus ce worktree : son agent n'a rien journalisé
             # depuis l'ouverture de l'étape, il est mort avec le `claude -p` qui
             # le portait. Le ticket est donc à reprendre — **sur cette
@@ -1584,7 +1634,9 @@ def cmd_reconcile(args):
             target = "running"
             why = (f"worktree vivant sur {worktree['branch']}"
                    + (", branche poussée" if branch else ", rien de poussé")
-                   + (" (verrouillé)" if worktree["locked"] else ""))
+                   + (" (verrouillé)" if worktree["locked"] else "")
+                   + (f", tenu par le PID {worktree['lock_pid']}"
+                      if worktree.get("lock_pid") else ""))
         elif branch and ticket["status"] in BAD:
             # Le pendant du cas 3, sans worktree, et il devient indispensable
             # avec le cas suivant : sans lui, un ticket tombé passait `running`

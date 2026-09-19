@@ -2238,6 +2238,114 @@ def was_cut(expired, summary):
     return bool(expired) and not (summary and not summary.get("is_error"))
 
 
+def kill_tree(pid):
+    """Arrête un processus **et toute sa descendance**.
+
+    `Popen.terminate()` ne suffit pas sous Windows : Claude Code s'y lance par
+    `claude.CMD`, donc le processus que le superviseur connaît est l'interpréteur
+    de commandes, et le `claude.exe` qui porte l'étape en est le fils.
+    `terminate()` tue le premier et laisse le second orphelin, qui garde le tube
+    de sortie ouvert et va au bout de sa vague. C'est ainsi que l'étape
+    « abandonnée avant tout dispatch » du 2026-09-19 a dispatché #844 quand
+    même, puis travaillé en parallèle de l'étape suivante. `taskkill /T`
+    descend l'arbre ; ailleurs, l'étape a son propre groupe de processus
+    (`start_new_session`) et c'est lui qu'on tue.
+    """
+    if not pid:
+        return
+    try:
+        if os.name == "nt":
+            subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"],
+                           capture_output=True, timeout=60,
+                           creationflags=flags_sans_fenetre())
+            return
+        group = os.getpgid(pid)
+        if group != os.getpgid(0):
+            os.killpg(group, signal.SIGKILL)
+        else:
+            os.kill(pid, signal.SIGKILL)
+    except (OSError, subprocess.SubprocessError):
+        pass
+
+
+def surviving_legs(args):
+    """Les étapes de ce jalon encore vivantes : PID → âge en secondes.
+
+    Un superviseur ne connaît que les appels qu'il a lancés lui-même. Tué, puis
+    relancé par la veille, il ignore tout de l'étape que son prédécesseur avait
+    ouverte — et qui peut très bien tourner encore (voir `kill_tree`). On la
+    retrouve donc par sa ligne de commande, qui porte le prompt de l'étape.
+    Une sonde en échec répond « aucune » : c'est le comportement d'avant.
+    """
+    marker = leg_prompt(args).split(" --")[0] + " --"
+    try:
+        if os.name == "nt":
+            script = ("[Console]::OutputEncoding = [Text.Encoding]::UTF8; "
+                      "Get-CimInstance Win32_Process -Filter "
+                      "\"CommandLine like '%stream-json%'\" | ForEach-Object { "
+                      "'{0} {1} {2}' -f $_.ProcessId, "
+                      "[int]((Get-Date) - $_.CreationDate).TotalSeconds, "
+                      "$_.CommandLine }")
+            command = ["powershell", "-NoProfile", "-NonInteractive",
+                       "-Command", script]
+        else:
+            command = ["ps", "-eo", "pid=,etimes=,args="]
+        proc = subprocess.run(command, capture_output=True, text=True,
+                              encoding="utf-8", errors="replace", timeout=60,
+                              creationflags=flags_sans_fenetre())
+    except (OSError, subprocess.SubprocessError):
+        return {}
+    found = {}
+    for line in proc.stdout.splitlines():
+        parts = line.strip().split(None, 2)
+        if len(parts) < 3 or not parts[0].isdigit() or not parts[1].isdigit():
+            continue
+        pid, age, cmdline = int(parts[0]), int(parts[1]), parts[2]
+        if pid != os.getpid() and marker in cmdline and "stream-json" in cmdline:
+            found[pid] = age
+    return found
+
+
+def wait_for_survivors(args, stop_flag):
+    """N'ouvrir aucune étape tant qu'une précédente vit encore.
+
+    Rend False s'il n'y avait personne, True après avoir attendu (la boucle
+    doit alors tout relire : la survivante a pu avancer ou finir le jalon), et
+    None si l'arrêt a été demandé pendant l'attente.
+
+    Ouvrir une étape par-dessus une survivante, c'est écrire un `leg_started`
+    qui fait passer ses agents pour morts, puis en lancer de seconds sur leurs
+    branches (2026-09-19, #844). Une survivante au-delà de `--leg-timeout` est
+    arrêtée avec toute sa descendance, comme l'aurait fait son propre
+    superviseur ; ses tickets restent dans leurs worktrees, et l'étape suivante
+    les reprend.
+    """
+    if getattr(args, "dry_run", False):
+        return False
+    limit = args.leg_timeout * 60
+    waited = False
+    while True:
+        survivors = surviving_legs(args)
+        if not survivors:
+            return waited
+        if stop_flag.is_set():
+            return None
+        for pid, age in sorted(survivors.items()):
+            if age >= limit:
+                say(f"étape survivante (PID {pid}) ouverte depuis plus de "
+                    f"{args.leg_timeout} min — arrêt de son arbre de processus",
+                    "WARN")
+                kill_tree(pid)
+        if not waited:
+            say("étape précédente encore vivante (PID "
+                + ", ".join(str(pid) for pid in sorted(survivors))
+                + ") — aucune étape ouverte tant qu'elle tourne : ses agents "
+                "tiennent leurs tickets", "WARN")
+            waited = True
+        beat()
+        time.sleep(30)
+
+
 def stream_call(args, command, raw_path, env, timeout_min, label, stall=None):
     """Lance l'appel et lit son flux `stream-json` — le corps commun.
 
@@ -2254,7 +2362,8 @@ def stream_call(args, command, raw_path, env, timeout_min, label, stall=None):
         process = subprocess.Popen(
             command, cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             text=True, encoding="utf-8", errors="replace", bufsize=1, env=env,
-            creationflags=flags_sans_fenetre())
+            creationflags=flags_sans_fenetre(),
+            start_new_session=os.name != "nt")
     except (OSError, ValueError) as exc:
         # Sans cela, l'exception remonte, le superviseur meurt, et la veille le
         # relance toutes les cinq minutes pour qu'il remeure de la même façon.
@@ -2284,10 +2393,7 @@ def stream_call(args, command, raw_path, env, timeout_min, label, stall=None):
     def kill(why, flag):
         flag.set()
         say(why, "ERROR")
-        try:
-            process.terminate()
-        except OSError:
-            pass
+        kill_tree(process.pid)
 
     def cutoff():
         kill(f"{label} sans réponse depuis {timeout_min} min — arrêt de l'appel ; "
@@ -2336,6 +2442,7 @@ def stream_call(args, command, raw_path, env, timeout_min, label, stall=None):
                     limit_info, issue = info, "quota"
                     say(f"quota {info.get('rateLimitType') or 'inconnu'} refusé "
                         f"par le serveur", "WARN")
+                    kill_tree(process.pid)
                     break
                 # Le refus arrive tard — de 8 à 52 minutes après l'ouverture sur
                 # le run S4 —, c'est-à-dire après que l'orchestrateur a dispatché
@@ -2360,6 +2467,9 @@ def stream_call(args, command, raw_path, env, timeout_min, label, stall=None):
                     say(f"fenêtre déjà à {used * 100:.0f}% à l'ouverture — étape "
                         f"abandonnée avant tout dispatch, plutôt que de la voir "
                         f"mourir sur ses agents", "WARN")
+                    # Tout de suite, et tout l'arbre : chaque seconde laissée à
+                    # l'étape est une seconde où elle peut dispatcher.
+                    kill_tree(process.pid)
                     break
                 if status == "allowed_warning":
                     used = info.get("utilization")
@@ -2388,7 +2498,7 @@ def stream_call(args, command, raw_path, env, timeout_min, label, stall=None):
     try:
         process.wait(timeout=30)
     except subprocess.TimeoutExpired:
-        process.terminate()
+        kill_tree(process.pid)
         try:
             process.wait(timeout=15)
         except subprocess.TimeoutExpired:
@@ -3127,6 +3237,14 @@ def supervise(args):
             # La fenêtre a tourné : la mesure d'avant ne dit plus rien de celle
             # qui s'ouvre. La garder ferait attendre indéfiniment.
             quota_seen = None
+            continue
+
+        # Avant le `leg_started` : l'écrire pendant qu'une étape précédente vit
+        # encore ferait passer ses agents pour morts (voir `wait_for_survivors`).
+        waited = wait_for_survivors(args, stop_flag)
+        if waited is None:
+            return 1
+        if waited:
             continue
 
         before = progress_count(args.no_merge)

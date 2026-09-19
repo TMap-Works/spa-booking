@@ -1995,6 +1995,42 @@ class AgentAnonymeDeJalon(unittest.TestCase):
         self.assertIn("worktree-agent-4f21ab", output)
         self.assertIn("/w/agent-4f21ab", output)
 
+    VERROUILLE = ("worktree /depot\nHEAD 000\nbranch refs/heads/develop\n\n"
+                  + ANONYME + "locked claude agent agent-4f21ab (pid 4242)\n")
+
+    def test_un_verrou_tenu_par_un_vivant_retient_le_ticket(self):
+        """2026-09-19, #844 : le journal est muet depuis l'ouverture de l'étape,
+        mais le `claude -p` qui a posé le verrou vit encore. Remettre le ticket
+        en file lançait un second agent sur la même branche."""
+        with mock.patch.object(run_mod, "process_is_claude",
+                               return_value=True) as sonde:
+            tickets, output = self.reconcile(
+                [self.ligne("2026-08-25T20:05:00+00:00"),
+                 self.etape("2026-08-25T21:00:00+00:00")],
+                porcelain=self.VERROUILLE)
+        sonde.assert_called_with(4242)
+        self.assertEqual(tickets[19]["status"], "running")
+        self.assertNotIn("agent mort avec son étape", output)
+
+    def test_un_verrou_dont_le_processus_est_mort_ne_retient_rien(self):
+        """Le contre-essai : l'étape qui portait l'agent est morte, son verrou
+        n'est plus qu'un vestige, et le ticket repart comme avant."""
+        with mock.patch.object(run_mod, "process_is_claude", return_value=False):
+            tickets, output = self.reconcile(
+                [self.ligne("2026-08-25T20:05:00+00:00"),
+                 self.etape("2026-08-25T21:00:00+00:00")],
+                porcelain=self.VERROUILLE)
+        self.assertEqual(tickets[19]["status"], "pending")
+        self.assertIn("agent mort avec son étape", output)
+
+    def test_le_pid_du_verrou_est_lu(self):
+        claims = {run_mod.path_key("/w/agent-4f21ab"): 19}
+        with mock.patch.object(run_mod.subprocess, "run",
+                               return_value=completed(0, self.VERROUILLE)):
+            worktree = run_mod.live_worktrees(claims)[19]
+        self.assertTrue(worktree["locked"])
+        self.assertEqual(worktree["lock_pid"], 4242)
+
     def test_un_worktree_anonyme_disparu_rend_le_ticket_a_la_file(self):
         """La revendication survit au worktree — le journal est en ajout seul.
         Elle ne vaut donc que confrontée à `git worktree list` : sans entrée en
