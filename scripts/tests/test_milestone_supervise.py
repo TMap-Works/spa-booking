@@ -3358,5 +3358,76 @@ class VeilleSurPortable(unittest.TestCase):
             self.assertFalse(sup.unbind_from_battery())
 
 
+class EtapeSurvivante(unittest.TestCase):
+    """Une étape arrêtée doit l'être vraiment, et aucune ne s'ouvre par-dessus
+    une survivante (2026-09-19, #844 : deux agents sur la même branche)."""
+
+    ARGS = dict(milestone="Jalon A", width=3, waves_per_leg=1, nature="projet",
+                no_merge=False, yes=True, leg_timeout=180, dry_run=False)
+
+    def args(self, **kwargs):
+        return argparse.Namespace(**{**self.ARGS, **kwargs})
+
+    def test_l_arret_descend_tout_l_arbre(self):
+        """`terminate()` ne tue que `claude.CMD` : le `claude.exe` qu'il a lancé
+        survivait et poursuivait sa vague."""
+        code = code_sans_docstring(sup.stream_call)
+        self.assertNotIn(".terminate()", code)
+        self.assertGreaterEqual(code.count("kill_tree(process.pid)"), 4)
+        self.assertIn("'/T'", code_sans_docstring(sup.kill_tree))
+
+    def test_seules_les_etapes_du_jalon_sont_des_survivantes(self):
+        sortie = "\n".join([
+            '100 50 claude.exe -p "/milestone Jalon A --width 3 --waves 1 --yes"'
+            ' --output-format stream-json',
+            '101 50 cmd.exe /c ""claude.CMD" -p "/milestone Jalon A --width 3'
+            ' --waves 1 --yes" --output-format stream-json"',
+            '200 60 claude.exe -p "/milestone Jalon AB --width 3" --output-format'
+            ' stream-json',
+            '300 70 claude.exe -p "/milestone-arbitrate Jalon A" --output-format'
+            ' stream-json',
+            "illisible",
+        ])
+        with mock.patch.object(sup.subprocess, "run",
+                               return_value=subprocess.CompletedProcess(
+                                   [], 0, stdout=sortie)):
+            self.assertEqual(sup.surviving_legs(self.args()), {100: 50, 101: 50})
+
+    def test_sans_survivante_rien_n_attend(self):
+        with mock.patch.object(sup, "surviving_legs", return_value={}):
+            self.assertFalse(sup.wait_for_survivors(self.args(), mock.Mock()))
+
+    def test_on_attend_la_fin_de_la_survivante(self):
+        stop = mock.Mock()
+        stop.is_set.return_value = False
+        with mock.patch.object(sup, "surviving_legs",
+                               side_effect=[{100: 60}, {100: 90}, {}]), \
+             mock.patch.object(sup, "kill_tree") as kill, \
+             mock.patch.object(sup, "beat"), \
+             mock.patch.object(sup, "say"), \
+             mock.patch.object(sup.time, "sleep"):
+            self.assertTrue(sup.wait_for_survivors(self.args(), stop))
+        kill.assert_not_called()
+
+    def test_une_survivante_hors_delai_est_arretee(self):
+        stop = mock.Mock()
+        stop.is_set.return_value = False
+        with mock.patch.object(sup, "surviving_legs",
+                               side_effect=[{100: 181 * 60}, {}]), \
+             mock.patch.object(sup, "kill_tree") as kill, \
+             mock.patch.object(sup, "beat"), \
+             mock.patch.object(sup, "say"), \
+             mock.patch.object(sup.time, "sleep"):
+            self.assertTrue(sup.wait_for_survivors(self.args(), stop))
+        kill.assert_called_once_with(100)
+
+    def test_aucune_etape_ouverte_avant_d_avoir_attendu(self):
+        """La garde précède le `leg_started`, qui ferait passer pour morts les
+        agents de la survivante."""
+        code = code_sans_docstring(sup.supervise)
+        self.assertLess(code.index("wait_for_survivors(args, stop_flag)"),
+                        code.index("'leg_started'"))
+
+
 if __name__ == "__main__":
     unittest.main()
