@@ -404,3 +404,88 @@
   color: var(--spa-color-text-on-brand-muted);
   overflow-wrap: anywhere;
 }
+
+/* --- Photographie d'ambiance du volet d'accueil ----------------------------- */
+
+/*
+ * Le volet d'accueil, quand il porte une photographie de salon.
+ *
+ * ## Un fond, et non une illustration posée à côté du texte
+ *
+ * Le volet a une hauteur imposée par le formulaire d'en face (`min-block-size:
+ * 36rem` au-delà de 56 rem), et ce qu'il contient — identité, titre, accroche,
+ * puces — n'en occupe qu'une partie, variable d'un écran à l'autre :
+ * l'inscription d'un salon est deux fois plus haute que la connexion de la
+ * console. Une image glissée dans le flux aurait donc à choisir entre écraser
+ * ce texte sur un téléphone et laisser un blanc sur un écran large. En fond,
+ * elle prend exactement la place qui reste, à toutes les largeurs, et le volet
+ * garde la mise en page que #927 et #1052 lui ont donnée.
+ *
+ * ## Le voile n'est pas décoratif : il tient le contraste
+ *
+ * Le volet écrit en deux couleurs : `--spa-color-text-on-brand` (blanc) pour le
+ * titre et les puces, `--spa-color-text-on-brand-muted` (`brand-200`, #a5d2cb)
+ * pour l'accroche. Toutes deux sont choisies pour l'aplat `brand-800`
+ * (#12332e) ; posées sur une photographie, elles tombent sous 4,5:1 partout où
+ * la scène est claire — et ces photos le sont : une serviette blanche, une
+ * fenêtre, un carrelage.
+ *
+ * Le voile ci-dessous repose donc l'aplat de marque par-dessus l'image. Son
+ * opacité n'est pas un réglage d'œil : c'est **le texte secondaire qui la
+ * fixe**. Dans le pire cas — une photographie blanche sous le texte — le
+ * contraste de `brand-200` sur le voile vaut :
+ *
+ * | Voile | Fond obtenu | Titre (blanc) | Accroche (`brand-200`) |
+ * |---|---|---|---|
+ * | 90 % | rgb(42,71,67) | 10,1:1 | 6,1:1 |
+ * | 86 % | rgb(51,80,75) | 8,8:1 | 5,3:1 |
+ * | 82 % | rgb(58,86,81) | 7,9:1 | 4,8:1 |
+ * | 80 % | rgb(65,92,88) | 7,3:1 | **4,4:1** |
+ * | 68 % | rgb(94,116,113) | 5,0:1 | **3,0:1** |
+ *
+ * D'où le plancher à 82 % : en dessous, l'accroche passe sous le seuil AA de
+ * 4,5:1 (`ds:a11y`). Un dégradé qui s'ouvrirait davantage vers le bas
+ * montrerait mieux la photographie, mais aucun de ces écrans ne garantit que
+ * son texte s'arrête avant : la connexion du back-office pose sa dernière puce
+ * à 90 % de la hauteur du volet, l'inscription d'un salon déroule un formulaire
+ * qui l'étire au double. Le dégradé reste donc étroit — 90 % en haut, 82 % en
+ * bas —, et c'est le grain de la photographie, non son sujet, qui réchauffe la
+ * bande.
+ *
+ * `background-blend-mode` n'est pas employé : il mélangerait la couleur à
+ * l'image sur toute la surface, sans laisser décider où le voile est épais.
+ */
+.spa-auth__intro--photo {
+  position: relative;
+  background-position: center;
+  background-size: cover;
+  isolation: isolate;
+}
+
+.spa-auth__intro--photo::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background-image: linear-gradient(
+    to bottom,
+    color-mix(in srgb, var(--spa-color-surface-brand) 90%, transparent) 0%,
+    color-mix(in srgb, var(--spa-color-surface-brand) 82%, transparent) 100%
+  );
+}
+
+/*
+ * Sous le palier, les volets sont empilés et l'accueil se réduit à une bande de
+ * quelques centaines de pixels, entièrement occupée par le texte. Le voile y
+ * est donc uniforme et au plus épais : il n'y a aucune zone sans écriture où
+ * découvrir l'image, et la bande ne sert qu'à réchauffer l'en-tête.
+ */
+@media (max-width: 55.999rem) {
+  .spa-auth__intro--photo::before {
+    background-image: linear-gradient(
+      to bottom,
+      color-mix(in srgb, var(--spa-color-surface-brand) 90%, transparent) 0%,
+      color-mix(in srgb, var(--spa-color-surface-brand) 88%, transparent) 100%
+    );
+  }
+}

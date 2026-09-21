@@ -1,7 +1,8 @@
 import Link from 'next/link';
-import type { ReactNode } from 'react';
+import type { CSSProperties, ReactNode } from 'react';
 
 import { Icon, type IconName } from '@/components/ui/icon';
+import type { Photo } from '@/lib/photos';
 import { PLATFORM_HOME_PATH, PLATFORM_NAME } from '@/lib/platform';
 
 /**
@@ -80,6 +81,19 @@ interface AuthScreenProps {
   readonly highlights: readonly AuthHighlight[];
   /** Les chemins de retour, sous le cadre. */
   readonly exits: readonly AuthExit[];
+  /**
+   * La photographie d'ambiance du volet d'accueil, s'il en porte une.
+   *
+   * Décorative : elle donne le registre du lieu — un salon de coiffure pour le
+   * back-office, un intérieur de spa pour la console — et le texte du volet dit
+   * déjà tout ce qu'il y a à savoir. Elle est donc posée en **fond** plutôt
+   * qu'en `<img>`, et n'a rien à annoncer à un lecteur d'écran (`alt` non rendu,
+   * voir `lib/photos.ts`).
+   *
+   * Absente, le volet garde l'aplat de marque nu de #927 : c'est le repli, et
+   * aucun écran ne casse s'il ne choisit pas de photo.
+   */
+  readonly photo?: Photo;
   readonly children: ReactNode;
 }
 
@@ -89,12 +103,21 @@ export function AuthScreen({
   lead,
   highlights,
   exits,
+  photo,
   children,
 }: AuthScreenProps) {
+  const introClassName =
+    photo === undefined ? 'spa-auth__intro' : 'spa-auth__intro spa-auth__intro--photo';
+  // L'URL est une donnée du registre, pas une règle : elle change d'un écran à
+  // l'autre, et une classe par photographie aurait fait grossir la feuille d'un
+  // bloc à chaque image ajoutée.
+  const introStyle: CSSProperties | undefined =
+    photo === undefined ? undefined : { backgroundImage: `url(${photo.src})` };
+
   return (
     <div className="spa-auth">
       <div className="spa-auth__frame">
-        <div className="spa-auth__intro">
+        <div className={introClassName} style={introStyle}>
           <Link className="spa-auth__brand" href={PLATFORM_HOME_PATH}>
             <span className="spa-auth__mark" aria-hidden="true">
               <Icon name="leaf" />

@@ -522,6 +522,63 @@
   }
 }
 
+/*
+ * Le bandeau photographique en tête de chaque carte.
+ *
+ * ## Pourquoi des marges négatives plutôt qu'une carte restructurée
+ *
+ * La carte est une colonne `flex` avec sa gouttière (`padding`), et tout ce
+ * qu'elle contient s'y range : pastille, titre, liste, liens. Une image qui
+ * respecterait cette gouttière flotterait à l'intérieur d'un cadre déjà cadré —
+ * deux contours concentriques à 24 px d'écart. Le bandeau reprend donc la
+ * gouttière en négatif pour toucher les bords, ce qui ne change la structure
+ * d'aucun des autres enfants.
+ *
+ * La valeur est celle de `--spa-space-6`, puis de `--spa-space-8` au-delà de
+ * 48 rem : les deux paliers de `padding` de la carte, recopiés ici parce
+ * qu'aucune variable ne porte « la gouttière courante de cette carte ». Ces
+ * deux marges suivent donc le `padding` de `.spa-home-audience` — elles
+ * changent avec lui ou pas du tout.
+ *
+ * ## Informative, et non décorative
+ *
+ * Comme la bande des métiers, ces deux photographies disent à qui la carte
+ * s'adresse — une cliente en soin, une professionnelle au travail — avant que
+ * le titre ne le dise. Elles portent donc leur `alt`.
+ */
+.spa-home-audience__photo {
+  display: block;
+  /*
+   * `max-inline-size: none` d'abord, et ce n'est pas une précaution : le socle
+   * plafonne toute image à la largeur de son conteneur (`base.css`, la règle
+   * « img, svg, video »). C'est le bon défaut partout ailleurs, et il annulait
+   * ici l'élargissement ci-dessous **en silence** — l'image gardait la largeur
+   * de la boîte de contenu et ne débordait qu'à gauche, par sa marge négative,
+   * laissant une gouttière pleine le long du bord droit de la carte.
+   *
+   * `align-self: stretch` ne remplace pas cette largeur : `stretch` ne
+   * s'applique pas à un élément remplacé, qui garde sa taille intrinsèque. Elle
+   * est donc posée explicitement, et vaut la boîte de contenu plus les deux
+   * gouttières que les marges franchissent.
+   */
+  max-inline-size: none;
+  inline-size: calc(100% + 2 * var(--spa-space-6));
+  block-size: auto;
+  margin: calc(-1 * var(--spa-space-6)) calc(-1 * var(--spa-space-6)) var(--spa-space-2);
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  border-start-start-radius: var(--spa-radius-xl);
+  border-start-end-radius: var(--spa-radius-xl);
+}
+
+@media (min-width: 48rem) {
+  .spa-home-audience__photo {
+    inline-size: calc(100% + 2 * var(--spa-space-8));
+    margin: calc(-1 * var(--spa-space-8)) calc(-1 * var(--spa-space-8)) var(--spa-space-2);
+  }
+}
+
+
 .spa-home-audience--brand {
   background-color: var(--spa-color-surface-brand);
   border-color: var(--spa-color-surface-brand);
@@ -845,12 +902,153 @@
   color: var(--spa-color-text-muted);
 }
 
+/* --- Les métiers, en images ------------------------------------------------- */
+
+/*
+ * La bande des quatre métiers du périmètre (CDC §1.1).
+ *
+ * ## La seule section dont le propos soit l'image
+ *
+ * Partout ailleurs sur cet accueil, la photographie est un fond posé sous du
+ * texte — le bandeau de fin, les deux cartes de « Pour qui ». Ici elle est le
+ * contenu : la surcapitale du héros énumère quatre métiers depuis #927, et rien
+ * ne les montrait. Les images portent donc leur texte alternatif et non un
+ * `aria-hidden`, et le libellé sous chacune est une légende, pas un titre.
+ *
+ * ## Le fond alterné, et non une carte de plus
+ *
+ * La section reprend le fond en creux de `--sunken` plutôt que de poser quatre
+ * cartes bordées : les vignettes ont déjà leur propre contour: leur cadre
+ * d'image. Une bordure de carte autour aurait fait deux traits concentriques à
+ * 8 px d'écart.
+ */
+.spa-home-trades {
+  padding-block: var(--spa-space-12);
+  background-color: var(--spa-color-surface-sunken);
+}
+
+@media (min-width: 48rem) {
+  .spa-home-trades {
+    padding-block: var(--spa-space-16);
+  }
+}
+
+/*
+ * Une colonne sur un téléphone, deux à partir de 40 rem, quatre à partir de
+ * 60 rem — les paliers que `sizes` recopie sur les `<Image>` de la page. Trois
+ * colonnes n'existent à aucune largeur : les métiers sont quatre, et un rang
+ * de trois suivi d'un orphelin désignerait le quatrième sans raison.
+ */
+.spa-home-trades__list {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--spa-space-4);
+  margin-block-start: var(--spa-space-8);
+}
+
+@media (min-width: 40rem) {
+  .spa-home-trades__list {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (min-width: 60rem) {
+  .spa-home-trades__list {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
+.spa-home-trades__item {
+  position: relative;
+  overflow: hidden;
+  border-radius: var(--spa-radius-lg);
+  box-shadow: var(--spa-shadow-sm);
+}
+
+/*
+ * Le rapport est imposé plutôt que laissé aux fichiers : les huit photographies
+ * du registre n'ont pas le même — `massage-dos.jpg` est un portrait, les autres
+ * des paysages —, et quatre vignettes de hauteurs différentes ne feraient plus
+ * une bande. `object-fit: cover` recadre au centre, ce que le téléchargement a
+ * déjà préparé (`crop=entropy`).
+ */
+.spa-home-trades__photo {
+  display: block;
+  inline-size: 100%;
+  block-size: auto;
+  aspect-ratio: 4 / 3;
+  object-fit: cover;
+}
+
+@media (min-width: 60rem) {
+  .spa-home-trades__photo {
+    aspect-ratio: 3 / 4;
+  }
+}
+
+/*
+ * La légende est posée sur l'image, en bas : sous elle, elle aurait ajouté une
+ * ligne de texte à une bande dont le propos est justement de ne pas en être
+ * une. Le dégradé n'est pas décoratif — il porte le contraste du blanc sur une
+ * photographie dont on ne sait pas si son bas est clair.
+ *
+ * Le voile est celui de marque, à l'opacité employée partout ailleurs dans le
+ * produit (88 %, voir `components/auth.css` pour le calcul) : sur une
+ * photographie blanche — le pire cas —, le blanc y tient 8,8:1.
+ *
+ * Pas `--spa-color-scrim`, bien que ce soit le rôle qui nomme un voile : il
+ * vaut 55 % d'opacité, choisis pour assombrir l'arrière-plan d'une boîte
+ * modale, pas pour porter du texte. Le blanc y tomberait à 2,8:1 sur une scène
+ * claire. Le renforcer aurait demandé d'empiler deux couches du même jeton pour
+ * en composer l'alpha — un détour pour arriver à ce que le voile de marque
+ * donne directement, et en gardant l'identité du produit.
+ */
+.spa-home-trades__label {
+  position: absolute;
+  inset-block-end: 0;
+  inset-inline: 0;
+  padding: var(--spa-space-6) var(--spa-space-4) var(--spa-space-3);
+  background-image: linear-gradient(
+    to top,
+    color-mix(in srgb, var(--spa-color-surface-brand) 88%, transparent) 0%,
+    transparent 100%
+  );
+  color: var(--spa-color-text-on-brand);
+  font-weight: var(--spa-font-weight-semibold);
+}
+
 /* --- Bandeau de fin --------------------------------------------------------- */
 
+/*
+ * Le bandeau de fin, sur une photographie de soin.
+ *
+ * Même dispositif que le volet des écrans d'identification
+ * (`components/auth.css`), et pour la même raison : le voile de marque tient
+ * le contraste que la photographie ne garantit pas. Le plancher est le même —
+ * 82 % —, fixé par `--spa-color-text-on-brand-muted` ; ici il est tenu
+ * uniformément plutôt qu'en dégradé, parce que le bandeau est large et bas, et
+ * que son titre comme ses deux boutons s'étalent sur toute sa hauteur.
+ *
+ * Le fond de marque reste déclaré sous l'image : c'est lui qu'on voit si le
+ * fichier manque, et le bandeau ne devient alors pas illisible.
+ */
 .spa-home-closing {
+  position: relative;
+  isolation: isolate;
   padding-block: var(--spa-space-12);
   background-color: var(--spa-color-surface-brand);
+  background-image: url('/photos/soin-pierres-chaudes.jpg');
+  background-position: center 40%;
+  background-size: cover;
   color: var(--spa-color-text-on-brand);
+}
+
+.spa-home-closing::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background-color: color-mix(in srgb, var(--spa-color-surface-brand) 86%, transparent);
 }
 
 .spa-home-closing__inner {

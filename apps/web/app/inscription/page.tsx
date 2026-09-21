@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 
 import { AuthScreen, type AuthHighlight } from '@/components/auth/auth-screen';
+import { PHOTOS } from '@/lib/photos';
 import { PLAN_PROMISE } from '@/lib/plan';
 import { PLATFORM_HOME_PATH, PLATFORM_NAME } from '@/lib/platform';
 
@@ -35,6 +36,7 @@ export default function SignupPage() {
       headline="Ouvrez votre salon en ligne"
       lead="Quelques minutes suffisent : votre page de réservation, votre planning et votre caisse, au même endroit."
       highlights={SIGNUP_HIGHLIGHTS}
+      photo={PHOTOS.spaInterieur}
       exits={[{ href: PLATFORM_HOME_PATH, label: `Accueil ${PLATFORM_NAME}` }]}
     >
       <SignupForm />

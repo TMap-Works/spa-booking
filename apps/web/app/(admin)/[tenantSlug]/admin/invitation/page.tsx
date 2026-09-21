@@ -1,6 +1,7 @@
 import { notFound, redirect } from 'next/navigation';
 
 import { AuthScreen, type AuthHighlight } from '@/components/auth/auth-screen';
+import { PHOTOS } from '@/lib/photos';
 import { PUBLIC_EXIT_LABELS } from '@/components/salon/public-exits';
 import { PLATFORM_HOME_PATH, PLATFORM_NAME } from '@/lib/platform';
 import { readSalonIdentity } from '@/lib/salon-identity';
@@ -62,6 +63,7 @@ export default async function AdminInvitationPage({
       headline="Bienvenue dans votre back-office"
       lead="Choisissez votre mot de passe : vous arriverez directement dans votre espace."
       highlights={WELCOME_HIGHLIGHTS}
+      photo={PHOTOS.soinVisage}
       exits={[
         { href: salonPath(tenantSlug), label: PUBLIC_EXIT_LABELS.vitrine },
         { href: PLATFORM_HOME_PATH, label: `Accueil ${PLATFORM_NAME}` },
