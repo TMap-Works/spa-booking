@@ -1,10 +1,11 @@
 import type { PublicTenant } from '@spa/shared';
-import type { ReactNode } from 'react';
+import type { CSSProperties, ReactNode } from 'react';
 
 import { openingStatus } from '@/components/salon/opening-hours';
 import { addressLines } from '@/components/salon/salon-address';
 import { Avatar } from '@/components/ui/avatar';
 import { Icon, type IconName } from '@/components/ui/icon';
+import { PHOTOS, type Photo } from '@/lib/photos';
 
 /**
  * Le cadre d'accueil de la connexion et de l'inscription **clientes** (#1052).
@@ -56,6 +57,20 @@ interface SalonAuthCopy {
   readonly headline: (salonName: string) => string;
   readonly fallbackHeadline: string;
   readonly lead: string;
+  /**
+   * La photographie d'ambiance du volet, décorative (voir `lib/photos.ts`).
+   *
+   * Elle est attachée à l'intention plutôt que passée par la page, pour la même
+   * raison que les deux titres le sont : les deux écrans se lisent l'un à côté
+   * de l'autre, et deux pages libres de choisir auraient fini par poser la même
+   * image des deux côtés — ou deux images sans rapport.
+   *
+   * Aucune ne montre de visage. Le volet nomme le salon juste à côté, et un
+   * portrait y aurait été pris pour une personne de l'établissement : ces deux
+   * écrans sont posés sur la vitrine d'un salon réel, pas sur une page
+   * d'éditeur.
+   */
+  readonly photo: Photo;
 }
 
 /**
@@ -71,11 +86,13 @@ const COPY: Readonly<Record<SalonAuthIntent, SalonAuthCopy>> = {
     headline: (salonName) => `Bienvenue chez ${salonName}`,
     fallbackHeadline: 'Bienvenue',
     lead: 'Retrouvez vos rendez-vous, votre historique et vos coordonnées.',
+    photo: PHOTOS.massageDos,
   },
   inscription: {
     headline: (salonName) => `Créez votre compte ${salonName}`,
     fallbackHeadline: 'Créez votre compte',
     lead: 'Réservez plus vite, reportez ou annulez en ligne, gardez vos rappels à jour.',
+    photo: PHOTOS.natureMorteSpa,
   },
 };
 
@@ -157,7 +174,13 @@ export function SalonAuthScreen({
   return (
     <div className="spa-auth spa-auth--salon">
       <div className="spa-auth__frame">
-        <div className="spa-auth__intro">
+        {/* L'URL vient du registre et non d'une règle CSS : une classe par
+            photographie aurait fait grossir la feuille d'un bloc à chaque image
+            ajoutée, pour une valeur qui n'est pas une décision de style. */}
+        <div
+          className="spa-auth__intro spa-auth__intro--photo"
+          style={{ backgroundImage: `url(${copy.photo.src})` } satisfies CSSProperties}
+        >
           {/*
             Rien plutôt qu'un paragraphe vide quand la fiche n'a pas pu être
             lue : la gouttière du volet creuserait sinon 24 px de blanc autour

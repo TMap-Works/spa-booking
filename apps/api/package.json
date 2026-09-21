@@ -7,7 +7,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "start": "node dist/main.js",
-    "prestart:dev": "npm run build --workspace @spa/shared",
+    "prestart:dev": "prisma generate && npm run build --workspace @spa/shared",
     "start:dev": "node --watch --require ts-node/register src/main.ts",
     "lint": "eslint .",
     "pretypecheck": "prisma generate",

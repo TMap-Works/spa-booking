@@ -1,6 +1,7 @@
 import { redirect } from 'next/navigation';
 
 import { AuthScreen, type AuthHighlight } from '@/components/auth/auth-screen';
+import { PHOTOS } from '@/lib/photos';
 import { PLATFORM_HOME_PATH, PLATFORM_NAME } from '@/lib/platform';
 
 import { PlatformLoginForm } from '../components/platform-login-form';
@@ -37,6 +38,7 @@ export default async function PlatformLoginPage({ searchParams }: PlatformLoginP
       headline="La console de l’éditeur"
       lead="L’espace réservé à l’équipe qui ouvre et accompagne les salons de la plateforme."
       highlights={CONSOLE_HIGHLIGHTS}
+      photo={PHOTOS.salonInterieur}
       exits={[{ href: PLATFORM_HOME_PATH, label: `Accueil ${PLATFORM_NAME}` }]}
     >
       <PlatformLoginForm expired={motif === 'session-expiree'} />

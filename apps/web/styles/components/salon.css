@@ -44,18 +44,55 @@
 /* --- Bandeau d'identité (BM-VITRINE-01, BM-VITRINE-02) ---------------------- */
 
 /*
+ * Le bandeau d'identité, sur l'aplat de marque et une texture photographique.
+ *
  * L'aplat de marque, et non l'accent : l'accent désigne ce qu'on clique
  * (BM-VISUEL-01), et un bandeau peint en accent passerait pour un bouton géant.
  * Mêmes rôles que le bandeau de clôture de l'accueil (`home.css`).
+ *
+ * ## Une texture, et non la photo du salon
+ *
+ * C'est la seule surface du produit où la retenue est une question de fond et
+ * non de contraste : cette page est celle d'un **établissement réel**, et une
+ * photographie de catalogue posée en grand y serait lue comme une photographie
+ * de ce salon-là. Une cliente qui pousse la porte d'après l'image doit
+ * retrouver le lieu qu'elle a vu.
+ *
+ * L'image est donc tenue sous le voile le plus épais du produit — 88 %, contre
+ * 82 % ailleurs —, à hauteur de grain : elle réchauffe l'aplat de marque, elle
+ * ne décrit aucun lieu. Ce qui identifie le salon reste ce qu'il a lui-même
+ * écrit : son monogramme, son nom, sa localité, ses horaires.
+ *
+ * Le jour où un salon pourra téléverser sa propre photographie, c'est elle qui
+ * prendra cette place — et le voile n'aura plus lieu d'être, puisque l'image
+ * sera alors la sienne. Rien ici ne s'y oppose : une variable de plus sur
+ * `background-image`, et la règle tient.
+ *
+ * L'aplat reste déclaré sous l'image : c'est lui qu'on voit si le fichier
+ * manque, et le bandeau ne devient alors pas illisible.
  */
 .spa-salon-hero {
   display: flex;
+  position: relative;
+  isolation: isolate;
   flex-direction: column;
   gap: var(--spa-space-5);
   padding: var(--spa-space-6);
+  overflow: hidden;
   border-radius: var(--spa-radius-xl);
   background-color: var(--spa-color-surface-brand);
+  background-image: url('/photos/spa-interieur.jpg');
+  background-position: center 62%;
+  background-size: cover;
   color: var(--spa-color-text-on-brand);
+}
+
+.spa-salon-hero::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background-color: color-mix(in srgb, var(--spa-color-surface-brand) 88%, transparent);
 }
 
 /* Sur l'aplat de marque, l'anneau de focus ordinaire tombe sous 2:1. */

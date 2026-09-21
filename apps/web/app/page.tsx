@@ -1,10 +1,12 @@
 import { SUBSCRIPTION_PLAN } from '@spa/shared';
 import type { Metadata } from 'next';
+import Image from 'next/image';
 import Link from 'next/link';
 
 import { BookingPreview } from '@/components/home/booking-preview';
 import { SalonFinder } from '@/components/home/salon-finder';
 import { Icon, type IconName } from '@/components/ui/icon';
+import { PHOTOS, type Photo } from '@/lib/photos';
 import { PLAN_PRICE_LABEL, PLAN_PROMISE } from '@/lib/plan';
 import { PLATFORM_HOME_PATH, PLATFORM_NAME } from '@/lib/platform';
 import { readSalonIdentity } from '@/lib/salon-identity';
@@ -93,6 +95,27 @@ const TRUST: readonly Feature[] = [
     title: 'Zéro double réservation',
     text: 'Un créneau pris est verrouillé à l’instant même, pour tout le monde.',
   },
+];
+
+/**
+ * Les quatre métiers du périmètre, illustrés — CDC §1.1.
+ *
+ * La surcapitale du héros les énumère depuis #927 (« Spas · instituts ·
+ * coiffure · barbiers · massage ») sans que rien ne les montre : une gérante de
+ * barbershop lisait une page qui ne ressemblait qu'à un spa. Cette bande est la
+ * seule de l'accueil dont le propos soit l'image ; le libellé n'y est qu'une
+ * légende, et c'est pourquoi il tient en deux mots.
+ *
+ * Les photographies sont **informatives** ici, et non décoratives comme dans
+ * les volets d'identification : elles sont le contenu de la section. Elles
+ * portent donc l'`alt` du registre (`lib/photos.ts`) plutôt qu'un
+ * `aria-hidden`.
+ */
+const TRADES: readonly { readonly label: string; readonly photo: Photo }[] = [
+  { label: 'Spas', photo: PHOTOS.spaInterieur },
+  { label: 'Instituts de beauté', photo: PHOTOS.soinVisage },
+  { label: 'Salons de coiffure', photo: PHOTOS.salonInterieur },
+  { label: 'Barbershops', photo: PHOTOS.barbier },
 ];
 
 const LOOP: readonly Feature[] = [
@@ -329,6 +352,42 @@ export default async function HomePage() {
           </ul>
         </section>
 
+        <section className="spa-home-trades" aria-labelledby="metiers-titre">
+          <div className="spa-home__inner">
+            <div className="spa-home-section__heading">
+              <p className="spa-home__eyebrow">Pour qui c’est fait</p>
+              <h2 className="spa-home-section__title" id="metiers-titre">
+                Tous les métiers du rendez-vous
+              </h2>
+              <p className="spa-home-section__lead">
+                Une prestation, une durée, un praticien, un créneau : la même mécanique sert un
+                soin du visage comme une coupe de barbe.
+              </p>
+            </div>
+            <ul className="spa-home-trades__list">
+              {TRADES.map((trade) => (
+                <li className="spa-home-trades__item" key={trade.label}>
+                  {/*
+                    `sizes` décrit la place réellement occupée, sinon Next sert
+                    l'image pleine largeur de l'écran pour une vignette de
+                    quatre colonnes. Les paliers suivent ceux de la grille
+                    ci-contre, dans `home.css`.
+                  */}
+                  <Image
+                    className="spa-home-trades__photo"
+                    src={trade.photo.src}
+                    alt={trade.photo.alt}
+                    width={trade.photo.width}
+                    height={trade.photo.height}
+                    sizes="(min-width: 60rem) 25vw, (min-width: 40rem) 50vw, 100vw"
+                  />
+                  <span className="spa-home-trades__label">{trade.label}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        </section>
+
         <section className="spa-home-section" id="parcours" aria-labelledby="parcours-titre">
           <div className="spa-home__inner">
             <div className="spa-home-section__heading">
@@ -373,6 +432,22 @@ export default async function HomePage() {
             </div>
             <div className="spa-home-audiences">
               <article className="spa-home-audience" aria-labelledby="clientele-titre">
+                {/*
+                  Pas `massageDos` ici, bien qu'elle soit la scène la plus
+                  juste pour une cliente : c'est un portrait (1100 × 1650) dont
+                  le centre est un drap blanc, et le recadrage en 16/9 de ce
+                  bandeau n'en garde qu'un aplat clair — une carte qui paraît
+                  n'avoir pas chargé son image. Elle sert le volet vertical de
+                  la connexion cliente, où sa hauteur est un avantage.
+                */}
+                <Image
+                  className="spa-home-audience__photo"
+                  src={PHOTOS.natureMorteSpa.src}
+                  alt={PHOTOS.natureMorteSpa.alt}
+                  width={PHOTOS.natureMorteSpa.width}
+                  height={PHOTOS.natureMorteSpa.height}
+                  sizes="(min-width: 48rem) 50vw, 100vw"
+                />
                 <span className="spa-home__badge">
                   <Icon name="sparkle" />
                 </span>
@@ -396,6 +471,14 @@ export default async function HomePage() {
                 className="spa-home-audience spa-home-audience--brand"
                 aria-labelledby="equipe-titre"
               >
+                <Image
+                  className="spa-home-audience__photo"
+                  src={PHOTOS.coiffureBrushing.src}
+                  alt={PHOTOS.coiffureBrushing.alt}
+                  width={PHOTOS.coiffureBrushing.width}
+                  height={PHOTOS.coiffureBrushing.height}
+                  sizes="(min-width: 48rem) 50vw, 100vw"
+                />
                 <span className="spa-home__badge spa-home__badge--brand">
                   <Icon name="store" />
                 </span>
