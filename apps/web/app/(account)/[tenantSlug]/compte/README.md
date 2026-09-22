@@ -214,6 +214,52 @@ par la page. Le `next` de la route est revalidé à l'arrivée, et borné à l'e
 client de l'établissement : sans quoi `?next=https://exemple.test` ferait de
 cette route une redirection ouverte.
 
+## La langue : l'espace la lit, et il l'enregistre
+
+Tous les textes de cet espace viennent du namespace `account`
+(`messages/{fr,en}/account.json`), et la règle de lint anti-texte-en-dur est
+allumée sur tout le dossier par un marqueur `.i18n-lint` vide (#847, #845).
+Trois répertoires en portent un : celui-ci, `[tenantSlug]/` pour sa frontière
+d'erreur, et `components/account/`.
+
+Ce qui distingue cet espace des dix autres écrans de l'épique #843 est qu'il a un
+**compte** sous la main, donc une préférence à écrire. Deux sens de circulation,
+et ils ne se confondent pas :
+
+| Sens | Où | Ce qui se passe |
+|---|---|---|
+| compte → écran | `loginAction`, `registerAction`, `updateProfileAction` | la préférence du compte est recopiée dans `spa_account_locale`, et `spa_locale` — le choix du sélecteur — est **effacé** |
+| écran → compte | `components/account-locale-sync.tsx` → `saveAccountLocaleAction` | un choix explicite qui diffère de la préférence enregistrée part vers `PATCH /auth/me`, et le miroir suit |
+
+Le cookie du sélecteur est effacé et non réécrit avec la valeur du compte :
+l'ordre de résolution de #845 le place **avant** la préférence du compte
+(`i18n/resolve.ts`), si bien que le réécrire aurait fait passer pour un choix de
+sélecteur ce qui vient du compte — et le sélecteur n'aurait plus jamais rien eu à
+réaffirmer. Effacé, l'étape « compte » prend la main d'elle-même. Voir
+`account-locale.ts`, qui porte les trois gestes et rien d'autre.
+
+Deux conséquences qu'il faut avoir en tête avant d'y toucher :
+
+- **un compte sans préférence ne décide de rien.** `locale: null` se lit
+  « aucune » et non « anglais » (#844) : on efface alors le miroir et on laisse
+  le choix explicite en place. Une cliente qui avait demandé le français avant de
+  se connecter ne doit pas retomber dans la langue du salon pour s'être
+  identifiée ;
+- **la synchronisation se décide sur le cookie explicite, jamais sur la langue
+  affichée.** Celle-ci peut venir d'un `Accept-Language` que personne n'a
+  demandé, et l'enregistrer ferait naître une préférence par accident.
+
+Le report se fait depuis un îlot client parce que le sélecteur, lui, est partagé
+par les trois coquilles du produit : la vitrine et le back-office n'ont pas de
+compte client à mettre à jour, et y poser un appel à l'API du compte aurait mis
+une écriture sur le chemin de chaque changement de langue du produit.
+
+La **mise en forme** suit la même langue, mais par un autre chemin : les dates,
+les durées et les montants passent par `lib/format.ts`, qui veut une langue *et*
+un pays — celui de l'établissement, qu'un contexte pose une fois au gabarit
+(`components/account-display-locale.tsx`, même motif que `PhoneCountryProvider`).
+Le **fuseau** reste celui du salon dans toutes les langues.
+
 ## Ce que cet espace ne fait pas
 
 - **il ne change pas l'adresse e-mail.** Elle est l'identifiant de connexion et
