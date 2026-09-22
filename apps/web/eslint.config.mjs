@@ -1,8 +1,29 @@
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
 import js from '@eslint/js';
 import next from '@next/eslint-plugin-next';
 import globals from 'globals';
 import reactHooks from 'eslint-plugin-react-hooks';
 import tseslint from 'typescript-eslint';
+
+import { i18nLintedGlobs } from './eslint-rules/i18n-markers.mjs';
+import { spaI18nPlugin } from './eslint-rules/no-literal-jsx-text.mjs';
+
+const here = path.dirname(fileURLToPath(import.meta.url));
+
+/**
+ * Les répertoires où les textes en dur sont interdits (#845).
+ *
+ * Ils ne sont **pas listés ici** : ils sont découverts par la présence d'un
+ * fichier marqueur `.i18n-lint`, déposé par le ticket qui vient de traduire le
+ * répertoire. Onze tickets d'écrans de l'épique #843 en déposeront chacun un ;
+ * cette ligne, elle, ne bougera pas — c'est le second critère d'acceptation de
+ * #845, et c'est ce qui les garde parallélisables.
+ *
+ * Voir `eslint-rules/i18n-markers.mjs`.
+ */
+const i18nLinted = i18nLintedGlobs(here);
 
 export default tseslint.config(
   {
@@ -62,5 +83,19 @@ export default tseslint.config(
       // utile va dans une notification, une erreur remonte à l'appelant.
       'no-console': 'error',
     },
+  },
+  // Le greffon est enregistré partout, la règle n'est allumée nulle part : c'est
+  // ce qui permet aux blocs suivants — et à un `/* eslint spa-i18n/… */` dans un
+  // fichier — de la désigner par son nom.
+  { plugins: { 'spa-i18n': spaI18nPlugin } },
+  ...i18nLinted.map((files) => ({
+    files: [files],
+    rules: { 'spa-i18n/no-literal-jsx-text': 'error' },
+  })),
+  {
+    // Les suites de tests écrivent du JSX pour l'éprouver : un libellé attendu y
+    // est la donnée du test, pas un texte d'interface.
+    files: ['tests/**/*.{ts,tsx,mjs}'],
+    rules: { 'spa-i18n/no-literal-jsx-text': 'off' },
   },
 );
