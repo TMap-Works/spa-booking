@@ -1,9 +1,17 @@
 'use client';
 
 import { zodResolver } from '@hookform/resolvers/zod';
-import { e164PhoneSchemaFor, guestContactSchemaFor, longTextSchema } from '@spa/shared';
+import {
+  EMAIL_ADDRESS_MAX_LENGTH,
+  LONG_TEXT_MAX_LENGTH,
+  NAME_MAX_LENGTH,
+  e164PhoneSchemaFor,
+  guestContactSchemaFor,
+  longTextSchema,
+} from '@spa/shared';
+import { useTranslations } from 'next-intl';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Controller, useForm } from 'react-hook-form';
+import { Controller, useForm, type FieldError } from 'react-hook-form';
 import { z } from 'zod';
 
 import { BookingActionBar, type BookingSummary } from '@/components/booking/summary-bar';
@@ -12,7 +20,7 @@ import { Field } from '@/components/ui/field';
 import { PhoneField } from '@/components/ui/phone-field';
 import { TextArea } from '@/components/ui/textarea';
 import type { AccountPresence } from '@/lib/account-presence';
-import { BOOKING_CONSENT, ConsentField, consentSchema } from '@/lib/booking/consent';
+import { ConsentField, consentSchema } from '@/lib/booking/consent';
 import type { ContactDraft } from '@/lib/booking/draft';
 import { formatPhoneForDisplay } from '@/lib/phone';
 
@@ -55,6 +63,18 @@ import { useDraftAutosave } from '../use-draft-autosave';
  * une réservation que le salon aurait prise ; un formulaire **plus permissif**
  * déplace le refus après la soumission, en bloc en tête de page, pour un numéro
  * que le champ venait d'accepter — ce qu'interdit la skill web-frontend §4.
+ *
+ * ## Aucun de ses messages n'est affichable tel quel (#846)
+ *
+ * Ce schéma est bâti **hors de React** : ni lui ni les schémas dont il dérive
+ * ne peuvent lire le catalogue. Ses deux sources de messages s'en tirent
+ * différemment, et les deux sont traduites au point de rendu :
+ *
+ * - `consentSchema` porte une **clé** (`CONSENT_ERROR_KEY`), que le point de
+ *   rendu passe à `t` ;
+ * - les schémas de `packages/shared` portent des phrases françaises, écrites
+ *   pour l'API autant que pour cet écran : elles sont remplacées à l'affichage
+ *   d'après le **code** de l'erreur — voir `fieldError`.
  */
 function contactFormSchemaFor(countryCode: string | null) {
   return guestContactSchemaFor(countryCode).extend({
@@ -67,8 +87,9 @@ function contactFormSchemaFor(countryCode: string | null) {
 /** La forme validée d'un formulaire de coordonnées, quel que soit le pays. */
 type ContactFormValues = z.output<ReturnType<typeof contactFormSchemaFor>>;
 
-/**
- * L'aide du champ « Téléphone » — à quoi sert le numéro, et rien de plus.
+/*
+ * L'aide du champ « Téléphone » — à quoi sert le numéro, et rien de plus —
+ * vit dans le catalogue depuis #846, sous `tunnel.contactStep.phoneHint`.
  *
  * Elle disait jusqu'ici **quelle forme** était acceptée (« au format du pays de
  * l'établissement », « au format international »), parce que rien d'autre à
@@ -78,12 +99,11 @@ type ContactFormValues = z.output<ReturnType<typeof contactFormSchemaFor>>;
  * sous le champ ajouterait une ligne à 360 px pour une information déjà
  * visible (audit `d20260918-1`, « aides de champ en une ligne »).
  *
- * Le message d'erreur n'est plus composé ici non plus : c'est `PhoneField` qui
+ * Le message d'erreur n'est pas composé ici non plus : c'est `PhoneField` qui
  * le rend, parce qu'il nomme le pays du drapeau, que seul le champ connaît. La
  * règle reste celle du contrat — `e164PhoneSchemaFor`, dans le schéma
  * ci-dessus.
  */
-const PHONE_HINT = 'Facultatif, pour le rappel par SMS.';
 
 /**
  * L'adresse coupée juste après l'arobase, pour y poser un `<wbr />` (#1086).
@@ -180,6 +200,30 @@ interface ContactStepProps {
  * Les messages d'erreur sont rendus **sur le champ** par `Field`, jamais en bloc
  * en haut de page (skill web-frontend §4) : un bloc oblige à retrouver
  * soi-même le champ fautif, sur un écran mobile où il est souvent hors vue.
+ *
+ * ## La langue (#846)
+ *
+ * ### Les messages de validation sont traduits sur le **code**, pas sur le texte
+ *
+ * Les règles de fond viennent de `packages/shared` — `guestContactSchemaFor`,
+ * `longTextSchema` —, et le contrat y écrit ses messages Zod en français : il
+ * sert aussi l'API, qui n'a pas la langue de cette requête-ci. Les afficher tels
+ * quels laisserait « ce champ est obligatoire » sous un formulaire anglais.
+ *
+ * La traduction se fait donc **à l'écran**, à partir du `code` de l'erreur
+ * (`FieldError.type`, que `zodResolver` recopie de l'`issue`) et non de son
+ * texte — exactement l'arbitrage déjà pris pour les erreurs de l'API
+ * (`booking-tunnel.tsx`, `onSlotLost`) : un code engage, une phrase non. Voir
+ * `fieldError` ci-dessous.
+ *
+ * ### Ce qui n'est pas écrit ici
+ *
+ * Le message du **téléphone** appartient à `PhoneField`, qui nomme le pays du
+ * drapeau, et le texte du **consentement** à `lib/booking/consent.tsx`, qui
+ * porte aussi la phrase de la politique de données. De ce dernier, cet écran ne
+ * fait que traduire la **clé** que le schéma rend en guise de message
+ * (`CONSENT_ERROR_KEY`) — même partage des rôles que ci-dessus : le module pur
+ * dit quoi dire, l'écran dit dans quelle langue.
  */
 export function ContactStep({
   contact,
@@ -191,11 +235,15 @@ export function ContactStep({
   onBack,
   onSubmit,
 }: ContactStepProps) {
+  const t = useTranslations('booking');
   // Le schéma ne dépend que du pays, qui ne change pas d'une frappe à l'autre :
   // le reconstruire à chaque rendu recréerait un résolveur par caractère tapé.
   // Le résolveur est mémoïsé **avec** lui — le mémoïser à moitié laisserait
   // `zodResolver` rappelé à chaque frappe, c'est-à-dire précisément ce qu'on
   // évite ici.
+  //
+  // La langue n'y entre pas, et c'est voulu : aucun de ses messages n'est
+  // affiché tel quel (#846) — voir `contactFormSchemaFor`.
   const resolver = useMemo(() => zodResolver(contactFormSchemaFor(countryCode)), [countryCode]);
 
   /**
@@ -370,6 +418,39 @@ export function ContactStep({
   }, [onSave, getValues]);
   const autosave = useDraftAutosave(persistDraft);
 
+  /**
+   * Le message d'un champ, écrit **ici** à partir du code de son erreur (#846).
+   *
+   * `FieldError.type` porte le `code` de l'`issue` Zod que `zodResolver` a
+   * relayée : `too_small` pour un champ requis laissé vide, `too_big` pour une
+   * borne de longueur dépassée, `invalid_string` pour une adresse e-mail qui
+   * n'en est pas une. Ce sont les seules issues que les trois schémas de ce
+   * formulaire produisent ; le repli couvre ce qu'un durcissement du contrat y
+   * ajouterait, plutôt que de laisser un champ refusé sans un mot.
+   *
+   * `max` est la borne du champ, lue dans `@spa/shared` — la même constante que
+   * le schéma : « faites plus court » sans dire combien oblige à tâtonner
+   * caractère par caractère. Elle est passée en **chaîne** pour qu'`Intl` ne
+   * groupe pas ses milliers : la borne d'un mot au salon s'écrit « 2000 » et
+   * non « 2 000 », comme la borne d'une colonne.
+   */
+  const fieldError = (error: FieldError | undefined, max: number): string | undefined => {
+    if (error === undefined) {
+      return undefined;
+    }
+
+    switch (error.type) {
+      case 'too_small':
+        return t('tunnel.contactStep.errors.required');
+      case 'too_big':
+        return t('tunnel.contactStep.errors.tooLong', { max: String(max) });
+      case 'invalid_string':
+        return t('tunnel.contactStep.errors.email');
+      default:
+        return t('tunnel.contactStep.errors.invalid');
+    }
+  };
+
   return (
     <form
       // L'étape porte la mise en page des étapes du tunnel : sans elle, les
@@ -454,7 +535,7 @@ export function ContactStep({
       {identitySummarised ? (
         <div className="spa-booking__identity">
           <div className="spa-booking__identity-text">
-            <p className="spa-booking__identity-label">Réservé au nom de</p>
+            <p className="spa-booking__identity-label">{t('tunnel.contactStep.identityLabel')}</p>
             {/* Ce que les champs masqués portent, et donc ce qui sera
                 réservé : le nom corrigé par la cliente l'emporte sur celui du
                 compte ici comme dans le formulaire. */}
@@ -489,7 +570,9 @@ export function ContactStep({
               setEditingIdentity(true);
             }}
           >
-            Modifier
+            {/* Le même mot que le « Modifier » des blocs du récapitulatif, donc
+                la même clé : un seul geste, un seul libellé (`ds:libelles`). */}
+            {t('tunnel.actions.edit')}
           </Button>
         </div>
       ) : null}
@@ -502,18 +585,18 @@ export function ContactStep({
       <div className="spa-booking__names" hidden={identitySummarised} ref={namesRef}>
         <Field
           id="firstName"
-          label="Prénom"
+          label={t('tunnel.contactStep.firstName')}
           autoComplete="given-name"
           required
-          error={errors.firstName?.message}
+          error={fieldError(errors.firstName, NAME_MAX_LENGTH)}
           {...register('firstName')}
         />
         <Field
           id="lastName"
-          label="Nom"
+          label={t('tunnel.contactStep.lastName')}
           autoComplete="family-name"
           required
-          error={errors.lastName?.message}
+          error={fieldError(errors.lastName, NAME_MAX_LENGTH)}
           {...register('lastName')}
         />
       </div>
@@ -532,12 +615,12 @@ export function ContactStep({
       <div hidden={identitySummarised}>
         <Field
           id="email"
-          label="Adresse e-mail"
+          label={t('tunnel.contactStep.email')}
           type="email"
           autoComplete="email"
           required
-          hint="La confirmation y sera envoyée."
-          error={errors.email?.message}
+          hint={t('tunnel.contactStep.emailHint')}
+          error={fieldError(errors.email, EMAIL_ADDRESS_MAX_LENGTH)}
           {...register('email')}
         />
       </div>
@@ -552,9 +635,9 @@ export function ContactStep({
           render={({ field, fieldState }) => (
             <PhoneField
               id="phone"
-              label="Téléphone"
+              label={t('tunnel.contactStep.phone')}
               defaultCountry={countryCode}
-              hint={PHONE_HINT}
+              hint={t('tunnel.contactStep.phoneHint')}
               invalid={fieldState.invalid}
               value={field.value}
               onChange={field.onChange}
@@ -581,9 +664,9 @@ export function ContactStep({
           d'un panneau contraint en hauteur y dérogent. */}
       <TextArea
         id="clientNote"
-        label="Un mot pour le salon"
-        hint="Allergie, préférence, retard annoncé — facultatif."
-        error={errors.clientNote?.message}
+        label={t('tunnel.contactStep.note')}
+        hint={t('tunnel.contactStep.noteHint')}
+        error={fieldError(errors.clientNote, LONG_TEXT_MAX_LENGTH)}
         {...register('clientNote')}
       />
 
@@ -598,10 +681,19 @@ export function ContactStep({
           commise. Passé le premier clic sur « Vérifier ma réservation », la
           question est posée, et `reValidateMode` fait disparaître le message à
           la seconde où la case est cochée. */}
+      {/* `variant` et non une copie passée en propriété (#846) : le composant
+          lit lui-même son texte dans le catalogue, et cet écran n'a plus à le
+          lui donner.
+
+          Le message du refus, lui, arrive du schéma sous forme de **clé** :
+          `consentSchema` est bâti hors de React et ne peut pas la traduire. Il
+          est passé **tel quel**, et c'est `ConsentField` qui le convertit — le
+          même point de rendu sert ainsi les deux écrans de consentement, dont
+          celui de l'espace client, qui n'est pas encore traduit. */}
       <ConsentField
         id="consent"
+        variant="booking"
         tenantSlug={tenantSlug}
-        copy={BOOKING_CONSENT}
         error={isSubmitted ? errors.consent?.message : undefined}
         {...register('consent')}
       />
@@ -620,7 +712,7 @@ export function ContactStep({
             onBack();
           }}
         >
-          Changer de créneau
+          {t('tunnel.actions.changeSlot')}
         </Button>
       </div>
 
@@ -630,7 +722,7 @@ export function ContactStep({
           barre est rendue par l'étape et non par le tunnel. */}
       <BookingActionBar summary={summary}>
         <Button type="submit" variant="accent" block loading={isSubmitting}>
-          Vérifier ma réservation
+          {t('tunnel.contactStep.submit')}
         </Button>
       </BookingActionBar>
     </form>

@@ -1,16 +1,16 @@
 import type { Money, PublicTenant, UtcInstant } from '@spa/shared';
+import { useLocale, useTranslations } from 'next-intl';
 
-import { appointmentTimeRange } from '@/components/account/appointment-brief';
-// Le libellé de l'absence de préférence vient de son point d'écriture unique
-// (CDC §1.4, `BM-PRATICIEN-01`) : l'étape « Prestation » et celle du créneau le
-// lisent déjà là, et une copie de plus est exactement ce que le critère
-// `ds:libelles` relève — la même chose nommée de deux façons sur un parcours.
-import { NO_PREFERENCE_LABEL } from '@/components/booking/staff-choice';
 import { addressLines } from '@/components/salon/salon-address';
 import { Avatar } from '@/components/ui/avatar';
 import { DateBlock } from '@/components/ui/date-block';
 import { Icon } from '@/components/ui/icon';
-import { formatDuration, formatMoney, formatTimeInTimeZone } from '@/lib/format';
+import {
+  formatDuration,
+  formatMoney,
+  formatTimeInTimeZone,
+  type DisplayLocale,
+} from '@/lib/format';
 
 /**
  * L'instant de fin, déduit d'une durée — « 09:00 – 10:00 » plutôt que « 09:00 ».
@@ -41,7 +41,13 @@ export function endOfBooking(startsAt: UtcInstant, durationMinutes: number | nul
 }
 
 interface EditActionProps {
-  /** Ce que la correction rouvre — « la date et l'heure », « la prestation ». */
+  /**
+   * Ce que la correction rouvre — « la date et l'heure », « la prestation ».
+   *
+   * Déjà traduit par l'appelant : c'est lui qui sait **ce** que son bouton
+   * rouvre, et les trois compléments vivent dans le catalogue, sous la section
+   * de l'écran qui les emploie (#846).
+   */
   readonly target: string;
   readonly onClick: () => void;
 }
@@ -60,9 +66,12 @@ interface EditActionProps {
  * date et l'heure ».
  */
 export function EditAction({ target, onClick }: EditActionProps) {
+  const t = useTranslations('booking');
+
   return (
     <button type="button" className="spa-booking__rdv-edit" onClick={onClick}>
-      Modifier<span className="spa-visually-hidden"> {target}</span>
+      {t('tunnel.actions.edit')}
+      <span className="spa-visually-hidden"> {target}</span>
     </button>
   );
 }
@@ -125,6 +134,13 @@ interface BookingAppointmentCardProps {
  * L'heure est lue dans le fuseau de l'établissement (ADR 0006). La mention
  * explicite du fuseau, quand le visiteur est ailleurs, reste portée une seule
  * fois par la progression du tunnel.
+ *
+ * ## La langue (#846)
+ *
+ * L'heure, la durée et le montant passent par `lib/format.ts` avec la langue
+ * résolue et le pays de l'établissement ; le **fuseau** ne bouge pas. Ce que la
+ * carte affiche du salon — son nom, son adresse, le nom du praticien, celui de
+ * la prestation — ne se traduit pas : c'est le contenu de l'établissement.
  */
 export function BookingAppointmentCard({
   tenant,
@@ -137,10 +153,31 @@ export function BookingAppointmentCard({
   onEditSlot = null,
   onEditService = null,
 }: BookingAppointmentCardProps) {
+  const t = useTranslations('booking');
+  const locale = useLocale();
+  const display: DisplayLocale = { locale, countryCode: tenant.address?.country ?? null };
+  /*
+   * La plage horaire, composée ici plutôt que par `appointmentTimeRange` (#846).
+   *
+   * Cette fonction-là vit dans `components/account/`, qui n'est pas dans
+   * l'empreinte de ce ticket : elle ne prend pas de contexte d'affichage, et sa
+   * sortie reste donc en français — « 14:00 – 15:00 » à côté d'une durée et d'un
+   * total en anglais, sur l'écran de confirmation d'une visiteuse anglophone.
+   * Les deux heures viennent d'`Intl`, qui écrit « 2:00 PM » en `en-US`.
+   *
+   * Ce sont les **mêmes deux appels**, au même séparateur — espace insécable,
+   * tiret demi-cadratin, espace insécable — pour que les deux écrans qui
+   * montrent le même rendez-vous l'écrivent pareil. Le jour où l'espace client
+   * est traduit à son tour, `appointmentTimeRange` prendra le contexte et ces
+   * quatre lignes disparaîtront au profit d'un appel.
+   *
+   * Le **fuseau** ne bouge pas : c'est celui de l'établissement, langue ou non.
+   */
+  const start = formatTimeInTimeZone(startsAt, tenant.timezone, display);
   const hours =
     endsAt === null
-      ? formatTimeInTimeZone(startsAt, tenant.timezone)
-      : appointmentTimeRange({ startsAt, endsAt }, tenant.timezone);
+      ? start
+      : `${start}\u00a0–\u00a0${formatTimeInTimeZone(endsAt, tenant.timezone, display)}`;
 
   return (
     <article className="spa-booking__rdv">
@@ -156,19 +193,27 @@ export function BookingAppointmentCard({
                 faire une ligne à elle. Omise plutôt que rendue à zéro : une
                 durée nulle n'existe pas. */}
             {durationMinutes === null || durationMinutes <= 0 ? null : (
-              <span className="spa-booking__rdv-duration"> · {formatDuration(durationMinutes)}</span>
+              <span className="spa-booking__rdv-duration">
+                {' · '}
+                {formatDuration(durationMinutes, display)}
+              </span>
             )}
           </p>
           {/* `<p>` et non un titre : le `<h1>` de l'étape pose déjà la question
               de l'écran, et le seul `<h2>` du récapitulatif est « Avant de
               confirmer ». Un titre de plus ici ferait un plan de document où
               le rendez-vous et l'avertissement seraient de même rang. */}
-          <p className="spa-booking__rdv-service">{serviceName ?? 'Prestation'}</p>
+          <p className="spa-booking__rdv-service">
+            {serviceName ?? t('tunnel.appointmentCard.serviceFallback')}
+          </p>
         </div>
 
         {onEditSlot === null ? null : (
           <div className="spa-booking__rdv-head-edit">
-            <EditAction target="la date et l’heure" onClick={onEditSlot} />
+            <EditAction
+              target={t('tunnel.appointmentCard.editSlotTarget')}
+              onClick={onEditSlot}
+            />
           </div>
         )}
       </div>
@@ -184,10 +229,24 @@ export function BookingAppointmentCard({
             <Avatar name={staffName} size="sm" />
           )}
           <span className="spa-booking__rdv-fact-body">
-            Avec <strong>{staffName ?? NO_PREFERENCE_LABEL}</strong>
+            {/* La graisse porte sur le nom seul, et c'est la balise nommée du
+                message qui le dit : « Avec <name>Nivo</name> » en français,
+                « With <name>Nivo</name> » en anglais — la préposition n'est
+                pas un morceau qu'on concatène (#846). */}
+            {/* Le libellé de l'absence de préférence vient de son point
+                d'écriture unique (CDC §1.4, `BM-PRATICIEN-01`) : c'est la clé
+                que `StaffChoice` emploie, lue ici plutôt que redite — une copie
+                de plus est exactement ce que `ds:libelles` relève. */}
+            {t.rich('tunnel.appointmentCard.withStaff', {
+              staff: staffName ?? t('tunnel.staffChoice.noPreference'),
+              name: (chunks) => <strong>{chunks}</strong>,
+            })}
           </span>
           {onEditService === null ? null : (
-            <EditAction target="la prestation et le praticien" onClick={onEditService} />
+            <EditAction
+              target={t('tunnel.appointmentCard.editServiceTarget')}
+              onClick={onEditService}
+            />
           )}
         </li>
 
@@ -220,8 +279,8 @@ export function BookingAppointmentCard({
         // Le total ferme la carte, aligné à droite et en graisse forte : c'est
         // ce que l'œil cherche en dernier avant de s'engager (`BM-VISUEL-03`).
         <p className="spa-booking__rdv-total">
-          <span className="spa-booking__rdv-total-term">Total</span>
-          <span className="spa-booking__rdv-total-value">{formatMoney(price)}</span>
+          <span className="spa-booking__rdv-total-term">{t('tunnel.appointmentCard.total')}</span>
+          <span className="spa-booking__rdv-total-value">{formatMoney(price, display)}</span>
         </p>
       )}
     </article>

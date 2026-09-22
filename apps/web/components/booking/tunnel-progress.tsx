@@ -1,3 +1,4 @@
+import { useTranslations } from 'next-intl';
 import type { RefObject } from 'react';
 
 import { BOOKING_STEPS, type BookingStep } from '@/lib/booking/draft';
@@ -23,38 +24,6 @@ import { BOOKING_STEPS, type BookingStep } from '@/lib/booking/draft';
 export const COUNTED_BOOKING_STEPS: readonly BookingStep[] = BOOKING_STEPS.filter(
   (step) => step !== 'confirmation',
 );
-
-/**
- * Le titre de chaque étape, formulé comme la question qu'elle pose.
- *
- * `BM-TUNNEL-11` (`docs/design/benchmark/parcours-client.md`) : *« un grand
- * titre par écran, formulé comme une action »*, et *« chaque écran dit ce qu'il
- * demande »*. Le tunnel affichait à la place un titre unique — « Prendre
- * rendez-vous » — et une accroche qui le redisait, identiques d'un bout à
- * l'autre du parcours (audit `d20260918-1`).
- *
- * La confirmation garde un titre, sans question : il n'y est plus rien attendu
- * de la cliente. Il ne reprend pas les mots de la pastille de succès qui le
- * suit — « Votre rendez-vous est enregistré » — pour ne pas dire deux fois la
- * même phrase à dix pixels d'intervalle.
- *
- * ## Ils tiennent sur une ligne à 360 px, et c'est une contrainte
- *
- * Le critère d'acceptation de #1047 donne 120 px à l'en-tête et à la
- * progression réunis. Un titre qui passe à deux lignes en coûte 27 de plus et
- * fait sortir le budget : ces cinq phrases sont donc courtes **par nécessité**,
- * pas par goût du laconisme — une colonne de 328 px en tient environ 28
- * caractères au corps `xl`. Allonger l'une d'elles demande de vérifier la
- * mesure, que `tests/booking-step-indicator.test.mjs` tient du côté du corps et
- * de la gouttière, mais pas du côté de la longueur du texte.
- */
-const STEP_TITLES: Readonly<Record<BookingStep, string>> = {
-  prestation: 'Quelle prestation ?',
-  creneau: 'Quand souhaitez-vous venir ?',
-  coordonnees: 'Comment vous joindre ?',
-  recapitulatif: 'Tout est-il exact ?',
-  confirmation: 'Votre rendez-vous',
-};
 
 interface BookingProgressProps {
   readonly step: BookingStep;
@@ -124,6 +93,27 @@ interface BookingProgressProps {
  *
  * Server Component : ni état, ni écouteur. Il est rendu dans l'arbre client du
  * tunnel, qui porte l'étape, mais n'ajoute rien à son bundle.
+ *
+ * ## La langue (#846)
+ *
+ * Le compte, les cinq titres d'étape et la mention de fuseau viennent du
+ * catalogue, sous `tunnel.progress`. `useTranslations` et non
+ * `getTranslations` : ce composant n'est pas asynchrone.
+ *
+ * ### Les titres tiennent sur une ligne à 360 px, dans les deux langues
+ *
+ * `BM-TUNNEL-11` (`docs/design/benchmark/parcours-client.md`) demande *« un
+ * grand titre par écran, formulé comme une action »*, et le critère
+ * d'acceptation de #1047 donne 120 px à l'en-tête et à la progression réunis :
+ * un titre qui passe à deux lignes en coûte 27 de plus et fait sortir le
+ * budget. Une colonne de 328 px en tient environ 28 caractères au corps `xl` —
+ * c'est la mesure à vérifier **dans chaque langue** avant d'allonger l'une de
+ * ces cinq phrases, et `tests/booking-step-indicator.test.mjs` ne la tient que
+ * du côté du corps et de la gouttière.
+ *
+ * La confirmation garde un titre, sans question : il n'y est plus rien attendu
+ * de la cliente, et il ne reprend pas les mots de la pastille de succès qui le
+ * suit — deux fois la même phrase à dix pixels d'intervalle.
  */
 export function BookingProgress({
   step,
@@ -131,6 +121,7 @@ export function BookingProgress({
   titleRef,
   title,
 }: BookingProgressProps) {
+  const t = useTranslations('booking');
   const rank = COUNTED_BOOKING_STEPS.indexOf(step);
   const total = COUNTED_BOOKING_STEPS.length;
 
@@ -138,8 +129,10 @@ export function BookingProgress({
     <div className="spa-booking__progress">
       {rank === -1 ? null : (
         <p className="spa-booking__progress-line">
+          {/* Le compte est écrit, et c'est lui qui porte l'information : le
+              filet ci-dessous ne fait que le dessiner (WCAG 1.4.1). */}
           <span className="spa-booking__progress-count">
-            Étape {rank + 1} sur {total}
+            {t('tunnel.progress.count', { rank: rank + 1, total })}
           </span>
           <span className="spa-booking__progress-track" aria-hidden="true">
             {COUNTED_BOOKING_STEPS.map((name, index) => (
@@ -174,14 +167,21 @@ export function BookingProgress({
            à franchir à chaque écran. */
         tabIndex={-1}
       >
-        {title ?? STEP_TITLES[step]}
+        {/* Clé construite, et c'est le seul endroit du composant : les cinq
+            titres se distinguent par la seule étape, et cinq `t(...)` littéraux
+            derrière une table de correspondance diraient deux fois la même
+            chose. L'`as` désigne une clé réelle, que la parité des catalogues
+            garantit — même détour que `components/ui/locale-switcher.tsx`. */}
+        {title ?? t(`tunnel.progress.titles.${step}` as 'tunnel.progress.titles.prestation')}
       </h1>
 
       {timeZoneMention === null ? null : (
         // Une ligne, et non deux : cette mention entre dans le budget de hauteur
         // de l'écran, et « Tous les horaires sont affichés en … » passait à la
         // ligne à 360 px. Elle ne dit rien de moins.
-        <p className="spa-booking__timezone">Horaires affichés en {timeZoneMention}.</p>
+        <p className="spa-booking__timezone">
+          {t('tunnel.progress.timeZone', { zone: timeZoneMention })}
+        </p>
       )}
     </div>
   );

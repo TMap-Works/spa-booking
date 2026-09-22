@@ -8,6 +8,7 @@ import type {
   TimeZone,
   UtcInstant,
 } from '@spa/shared';
+import { useLocale, useTranslations } from 'next-intl';
 import {
   useCallback,
   useEffect,
@@ -25,7 +26,6 @@ import { SlotGridSkeleton } from '@/components/booking/step-skeleton';
 import { Button } from '@/components/ui/button';
 import { Sheet } from '@/components/ui/sheet';
 import { bandStartShowing, bandWindow } from '@/lib/booking/day-band';
-import { slotCountLabel } from '@/lib/booking/day-state';
 import { type BookingWindow, type CalendarMonth } from '@/lib/booking/month-grid';
 import {
   gridMoveForKey,
@@ -35,7 +35,12 @@ import {
   selectableDays,
   slotRows,
 } from '@/lib/booking/slots';
-import { formatCalendarDate, formatTimeInTimeZone, timeZoneMention } from '@/lib/format';
+import {
+  formatCalendarDate,
+  formatTimeInTimeZone,
+  timeZoneMention,
+  type DisplayLocale,
+} from '@/lib/format';
 
 /**
  * Le sélecteur de créneau — un calendrier mensuel, puis la grille d'**une seule**
@@ -104,6 +109,18 @@ import { formatCalendarDate, formatTimeInTimeZone, timeZoneMention } from '@/lib
  * tient le troisième critère d'acceptation de #1049 — *« aucune modification de
  * l'API de disponibilité ni du moteur »* — par construction, et fait hériter
  * l'écran de report sans qu'une ligne n'y change.
+ *
+ * ## La langue (#846)
+ *
+ * Les mots viennent du catalogue, sous `tunnel.slotPicker` — les moments de la
+ * journée, les deux états vides, le renvoi vers le prochain créneau, le titre
+ * du panneau du mois. Les **heures** et les **dates** viennent de
+ * `lib/format.ts`, à qui l'on passe la langue du lecteur et le pays de
+ * l'établissement.
+ *
+ * Le **fuseau** ne bouge pas : c'est celui du salon, et `timeZoneMention` reste
+ * ce qui le mentionne quand le visiteur est ailleurs. Un rendez-vous mal
+ * fuseau-horairé est un bug de sévérité haute, la langue n'y change rien.
  */
 interface SlotPickerProps {
   /**
@@ -143,6 +160,11 @@ interface SlotPickerProps {
   readonly onMonthChange: (month: CalendarMonth) => void;
   /** Le fuseau de l'établissement : les heures s'affichent dans celui-là. */
   readonly timeZone: TimeZone;
+  /**
+   * Le pays de l'établissement, pour la **région** des dates et des heures
+   * (#846). Le fuseau, lui, reste `timeZone` quelle que soit la langue.
+   */
+  readonly countryCode?: string | null | undefined;
   /**
    * Ce qui s'affiche quand aucune journée n'a de créneau.
    *
@@ -206,9 +228,17 @@ interface SlotPickerProps {
  * La dériver du texte affiché plutôt que d'un second formateur garantit en outre
  * que les deux formes ne peuvent pas diverger : mêmes chiffres, même fuseau,
  * seul le séparateur change.
+ *
+ * ## Le séparateur vient du catalogue (#846)
+ *
+ * Et lui seul : c'est tout ce qui distingue les deux langues ici. Le français
+ * remplace les deux-points par « h » ; l'anglais les garde — `en-US` écrit déjà
+ * « 2:00 PM », que tout lecteur d'écran énonce « two PM », et y glisser un « h »
+ * donnerait « 2 h 00 PM ». Un séparateur est une convention typographique de
+ * langue, au même titre que la virgule décimale.
  */
-function spokenTime(shortTime: string): string {
-  return shortTime.replace(':', ' h ');
+function spokenTime(shortTime: string, separator: string): string {
+  return shortTime.replace(':', separator);
 }
 
 export function SlotPicker({
@@ -218,6 +248,7 @@ export function SlotPicker({
   openingHours,
   onMonthChange,
   timeZone,
+  countryCode,
   emptyState,
   selectedSlot,
   lockedSlotNote,
@@ -226,6 +257,14 @@ export function SlotPicker({
   calendarRef,
   onChoose,
 }: SlotPickerProps) {
+  const t = useTranslations('booking');
+  const locale = useLocale();
+  // Mémoïsé : plusieurs `useMemo` de ce composant en dépendent, et un objet
+  // recomposé à chaque rendu les ferait tous retomber à chaque passe.
+  const display = useMemo<DisplayLocale>(
+    () => ({ locale, countryCode: countryCode ?? null }),
+    [countryCode, locale],
+  );
   /** La journée que la bande et le calendrier montrent comme retenue. */
   const [selectedDate, setSelectedDate] = useState<CalendarDate | null>(null);
   /**
@@ -393,13 +432,23 @@ export function SlotPicker({
       return null;
     }
 
+    // La phrase entière est au catalogue, sens compris : « Prochain créneau :
+    // vendredi 25 septembre 2026 à 09:00 ». La découper autour de ses deux
+    // valeurs laisserait une langue sans moyen de les ordonner autrement.
     return {
       date: day.date,
-      label: `${ahead === undefined ? 'Créneau précédent' : 'Prochain créneau'} : ${formatCalendarDate(
-        day.date,
-      )} à ${formatTimeInTimeZone(first.startsAt, timeZone)}`,
+      label:
+        ahead === undefined
+          ? t('tunnel.slotPicker.previousSlot', {
+              date: formatCalendarDate(day.date, display),
+              time: formatTimeInTimeZone(first.startsAt, timeZone, display),
+            })
+          : t('tunnel.slotPicker.nextSlot', {
+              date: formatCalendarDate(day.date, display),
+              time: formatTimeInTimeZone(first.startsAt, timeZone, display),
+            }),
     };
-  }, [firstVisible, lastVisible, open, timeZone]);
+  }, [display, firstVisible, lastVisible, open, t, timeZone]);
 
   /**
    * La mention du fuseau, calculée **après le montage** seulement.
@@ -441,13 +490,21 @@ export function SlotPicker({
     }
   });
 
-  const zoneMention = mounted ? timeZoneMention(timeZone) : null;
+  const zoneMention = mounted ? timeZoneMention(timeZone, display) : null;
+  // Deux messages plutôt qu'une concaténation conditionnelle : le titre avec
+  // fuseau et le titre sans fuseau ne se ponctuent pas forcément pareil d'une
+  // langue à l'autre, et une langue doit pouvoir les tourner chacun à sa façon.
   const dayHeading =
     activeDay === null
       ? ''
-      : `Créneaux du ${formatCalendarDate(activeDay.date)}${
-          zoneMention === null ? '' : ` — ${zoneMention}`
-        }`;
+      : zoneMention === null
+        ? t('tunnel.slotPicker.dayHeading', {
+            date: formatCalendarDate(activeDay.date, display),
+          })
+        : t('tunnel.slotPicker.dayHeadingWithZone', {
+            date: formatCalendarDate(activeDay.date, display),
+            zone: zoneMention,
+          });
 
   /** La journée affichée, découpée en lignes de grille — matin, après-midi, soir. */
   const rows = useMemo(
@@ -602,6 +659,7 @@ export function SlotPicker({
         openingHours={openingHours}
         selectedDate={calendarDate}
         busy={busy}
+        countryCode={countryCode}
         onMonthChange={goToMonth}
         onSelect={holdDate}
         // Seule l'activation referme : les flèches retiennent la journée au
@@ -625,9 +683,16 @@ export function SlotPicker({
       <p role="status" className="spa-visually-hidden">
         {activeDay === null
           ? ''
-          : `${slotCountLabel(activeDay.slots.length)} le ${formatCalendarDate(activeDay.date)}${
-              zoneMention === null ? '' : `, ${zoneMention}`
-            }.`}
+          : zoneMention === null
+            ? t('tunnel.slotPicker.announce', {
+                count: activeDay.slots.length,
+                date: formatCalendarDate(activeDay.date, display),
+              })
+            : t('tunnel.slotPicker.announceWithZone', {
+                count: activeDay.slots.length,
+                date: formatCalendarDate(activeDay.date, display),
+                zone: zoneMention,
+              })}
       </p>
 
       {/*
@@ -653,6 +718,7 @@ export function SlotPicker({
             openingHours={openingHours}
             selectedDate={calendarDate}
             busy={busy}
+            countryCode={countryCode}
             bandRef={bandNode}
             onFromChange={setBandFrom}
             onMonthChange={goToMonth}
@@ -677,7 +743,12 @@ export function SlotPicker({
             // ce que le squelette d'avant hydratation montrait — la cliente
             // voyait alors un squelette céder la place à un autre.
             <div aria-busy="true">
-              <span className="spa-visually-hidden">Chargement des disponibilités…</span>
+              {/* La même clé que le squelette d'avant hydratation : deux
+                  formulations pour un même chargement diraient à l'oreille que
+                  l'écran a changé alors qu'il attend toujours. */}
+              <span className="spa-visually-hidden">
+                {t('tunnel.skeleton.loading.creneau')}
+              </span>
               <SlotGridSkeleton />
             </div>
           ) : open.length === 0 ? (
@@ -701,8 +772,11 @@ export function SlotPicker({
               <div className="spa-empty-state">
                 <p className="spa-empty-state__title">
                   {firstVisible === null || lastVisible === null
-                    ? 'Aucun créneau sur ces journées'
-                    : `Complet du ${formatCalendarDate(firstVisible)} au ${formatCalendarDate(lastVisible)}`}
+                    ? t('tunnel.slotPicker.emptyWindow')
+                    : t('tunnel.slotPicker.fullWindow', {
+                        from: formatCalendarDate(firstVisible, display),
+                        to: formatCalendarDate(lastVisible, display),
+                      })}
                 </p>
                 {nearestOpen === null ? null : (
                   <Button
@@ -751,15 +825,23 @@ export function SlotPicker({
                 }}
               >
                 {rows.map((row) => (
-                  <div role="row" className="spa-slot-grid__row" key={row.label}>
+                  <div role="row" className="spa-slot-grid__row" key={row.moment}>
                     <span role="rowheader" className="spa-slot-grid__rowheader spa-card__meta">
-                      {row.label}
+                      {/* Clé construite : les trois moments ne se distinguent
+                          que par ce segment. L'`as` désigne une clé réelle,
+                          comme dans `components/ui/locale-switcher.tsx`. */}
+                      {t(`tunnel.slotPicker.moments.${row.moment}` as 'tunnel.slotPicker.moments.morning')}
                     </span>
                     {row.slots.map((slot) => (
                       <SlotCell
                         key={slot.startsAt}
                         slot={slot}
                         timeZone={timeZone}
+                        display={display}
+                        spokenSeparator={t('tunnel.slotPicker.spokenSeparator')}
+                        lockedLabel={(time, note) =>
+                          t('tunnel.slotPicker.lockedSlot', { time, note })
+                        }
                         note={lockedSlotNote?.(slot.startsAt) ?? null}
                         busy={busy}
                         pressed={
@@ -793,7 +875,7 @@ export function SlotPicker({
       */}
       <Sheet
         open={monthOpen}
-        title="Choisir une date"
+        title={t('tunnel.slotPicker.chooseDate')}
         onClose={() => {
           setMonthOpen(false);
         }}
@@ -807,6 +889,12 @@ export function SlotPicker({
 interface SlotCellProps {
   readonly slot: AvailabilitySlot;
   readonly timeZone: TimeZone;
+  /** La langue et la région de l'heure affichée — le fuseau reste `timeZone`. */
+  readonly display: DisplayLocale;
+  /** Ce qui remplace les deux-points dans le nom accessible — voir `spokenTime`. */
+  readonly spokenSeparator: string;
+  /** « 14 h 00 (actuel) » — assemblé par le catalogue, jamais ici. */
+  readonly lockedLabel: (time: string, note: string) => string;
   /** Non `null` : le créneau est rendu, et ce mot dit pourquoi il ne se choisit pas. */
   readonly note: string | null;
   readonly busy: boolean;
@@ -834,6 +922,9 @@ interface SlotCellProps {
 function SlotCell({
   slot,
   timeZone,
+  display,
+  spokenSeparator,
+  lockedLabel,
   note,
   busy,
   pressed,
@@ -841,9 +932,9 @@ function SlotCell({
   onFocus,
   onChoose,
 }: SlotCellProps) {
-  const time = formatTimeInTimeZone(slot.startsAt, timeZone);
+  const time = formatTimeInTimeZone(slot.startsAt, timeZone, display);
   const locked = note !== null || busy;
-  const spoken = spokenTime(time);
+  const spoken = spokenTime(time, spokenSeparator);
 
   return (
     <span role="gridcell" className="spa-slot-grid__cell">
@@ -851,7 +942,7 @@ function SlotCell({
         variant="neutral"
         // Le nom accessible dit l'heure en toutes lettres, le texte visible
         // garde la forme courte : hors de sa colonne, un créneau est lu seul.
-        aria-label={note === null ? spoken : `${spoken} (${note})`}
+        aria-label={note === null ? spoken : lockedLabel(spoken, note)}
         aria-disabled={locked ? true : undefined}
         aria-pressed={pressed}
         tabIndex={tabbable ? 0 : -1}

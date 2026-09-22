@@ -1,12 +1,14 @@
 'use client';
 
 import type { BookedAppointment, PublicService, PublicTenant, UtcInstant } from '@spa/shared';
+import { useLocale, useTranslations } from 'next-intl';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 
 import { BookingStepSkeleton } from '@/components/booking/step-skeleton';
 import { BookingSummaryAside, type BookingSummary } from '@/components/booking/summary-bar';
 import { BookingTunnelHeader } from '@/components/booking/tunnel-header';
 import { BookingProgress } from '@/components/booking/tunnel-progress';
+import { LocaleSwitcher } from '@/components/ui/locale-switcher';
 import { Notification, type NotificationTone } from '@/components/ui/notification';
 import type { AccountPresence } from '@/lib/account-presence';
 import {
@@ -20,9 +22,9 @@ import {
   type BookingStep,
   type ContactDraft,
 } from '@/lib/booking/draft';
-import { formatDateTimeInTimeZone, timeZoneMention } from '@/lib/format';
+import { formatDateTimeInTimeZone, timeZoneMention, type DisplayLocale } from '@/lib/format';
 
-import { ACCOUNT_GATE_TITLE, AccountGateStep } from './steps/account-gate-step';
+import { AccountGateStep } from './steps/account-gate-step';
 import { ConfirmationStep } from './steps/confirmation-step';
 import { ContactStep } from './steps/contact-step';
 import { ServiceStep } from './steps/service-step';
@@ -201,6 +203,36 @@ function keepChosenSlot(current: BookingDraft, merged: BookingDraft): BookingDra
  * L'état vit dans l'URL et dans `sessionStorage` — voir `lib/booking/draft.ts`
  * pour le partage des rôles. Le composant relit les deux au montage, réécrit le
  * stockage à chaque changement, et tient l'adresse à jour à chaque étape.
+ *
+ * ## La langue (#846)
+ *
+ * ### Le sélecteur est en **pied de colonne**, et non dans l'en-tête
+ *
+ * L'en-tête du tunnel se réduit à « ← Retour » et « ✕ Quitter » (BM-TUNNEL-10),
+ * et c'est tout l'objet de #1047 : l'attention reste sur la réservation. Le
+ * choix de la langue est un **réglage d'affichage**, du même ordre que le thème
+ * — `SalonShell` le range pour cette raison dans le pied de la vitrine et de
+ * l'espace client (#845). Il ferme donc la colonne de l'étape, à la place où
+ * l'on cherche les réglages, sans disputer la sienne à aucune des deux
+ * commandes du haut.
+ *
+ * Il est un **frère** des étapes et jamais leur descendant : le sélecteur est
+ * lui-même un `<form>`, et trois des cinq étapes en sont un — un formulaire
+ * imbriqué n'est pas du HTML valide, et le navigateur en démonterait un.
+ *
+ * ### Changer de langue ne perd pas ce qui a été choisi
+ *
+ * `setLocaleAction` est une action serveur : Next rejoue la route courante
+ * après elle, **sans navigation**. Ce composant n'est donc ni démonté ni
+ * remonté, son état survit tel quel, et même s'il l'était, le brouillon vit dans
+ * `sessionStorage` et dans l'adresse. Ce sont `useState(() => initialDraft)`,
+ * l'effet d'hydratation et l'effet d'adresse qui le garantissent : la langue ne
+ * les touche pas.
+ *
+ * ### Les dates, les heures et le fuseau
+ *
+ * `display` porte la langue résolue et le pays de l'établissement ; le
+ * **fuseau** reste celui du salon, quelle que soit la langue (ADR 0006).
  */
 export function BookingTunnel({
   tenant,
@@ -211,6 +243,17 @@ export function BookingTunnel({
   registerHref,
   initialDraft,
 }: BookingTunnelProps) {
+  const t = useTranslations('booking');
+  const locale = useLocale();
+  /**
+   * Ce qui décide de la mise en forme des dates, des heures et des montants —
+   * la langue de la requête et le pays de l'établissement (#846).
+   *
+   * Mémoïsé pour que les rappels qui le lisent — `onSlotLost` — ne changent pas
+   * d'identité à chaque rendu du tunnel.
+   */
+  const countryCode = tenant.address?.country ?? null;
+  const display: DisplayLocale = useMemo(() => ({ locale, countryCode }), [locale, countryCode]);
   // L'étape et les choix que l'adresse porte, dès le premier rendu — celui du
   // serveur, que l'hydratation rejoue à l'identique (#1055). Le reste du
   // brouillon arrive de `sessionStorage` dans l'effet ci-dessous.
@@ -629,22 +672,24 @@ export function BookingTunnel({
    */
   const onSlotLost = useCallback(() => {
     const lost = draft.startsAt;
-    // `null` n'arrive pas depuis le récapitulatif, qui ne s'affiche pas sans
-    // créneau — c'est le type qui l'impose ici, et la phrase reste juste.
-    const perdu =
-      lost === null ? 'Ce créneau' : `Le ${formatDateTimeInTimeZone(lost, tenant.timezone)}`;
 
     setNotice({
       tone: 'warning',
-      title: 'Ce créneau n’est plus disponible',
+      title: t('tunnel.notices.slotLost.title'),
+      // Deux messages et non une phrase composée d'un morceau variable : le
+      // français dit « Le lundi 1 septembre à 09:00 », l'anglais « Your time on
+      // Monday, 1 September at 9:00 AM », et la préposition n'est pas au même
+      // endroit. `null` n'arrive de toute façon pas depuis le récapitulatif,
+      // qui ne s'affiche pas sans créneau — c'est le type qui l'impose ici.
       body:
-        `${perdu} n’est plus réservable : il vient d’être pris, ou il est sorti ` +
-        'des horaires ouverts à la réservation. Votre prestation et vos ' +
-        'coordonnées sont conservées : il ne vous reste qu’à choisir un autre ' +
-        'horaire ci-dessous.',
+        lost === null
+          ? t('tunnel.notices.slotLost.body')
+          : t('tunnel.notices.slotLost.bodyWithSlot', {
+              slot: formatDateTimeInTimeZone(lost, tenant.timezone, display),
+            }),
     });
     setDraft((current) => ({ ...current, startsAt: null, step: 'creneau' }));
-  }, [draft.startsAt, tenant.timezone]);
+  }, [draft.startsAt, display, t, tenant.timezone]);
 
   /**
    * L'action de réservation a refusé faute de compte (2026-09-22).
@@ -660,13 +705,13 @@ export function BookingTunnel({
     setSignedOut(true);
     setNotice({
       tone: 'warning',
-      title: 'Votre session a pris fin',
-      body:
-        'Connectez-vous de nouveau pour confirmer ce rendez-vous : votre prestation ' +
-        'et votre horaire sont conservés.',
+      // Écrite ici et non reprise du corps d'erreur de l'API, pour la raison
+      // déjà donnée à `onSlotLost` : seul le `code` engage l'API.
+      title: t('tunnel.notices.sessionEnded.title'),
+      body: t('tunnel.notices.sessionEnded.body'),
     });
     setDraft((current) => ({ ...current, step: 'coordonnees' }));
-  }, []);
+  }, [t]);
 
   const onCancelled = useCallback((appointment: BookedAppointment) => {
     setNotice(null);
@@ -725,7 +770,7 @@ export function BookingTunnel({
     }
   }, [step]);
 
-  const zoneMention = hydrated ? timeZoneMention(tenant.timezone) : null;
+  const zoneMention = hydrated ? timeZoneMention(tenant.timezone, display) : null;
 
   /**
    * Ce que le tunnel rappelle de la réservation en cours (#735, #1047).
@@ -749,6 +794,11 @@ export function BookingTunnel({
             null,
           startsAt: draft.startsAt,
           timeZone: tenant.timezone,
+          // La **région** de mise en forme voyage avec le fuseau, et pour la
+          // même raison : ces faits sont ceux du salon, pas du navigateur
+          // (#846). La langue, elle, est lue par les surfaces qui rendent le
+          // rappel.
+          countryCode,
         };
 
   /**
@@ -822,7 +872,11 @@ export function BookingTunnel({
               // reparaît dès le calendrier, où elle qualifie ce qu'on lit.
               timeZoneMention={step === 'prestation' ? null : zoneMention}
               titleRef={titleRef}
-              title={gated ? ACCOUNT_GATE_TITLE : undefined}
+              // Le titre de l'étape qui barre la route est lu **ici** et non
+              // exporté par `AccountGateStep` : une constante de module ne peut
+              // pas lire le catalogue (#846). C'est de toute façon le tunnel
+              // qui rend la progression, donc le seul à afficher ce titre.
+              title={gated ? t('tunnel.gateStep.title') : undefined}
             />
 
             {notice === null ? null : (
@@ -851,6 +905,10 @@ export function BookingTunnel({
                 services={services}
                 selectedServiceId={draft.serviceId}
                 selectedStaffId={draft.staffId}
+                // La région de mise en forme des durées et des tarifs, comme à
+                // l'étape du créneau et dans le rappel : elle est celle du
+                // salon, pas du navigateur (#846).
+                countryCode={countryCode}
                 onSubmit={chooseService}
               />
             ) : step === 'creneau' && selectedService !== null ? (
@@ -953,6 +1011,26 @@ export function BookingTunnel({
                 onRestart={restart}
               />
             ) : null}
+
+            {/*
+              Le sélecteur de langue ferme la colonne de l'étape, et non
+              l'en-tête (#846).
+
+              C'est un réglage d'affichage, du même ordre que le thème, et il est
+              rangé au même endroit que dans `components/salon/salon-shell.tsx` :
+              le pied. L'en-tête du tunnel, lui, se réduit à « ← Retour » et
+              « ✕ Quitter » (BM-TUNNEL-10) — un troisième contrôle y disputerait
+              la place aux deux seules commandes de l'écran.
+
+              **Frère des étapes, jamais leur descendant** : le sélecteur est un
+              `<form>`, et trois des cinq étapes en sont un. Un formulaire
+              imbriqué n'est pas du HTML valide.
+
+              Sans enveloppe ni classe nouvelle : `.spa-booking__content` est une
+              colonne flex à gouttière, et `.spa-locale-switcher` porte déjà son
+              `align-self`.
+            */}
+            <LocaleSwitcher />
           </div>
 
           {/* La colonne de bureau, rendue par le tunnel et non par l'étape :

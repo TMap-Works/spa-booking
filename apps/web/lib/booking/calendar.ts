@@ -6,9 +6,25 @@
  * bornes de la requête de disponibilité sont des dates civiles de
  * l'établissement (voir `availabilityQuerySchema`), et c'est le seul endroit du
  * front qui les calcule.
+ *
+ * ## La langue (#846)
+ *
+ * Deux des trois fonctions de ce fichier ne produisent pas du texte mais une
+ * **donnée** — un `YYYY-MM-DD` — et leur locale `en-US` est un détail de
+ * découpage, non un choix d'affichage : elle ne bouge pas avec la langue.
+ *
+ * `formatCalendarMonth`, elle, est lue par une cliente, et reçoit donc un
+ * `DisplayLocale`. L'étiquette BCP 47 est demandée à `formattingLocale`
+ * (`lib/format.ts`) plutôt que composée ici : c'est là que vit la règle de repli
+ * quand l'établissement n'a pas publié son pays, et deux façons de la calculer
+ * finiraient par diverger. Le paramètre reste facultatif, comme dans
+ * `lib/format.ts` et pour la même raison : les appelants hors de l'empreinte de
+ * ce ticket gardent le comportement d'avant.
  */
 
 import type { CalendarDate, TimeZone } from '@spa/shared';
+
+import { formattingLocale, type DisplayLocale } from '@/lib/format';
 
 /** Millisecondes dans une journée — les bornes se déplacent en UTC, pas en heure murale. */
 const MILLISECONDS_IN_DAY = 24 * 60 * 60 * 1000;
@@ -59,9 +75,13 @@ export function addCalendarDays(date: CalendarDate, days: number): CalendarDate 
  * Lu dans le référentiel UTC pour la raison qu'expose `formatCalendarDate` :
  * une date civile **est déjà** celle de l'établissement, et la reprojeter dans
  * son fuseau la décalerait d'un jour — donc, le 1er du mois, de tout un mois.
+ *
+ * Le nom du mois vient d'`Intl` et non d'un catalogue : « septembre » et
+ * « September » sont des mots que la bibliothèque standard sait déjà dire, et
+ * les recopier dans deux JSON ferait douze libellés à tenir par langue.
  */
-export function formatCalendarMonth(date: CalendarDate): string {
-  return new Intl.DateTimeFormat('fr-FR', {
+export function formatCalendarMonth(date: CalendarDate, display?: DisplayLocale): string {
+  return new Intl.DateTimeFormat(formattingLocale(display?.locale, display?.countryCode), {
     timeZone: 'UTC',
     month: 'long',
     year: 'numeric',

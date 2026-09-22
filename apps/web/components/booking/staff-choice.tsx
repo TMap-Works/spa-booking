@@ -1,38 +1,35 @@
 'use client';
 
 import type { StaffMemberSummary } from '@spa/shared';
+import { useTranslations } from 'next-intl';
 import type { ReactNode } from 'react';
 
 import { Avatar, avatarClasses } from '@/components/ui/avatar';
 import { Icon } from '@/components/ui/icon';
 
 /**
- * Le libellé de l'absence de préférence.
+ * ## Les trois libellés partagés, et où ils vivent depuis #846
  *
- * `BM-PRATICIEN-01` admet les deux formulations — *« Sans préférence » (ou
- * « Premier disponible »)* —, et c'est la seconde que le produit emploie déjà
- * partout ailleurs : la barre de résumé (`summary-bar.tsx`), le récapitulatif
- * (`steps/recap.tsx`), l'étape du créneau et le tiroir du back-office. En
- * introduire une troisième ici ferait nommer la même chose de deux façons sur le
- * même parcours, ce que le critère `ds:libelles` relève comme un défaut.
- */
-export const NO_PREFERENCE_LABEL = 'Premier disponible';
-
-/** Ce que l'option rapporte à la cliente — `BM-PRATICIEN-01`. */
-export const NO_PREFERENCE_BENEFIT = 'Le plus de créneaux';
-
-/**
- * Le constat qu'une prestation que personne ne pratique n'a pas de créneau à
- * offrir.
+ * - **`tunnel.staffChoice.noPreference`** — l'absence de préférence.
+ *   `BM-PRATICIEN-01` admet les deux formulations — *« Sans préférence » (ou
+ *   « Premier disponible »)* —, et c'est la seconde que le produit emploie
+ *   partout : la barre de résumé (`summary-bar.tsx`), le récapitulatif, l'étape
+ *   du créneau et le tiroir du back-office. En introduire une troisième ferait
+ *   nommer la même chose de deux façons sur le même parcours, ce que le critère
+ *   `ds:libelles` relève comme un défaut.
+ * - **`tunnel.staffChoice.noPreferenceBenefit`** — ce que l'option rapporte à
+ *   la cliente, que `BM-PRATICIEN-01` demande d'écrire à côté d'elle.
+ * - **`tunnel.staffChoice.noStaffNotice`** — le constat qu'une prestation que
+ *   personne ne pratique n'a pas de créneau à offrir. L'étape « créneau »
+ *   l'écrit aussi (#1049) : le choix du praticien y est une puce qui ouvre un
+ *   panneau, et ouvrir un panneau pour y lire qu'il n'y a personne est un geste
+ *   perdu — la phrase se lit donc à la place de la puce.
  *
- * Exporté parce que l'étape « créneau » l'écrit aussi (#1049) : le choix du
- * praticien y est une puce qui ouvre un panneau, et ouvrir un panneau pour y lire
- * qu'il n'y a personne est un geste perdu — la phrase se lit donc à la place de
- * la puce. Une seule fois dans le produit : `ds:libelles` relève comme un défaut
- * la même chose nommée de deux façons sur un seul parcours.
+ * Les trois étaient des constantes exportées d'ici ; ce sont maintenant des
+ * **clés du catalogue**, que les autres écrans lisent par `useTranslations`.
+ * Une seule écriture, comme avant — dans le catalogue plutôt que dans ce
+ * module, parce qu'un module sans React ne sait pas dans quelle langue on lit.
  */
-export const NO_STAFF_NOTICE =
-  'Aucun praticien ne propose cette prestation actuellement : le salon n’a aucun créneau à offrir pour elle.';
 
 interface StaffChoiceProps {
   /** Les praticiens **actifs** qui tiennent la prestation retenue. */
@@ -85,14 +82,23 @@ interface StaffChoiceProps {
  * praticiens actifs, et vide il ne veut pas seulement dire « personne n'est
  * affecté » mais « personne ne peut honorer ce soin » — c'est la lecture que la
  * vitrine en fait déjà, ligne par ligne (`service-catalog.tsx`).
+ *
+ * ## La langue (#846)
+ *
+ * Le **nom du praticien** vient de la fiche que le salon a saisie et s'affiche
+ * tel quel ; tout le reste — la légende, l'absence de préférence, ce qu'elle
+ * rapporte, les deux phrases d'explication — vient du catalogue, sous
+ * `tunnel.staffChoice`.
  */
 export function StaffChoice({ staff, value, onSelect }: StaffChoiceProps) {
+  const t = useTranslations('booking');
+
   return (
     <fieldset className="spa-booking__staff">
-      <legend className="spa-booking__staff-legend">Praticien</legend>
+      <legend className="spa-booking__staff-legend">{t('tunnel.staffChoice.legend')}</legend>
 
       {staff.length === 0 ? (
-        <p className="spa-booking__staff-empty">{NO_STAFF_NOTICE}</p>
+        <p className="spa-booking__staff-empty">{t('tunnel.staffChoice.noStaffNotice')}</p>
       ) : (
         <>
           <div className="spa-booking__staff-row">
@@ -108,8 +114,8 @@ export function StaffChoice({ staff, value, onSelect }: StaffChoiceProps) {
                   <Icon name="users" />
                 </span>
               }
-              name={NO_PREFERENCE_LABEL}
-              note={NO_PREFERENCE_BENEFIT}
+              name={t('tunnel.staffChoice.noPreference')}
+              note={t('tunnel.staffChoice.noPreferenceBenefit')}
               onSelect={() => {
                 onSelect(null);
               }}
@@ -134,9 +140,7 @@ export function StaffChoice({ staff, value, onSelect }: StaffChoiceProps) {
             ))}
           </div>
 
-          <p className="spa-booking__staff-hint">
-            Sans préférence, le salon vous attribue le premier praticien disponible.
-          </p>
+          <p className="spa-booking__staff-hint">{t('tunnel.staffChoice.hint')}</p>
         </>
       )}
     </fieldset>

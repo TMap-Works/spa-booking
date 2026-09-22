@@ -7,14 +7,11 @@ import type {
   PublicTenant,
   UtcInstant,
 } from '@spa/shared';
+import { useLocale, useTranslations } from 'next-intl';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { SlotPicker } from '@/components/booking/slot-picker';
-import {
-  NO_PREFERENCE_LABEL,
-  NO_STAFF_NOTICE,
-  StaffChoice,
-} from '@/components/booking/staff-choice';
+import { StaffChoice } from '@/components/booking/staff-choice';
 import { BookingActionBar, type BookingSummary } from '@/components/booking/summary-bar';
 import { Button } from '@/components/ui/button';
 import { Notification } from '@/components/ui/notification';
@@ -29,6 +26,7 @@ import {
   monthRange,
   type CalendarMonth,
 } from '@/lib/booking/month-grid';
+import type { DisplayLocale } from '@/lib/format';
 
 import { loadAvailabilityAction } from '../actions';
 
@@ -149,6 +147,17 @@ interface SlotStepProps {
  * offre de réessayer. La sortie de l'état vide est passée d'« élargir la
  * fenêtre » à « voir le mois suivant » : c'est le même geste, dans l'idiome du
  * calendrier.
+ *
+ * ## La langue (#846)
+ *
+ * Le titre de l'état vide est **quatre messages** et non une phrase assemblée
+ * de morceaux : « Aucun créneau avec Nivo en septembre 2026 » et « No available
+ * times with Nivo in September 2026 » ne placent ni la préposition ni le nom au
+ * même endroit, et une concaténation figerait l'ordre du français.
+ *
+ * Le message d'erreur affiché, lui, reste celui que l'action rend : les phrases
+ * que le front écrit sont traduites (`actions.ts`), celle que l'API renvoie
+ * appartient à l'API.
  */
 export function SlotStep({
   tenant,
@@ -160,6 +169,11 @@ export function SlotStep({
   onStaffChange,
   onChoose,
 }: SlotStepProps) {
+  const t = useTranslations('booking');
+  const locale = useLocale();
+  /** La langue du lecteur, la région de l'établissement — le fuseau reste à part. */
+  const countryCode = tenant.address?.country ?? null;
+  const display: DisplayLocale = { locale, countryCode };
   const [days, setDays] = useState<readonly DayAvailability[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [retrying, setRetrying] = useState(false);
@@ -351,10 +365,18 @@ export function SlotStep({
   const staffLabel =
     staffId === null
       ? null
-      : (service.staff.find((member) => member.id === staffId)?.displayName ?? 'ce praticien');
+      : (service.staff.find((member) => member.id === staffId)?.displayName ??
+        t('tunnel.slotStep.unknownStaff'));
 
-  /** Ce que la puce porte — l'absence de préférence est un choix, pas un vide. */
-  const staffName = staffLabel ?? NO_PREFERENCE_LABEL;
+  /**
+   * Ce que la puce porte — l'absence de préférence est un choix, pas un vide.
+   *
+   * Le libellé vient de la clé de `StaffChoice` (`tunnel.staffChoice`) et non
+   * d'une clé à cette étape : c'est le même mot à l'étape « Prestation », dans
+   * le panneau et ici, et `ds:libelles` relève comme un défaut la même chose
+   * nommée de deux façons sur un seul parcours (#846).
+   */
+  const staffName = staffLabel ?? t('tunnel.staffChoice.noPreference');
 
   /** Les bornes réservables, dont le calendrier tire les mois qu'il atteint. */
   const bounds = useMemo(() => (today === null ? null : bookingWindow(today)), [today]);
@@ -362,6 +384,27 @@ export function SlotStep({
   /** Le mois suivant se laisse-t-il atteindre, ou la fenêtre s'arrête-t-elle là ? */
   const canSeeNextMonth =
     month !== null && bounds !== null && isNavigableMonth(addMonths(month, 1), bounds);
+
+  /**
+   * Ce que l'état vide annonce — « Aucun créneau », et les précisions dont on
+   * dispose (#846).
+   *
+   * Quatre clés et non une phrase assemblée : le praticien et le mois
+   * n'entrent pas au même endroit dans les deux langues, et une concaténation
+   * figerait l'ordre du français. Chaque clé est écrite en toutes lettres — la
+   * règle du dépôt interdit d'en composer une par concaténation.
+   */
+  const emptyTitle =
+    staffLabel === null
+      ? month === null
+        ? t('tunnel.slotStep.emptyTitle')
+        : t('tunnel.slotStep.emptyTitleMonth', { month: formatMonth(month, display) })
+      : month === null
+        ? t('tunnel.slotStep.emptyTitleStaff', { staff: staffLabel })
+        : t('tunnel.slotStep.emptyTitleStaffMonth', {
+            staff: staffLabel,
+            month: formatMonth(month, display),
+          });
 
   /**
    * « Voir le mois suivant » — la sortie de l'état vide, `states.md` étape 3.
@@ -428,7 +471,7 @@ export function SlotStep({
   return (
     <section
       className="spa-booking__step spa-booking__step--calendar"
-      aria-label="Choix du praticien et du créneau"
+      aria-label={t('tunnel.slotStep.label')}
     >
       <h2 className="spa-card__title">{service.name}</h2>
 
@@ -447,17 +490,17 @@ export function SlotStep({
           // perdu : la `<select>` d'avant portait déjà ce constat en clair, et
           // l'étape le garde. C'est aussi ce qui explique la grille vide en
           // dessous.
-          <p className="spa-booking__staff-empty">{NO_STAFF_NOTICE}</p>
+          <p className="spa-booking__staff-empty">{t('tunnel.staffChoice.noStaffNotice')}</p>
         ) : (
           <Button
             variant="neutral"
             aria-haspopup="dialog"
-            aria-label={`Praticien : ${staffName}. Choisir un praticien`}
+            aria-label={t('tunnel.slotStep.staffChipLabel', { staff: staffName })}
             onClick={() => {
               setStaffOpen(true);
             }}
           >
-            <span aria-hidden="true">{`Avec : ${staffName}`}</span>
+            <span aria-hidden="true">{t('tunnel.slotStep.staffChip', { staff: staffName })}</span>
             <span aria-hidden="true" className="spa-booking__staff-chip-caret">
               ▾
             </span>
@@ -473,7 +516,7 @@ export function SlotStep({
       */}
       <Sheet
         open={staffOpen}
-        title="Choisir un praticien"
+        title={t('tunnel.slotStep.staffSheetTitle')}
         onClose={() => {
           setStaffOpen(false);
         }}
@@ -493,15 +536,17 @@ export function SlotStep({
       </Sheet>
 
       {error === null ? null : (
-        <Notification tone="danger" title="Les disponibilités n’ont pas pu être chargées">
+        <Notification tone="danger" title={t('tunnel.slotStep.errorTitle')}>
+          {/* La phrase de l'erreur vient de l'action, qui traduit les siennes
+              et laisse passer celle de l'API — voir l'en-tête, « La langue ». */}
           <p>{error}</p>
           <Button
             variant="neutral"
             loading={retrying}
-            loadingLabel="Nouvelle tentative en cours…"
+            loadingLabel={t('tunnel.slotStep.retrying')}
             onClick={retry}
           >
-            Réessayer
+            {t('tunnel.slotStep.retry')}
           </Button>
         </Notification>
       )}
@@ -530,6 +575,9 @@ export function SlotStep({
           openingHours={tenant.openingHours}
           onMonthChange={setMonth}
           timeZone={tenant.timezone}
+          // La région de mise en forme des dates et des heures — le fuseau,
+          // lui, reste celui du salon quelle que soit la langue (#846).
+          countryCode={countryCode}
           // Le conteneur où rattraper le focus : la **bande de jours** depuis
           // #1049 — c'est elle qui reste à l'écran quand le mois change, le
           // calendrier n'étant dans le document que tant que son panneau est
@@ -551,15 +599,11 @@ export function SlotStep({
           onChoose={onChoose}
           emptyState={
             <div className="spa-empty-state">
-              <p className="spa-empty-state__title">
-                {`Aucun créneau${staffLabel === null ? '' : ` avec ${staffLabel}`}${
-                  month === null ? '' : ` en ${formatMonth(month)}`
-                }`}
-              </p>
+              <p className="spa-empty-state__title">{emptyTitle}</p>
               <p className="spa-empty-state__description">
                 {staffLabel === null
-                  ? 'Essayez un autre mois, une autre prestation, ou contactez le salon directement.'
-                  : 'Un autre mois ou un autre praticien a peut-être de la place, sinon contactez le salon directement.'}
+                  ? t('tunnel.slotStep.emptyDescription')
+                  : t('tunnel.slotStep.emptyDescriptionStaff')}
               </p>
               {/*
                 La sortie de l'état vide — `states.md` étape 3. Elle a remplacé
@@ -570,7 +614,7 @@ export function SlotStep({
               */}
               {canSeeNextMonth ? (
                 <Button variant="neutral" onClick={showNextMonth}>
-                  Voir le mois suivant
+                  {t('tunnel.slotStep.nextMonth')}
                 </Button>
               ) : null}
               {staffLabel === null ? null : (
@@ -580,7 +624,7 @@ export function SlotStep({
                     onStaffChange(null);
                   }}
                 >
-                  Voir tous les praticiens
+                  {t('tunnel.slotStep.allStaff')}
                 </Button>
               )}
             </div>
@@ -597,7 +641,7 @@ export function SlotStep({
           correction nommée à l'endroit qu'elle corrige. */}
       <div className="spa-booking__actions">
         <Button variant="quiet" onClick={onBack}>
-          Changer de prestation
+          {t('tunnel.actions.changeService')}
         </Button>
       </div>
 

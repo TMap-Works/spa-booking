@@ -7,6 +7,7 @@ import {
   type PublicTenant,
   type UtcInstant,
 } from '@spa/shared';
+import { useTranslations } from 'next-intl';
 import { useState } from 'react';
 
 import { BookingActionBar } from '@/components/booking/summary-bar';
@@ -54,7 +55,7 @@ interface Refusal {
   readonly body: string;
 }
 
-/**
+/*
  * Le refus qu'aucun autre créneau ne lèvera — `CLIENT_EMAIL_NOT_BOOKABLE` (#452).
  *
  * ## Pourquoi il ne renvoie pas au calendrier
@@ -79,19 +80,14 @@ interface Refusal {
  * l'annuaire du personnel, que n'importe qui pourrait interroger adresse par
  * adresse. La phrase constate donc le refus et propose la suite, sans qualifier
  * l'adresse ni confirmer qu'elle appartient à quelqu'un.
+ *
+ * Elle vit sous `tunnel.summaryStep.emailRefused*` depuis #846 : une constante
+ * de module ne peut pas lire le catalogue, et c'est `confirm` qui la compose.
+ * Son **ton** reste `warning` et non `danger` — rien n'est cassé, et l'action à
+ * mener est claire. Le ton porte de toute façon `role="alert"`, donc l'annonce
+ * reste immédiate au lecteur d'écran : le visiteur vient de cliquer, il attend
+ * une réponse.
  */
-const EMAIL_NOT_BOOKABLE: Refusal = {
-  // `warning` et non `danger` : rien n'est cassé, et l'action à mener est claire.
-  // Le ton porte aussi `role="alert"`, donc l'annonce reste immédiate au lecteur
-  // d'écran — le visiteur vient de cliquer, il attend une réponse.
-  tone: 'warning',
-  title: 'Cette adresse e-mail ne peut pas être utilisée ici',
-  body:
-    'La réservation en ligne n’accepte pas cette adresse pour cet établissement. ' +
-    'Reprenez vos coordonnées pour en saisir une autre : votre prestation et ' +
-    'votre créneau sont conservés. Si vous tenez à cette adresse, contactez ' +
-    'directement l’établissement.',
-};
 
 /**
  * Récapitulatif et validation — quatrième critère d'acceptation de #45.
@@ -124,6 +120,16 @@ const EMAIL_NOT_BOOKABLE: Refusal = {
  *
  * Un double clic ne doit jamais produire deux réservations (skill web-frontend
  * §3).
+ *
+ * ## La langue (#846)
+ *
+ * Les deux codes de refus que cet écran transforme en phrase —
+ * `CLIENT_EMAIL_NOT_BOOKABLE` ici, `SLOT_NO_LONGER_AVAILABLE` chez
+ * l'orchestrateur — ont chacun leur clé. Le refus générique, lui, affiche
+ * encore `result.message` : c'est la phrase que l'action a écrite (traduite
+ * depuis `actions.ts`) ou celle que l'API a renvoyée, et la seconde appartient
+ * à l'API — la reformuler ici effacerait le seul détail qu'on ait d'une panne
+ * qu'aucun code ne nomme.
  */
 export function SummaryStep({
   tenant,
@@ -138,6 +144,7 @@ export function SummaryStep({
   onSlotLost,
   onSignInRequired,
 }: SummaryStepProps) {
+  const t = useTranslations('booking');
   const [submitting, setSubmitting] = useState(false);
   const [refusal, setRefusal] = useState<Refusal | null>(null);
 
@@ -207,8 +214,12 @@ export function SummaryStep({
     // est à un écran d'ici, pas cinq.
     setRefusal(
       result.code === ERROR_CODES.CLIENT_EMAIL_NOT_BOOKABLE
-        ? EMAIL_NOT_BOOKABLE
-        : { tone: 'danger', title: 'La réservation n’a pas abouti', body: result.message },
+        ? {
+            tone: 'warning',
+            title: t('tunnel.summaryStep.emailRefusedTitle'),
+            body: t('tunnel.summaryStep.emailRefusedBody'),
+          }
+        : { tone: 'danger', title: t('tunnel.summaryStep.failureTitle'), body: result.message },
     );
     // Le bouton se réarme, dans les deux cas : la panne est peut-être passagère,
     // et sur le refus d'adresse c'est ce qui rend « Corriger mes coordonnées »
@@ -218,7 +229,7 @@ export function SummaryStep({
   };
 
   return (
-    <section className="spa-booking__step" aria-label="Récapitulatif de votre réservation">
+    <section className="spa-booking__step" aria-label={t('tunnel.summaryStep.label')}>
       {/* Plus de titre d'étape ici : le `<h1>` du tunnel pose la question —
           « Tout est-il exact ? » —, et « Vérifiez votre réservation » juste
           au-dessous la redisait en d'autres mots (#1047, BM-TUNNEL-11). */}
@@ -233,7 +244,7 @@ export function SummaryStep({
               dit que « revenir ». */}
           <div className="spa-booking__actions">
             <Button variant="quiet" onClick={onBack} disabled={submitting}>
-              Corriger mes coordonnées
+              {t('tunnel.summaryStep.fixContact')}
             </Button>
           </div>
         </Notification>
@@ -313,18 +324,24 @@ export function SummaryStep({
             —, et un `h3` sauterait le niveau 2 de la page (WCAG 1.3.1). Le corps
             reste celui de `.spa-booking__terms-title` : c'est la classe qui le
             décide, pas l'élément. */}
-        <h2 className="spa-booking__terms-title">Avant de confirmer</h2>
+        <h2 className="spa-booking__terms-title">{t('tunnel.summaryStep.termsTitle')}</h2>
         <ul className="spa-list spa-booking__terms-list">
           <li>
             {/* Le montant n'est pas redit : il est deux lignes plus haut, dans
                 la carte. Ce que cette phrase ajoute, c'est *où* et *quand* il se
-                règle, pas *combien*. */}
-            <span className="spa-booking__terms-label">Règlement sur place</span>, le jour du
-            rendez-vous.
+                règle, pas *combien*.
+
+                `t.rich` et une balise nommée : ce qui est en relief est le fait
+                — « Règlement sur place » —, et ce fait n'occupe pas la même
+                place dans la phrase anglaise (#846). */}
+            {t.rich('tunnel.summaryStep.termsPayment', {
+              label: (chunks) => <span className="spa-booking__terms-label">{chunks}</span>,
+            })}
           </li>
           <li>
-            <span className="spa-booking__terms-label">Annulation sans frais</span> tant que le
-            rendez-vous n’a pas eu lieu.
+            {t.rich('tunnel.summaryStep.termsCancellation', {
+              label: (chunks) => <span className="spa-booking__terms-label">{chunks}</span>,
+            })}
           </li>
         </ul>
       </div>
@@ -337,12 +354,12 @@ export function SummaryStep({
           variant="accent"
           block
           loading={submitting}
-          loadingLabel="Réservation en cours…"
+          loadingLabel={t('tunnel.summaryStep.submitting')}
           onClick={() => {
             void confirm();
           }}
         >
-          Confirmer la réservation
+          {t('tunnel.summaryStep.submit')}
         </Button>
       </BookingActionBar>
     </section>

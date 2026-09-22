@@ -1,13 +1,19 @@
 'use client';
 
 import type { Money, TimeZone, UtcInstant } from '@spa/shared';
+import { useLocale, useTranslations } from 'next-intl';
 import { useId, useState, type ReactNode } from 'react';
 
 import { Avatar } from '@/components/ui/avatar';
 import { DateBlock } from '@/components/ui/date-block';
 import { Icon } from '@/components/ui/icon';
 import { Sheet } from '@/components/ui/sheet';
-import { formatDuration, formatMoney, formatTimeInTimeZone } from '@/lib/format';
+import {
+  formatDuration,
+  formatMoney,
+  formatTimeInTimeZone,
+  type DisplayLocale,
+} from '@/lib/format';
 
 /**
  * Ce que le tunnel rappelle de la réservation en cours.
@@ -26,24 +32,35 @@ export interface BookingSummary {
   /** `null` tant qu'aucun créneau n'est retenu — l'étape « Créneau » est là pour ça. */
   readonly startsAt: UtcInstant | null;
   readonly timeZone: TimeZone;
+  /**
+   * Le pays de l'établissement (`PublicTenant.address.country`), pour la
+   * **région** de mise en forme — #846.
+   *
+   * Il voyage avec le fuseau et pour la même raison : ces faits sont ceux du
+   * salon, pas du navigateur. `en-US` écrit « 9/1/2026 » là où `en-GB` écrit
+   * « 01/09/2026 », et les deux sont de l'anglais ; le montant suit la même
+   * règle. Absent, `lib/format.ts` retombe sur le repli documenté de sa langue.
+   *
+   * Facultatif : il s'ajoute à un objet que le tunnel compose déjà, et les
+   * écrans qui ne le renseignent pas encore gardent le comportement d'avant.
+   */
+  readonly countryCode?: string | null | undefined;
 }
-
-/** Le libellé de l'absence de préférence, écrit une fois pour les deux surfaces. */
-const NO_PREFERENCE = 'Premier disponible';
-
-/**
- * L'annulation, en une ligne.
- *
- * Elle reprend au mot près la règle que le récapitulatif détaille avant de
- * confirmer (`steps/summary-step.tsx`, « Avant de confirmer ») : ni frais ni
- * préavis côté API — `AppointmentsService.cancel` ne refuse que sur le cycle de
- * vie. Deux phrases différentes pour une même règle sur deux écrans qui se
- * suivent, c'est ce que le critère `ds:coherence` relève.
- */
-const CANCELLATION_LINE = 'Annulation sans frais tant que le rendez-vous n’a pas eu lieu.';
 
 interface SummaryFactsProps {
   readonly summary: BookingSummary;
+}
+
+/**
+ * Ce qui décide de la mise en forme des dates et des montants (#846) — la
+ * langue du lecteur, la région de l'établissement.
+ *
+ * Composé ici plutôt qu'à chaque appel : les trois surfaces de ce fichier
+ * mettent en forme la même réservation, et deux contextes d'affichage pour un
+ * seul rendez-vous seraient une divergence de plus à trouver.
+ */
+function useDisplay(summary: BookingSummary): DisplayLocale {
+  return { locale: useLocale(), countryCode: summary.countryCode ?? null };
 }
 
 /**
@@ -56,26 +73,33 @@ interface SummaryFactsProps {
  * choses différentes du même rendez-vous.
  */
 function SummaryFacts({ summary }: SummaryFactsProps) {
+  const t = useTranslations('booking');
+  const display = useDisplay(summary);
+
   return (
     <dl className="spa-booking__facts">
       <div className="spa-booking__fact">
-        <dt className="spa-booking__fact-term">Prestation</dt>
+        <dt className="spa-booking__fact-term">{t('tunnel.summaryBar.service')}</dt>
         <dd className="spa-booking__fact-value">
           {summary.serviceName}
           <span className="spa-booking__fact-note">
-            {formatDuration(summary.durationMinutes)}
+            {formatDuration(summary.durationMinutes, display)}
           </span>
         </dd>
       </div>
 
       <div className="spa-booking__fact">
-        <dt className="spa-booking__fact-term">Praticien</dt>
+        <dt className="spa-booking__fact-term">{t('tunnel.summaryBar.staff')}</dt>
         <dd className="spa-booking__fact-value spa-booking__fact-value--figure">
           {/* Décoratif : le nom est écrit juste à côté. Sur « Premier
               disponible », aucune pastille — il n'y a personne à représenter,
               et « PD » se lirait comme des initiales. */}
           {summary.staffName === null ? null : <Avatar name={summary.staffName} size="sm" />}
-          <span>{summary.staffName ?? NO_PREFERENCE}</span>
+          {/* Le nom du praticien est du contenu du salon : il s'affiche tel
+              quel. Seule l'absence de préférence est un mot du produit, et
+              c'est celui que `StaffChoice` emploie déjà — une seule clé pour
+              les deux surfaces (`ds:libelles`). */}
+          <span>{summary.staffName ?? t('tunnel.staffChoice.noPreference')}</span>
         </dd>
       </div>
 
@@ -84,10 +108,10 @@ function SummaryFacts({ summary }: SummaryFactsProps) {
         // heure : — » ferait passer un choix à venir pour une donnée manquante
         // (`docs/design/appointments/states.md`).
         <div className="spa-booking__fact">
-          <dt className="spa-booking__fact-term">Date et heure</dt>
+          <dt className="spa-booking__fact-term">{t('tunnel.summaryBar.dateTime')}</dt>
           <dd className="spa-booking__fact-value spa-booking__fact-value--figure">
             <DateBlock instant={summary.startsAt} timeZone={summary.timeZone} />
-            <span>{formatTimeInTimeZone(summary.startsAt, summary.timeZone)}</span>
+            <span>{formatTimeInTimeZone(summary.startsAt, summary.timeZone, display)}</span>
           </dd>
         </div>
       )}
@@ -95,9 +119,9 @@ function SummaryFacts({ summary }: SummaryFactsProps) {
       {/* Le total ferme la liste, et c'est le seul fait aligné à droite : c'est
           ce que l'œil cherche en dernier avant de s'engager. */}
       <div className="spa-booking__fact spa-booking__fact--total">
-        <dt className="spa-booking__fact-term">Total</dt>
+        <dt className="spa-booking__fact-term">{t('tunnel.summaryBar.total')}</dt>
         <dd className="spa-booking__fact-value spa-booking__fact-value--total">
-          {formatMoney(summary.price)}
+          {formatMoney(summary.price, display)}
         </dd>
       </div>
     </dl>
@@ -155,9 +179,28 @@ interface BookingActionBarProps {
  * Elle se décolle et sa ligne de rappel disparaît : `BookingSummaryAside` prend
  * le relais en colonne, et le bouton retombe *« dans le flux »* — l'adaptation
  * desktop que `wireframes.md` décrit pour toutes les étapes.
+ *
+ * ## La langue (#846)
+ *
+ * Les mots viennent du catalogue, sous `tunnel.summaryBar` ; les **valeurs** —
+ * durée, prix, heure — de `lib/format.ts`, à qui l'on passe la langue du
+ * lecteur et le pays de l'établissement (`useDisplay`). Le fuseau, lui, reste
+ * celui du salon quelle que soit la langue.
+ *
+ * La ligne d'annulation est **une seule clé** pour les deux surfaces, et elle
+ * dit au mot près ce que le récapitulatif détaille avant de confirmer
+ * (`steps/summary-step.tsx`, « Avant de confirmer ») : ni frais ni préavis côté
+ * API — `AppointmentsService.cancel` ne refuse que sur le cycle de vie. Deux
+ * phrases pour une même règle sur deux écrans qui se suivent, c'est ce que le
+ * critère `ds:coherence` relève.
  */
 export function BookingActionBar({ summary, children }: BookingActionBarProps) {
+  const t = useTranslations('booking');
+  const locale = useLocale();
   const [open, setOpen] = useState(false);
+  // `useDisplay` prend une réservation, et celle-ci peut manquer : la langue est
+  // donc lue directement, un crochet ne se sautant pas derrière une condition.
+  const display: DisplayLocale = { locale, countryCode: summary?.countryCode ?? null };
 
   return (
     <div className="spa-booking__bar">
@@ -181,17 +224,17 @@ export function BookingActionBar({ summary, children }: BookingActionBarProps) {
                 ·
               </span>
               <span className="spa-booking__bar-fact">
-                {formatDuration(summary.durationMinutes)}
+                {formatDuration(summary.durationMinutes, display)}
               </span>
               <span className="spa-booking__bar-sep" aria-hidden="true">
                 ·
               </span>
-              <span className="spa-booking__bar-price">{formatMoney(summary.price)}</span>
+              <span className="spa-booking__bar-price">{formatMoney(summary.price, display)}</span>
             </span>
             {/* Ce que le clic fait, écrit pour qui ne voit pas le chevron : le
                 nom accessible du bouton se terminerait sinon sur un montant,
                 sans dire qu'il ouvre quelque chose. */}
-            <span className="spa-visually-hidden">— voir le détail de votre réservation</span>
+            <span className="spa-visually-hidden">{t('tunnel.summaryBar.openDetail')}</span>
             <Icon name="chevron-down" className="spa-booking__bar-chevron" />
           </button>
 
@@ -200,10 +243,10 @@ export function BookingActionBar({ summary, children }: BookingActionBarProps) {
             onClose={() => {
               setOpen(false);
             }}
-            title="Votre réservation"
+            title={t('tunnel.summaryBar.title')}
           >
             <SummaryFacts summary={summary} />
-            <p className="spa-booking__policy">{CANCELLATION_LINE}</p>
+            <p className="spa-booking__policy">{t('tunnel.summaryBar.cancellation')}</p>
           </Sheet>
         </>
       )}
@@ -236,16 +279,17 @@ interface BookingSummaryAsideProps {
  * 360 px en occuperaient le tiers.
  */
 export function BookingSummaryAside({ summary }: BookingSummaryAsideProps) {
+  const t = useTranslations('booking');
   const titleId = useId();
 
   return (
     <aside className="spa-booking__aside" aria-labelledby={titleId}>
       <div className="spa-booking__aside-card">
         <h2 id={titleId} className="spa-booking__aside-title">
-          Votre réservation
+          {t('tunnel.summaryBar.title')}
         </h2>
         <SummaryFacts summary={summary} />
-        <p className="spa-booking__policy">{CANCELLATION_LINE}</p>
+        <p className="spa-booking__policy">{t('tunnel.summaryBar.cancellation')}</p>
       </div>
     </aside>
   );
