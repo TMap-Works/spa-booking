@@ -209,7 +209,8 @@ describe('informations du salon', () => {
     expect(screen.getByRole('link', { name: 'contact@lotus.test' }).getAttribute('href')).toBe(
       'mailto:contact@lotus.test',
     );
-    expect(screen.getByRole('link', { name: '+261341234567' }).getAttribute('href')).toBe(
+    // Lisible à l'œil, composable au doigt : le lien garde l'E.164 (#825).
+    expect(screen.getByRole('link', { name: '+261 34 12 345 67' }).getAttribute('href')).toBe(
       'tel:+261341234567',
     );
     expect(screen.getByRole('heading', { name: 'Nous trouver' })).toBeDefined();
@@ -306,7 +307,7 @@ describe('informations du salon', () => {
       <SalonInfo tenant={{ ...tenant, contactPhone: '+261341234567' }} bookable now={MARDI_MATIN} />,
     );
 
-    expect(screen.getByText('+261341234567')).toBeDefined();
+    expect(screen.getByText('+261 34 12 345 67')).toBeDefined();
     expect(screen.getByRole('heading', { name: 'Nous trouver' })).toBeDefined();
     expect(screen.queryByRole('heading', { name: 'Horaires' })).toBeNull();
   });

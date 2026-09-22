@@ -182,7 +182,7 @@ describe('la remarque écrite par le client à la réservation', () => {
 
 describe('la ligne de coordonnées de la liste', () => {
   it('met le numéro d’abord — c’est ce qu’un comptoir compose', () => {
-    expect(customerContactLine(FARA)).toBe('+261341234567 · fara.rakotoson@example.mg');
+    expect(customerContactLine(FARA)).toBe('+261 34 12 345 67 · fara.rakotoson@example.mg');
   });
 
   it('n’affiche que l’adresse quand la fiche n’a pas de numéro', () => {

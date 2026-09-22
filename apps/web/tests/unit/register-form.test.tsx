@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { RegisterForm } from '@/app/(account)/[tenantSlug]/compte/components/register-form';
+import { PhoneCountryProvider } from '@/components/ui/phone-country';
 
 const registerAction = vi.fn();
 const replace = vi.fn();
@@ -30,8 +31,17 @@ afterEach(() => {
 });
 
 function renderForm(): void {
-  render(<RegisterForm tenantSlug="salon-des-lilas" />);
+  // Le gabarit de l'espace client pose le pays du salon (#825) : un salon
+  // français, donc un numéro national français.
+  render(
+    <PhoneCountryProvider country="FR">
+      <RegisterForm tenantSlug="salon-des-lilas" />
+    </PhoneCountryProvider>,
+  );
 }
+
+/** Ce que rend le champ téléphone pour un numéro français trop court (#825). */
+const PHONE_INCOMPLETE = 'Ce numéro est incomplet pour ce pays (France, +33).';
 
 /**
  * La saisie exacte de #698 : « Nom » laissé vide, les trois autres fautifs.
@@ -43,7 +53,9 @@ function renderForm(): void {
 async function saisieDuRapport(user: ReturnType<typeof userEvent.setup>): Promise<void> {
   await user.type(screen.getByLabelText(/Prénom/), 'Zoé');
   await user.type(screen.getByLabelText(/Adresse e-mail/), 'zoe-pas-un-email');
-  await user.type(screen.getByLabelText(/Téléphone/), 'abc');
+  // Un numéro commencé et laissé en plan : le champ téléphone n'accepte plus
+  // de lettres depuis #825, et « abc » n'y laisserait rien.
+  await user.type(screen.getByLabelText(/Téléphone/), '06 12');
   await user.type(screen.getByLabelText(/Mot de passe/), 'court');
   // La case de consentement (#734) est cochée d'entrée : elle ne fait pas
   // partie du rapport de #698, et la laisser vide ferait porter aux listes de
@@ -95,7 +107,7 @@ describe('inscription — première soumission', () => {
     expect(messagesAffiches()).toEqual([
       'ce champ est obligatoire',
       'adresse e-mail invalide',
-      'numéro de téléphone invalide',
+      PHONE_INCOMPLETE,
       'le mot de passe fait au moins 12 caractères',
     ]);
     expect(registerAction).not.toHaveBeenCalled();
@@ -132,7 +144,7 @@ describe('inscription — correction', () => {
     // Les trois autres restent signalées : corriger un champ n'absout pas les autres.
     expect(messagesAffiches()).toEqual([
       'adresse e-mail invalide',
-      'numéro de téléphone invalide',
+      PHONE_INCOMPLETE,
       'le mot de passe fait au moins 12 caractères',
     ]);
   });
@@ -158,5 +170,24 @@ describe('inscription — correction', () => {
       // date n'accompagne le booléen, c'est le serveur qui l'horodate.
       dataConsent: true,
     });
+  });
+
+  it('envoie en E.164 un numéro tapé au format national (#825)', async () => {
+    registerAction.mockResolvedValue({ ok: true, data: { id: 'x' } });
+    const user = userEvent.setup();
+    renderForm();
+
+    await user.type(screen.getByLabelText(/Prénom/), 'Zoé');
+    await user.type(screen.getByLabelText(/^Nom/), 'Ranaivo');
+    await user.type(screen.getByLabelText(/Adresse e-mail/), 'zoe@example.test');
+    await user.type(screen.getByLabelText(/Téléphone/), '06 12 34 56 78');
+    await user.type(screen.getByLabelText(/Mot de passe/), 'correct horse battery');
+    await user.click(screen.getByRole('checkbox'));
+    await user.click(screen.getByRole('button', { name: /Créer mon compte/ }));
+
+    expect(registerAction).toHaveBeenCalledWith(
+      'salon-des-lilas',
+      expect.objectContaining({ phone: '+33612345678' }),
+    );
   });
 });

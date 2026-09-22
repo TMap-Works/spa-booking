@@ -1,16 +1,17 @@
 'use client';
 
 import { zodResolver } from '@hookform/resolvers/zod';
-import { nameSchema, phoneSchema, type SessionUser } from '@spa/shared';
+import { e164PhoneSchema, nameSchema, type SessionUser } from '@spa/shared';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
-import { useForm } from 'react-hook-form';
+import { Controller, useForm } from 'react-hook-form';
 import { z } from 'zod';
 
 import { Button } from '@/components/ui/button';
 import { Field } from '@/components/ui/field';
 import { Icon } from '@/components/ui/icon';
 import { Notification } from '@/components/ui/notification';
+import { PhoneField } from '@/components/ui/phone-field';
 
 import { updateProfileAction } from '../actions';
 import { useAccountSessionRenewal } from './use-account-session-renewal';
@@ -56,11 +57,18 @@ import { useAccountSessionRenewal } from './use-account-session-renewal';
  * profil servi. Un bouton qui accepte un envoi sans modification déclenche une
  * requête, une notification de succès et un rafraîchissement pour rien — et
  * apprend à la cliente que le succès annoncé ne veut rien dire.
+ *
+ * ## Le téléphone, depuis #825
+ *
+ * `PhoneField` émet un E.164 : `e164PhoneSchema` le valide sans pays à
+ * compléter, avec la même bibliothèque que l'API. Le numéro enregistré revient
+ * derrière son drapeau, au format national — et `isDirty` reste faux tant
+ * qu'on n'y touche pas, le champ ne réécrivant pas la valeur qu'il reçoit.
  */
 const profileFormSchema = z.object({
   firstName: nameSchema,
   lastName: nameSchema,
-  phone: z.union([z.literal(''), phoneSchema]),
+  phone: z.union([z.literal(''), e164PhoneSchema]),
 });
 
 type ProfileFormValues = z.input<typeof profileFormSchema>;
@@ -78,6 +86,7 @@ export function ProfileForm({ tenantSlug, profile }: ProfileFormProps) {
 
   const {
     register,
+    control,
     handleSubmit,
     reset,
     formState: { errors, isSubmitting, isDirty },
@@ -162,14 +171,21 @@ export function ProfileForm({ tenantSlug, profile }: ProfileFormProps) {
 
         <fieldset className="spa-account__fieldset">
           <legend className="spa-account__legend">Contact</legend>
-          <Field
-            id="profile-phone"
-            label="Téléphone"
-            type="tel"
-            autoComplete="tel"
-            hint="Laissez vide pour ne plus recevoir de rappel par SMS."
-            error={errors.phone?.message}
-            {...register('phone')}
+          <Controller
+            control={control}
+            name="phone"
+            render={({ field, fieldState }) => (
+              <PhoneField
+                id="profile-phone"
+                label="Téléphone"
+                hint="Laissez vide pour ne plus recevoir de rappel par SMS."
+                invalid={fieldState.invalid}
+                value={field.value}
+                onChange={field.onChange}
+                onBlur={field.onBlur}
+                ref={field.ref}
+              />
+            )}
           />
 
           <p className="spa-account__readonly">

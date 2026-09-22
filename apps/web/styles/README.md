@@ -15,6 +15,7 @@ styles/
   components/
     button.css         bouton
     field.css          champ de saisie
+    phone.css          champ téléphone international (#825)
     select.css         sélecteur
     card.css           carte
     modal.css          modale
@@ -184,6 +185,43 @@ clic ne doit jamais produire deux réservations.
 En erreur : `aria-invalid="true"` sur le contrôle, message en
 `.spa-field__error` avec `role="alert"`, référencé par `aria-describedby`. La
 couleur ne porte jamais l'information seule — il y a toujours un texte.
+
+Un numéro de téléphone ne se saisit **jamais** dans un `.spa-field__control`
+nu : il passe par le champ téléphone ci-dessous.
+
+### Champ téléphone (#825)
+
+`components/ui/phone-field.tsx`, feuille `components/phone.css`. Un bouton de
+pays — drapeau, indicatif — et le numéro, dans une seule boîte ; le bouton ouvre
+un `Sheet` avec une recherche (nom dans la langue de l'écran ou en anglais, code
+ISO, indicatif). La saisie se fait au format **national**, la valeur émise est
+en **E.164**, et la règle reste celle du contrat (`e164PhoneSchema`).
+
+```html
+<div class="spa-field spa-phone">
+  <label class="spa-field__label" for="tel">Téléphone</label>
+  <div class="spa-phone__control">
+    <button class="spa-phone__country" type="button" aria-haspopup="dialog"
+            aria-label="Pays de l’indicatif : France (+33)">
+      <span class="spa-phone__flag" aria-hidden="true">…</span>
+      <span class="spa-phone__dial" aria-hidden="true">+33</span>
+    </button>
+    <input id="tel" class="spa-phone__input" type="tel" placeholder="06 12 34 56 78">
+  </div>
+</div>
+```
+
+- **Le pays de départ** est celui de l'établissement : en propriété
+  (`defaultCountry`) quand l'écran le connaît mieux, sinon le
+  `PhoneCountryProvider` posé par les gabarits du back-office et de l'espace
+  client, sinon les États-Unis.
+- **L'erreur** est un drapeau (`invalid`), pas un texte : le message nomme le
+  pays du drapeau, que seul le champ connaît (« … pour ce pays (Canada, +1) »).
+- **Les drapeaux sont embarqués** et chargés après l'affichage — une
+  cinquantaine de kilo-octets qui n'ont rien à faire sur le chemin critique du
+  tunnel. Aucune image ne vient d'un domaine tiers.
+- **Un numéro affiché** passe par `formatPhoneForDisplay` (`lib/phone.ts`) :
+  `+33 6 12 34 56 78`, le lien `tel:` gardant l'E.164.
 
 ### Sélecteur
 

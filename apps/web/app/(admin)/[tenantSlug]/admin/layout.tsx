@@ -3,6 +3,7 @@ import type { Metadata } from 'next';
 import { Inter } from 'next/font/google';
 import { cache, type ReactNode } from 'react';
 
+import { PhoneCountryProvider } from '@/components/ui/phone-country';
 import {
   ApiClientError,
   fetchMyStaffProfile,
@@ -130,6 +131,11 @@ export interface AdminShell {
   readonly establishments: readonly AdminEstablishment[];
   /** `null` quand la vitrine publique n'a pas répondu : on n'invente pas un fuseau. */
   readonly timeZone: string | null;
+  /**
+   * Le pays de l'adresse du salon — l'indicatif par défaut des champs téléphone
+   * du back-office (#825). `null` sans adresse publiée ou sans vitrine.
+   */
+  readonly countryCode: string | null;
   /** `null` quand `/auth/me` n'a pas répondu : on n'annonce pas un compte qu'on ignore. */
   readonly userName: string | null;
   readonly role: UserRole;
@@ -285,6 +291,7 @@ export const loadAdminShell = cache(async function loadAdminShell(
         ? [{ slug: tenant.value.slug, name: tenant.value.name }]
         : [],
     timeZone: tenant.status === 'fulfilled' ? tenant.value.timezone : null,
+    countryCode: tenant.status === 'fulfilled' ? (tenant.value.address?.country ?? null) : null,
     // L'initiale plutôt que le nom entier : le pied de rail est étroit, et
     // « Rakotoarisoa » y déborderait sans rien apprendre à qui est connecté.
     userName:
@@ -324,7 +331,7 @@ export default async function AdminLayout({ children, params }: AdminLayoutProps
         y écrive. Voir `components/admin-announcement.tsx` (#1037).
       */}
       <AdminAnnouncementRegion />
-      {children}
+      <PhoneCountryProvider country={shell?.countryCode ?? null}>{children}</PhoneCountryProvider>
     </main>
   );
 

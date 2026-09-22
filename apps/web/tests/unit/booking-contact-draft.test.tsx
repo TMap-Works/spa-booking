@@ -338,8 +338,14 @@ describe('« Un mot pour le salon » face à un rechargement', () => {
  * #737 corrige.
  */
 describe('une soumission refusée sur le champ en cours de frappe', () => {
-  /** Un numéro national : `e164PhoneSchema` le refuse, le champ garde le focus. */
-  const NUMERO_REFUSE = '0612345678';
+  /**
+   * Un numéro commencé : trop court pour le pays du drapeau — les États-Unis,
+   * ce salon n'ayant pas publié d'adresse —, `e164PhoneSchemaFor` le refuse et
+   * le champ garde le focus.
+   */
+  const NUMERO_REFUSE = '415 555';
+  /** Ce que le brouillon en garde : l'E.164 que le champ émet depuis #825. */
+  const NUMERO_REFUSE_E164 = '+1415555';
 
   beforeEach(() => {
     window.sessionStorage.clear();
@@ -380,6 +386,6 @@ describe('une soumission refusée sur le champ en cours de frappe', () => {
 
     // La cliente est restée sur l'étape : la validation a bien refusé.
     expect(screen.queryByLabelText(/Téléphone/)).not.toBeNull();
-    expect(readBookingDraft(tenant.slug).contact.phone).toBe(NUMERO_REFUSE);
+    expect(readBookingDraft(tenant.slug).contact.phone).toBe(NUMERO_REFUSE_E164);
   });
 });

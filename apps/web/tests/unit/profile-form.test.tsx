@@ -26,7 +26,8 @@ const profile: SessionUser = {
   role: 'client',
   firstName: 'Camille',
   lastName: 'Rakoto',
-  phone: '+261 34 12 345 67',
+  // E.164, comme l'API le rend depuis #824.
+  phone: '+261341234567',
   locale: null,
 };
 
@@ -57,7 +58,9 @@ describe('coordonnées — pré-remplissage', () => {
     renderForm();
 
     expect(valueOf(/Prénom/)).toBe('Camille');
-    expect(valueOf(/Téléphone/)).toBe('+261 34 12 345 67');
+    // Relu au format national, derrière le drapeau de son pays (#825).
+    expect(valueOf(/Téléphone/)).toBe('034 12 345 67');
+    expect(screen.getByRole('button', { name: /Madagascar \(\+261\)/ })).toBeDefined();
     expect(screen.getByText('camille@example.test')).toBeDefined();
   });
 
@@ -129,10 +132,13 @@ describe('coordonnées — validation', () => {
 
     const phone = screen.getByLabelText(/Téléphone/);
     await user.clear(phone);
-    await user.type(phone, 'pas un numéro');
+    await user.type(phone, '034 12');
     await user.click(screen.getByRole('button', { name: /Enregistrer/ }));
 
-    const message = await screen.findByText(/numéro de téléphone invalide/i);
+    // Le message nomme le pays du drapeau, et dit quoi corriger (#825).
+    const message = await screen.findByText(
+      'Ce numéro est incomplet pour ce pays (Madagascar, +261).',
+    );
     // Le lien est `aria-describedby` : c'est ce qui fait qu'un lecteur d'écran
     // annonce l'erreur en arrivant sur le champ (web-frontend §4).
     expect(phone.getAttribute('aria-describedby')).toContain(message.id);

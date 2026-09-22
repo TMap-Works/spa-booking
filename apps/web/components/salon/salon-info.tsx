@@ -1,6 +1,7 @@
 import type { PublicTenant } from '@spa/shared';
 
 import { Icon } from '@/components/ui/icon';
+import { formatPhoneForDisplay } from '@/lib/phone';
 
 import { formatOpeningRange, salonClock, weekSchedule } from './opening-hours';
 import { addressLines, directionsUrl } from './salon-address';
@@ -172,7 +173,7 @@ export function SalonInfo({ tenant, bookable, now = new Date() }: SalonInfoProps
             // parenthèses, que RFC 3966 n'admet pas (#773).
             <a className="spa-salon-card__link" href={telUri(tenant.contactPhone)}>
               <Icon name="phone" />
-              {tenant.contactPhone}
+              {formatPhoneForDisplay(tenant.contactPhone)}
             </a>
           )}
 

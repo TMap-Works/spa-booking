@@ -6,6 +6,7 @@ import { addressLines } from '@/components/salon/salon-address';
 import { telUri } from '@/components/salon/salon-contact';
 import { Avatar } from '@/components/ui/avatar';
 import { Icon } from '@/components/ui/icon';
+import { formatPhoneForDisplay } from '@/lib/phone';
 
 /**
  * La carte du salon, en colonne latérale de l'espace client — #1053.
@@ -126,7 +127,7 @@ export function SalonAside({ tenant }: SalonAsideProps) {
           <div className="spa-account__card-row">
             <Icon name="phone" className="spa-account__card-icon" />
             <a className="spa-account__card-link" href={telUri(phone)}>
-              {phone}
+              {formatPhoneForDisplay(phone)}
             </a>
           </div>
         )}

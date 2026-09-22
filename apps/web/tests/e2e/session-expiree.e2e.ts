@@ -89,12 +89,17 @@ test.describe('Session du back-office', () => {
       telephoneInitial = await telephone.inputValue();
     });
 
-    const nouveauTelephone = telephoneInitial === '+33612345670' ? '+33612345671' : '+33612345670';
+    // Au format national : le champ téléphone (#825) relit un numéro enregistré
+    // derrière le drapeau du salon, et c'est ce que `inputValue` rend.
+    const nouveauTelephone = telephoneInitial === '06 12 34 56 70' ? '06 12 34 56 71' : '06 12 34 56 70';
 
     await test.step('Nouvelle expiration, puis « Enregistrer » — l’enregistrement aboutit', async () => {
       await expirerAcces();
 
-      await telephone.fill(nouveauTelephone);
+      // Saisi en international : le salon d'essai n'a pas d'adresse, donc pas
+      // de pays — le champ part des États-Unis, et le « +33 » le bascule sur
+      // la France.
+      await telephone.fill(`+33 ${nouveauTelephone.slice(1)}`);
       await enregistrer.click();
 
       await expect(page.getByText('Réglages enregistrés')).toBeVisible({ timeout: 20_000 });

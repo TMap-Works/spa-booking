@@ -21,6 +21,7 @@ import { initialsOf } from '@/lib/initials';
 import { statusModifier, zonedFields } from '@/lib/admin/calendar-grid';
 import { appointmentOutcomeLabel } from '@/lib/appointment-status';
 import { formatCalendarDate, formatMoney, formatTimeInTimeZone } from '@/lib/format';
+import { formatPhoneForDisplay } from '@/lib/phone';
 
 import { adminLoadFailure, requireAdminAccessToken } from '../guard';
 import { adminCalendarPath } from '../paths';
@@ -463,7 +464,7 @@ function ClientRecord({
           <p className="spa-admin-client__name">{fullName(customer)}</p>
           <div className="spa-admin-client__contact">
             <span className="spa-admin-client__contact-item">
-              {customer.phone ?? 'Pas de numéro'}
+              {customer.phone === null ? 'Pas de numéro' : formatPhoneForDisplay(customer.phone)}
             </span>
             <span className="spa-admin-client__contact-item">{customer.email}</span>
             <span className="spa-admin-client__contact-item">
