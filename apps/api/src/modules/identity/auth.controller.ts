@@ -49,8 +49,10 @@ import { permissionsOf } from './permissions';
 import { clearRefreshCookie, readRefreshCookie, setRefreshCookie } from './refresh-cookie';
 import {
   IdentityThrottlerGuard,
+  ThrottleByPrincipal,
   ThrottleBySession,
   ThrottleByTarget,
+  ThrottleByToken,
 } from './identity-throttler.guard';
 import { TenantBillingGate } from './tenant-billing.gate';
 import { AllowUnpaidTenant } from './tenant-billing.guard';
@@ -72,8 +74,8 @@ import { AllowUnpaidTenant } from './tenant-billing.guard';
  * non préfixée `NEXT_PUBLIC_`), si bien que leur `req.ip` est celui de la tâche
  * ECS du front — le même pour tous les établissements et tous les visiteurs. Un
  * quota compté par adresse y vaut donc pour le **produit entier**, et c'est le
- * défaut que #860 a d'abord corrigé sur `refresh`, puis #1127 sur les routes qui
- * jugent un mot de passe.
+ * défaut que #860 a d'abord corrigé sur `refresh`, #1127 sur les routes qui
+ * jugent un mot de passe, puis #1128 sur celles qui restaient.
  *
  * Chaque route dit donc ce qu'elle compte, et le compteur suit ce qu'elle
  * protège (`identity-throttler.guard.ts`) :
@@ -81,35 +83,41 @@ import { AllowUnpaidTenant } from './tenant-billing.guard';
  * | Route | Compteur | Quota |
  * |---|---|---|
  * | `refresh` | la **session** prouvée par le cookie (`@ThrottleBySession()`) | 30 / min |
+ * | `me` | le **compte** prouvé par le jeton d'accès (`@ThrottleByPrincipal()`) | 60 / min |
  * | `login` | la **cible** : établissement + adresse (`@ThrottleByTarget()`) | 10 / min |
  * | `register` | l'**établissement** visé (`@ThrottleByTarget()`) | 5 / min |
- * | `invitations/accept`, `password-reset*` | l'adresse IP | 5 / min |
+ * | `password-reset` | la **cible** : établissement + adresse (`@ThrottleByTarget()`) | 5 / min |
+ * | `invitations/accept` | le **compte** que l'invitation désigne (`@ThrottleByToken()`) | 5 / min |
+ * | `password-reset/confirm` | le **compte** que le lien désigne (`@ThrottleByToken()`) | 5 / min |
  *
- * `logout` et `me` n'y figurent pas : elles ne portent pas de `@Throttle` et
- * retombent sur le défaut du module, soixante par minute et par adresse.
+ * Chacun de ces compteurs retombe sur l'adresse quand la requête ne prouve ni ne
+ * nomme rien d'exploitable — un corps malformé, un jeton contrefait. C'est
+ * voulu, et sans conséquence pour qui appelle normalement : ces requêtes-là sont
+ * refusées juste après, et les ranger ensemble sur un compteur commun est ce
+ * qu'il faut faire d'elles.
  *
- * ## Ce que ce ticket n'a **pas** fermé, et qu'il ne faut pas lire comme réglé
+ * ## La dernière route encore comptée par l'adresse : `logout`
  *
- * #1127 n'a repris que les trois routes qui jugent un mot de passe. Les autres
- * gardent un compteur d'adresse, donc un plafond de plateforme, et **c'est un
- * défaut ouvert, pas un arbitrage** — il est suivi en #1128 :
+ * Elle ne porte pas de `@Throttle` et retombe sur le défaut du module, soixante
+ * par minute pour la plateforme. C'est délibéré, et c'est le seul cas où le
+ * plafond de plateforme reste le bon compromis.
  *
- * - `me` est appelée à chaque rendu d'écran du back-office (`loadAdminShell`) :
- *   soixante par minute pour tout le produit s'atteint avec une poignée de
- *   salons ouverts en même temps ;
- * - `password-reset` nomme pourtant une cible. Sa limite par adresse e-mail en
- *   base (`users.password_reset_requested_at`) borne les **envois**, pas les
- *   appels, et cinq demandes par minute pour toute la plateforme reste un
- *   rationnement. Le compteur par cible ne ferait pas d'oracle d'existence, lui :
- *   il compte une cible, qu'elle existe ou non ;
- * - `invitations/accept` et `password-reset/confirm` ne nomment aucune cible —
- *   elles portent un jeton signé de 256 bits — mais cinq par minute pour le
- *   produit entier borne malgré tout six personnes qui acceptent leur invitation
- *   dans la même minute.
+ * Le compteur par session serait pourtant à portée — le cookie est là. Mais
+ * `logout` doit répondre 204 **même quand le cookie est illisible ou expiré**,
+ * et c'est justement le cas où l'on s'en sert le plus : une session qui a duré.
+ * Ces appels-là ne prouvent aucune session, retomberaient sur l'adresse, et le
+ * marquage n'aurait donc déplacé que les déconnexions qui n'en avaient pas
+ * besoin. Le nombre, lui, est large pour ce qu'il borne : une déconnexion par
+ * fin de session, contre un rendu d'écran pour `me`.
  *
- * Elles ne sont pas reprises ici parce que les critères de #1127 ne les couvrent
- * pas et qu'aucune n'est la cause du rouge de `develop` ; les y ajouter aurait
- * élargi un correctif dont treize tickets attendaient la fusion.
+ * ## Ce qui reste ouvert, et qu'il ne faut pas lire comme réglé
+ *
+ * Aucun compteur applicatif ne borne le **flot** lui-même : un attaquant choisit
+ * la cible qu'il nomme, donc le compteur qu'il consomme. Ce que ces compteurs
+ * apportent est ce que les tickets demandaient — le forçage d'un compte donné
+ * reste borné, et il ne l'est plus aux dépens des autres. Borner le flot
+ * demande l'adresse réelle du visiteur, que le serveur Next devrait propager
+ * jusqu'ici, et le limiteur d'entrée (`infra/terraform/`) en attendant.
  */
 @ApiTags('auth')
 @Controller({ path: 'auth', version: '1' })
@@ -227,11 +235,17 @@ export class AuthController {
    * l'invitation elle-même — un jeton signé, à usage unique, qui ne vaut que pour
    * poser le **premier** mot de passe du compte qu'il désigne.
    *
-   * Cinq tentatives par minute et par IP — la seule de ces routes, avec la
-   * réinitialisation, à rester comptée par l'adresse, et l'en-tête dit pourquoi :
-   * le corps ne nomme aucune cible, il porte un jeton de 256 bits qui ne se
-   * devine pas, et cette limite borne surtout le coût du bcrypt qu'un corps
-   * valide nous ferait payer.
+   * Cinq tentatives par minute et **par compte invité** (#1128). Le corps ne
+   * nomme aucune cible : il porte un jeton signé, et c'est de lui que le
+   * compteur se tire — le `sub` d'une invitation qui vérifie. Ce que la limite
+   * borne est le coût du bcrypt qu'un corps valide nous fait payer, et ce coût
+   * se compte par compte visé plutôt qu'en travers de tous les salons : six
+   * membres du personnel qui activent leur compte dans la même minute ne se
+   * gênent plus.
+   *
+   * Un jeton contrefait ne vérifie pas, ne désigne aucun compte, et retombe sur
+   * l'adresse — sans nous coûter de bcrypt, `verifyInvitationToken` précédant
+   * `hash` dans le service.
    *
    * **200** et non 201 : rien n'est créé — le compte existait déjà, il est
    * activé. La réponse est celle d'une connexion, cookie de rafraîchissement
@@ -242,6 +256,7 @@ export class AuthController {
    * compte inconnu, désactivé, ou déjà activé.
    */
   @Post('invitations/accept')
+  @ThrottleByToken({ kind: 'invitation', field: 'token' })
   @Throttle({ default: { limit: 5, ttl: 60_000 } })
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Activer un compte invité et ouvrir sa session' })
@@ -278,20 +293,34 @@ export class AuthController {
    * salon ne dise déjà ; répondre 202 sur un salon qui n'existe pas aurait
    * promis un courrier que personne n'enverrait.
    *
-   * ## Cinq par minute et par IP, plus une limite par adresse en base
+   * ## Cinq par minute et par cible, plus une limite par adresse en base
    *
-   * Cinq demandes par minute suffisent largement à un usage réel. Ce quota-là ne
-   * suffit pas à lui seul — il est en mémoire de tâche, et l'adresse qu'il
-   * compte est celle du serveur Next pour tous les visiteurs (voir l'en-tête de
-   * ce contrôleur, « aucune de ces routes n'est appelée depuis un
-   * navigateur »). La moitié « par adresse » que le critère exige est donc en base
-   * (`users.password_reset_requested_at`, `PASSWORD_RESET_COOLDOWN_MS`) :
-   * partagée par toutes les tâches, et durable à travers leurs redémarrages.
+   * Cinq demandes par minute suffisent largement à un usage réel — encore
+   * fallait-il que ce soit cinq demandes **pour un compte** et non cinq pour la
+   * plateforme entière, ce qu'un compteur d'adresse donnait ici : six personnes
+   * qui cliquent « mot de passe oublié » dans la même minute, tous salons
+   * confondus, et la sixième était refusée (#1128). La route nomme pourtant sa
+   * cible, `tenantSlug` + `email`, et c'est elle que le décorateur compte
+   * désormais.
    *
-   * Ce refus-là est **invisible** — la route rend 202 et n'envoie rien. Un 429
-   * aurait dit que l'adresse existe.
+   * **Ce 429-là ne dit pas si l'adresse existe** : le compteur se tire de la
+   * cible nommée, jamais du compte trouvé, et la garde ne consulte pas la base.
+   * Une adresse inconnue produit le même compteur au même rythme qu'une adresse
+   * connue. Voir `identity-throttler.guard.ts`, « Le 429 par cible n'est pas un
+   * oracle d'existence ».
+   *
+   * Ce quota ne suffit toujours pas à lui seul : il est en mémoire de tâche,
+   * donc divisé par le nombre de tâches. La moitié « par adresse » que le
+   * critère exige reste en base (`users.password_reset_requested_at`,
+   * `PASSWORD_RESET_COOLDOWN_MS`) : partagée par toutes les tâches, et durable à
+   * travers leurs redémarrages.
+   *
+   * Ce refus-là, lui, est **invisible** — la route rend 202 et n'envoie rien —
+   * et il doit le rester : il ne s'applique qu'à un compte qui existe, et un 429
+   * tiré de celui-là aurait dit que l'adresse est connue.
    */
   @Post('password-reset')
+  @ThrottleByTarget({ tenant: 'tenantSlug', account: 'email' })
   @Throttle({ default: { limit: 5, ttl: 60_000 } })
   @HttpCode(HttpStatus.ACCEPTED)
   @ApiOperation({ summary: 'Demander la réinitialisation d’un mot de passe oublié' })
@@ -344,11 +373,17 @@ export class AuthController {
    * authentifié, et la nuance dirait à qui présente un lien ramassé si le compte
    * qu'il désigne existe encore.
    *
-   * Cinq tentatives par minute et par IP, comme l'acceptation d'invitation : le
-   * jeton ne se devine pas, et cette limite borne surtout le coût du bcrypt
-   * qu'un corps valide nous ferait payer.
+   * Cinq tentatives par minute et **par compte visé**, comme l'acceptation
+   * d'invitation et pour les mêmes raisons (#1128) : le jeton ne se devine pas,
+   * cette limite borne surtout le coût du bcrypt qu'un corps valide nous ferait
+   * payer, et ce coût n'a aucune raison de se partager entre tous les salons.
+   *
+   * Le compteur est le `sub` du jeton, jamais son `jti` : c'est le compte qu'il
+   * faut borner, et un compteur par émission repartirait de zéro à chaque
+   * nouvelle demande de réinitialisation.
    */
   @Post('password-reset/confirm')
+  @ThrottleByToken({ kind: 'password-reset', field: 'token' })
   @Throttle({ default: { limit: 5, ttl: 60_000 } })
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Poser un nouveau mot de passe depuis un lien de réinitialisation' })
@@ -457,8 +492,23 @@ export class AuthController {
    * Voir l'en-tête d'`AuthenticatedAccountDto` : la porter dans la réponse d'une
    * connexion inviterait à la ranger avec le jeton, c'est-à-dire à la conserver
    * après qu'un administrateur l'a retirée.
+   *
+   * ## Soixante par minute, **et par compte** (#1128)
+   *
+   * Le back-office l'appelle à chaque rendu d'écran (`loadAdminShell`). Comptée
+   * par adresse, elle plafonnait donc le produit entier à soixante rendus par
+   * minute, toutes gérantes confondues : une poignée de salons ouverts en même
+   * temps suffisait à fermer le back-office pour tout le monde. Le nombre
+   * n'était pas faux, le compteur l'était.
+   *
+   * `@ThrottleByPrincipal()` le rattache au `sub` du jeton d'accès, vérifié dans
+   * la garde — laquelle s'exécute **avant** `@Auth()`, l'ordre des gardes de Nest
+   * mettant celles du contrôleur en premier. Une requête sans jeton valide
+   * retombe donc sur l'adresse, et c'est bien ce qu'il faut d'elle : elle sera
+   * refusée en 401 juste après.
    */
   @Get('me')
+  @ThrottleByPrincipal()
   // `@Auth()` sans argument : toute identité vérifiée, quel que soit son rôle.
   // Lire son propre compte n'est pas un privilège, et la restreindre priverait
   // la clientèle de la seule route qui lui rend son profil. Surtout, aucune
