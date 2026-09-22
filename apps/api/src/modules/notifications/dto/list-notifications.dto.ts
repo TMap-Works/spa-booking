@@ -1,4 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { DEFAULT_LOCALE, LOCALES } from '@spa/shared';
 import { Transform } from 'class-transformer';
 import { ArrayNotEmpty, IsArray, IsIn, IsOptional, IsUUID } from 'class-validator';
 
@@ -191,6 +192,19 @@ export class NotificationDto {
   @ApiProperty({ enum: NOTIFICATION_STATUS_FILTERS })
   public status!: string;
 
+  /**
+   * La langue dans laquelle le message est **réellement** parti — #854.
+   *
+   * Obligatoire ici alors que le contrat partagé la déclare facultative, et les
+   * deux sont d'accord : la colonne est `NOT NULL`, l'API l'émet donc
+   * systématiquement, et `.optional()` côté contrat n'ouvre que la porte des
+   * consommateurs déjà écrits — `notificationSchema` dit pourquoi. Un champ que
+   * le serveur pose toujours n'a pas à s'annoncer comme absent possible dans son
+   * propre OpenAPI.
+   */
+  @ApiProperty({ enum: LOCALES, example: DEFAULT_LOCALE })
+  public locale!: string;
+
   @ApiPropertyOptional({
     format: 'date-time',
     description: 'Instant d’envoi voulu, UTC. Absent hors rappel planifié.',
@@ -239,6 +253,11 @@ export function toNotificationDto(trace: NotificationTrace): NotificationDto {
     type: trace.type.toLowerCase(),
     channel: trace.channel.toLowerCase(),
     status: trace.status.toLowerCase(),
+    // Pas de `toLowerCase()` : la langue est déjà en minuscules des deux côtés.
+    // C'est tout l'objet du choix de #844 — une `VARCHAR` bornée par un `CHECK`
+    // plutôt qu'un type énuméré, précisément pour que ce champ-ci n'ait aucune
+    // casse à convertir, là où `type`, `channel` et `status` en ont une.
+    locale: trace.locale,
     ...(trace.scheduledFor === null ? {} : { scheduledFor: trace.scheduledFor.toISOString() }),
     ...(trace.sentAt === null ? {} : { sentAt: trace.sentAt.toISOString() }),
     attemptCount: trace.attemptCount,

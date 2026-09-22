@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import type { Locale } from '@spa/shared';
 
 import { AppConfigService } from '../../config/app-config.service';
 import {
@@ -42,14 +43,25 @@ import type {
  */
 export interface NotificationRenderer {
   /**
-   * Rend le message désigné, dans la portée de tenant courante.
+   * Rend le message désigné, dans la portée de tenant courante et dans la langue
+   * donnée.
+   *
+   * ## La langue est **passée**, jamais déduite ici — #854
+   *
+   * Elle est résolue par `NotificationDispatchService`, juste avant la prise de
+   * droit, et pour deux raisons qui tiennent ensemble : c'est la même valeur qui
+   * s'inscrit sur la ligne `notifications` et qui choisit le modèle — deux
+   * résolutions se seraient contredites au premier changement de préférence
+   * concomitant — et c'est ce qui fait que la langue du rappel J-1 se décide **au
+   * moment de l'envoi**, et non à la planification (sixième critère
+   * d'acceptation). L'enveloppe SQS n'en porte aucune.
    *
    * @throws {NotificationContextGoneError} le rendez-vous a disparu sous la
    * livraison — il n'y a plus rien à annoncer.
    * @throws {UnrenderableNotificationError} aucun modèle n'existe encore pour ce
-   * type de message.
+   * type de message **dans cette langue**.
    */
-  render(message: NotificationMessage): Promise<RenderedNotification>;
+  render(message: NotificationMessage, locale: Locale): Promise<RenderedNotification>;
 }
 
 /**
@@ -72,10 +84,18 @@ export const NOTIFICATION_RENDERER = Symbol('NOTIFICATION_RENDERER');
  *
  * La lecture a lieu **à chaque envoi**, et non une fois pour toutes : un modèle
  * corrigé à 14 h doit s'appliquer au message de 14 h 01. C'est une lecture
- * indexée sur l'unique `(tenant_id, type, channel)`, du même ordre que la
+ * indexée sur l'unique `(tenant_id, type, channel, locale)`, du même ordre que la
  * relecture d'éligibilité du rappel, et elle a lieu dans la portée de tenant
  * déjà ouverte par le consommateur — le modèle d'un salon ne peut donc pas partir
  * chez la cliente d'un autre.
+ *
+ * ## Le repli reste dans la langue de l'envoi — #854
+ *
+ * La personnalisation cherchée est celle de **cette langue**, et le défaut
+ * auquel on retombe est celui de **cette langue**. Un salon qui a réécrit son
+ * français et laissé son anglais au défaut sert donc son propre texte aux
+ * francophones et le texte de la plateforme aux anglophones — jamais du français
+ * à une anglophone, ce qui serait le seul repli vraiment fautif.
  *
  * ## Ce qu'il refuse
  *
@@ -113,11 +133,14 @@ export class AppointmentNotificationRenderer implements NotificationRenderer {
     private readonly config: AppConfigService,
   ) {}
 
-  public async render(message: NotificationMessage): Promise<RenderedNotification> {
-    const source = await this.resolveSource(message);
+  public async render(
+    message: NotificationMessage,
+    locale: Locale,
+  ): Promise<RenderedNotification> {
+    const source = await this.resolveSource(message, locale);
 
     if (message.type === 'PASSWORD_RESET') {
-      return this.renderPasswordReset(message, source);
+      return this.renderPasswordReset(message, source, locale);
     }
 
     // Le contexte se lit **après** le modèle : un message sans modèle n'a aucune
@@ -141,7 +164,13 @@ export class AppointmentNotificationRenderer implements NotificationRenderer {
 
     return renderNotification(
       source,
-      buildTemplateVariables(context, cancelUrl, message.channel, message.recipientUserId),
+      buildTemplateVariables(
+        context,
+        cancelUrl,
+        message.channel,
+        message.recipientUserId,
+        locale,
+      ),
       message.channel,
     );
   }
@@ -155,13 +184,16 @@ export class AppointmentNotificationRenderer implements NotificationRenderer {
    * le fassent — un salon doit pouvoir réécrire son courrier de
    * réinitialisation comme il réécrit ses confirmations.
    */
-  private async resolveSource(message: NotificationMessage): Promise<NotificationTemplateSource> {
+  private async resolveSource(
+    message: NotificationMessage,
+    locale: Locale,
+  ): Promise<NotificationTemplateSource> {
     const source =
-      (await this.templates.find(message.type, message.channel))?.source ??
-      defaultTemplateFor(message.type, message.channel);
+      (await this.templates.find(message.type, message.channel, locale))?.source ??
+      defaultTemplateFor(message.type, message.channel, locale);
 
     if (source === null) {
-      throw new UnrenderableNotificationError(message.type);
+      throw new UnrenderableNotificationError(message.type, locale);
     }
 
     return source;
@@ -200,11 +232,12 @@ export class AppointmentNotificationRenderer implements NotificationRenderer {
   private async renderPasswordReset(
     message: NotificationMessage,
     source: NotificationTemplateSource,
+    locale: Locale,
   ): Promise<RenderedNotification> {
     const token = message.passwordResetToken;
 
     if (token === undefined || token === '') {
-      throw new UnrenderableNotificationError(message.type);
+      throw new UnrenderableNotificationError(message.type, locale);
     }
 
     const context = await this.repository.loadPasswordResetContext(message.recipientUserId);
