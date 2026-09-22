@@ -1,6 +1,7 @@
 import {
   PLATFORM_TENANT_SEARCH_MAX_LENGTH,
   TENANT_BILLING_STATUSES,
+  type Locale,
   type PlatformTenant,
   type PlatformTenantDetail,
   type PlatformTenantEvent,
@@ -9,23 +10,79 @@ import {
   type TenantBillingStatus,
 } from '@spa/shared';
 
+import en from '@/messages/en/platform.json';
+import fr from '@/messages/fr/platform.json';
+
+import { formattingLocale, type DisplayLocale } from './format';
+
 /**
  * La console de l'éditeur, ce qui se décide sans DOM — libellés, mise en route,
  * filtres de la liste, export CSV.
+ *
+ * ## Les mots viennent du catalogue, lu directement (#1106)
+ *
+ * Ces fonctions sont **pures** : elles servent un Server Component (le tableau
+ * de bord, la fiche), un Client Component (la liste), une route d'export et des
+ * tests sans DOM. Aucun crochet de `next-intl` n'y est disponible, d'où l'import
+ * des deux fichiers de langue — le même parti que `lib/format.ts` et
+ * `lib/admin/calendar-messages.ts`. Ce sont **les mêmes fichiers** que ceux
+ * qu'`useTranslations('platform')` sert aux écrans : ce vocabulaire n'est écrit
+ * qu'une fois, et le test de parité des catalogues le garde entier dans les deux
+ * langues.
+ *
+ * Pas de formateur ICU pour autant : les messages lus ici n'ont que des
+ * paramètres nommés, et les deux comptages portent une clé par forme
+ * (`doneOne` / `doneOther`) plutôt qu'une règle de pluriel — la forme du
+ * singulier n'est pas celle du pluriel dans les deux langues, et l'export CSV
+ * n'a pas à monter un formateur ICU pour écrire neuf en-têtes.
+ *
+ * ## La langue est un paramètre, pas un défaut de module
+ *
+ * Chaque fonction la reçoit. Les dates passent par un {@link DisplayLocale} —
+ * langue **et** pays — pour la même raison que dans `lib/format.ts` : `en-US`
+ * écrit « 9/1/2026 » là où `en-GB` écrit « 01/09/2026 ». La console de l'éditeur
+ * n'a pas d'établissement de référence, elle passe donc la seule langue et
+ * laisse le repli documenté de `lib/format.ts` choisir la région.
  */
+
+/** Les deux catalogues, dans l'ordre où le front les sert. */
+const CATALOG = { fr, en } as const;
+
+/**
+ * Le catalogue de la console, dans la langue demandée.
+ *
+ * La langue est **obligatoire** partout dans ce module, et c'est ce qui
+ * distingue son parti de celui de `lib/format.ts` : celui-là garde un défaut
+ * français pour ses quarante appelants restés hors de l'épique #843, celui-ci
+ * n'a que les écrans de `app/plateforme/`, tous traduits par #1106. Un paramètre
+ * facultatif y aurait laissé `tsc` muet sur l'appel qui oublie sa langue —
+ * exactement l'oubli que ce ticket doit rendre impossible.
+ */
+function words(locale: Locale): typeof en {
+  return CATALOG[locale];
+}
+
+/**
+ * Le remplacement des paramètres d'un message lu hors de React.
+ *
+ * Même fonction que celle de `lib/format.ts`, et pour la même raison : ces
+ * messages n'ont que des paramètres nommés, et `String.replaceAll` les pose sans
+ * qu'un formateur ait à être monté.
+ */
+function fill(message: string, values: Readonly<Record<string, string>>): string {
+  return Object.entries(values).reduce(
+    (text, [name, value]) => text.replaceAll(`{${name}}`, value),
+    message,
+  );
+}
 
 /** La teinte d'une pastille, dans le vocabulaire des badges du back-office. */
 export type BadgeTone = 'completed' | 'pending' | 'confirmed' | 'no-show' | 'cancelled';
 
 /** Le libellé court d'un statut de facturation, tel qu'un filtre le propose. */
-export const BILLING_STATUS_LABELS: Readonly<Record<TenantBillingStatus, string>> = {
-  managed: 'Géré par la plateforme',
-  pending: 'Paiement en attente',
-  trialing: 'Essai',
-  active: 'Abonné',
-  past_due: 'Impayé',
-  canceled: 'Résilié',
-};
+export function billingStatusLabel(status: TenantBillingStatus, locale: Locale): string {
+  return words(locale).billingStatus[status];
+}
 
 const BILLING_STATUS_TONES: Readonly<Record<TenantBillingStatus, BadgeTone>> = {
   managed: 'completed',
@@ -36,16 +93,24 @@ const BILLING_STATUS_TONES: Readonly<Record<TenantBillingStatus, BadgeTone>> = {
   canceled: 'cancelled',
 };
 
-/** « 25 sept. 2026 » dans le fuseau du salon. */
-export function formatPlatformDate(instant: string, timeZone: string): string {
-  return new Intl.DateTimeFormat('fr-FR', { timeZone, dateStyle: 'medium' }).format(
+/** « 25 sept. 2026 » / « Sep 25, 2026 » dans le fuseau du salon. */
+export function formatPlatformDate(
+  instant: string,
+  timeZone: string,
+  display: DisplayLocale,
+): string {
+  return new Intl.DateTimeFormat(intlTag(display), { timeZone, dateStyle: 'medium' }).format(
     new Date(instant),
   );
 }
 
 /** « 25/09/2026 14:32 » dans le fuseau donné. */
-export function formatPlatformDateTime(instant: string, timeZone: string): string {
-  return new Intl.DateTimeFormat('fr-FR', {
+export function formatPlatformDateTime(
+  instant: string,
+  timeZone: string,
+  display: DisplayLocale,
+): string {
+  return new Intl.DateTimeFormat(intlTag(display), {
     timeZone,
     dateStyle: 'short',
     timeStyle: 'short',
@@ -53,37 +118,80 @@ export function formatPlatformDateTime(instant: string, timeZone: string): strin
 }
 
 /**
+ * « 25 septembre 2026 à 14:32 UTC » — l'horodatage de la vue d'ensemble.
+ *
+ * Ce n'est pas l'instant d'un rendez-vous mais celui du **calcul** des agrégats,
+ * et la console de l'éditeur n'a pas d'établissement dont emprunter le fuseau.
+ * Le fuseau est donc **UTC, et nommé** : cette fonction est appelée depuis un
+ * Server Component, où un `Intl.DateTimeFormat` sans `timeZone` prend celui du
+ * serveur — l'heure d'un conteneur, que personne ne lit et qui changerait d'un
+ * environnement à l'autre. C'est l'arbitrage déjà rendu dans `i18n/request.ts`
+ * (« un instant UTC, ce qui se voit, plutôt que l'heure du serveur, ce qui ne se
+ * voit pas »), et `timeZoneName` est ce qui le rend lisible plutôt que
+ * silencieux.
+ *
+ * Les composants sont énumérés plutôt que demandés par `dateStyle` / `timeStyle` :
+ * `Intl` **lève** quand on joint `timeZoneName` à un style (ECMA-402,
+ * `InitializeDateTimeFormat`), et l'énumération rend mot pour mot ce que les
+ * styles rendaient — « 23 septembre 2026 à 12:32 », « September 23, 2026 at
+ * 12:32 PM » — suivi du fuseau.
+ */
+export function formatPlatformStamp(instant: Date, display: DisplayLocale): string {
+  return new Intl.DateTimeFormat(intlTag(display), {
+    timeZone: 'UTC',
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    timeZoneName: 'short',
+  }).format(instant);
+}
+
+/**
+ * L'étiquette BCP 47 d'un contexte d'affichage — « fr-FR », « en-US ».
+ *
+ * Le calcul vit dans `lib/format.ts` (`formattingLocale`), avec ses replis
+ * documentés ; l'appeler ici plutôt que de le refaire garantit que la console et
+ * le back-office écrivent une date de la même façon pour une même langue.
+ */
+function intlTag(display: DisplayLocale): string {
+  return formattingLocale(display.locale, display.countryCode);
+}
+
+/**
  * La pastille de facturation d'un salon. L'essai porte sa date de fin : c'est
  * ce que l'éditeur surveille.
  */
-export function billingBadge(tenant: PlatformTenant): { label: string; tone: BadgeTone } {
+export function billingBadge(
+  tenant: PlatformTenant,
+  display: DisplayLocale,
+): { label: string; tone: BadgeTone } {
+  const catalog = words(display.locale);
+
   if (tenant.billingStatus === 'trialing' && tenant.trialEndsAt !== null) {
     return {
-      label: `Essai · fin le ${new Intl.DateTimeFormat('fr-FR', {
-        timeZone: tenant.timezone,
-        dateStyle: 'short',
-      }).format(new Date(tenant.trialEndsAt))}`,
+      label: fill(catalog.badge.trialEnds, {
+        date: new Intl.DateTimeFormat(intlTag(display), {
+          timeZone: tenant.timezone,
+          dateStyle: 'short',
+        }).format(new Date(tenant.trialEndsAt)),
+      }),
       tone: 'confirmed',
     };
   }
   if (tenant.billingStatus === 'past_due') {
-    return { label: 'Impayé — relance', tone: 'no-show' };
+    return { label: catalog.badge.pastDue, tone: 'no-show' };
   }
   return {
-    label: BILLING_STATUS_LABELS[tenant.billingStatus],
+    label: catalog.billingStatus[tenant.billingStatus],
     tone: BILLING_STATUS_TONES[tenant.billingStatus],
   };
 }
 
-const ORIGIN_LABELS: Readonly<Record<PlatformTenant['origin'], string>> = {
-  console: 'Ouvert par la console',
-  signup: 'Inscrit en ligne',
-  legacy: 'Créé hors console',
-};
-
 /** L'origine d'un salon, en toutes lettres. */
-export function originLabel(tenant: PlatformTenant): string {
-  return ORIGIN_LABELS[tenant.origin];
+export function originLabel(tenant: PlatformTenant, locale: Locale): string {
+  return words(locale).origin[tenant.origin];
 }
 
 /** Jours entiers restants jusqu'à un instant — `0` le jour même, jamais négatif. */
@@ -104,72 +212,80 @@ export interface SetupStep {
   readonly detail: string;
 }
 
-function plural(count: number, singular: string, pluralForm = `${singular}s`): string {
-  return `${String(count)} ${count > 1 ? pluralForm : singular}`;
-}
-
 /**
  * Les étapes qui mènent un salon à sa première réservation, dans l'ordre où
  * on les franchit. C'est la liste qu'un opérateur déroule au téléphone.
  */
-export function setupSteps(detail: PlatformTenantDetail): readonly SetupStep[] {
+export function setupSteps(
+  detail: PlatformTenantDetail,
+  display: DisplayLocale,
+): readonly SetupStep[] {
   const { setup } = detail;
+  const catalog = words(display.locale).setup;
 
   return [
     {
       key: 'admin',
-      label: 'Compte administrateur activé',
+      label: catalog.admin.label,
       done: setup.adminActivated,
-      detail: setup.adminActivated
-        ? 'Le gérant a posé son mot de passe.'
-        : 'Invitation non acceptée — renvoyer les liens d’accès.',
+      detail: setup.adminActivated ? catalog.admin.done : catalog.admin.todo,
     },
     {
       key: 'adresse',
-      label: 'Adresse du salon',
+      label: catalog.address.label,
       done: setup.address,
-      detail: setup.address ? 'Affichée sur la vitrine.' : 'À saisir dans les réglages du salon.',
+      detail: setup.address ? catalog.address.done : catalog.address.todo,
     },
     {
       key: 'horaires',
-      label: 'Horaires d’ouverture',
+      label: catalog.openingHours.label,
       done: setup.openingHours,
-      detail: setup.openingHours ? 'Renseignés.' : 'Aucun horaire saisi.',
+      detail: setup.openingHours ? catalog.openingHours.done : catalog.openingHours.todo,
     },
     {
       key: 'prestations',
-      label: 'Prestations en ligne',
+      label: catalog.services.label,
       done: setup.activeServices > 0,
       detail:
-        setup.activeServices > 0
-          ? plural(setup.activeServices, 'prestation active', 'prestations actives')
-          : 'Aucune prestation active.',
+        setup.activeServices === 0
+          ? catalog.services.todo
+          : fill(setup.activeServices === 1 ? catalog.services.doneOne : catalog.services.doneOther, {
+              count: String(setup.activeServices),
+            }),
     },
     {
       key: 'praticiens',
-      label: 'Praticiens avec horaires',
+      label: catalog.staff.label,
       done: setup.staffWithSchedule > 0,
       detail:
         setup.activeStaff === 0
-          ? 'Aucun praticien actif.'
-          : `${plural(setup.staffWithSchedule, 'praticien')} avec horaires sur ${String(setup.activeStaff)} actif${setup.activeStaff > 1 ? 's' : ''}`,
+          ? catalog.staff.todo
+          : // Le nom s'accorde avec le **nombre de praticiens actifs** et non avec
+            // ceux qui ont des horaires. Les deux catalogues placent donc le nom
+            // après `{active}` — « 1 sur 3 praticien·ne·s actif·ve·s », « 1 of 3
+            // active practitioners » : un nom posé après `{withSchedule}` se
+            // serait accordé sur le nombre qui ne dicte pas la forme choisie.
+            fill(setup.activeStaff === 1 ? catalog.staff.doneOne : catalog.staff.doneOther, {
+              withSchedule: String(setup.staffWithSchedule),
+              active: String(setup.activeStaff),
+            }),
     },
     {
       key: 'legal',
-      label: 'Identité légale (ticket de caisse)',
+      label: catalog.legal.label,
       done: setup.legalIdentity,
-      detail: setup.legalIdentity
-        ? 'Raison sociale et identifiant renseignés.'
-        : 'Raison sociale ou SIRET / NIF manquant.',
+      detail: setup.legalIdentity ? catalog.legal.done : catalog.legal.todo,
     },
     {
       key: 'premier-rdv',
-      label: 'Premier rendez-vous',
+      label: catalog.firstAppointment.label,
       done: setup.firstAppointmentAt !== null,
       detail:
         setup.firstAppointmentAt === null
-          ? 'Aucun rendez-vous pour l’instant.'
-          : `Le ${formatPlatformDate(setup.firstAppointmentAt, detail.tenant.timezone)}`,
+          ? catalog.firstAppointment.todo
+          : fill(catalog.firstAppointment.done, {
+              date: formatPlatformDate(setup.firstAppointmentAt, detail.tenant.timezone, display),
+            }),
     },
   ];
 }
@@ -179,18 +295,20 @@ export function setupSteps(detail: PlatformTenantDetail): readonly SetupStep[] {
 // ---------------------------------------------------------------------------
 
 /** Le titre d'une ligne d'historique. */
-export function eventTitle(event: PlatformTenantEvent): string {
+export function eventTitle(event: PlatformTenantEvent, locale: Locale): string {
+  const catalog = words(locale).events;
+
   switch (event.kind) {
     case 'provisioned':
-      return 'Salon ouvert depuis la console';
+      return catalog.provisioned;
     case 'note':
-      return 'Note';
+      return catalog.note;
     case 'suspended':
-      return 'Salon suspendu';
+      return catalog.suspended;
     case 'reactivated':
-      return 'Salon réactivé';
+      return catalog.reactivated;
     case 'invitation_reissued':
-      return 'Liens d’accès renvoyés';
+      return catalog.invitationReissued;
   }
 }
 
@@ -225,7 +343,15 @@ export function readTenantFilters(params: SearchParams): PlatformTenantListQuery
   };
 }
 
-/** Les filtres, réécrits en paramètres d'adresse — en français, comme le reste du back-office. */
+/**
+ * Les filtres, réécrits en paramètres d'adresse.
+ *
+ * Les **noms** de ces paramètres restent en français, quelle que soit la langue
+ * de l'interface : une adresse partagée doit se relire à l'identique par qui
+ * n'affiche pas la console dans la même langue, et un paramètre qui changerait
+ * de nom avec la langue ferait de deux liens vers la même liste deux liens
+ * différents.
+ */
 export function tenantFilterSearch(filters: PlatformTenantListQuery): URLSearchParams {
   const search = new URLSearchParams();
 
@@ -264,18 +390,44 @@ function csvCell(value: string): string {
 }
 
 /**
- * Les salons en CSV — séparateur point-virgule et BOM UTF-8, pour qu'Excel en
- * français l'ouvre en colonnes et avec ses accents.
+ * Les salons en CSV — séparateur point-virgule et BOM UTF-8, pour qu'Excel
+ * l'ouvre en colonnes et avec ses accents.
+ *
+ * Les **en-têtes suivent la langue de l'interface au moment de l'export**
+ * (#1106) : c'est la langue que la personne lit quand elle clique, et le fichier
+ * atterrit sur son poste. Les cellules, elles, restent des données du salon —
+ * son nom, son adresse, son fuseau, sa devise — à l'exception des trois valeurs
+ * que la console **nomme** : l'origine, le statut de facturation et l'état.
+ *
+ * Les dates y sont en ISO (`2026-09-20`), inchangées : une colonne de dates se
+ * trie et se recalcule, et une date localisée deviendrait du texte dans un
+ * tableur configuré autrement.
  */
-export function tenantsCsv(tenants: readonly PlatformTenant[]): string {
-  const header = ['Salon', 'Adresse', 'Origine', 'Facturation', 'Fin d’essai', 'État', 'Ouvert le', 'Fuseau', 'Devise'];
+export function tenantsCsv(tenants: readonly PlatformTenant[], locale: Locale): string {
+  const catalog = words(locale).csv;
+  const header = [
+    catalog.name,
+    catalog.address,
+    catalog.origin,
+    catalog.billing,
+    catalog.trialEnd,
+    catalog.state,
+    catalog.openedOn,
+    catalog.timezone,
+    catalog.currency,
+  ];
+  const origins: Readonly<Record<PlatformTenant['origin'], string>> = {
+    console: catalog.originConsole,
+    signup: catalog.originSignup,
+    legacy: catalog.originLegacy,
+  };
   const rows = tenants.map((tenant) => [
     tenant.name,
     tenant.slug,
-    { console: 'Console', signup: 'Libre-service', legacy: 'Hors console' }[tenant.origin],
-    BILLING_STATUS_LABELS[tenant.billingStatus],
+    origins[tenant.origin],
+    billingStatusLabel(tenant.billingStatus, locale),
     tenant.trialEndsAt === null ? '' : tenant.trialEndsAt.slice(0, 10),
-    tenant.isActive ? 'Actif' : 'Suspendu',
+    tenant.isActive ? catalog.stateActive : catalog.stateSuspended,
     tenant.createdAt.slice(0, 10),
     tenant.timezone,
     tenant.defaultCurrency,

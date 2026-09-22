@@ -1,0 +1,424 @@
+{
+  "meta": {
+    "title": "Platform console"
+  },
+  "shell": {
+    "title": "Platform console",
+    "subtitle": "Tracking the salons on the platform",
+    "railLabel": "Console sections",
+    "navGroup": "Establishments",
+    "nav": {
+      "dashboard": "Dashboard",
+      "tenants": "Salons",
+      "newTenant": "Open a salon"
+    },
+    "sessionLength": "30-minute session",
+    "signedInAs": "Signed in as:",
+    "operatorRole": "Operator",
+    "signOut": "Sign out",
+    "signingOut": "Signing out…"
+  },
+  "login": {
+    "headline": "The publisher’s console",
+    "lead": "The space reserved for the team that opens and supports the salons on the platform.",
+    "highlights": {
+      "open": "Open a salon and invite its manager",
+      "links": "Hand over the booking link and the back-office link",
+      "watch": "Track the salons open on the platform"
+    },
+    "exitHome": "{platform} home",
+    "title": "Platform console — sign in",
+    "expired": {
+      "title": "Your session has expired",
+      "body": "A console session lasts thirty minutes. Sign in again with a new code."
+    },
+    "email": "Email address",
+    "password": "Password",
+    "totp": "Verification code",
+    "totpHint": "The six digits shown by your authenticator app.",
+    "submit": "Sign in",
+    "submitting": "Signing in…",
+    "fieldErrors": {
+      "email": "Enter a valid email address.",
+      "password": "The password is at least {min} characters long.",
+      "totpCode": "Six digits, as your authenticator app shows them."
+    },
+    "errors": {
+      "credentials": {
+        "title": "Sign-in refused",
+        "body": "Incorrect address, password or code. If the code has just expired, enter the next one."
+      },
+      "throttled": {
+        "title": "Too many attempts",
+        "body": "Wait a minute before trying again."
+      },
+      "unavailable": {
+        "title": "Service unavailable",
+        "body": "The service is briefly unreachable. Please try again in a moment."
+      },
+      "validation": {
+        "title": "Incomplete form",
+        "body": "Enter your email address, your password and the six-digit code."
+      },
+      "unexpected": {
+        "title": "Cannot sign in",
+        "body": "An unexpected error occurred. Please try again."
+      }
+    }
+  },
+  "dashboard": {
+    "eyebrow": "Platform console",
+    "title": "Overview",
+    "lead": "{count, plural, =0 {No salon open} one {# salon open} other {# salons open}} · as of {stamp}",
+    "allTenants": "All salons",
+    "newTenant": "Open a salon",
+    "kpi": {
+      "revenue": "Monthly recurring revenue",
+      "revenueDetail": "{count, plural, =0 {no subscribed salon} one {# subscribed salon} other {# subscribed salons}}",
+      "trials": "Trials under way",
+      "trialsDetail": "{amount} / month to convert · {soon} within 7 days",
+      "pastDue": "Unpaid",
+      "pastDueNone": "No unpaid salon",
+      "pastDueDetail": "{amount} / month at risk",
+      "suspended": "Suspended salons",
+      "suspendedDetail": "{canceled, plural, one {# canceled} other {# canceled}} · {pending, plural, one {# payment pending} other {# payments pending}}"
+    },
+    "openings": {
+      "title": "Openings — last 12 weeks",
+      "count": "{count, plural, =0 {no salon} one {# salon} other {# salons}}"
+    },
+    "activation": {
+      "title": "Salon activation"
+    },
+    "trials": {
+      "title": "Trials ending",
+      "all": "All trials",
+      "none": "No trial ends within the next 7 days.",
+      "today": "Today",
+      "days": "{count} d"
+    },
+    "byBilling": {
+      "title": "Salons by billing"
+    },
+    "recent": {
+      "title": "Latest salons opened",
+      "all": "All",
+      "none": "No salon yet."
+    }
+  },
+  "widgets": {
+    "weeksLabel": "Salon openings per week",
+    "weekSummary": "Week of {week}: {signup, plural, one {# online sign-up} other {# online sign-ups}}, {console, plural, one {# opening from the console} other {# openings from the console}}",
+    "legendSignup": "Online sign-up",
+    "legendConsole": "Opened from the console",
+    "funnel": {
+      "opened": "Salons opened",
+      "configured": "Service and practitioner in place",
+      "booked": "At least one appointment",
+      "active": "An appointment in the last 30 days"
+    }
+  },
+  "tenants": {
+    "title": "Salons on the platform",
+    "searchLabel": "Search",
+    "searchPlaceholder": "Name, address, contact email or a manager’s email",
+    "billingLabel": "Billing",
+    "billingAny": "All",
+    "stateLabel": "State",
+    "stateAny": "All",
+    "filter": "Filter",
+    "clear": "Clear",
+    "count": "{count, plural, =0 {No salon} one {# salon} other {# salons}}",
+    "countFiltered": "{count, plural, =0 {No salon} one {# salon} other {# salons}} matching the filters",
+    "export": "Export to CSV",
+    "newTenant": "Open a salon",
+    "emptyFiltered": {
+      "title": "No salon matches",
+      "description": "Widen the search, or clear the filters to see every salon again.",
+      "action": "Clear the filters"
+    },
+    "empty": {
+      "title": "No salon open yet",
+      "description": "Open the first one: you will get the activation link to send to the manager, the address of their back office and their booking page.",
+      "action": "Open a salon"
+    },
+    "pagination": {
+      "label": "List pages",
+      "previous": "Previous page",
+      "next": "Next page",
+      "position": "Page {page} of {pages}"
+    },
+    "table": {
+      "name": "Salon",
+      "address": "Address",
+      "zoneCurrency": "Time zone · currency",
+      "openedOn": "Opened on",
+      "billing": "Billing",
+      "status": "Status",
+      "actions": "Actions",
+      "reveal": "Access links",
+      "hide": "Hide the links",
+      "reissuing": "Reissuing the invitation…",
+      "reissued": "New invitation issued for {email}. If the account is already activated the activation link has no effect: only the back office is of use."
+    }
+  },
+  "state": {
+    "active": "Active",
+    "suspended": "Suspended"
+  },
+  "record": {
+    "crumbs": "Breadcrumb",
+    "tenants": "Salons",
+    "identity": "/{slug} · {origin} on {date} · {zone} · {currency}",
+    "storefront": "Storefront",
+    "backOffice": "Back office",
+    "newTab": " (new tab)",
+    "setup": {
+      "title": "Getting started",
+      "progress": "{done, plural, one {# step} other {# steps}} of {total}",
+      "label": "Getting started: {done} of {total, plural, one {# step} other {# steps}}",
+      "done": " — done",
+      "todo": " — to do"
+    },
+    "activity": {
+      "title": "Activity — last 30 days",
+      "clients": "{count, plural, =0 {no client account} one {# client account} other {# client accounts}}",
+      "created": "Bookings taken",
+      "upcoming": "Upcoming",
+      "completed": "Honoured",
+      "noShow": "Not honoured",
+      "cancelled": "Cancelled",
+      "never": "No booking since it opened.",
+      "last": "Last booking taken on {stamp}."
+    },
+    "accounts": {
+      "title": "Salon accounts",
+      "count": "{count, plural, =0 {no account} one {# account} other {# accounts}}",
+      "none": "No internal account.",
+      "name": "Name",
+      "role": "Role",
+      "state": "State",
+      "lastLogin": "Last sign-in",
+      "never": "Never",
+      "roles": {
+        "admin": "Administrator",
+        "manager": "Manager",
+        "staff": "Practitioner"
+      },
+      "states": {
+        "disabled": "Disabled",
+        "pending": "Invitation pending",
+        "active": "Active"
+      }
+    },
+    "history": {
+      "title": "History and notes",
+      "none": "No note and no console action on this salon yet."
+    },
+    "billing": {
+      "title": "Subscription",
+      "status": "Status",
+      "trialEnd": "End of trial",
+      "periodEnd": "End of current period",
+      "stripe": "Stripe customer",
+      "noStripe": "None — salon outside billing",
+      "stripeHint": " (Stripe dashboard, new tab)"
+    },
+    "contact": {
+      "title": "Contact details",
+      "email": "Email",
+      "phone": "Phone",
+      "address": "Address",
+      "legalName": "Legal name",
+      "language": "Salon language",
+      "languageUnknown": "Unavailable while the salon is suspended",
+      "missing": "Not provided",
+      "missingFeminine": "Not provided"
+    },
+    "access": {
+      "title": "Manager access"
+    },
+    "suspendTitle": "Suspend the salon",
+    "suspendedTitle": "Salon suspended"
+  },
+  "actions": {
+    "accessHint": "Issues a new invitation for the administrator and shows the three links to hand over. No effect on an account that is already activated, other than giving the back-office address again.",
+    "accessSend": "Resend the access links",
+    "accessAgain": "Reissue again",
+    "accessPending": "Reissuing the invitation…",
+    "accessIssued": "New invitation issued for {email}.",
+    "linksUnavailable": "Links unavailable",
+    "noAdmin": "This salon has no administrator account to re-invite.",
+    "suspendHint": "Suspending closes the storefront, the booking journey and back-office sign-in, and cuts open sessions. Reversible.",
+    "suspendedHint": "The salon is suspended: its storefront and its back office answer “not found”.",
+    "suspend": "Suspend the salon",
+    "reactivate": "Reactivate the salon",
+    "reasonRequired": "State the reason — it is kept in the salon’s history.",
+    "reasonHint": "Kept in the salon’s history, visible to the other operators.",
+    "suspendReason": "Reason for the suspension",
+    "reactivateReason": "Reason for the reactivation",
+    "confirmSuspend": "Confirm the suspension",
+    "confirmReactivate": "Confirm the reactivation",
+    "suspending": "Suspending…",
+    "reactivating": "Reactivating…",
+    "cancel": "Cancel",
+    "noteLabel": "Add a note",
+    "noteHint": "Visible to the operators only. No client data.",
+    "notePlaceholder": "E.g. manager called back, follow-up planned for Monday.",
+    "noteEmpty": "The note is empty.",
+    "noteInvalid": "The note is invalid.",
+    "noteSubmit": "Save the note",
+    "noteSaving": "Saving…"
+  },
+  "access": {
+    "invitationLabel": "1. Manager activation link",
+    "invitationHint": "To send to the manager: they choose their password there and land in their back office. Valid for {expiry}, once only.",
+    "adminLabel": "2. Salon back office",
+    "adminHint": "The sign-in address of the manager and their team, once the account is activated.",
+    "bookingLabel": "3. Booking page",
+    "bookingHint": "The public link the salon shares with its clients.",
+    "copy": "Copy",
+    "copied": "Copied",
+    "expiryDays": "{count, plural, one {# day} other {# days}}",
+    "expiryHours": "{count} h"
+  },
+  "create": {
+    "title": "Open a salon",
+    "salonLegend": "The salon",
+    "name": "Salon name",
+    "slug": "Salon web address",
+    "slugHint": "Lower case, digits and hyphens. It appears in every link: /maison-lotus/reservation.",
+    "addressLine1": "Address",
+    "addressLine2": "Address line 2",
+    "postalCode": "Postal code",
+    "city": "City",
+    "country": "Country",
+    "timezone": "Time zone",
+    "timezoneHint": "Every slot of the salon is shown in this time zone.",
+    "currency": "Currency",
+    "language": "Salon language",
+    "languageHint": "The language its storefront, its back office and its emails open in. The salon can change it in its settings.",
+    "ownerLegend": "The manager",
+    "ownerHint": "They become the salon administrator: they manage the services, the hours, the team and the settings. No email is sent automatically — you hand them the activation link.",
+    "firstName": "First name",
+    "lastName": "Last name",
+    "email": "Email address",
+    "cancel": "Cancel",
+    "submit": "Open the salon",
+    "submitting": "Opening the salon…",
+    "openedTitle": "{name} is open",
+    "replayedTitle": "{name} was already open",
+    "openedBody": "An administrator account has been created for {firstName} {lastName} ({email}). Send them the activation link below: they will choose their password there, then enter their services and their hours and invite their team.",
+    "openAnother": "Open another salon",
+    "seeRecord": "See the salon record",
+    "failureTitle": "The salon was not opened",
+    "fieldErrors": {
+      "name": "Enter the salon name.",
+      "slug": "Lower case, digits and hyphens only.",
+      "slugTaken": "This address is already taken or reserved — choose another one.",
+      "slugReserved": "This address is reserved by the platform — choose another one.",
+      "addressLine1": "Enter the address.",
+      "addressLine2": "This address line is too long.",
+      "postalCode": "This postal code is too long.",
+      "city": "Enter the city.",
+      "countryCode": "Choose the country.",
+      "timezone": "Choose the time zone.",
+      "defaultCurrency": "Choose the currency.",
+      "defaultLocale": "Choose the language.",
+      "adminFirstName": "Enter the manager’s first name.",
+      "adminLastName": "Enter the manager’s last name.",
+      "adminEmail": "Enter a valid email address."
+    },
+    "errors": {
+      "emailTaken": "This address already has an account."
+    }
+  },
+  "errors": {
+    "validation": "The form contains an error. Check the fields.",
+    "tooManyRequests": "Too many attempts. Wait a minute before trying again.",
+    "unavailable": "The service is briefly unreachable. Please try again in a moment.",
+    "unexpected": "An unexpected error occurred. Please try again."
+  },
+  "billingStatus": {
+    "managed": "Managed by the platform",
+    "pending": "Payment pending",
+    "trialing": "Trial",
+    "active": "Subscribed",
+    "past_due": "Unpaid",
+    "canceled": "Canceled"
+  },
+  "badge": {
+    "trialEnds": "Trial · ends {date}",
+    "pastDue": "Unpaid — follow up"
+  },
+  "origin": {
+    "console": "Opened from the console",
+    "signup": "Signed up online",
+    "legacy": "Created outside the console"
+  },
+  "setup": {
+    "admin": {
+      "label": "Administrator account activated",
+      "done": "The manager has set their password.",
+      "todo": "Invitation not accepted — resend the access links."
+    },
+    "address": {
+      "label": "Salon address",
+      "done": "Shown on the storefront.",
+      "todo": "To be entered in the salon settings."
+    },
+    "openingHours": {
+      "label": "Opening hours",
+      "done": "Entered.",
+      "todo": "No hours entered."
+    },
+    "services": {
+      "label": "Services online",
+      "doneOne": "{count} active service",
+      "doneOther": "{count} active services",
+      "todo": "No active service."
+    },
+    "staff": {
+      "label": "Practitioners with hours",
+      "doneOne": "Hours entered for {withSchedule} of {active} active practitioner",
+      "doneOther": "Hours entered for {withSchedule} of {active} active practitioners",
+      "todo": "No active practitioner."
+    },
+    "legal": {
+      "label": "Legal identity (receipt)",
+      "done": "Legal name and identifier entered.",
+      "todo": "Legal name or tax identifier missing."
+    },
+    "firstAppointment": {
+      "label": "First appointment",
+      "done": "On {date}",
+      "todo": "No appointment yet."
+    }
+  },
+  "events": {
+    "provisioned": "Salon opened from the console",
+    "note": "Note",
+    "suspended": "Salon suspended",
+    "reactivated": "Salon reactivated",
+    "invitationReissued": "Access links resent"
+  },
+  "csv": {
+    "name": "Salon",
+    "address": "Address",
+    "origin": "Origin",
+    "billing": "Billing",
+    "trialEnd": "Trial end",
+    "state": "State",
+    "openedOn": "Opened on",
+    "timezone": "Time zone",
+    "currency": "Currency",
+    "originConsole": "Console",
+    "originSignup": "Self-service",
+    "originLegacy": "Outside console",
+    "stateActive": "Active",
+    "stateSuspended": "Suspended"
+  },
+  "export": {
+    "failed": "The export could not be produced. Please try again."
+  }
+}
