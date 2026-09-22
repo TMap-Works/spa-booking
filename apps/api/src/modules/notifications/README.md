@@ -18,6 +18,7 @@ canaux, rien de plus — le marketing et les campagnes sont hors périmètre MVP
 | #799 | Les **passerelles SES et SNS** — l'expéditeur réel derrière `NOTIFICATION_SENDER`, la publication des abonnés du bus sur SQS au lieu d'une expédition en processus, et `POST /api/v1/interne/notifications/dispatch`, la route que la Lambda d'envoi appelle |
 | #800 | **« Votre rendez-vous est confirmé »** — tout rendez-vous naît à confirmer par le salon, et le message de la réservation le dit. Celui-ci part quand le salon confirme : abonnement à `appointment.confirmed` (émis par `PENDING → CONFIRMED`), type `APPOINTMENT_CONFIRMED`, modèles e-mail et SMS, et revérification au moment de l'envoi — encore confirmé, pas encore commencé |
 | temps réel | **« Votre rendez-vous a été déplacé »** — un report crée un rendez-vous neuf sans passer par la réservation, et la cliente dont le salon déplaçait le rendez-vous n'en apprenait rien. Abonnement à `appointment.rescheduled`, type `APPOINTMENT_RESCHEDULED`, modèles e-mail et SMS, et revérification à l'envoi — le rendez-vous neuf occupe encore son créneau et n'a pas commencé (demande du PO du 21/09) |
+| #854 | La **langue du destinataire** — modèles de plateforme en `fr` et en `en` pour chaque message, colonne `locale` sur `notifications` et sur `notification_templates`, unicité des personnalisations à quatre dimensions, résolution de la langue **à l'expédition**, formatage des dates et des montants dans la langue d'envoi, et l'API des modèles indexée par langue avec un aperçu rendu |
 
 ## La chaîne complète, depuis #799
 
@@ -167,14 +168,52 @@ message passer de un segment à deux au moment où il ajoute l'apostrophe.
 
 | Route | Rôle | Ce qu'elle fait |
 |---|---|---|
-| `GET /notification-templates` | `STAFF` | les modèles effectifs, et le vocabulaire des variables |
-| `GET /notification-templates/:type/:channel` | `STAFF` | le modèle effectif d'un message |
-| `PUT /notification-templates/:type/:channel` | `MANAGER` | écrit la personnalisation, après validation |
-| `DELETE /notification-templates/:type/:channel` | `MANAGER` | revient au modèle par défaut |
+| `GET /notification-templates` | `STAFF` | les modèles effectifs des **deux langues**, et le vocabulaire des variables. `?locale=` restreint à une langue |
+| `GET /notification-templates/:type/:channel/:locale` | `STAFF` | le modèle effectif d'un message, dans une langue |
+| `POST /notification-templates/:type/:channel/:locale/preview` | `STAFF` | rend le message tel qu'il partira — sans rien écrire, sans rien envoyer |
+| `PUT /notification-templates/:type/:channel/:locale` | `MANAGER` | écrit la personnalisation de cette langue, après validation |
+| `DELETE /notification-templates/:type/:channel/:locale` | `MANAGER` | revient au modèle par défaut de cette langue |
 
 Lire à `STAFF` répond à une question de comptoir — « qu'est-ce que ma cliente a
 reçu, exactement ? ». Écrire engage l'établissement auprès de **toutes** ses
 clientes à venir : c'est un geste de responsable.
+
+L'aperçu est en `POST` alors qu'il ne crée rien, et en `STAFF` alors qu'il rend
+un brouillon : le brouillon voyage dans le **corps** — un modèle d'e-mail ne
+tient pas dans une chaîne de requête —, et il ne touche pas la base, donc il ne
+demande pas le geste de responsable qu'est l'écriture. Il répond `200`, jamais
+`201` : rien n'a été créé.
+
+### La langue des messages (#854)
+
+Quatre coordonnées désignent désormais un modèle — établissement, type, canal,
+**langue** —, et c'est l'unique de `notification_templates` qui le dit. Ce que
+cela change, en trois règles :
+
+- **la langue d'un envoi se résout à l'expédition**, dans
+  `NotificationDispatchService`, juste avant la prise de droit : préférence du
+  destinataire (`users.locale`) si son compte en porte une, langue de
+  l'établissement (`tenants.default_locale`) sinon. L'enveloppe SQS n'en porte
+  aucune — entre la planification d'un rappel J-1 et sa livraison il y a jusqu'à
+  une heure, et une cliente qui bascule sa langue dans cet intervalle doit
+  recevoir la nouvelle. La langue retenue est inscrite sur la ligne
+  `notifications`, où elle est un **constat** et non une préférence ;
+- **le repli ne traverse jamais la frontière de langue** : une langue sans
+  personnalisation retombe sur le modèle de plateforme *de cette langue*, jamais
+  sur la personnalisation ni le défaut de l'autre. Un message dans une langue
+  qu'on ne lit pas est pire qu'un message absent — il fait croire qu'on a été
+  prévenu ;
+- **la parité des défauts est une barrière**, pas une intention :
+  `notification-default-templates.spec.ts` compare les deux couvertures plutôt
+  que de les compter, et rougit le jour où le français gagne un message que
+  l'anglais n'a pas. Les SMS anglais sont mesurés contre la même borne que les
+  français, sur le rendu de référence **de leur langue** — la date anglaise étant
+  plus longue, mesurer l'anglais contre la référence française aurait
+  sous-estimé sa facture.
+
+Les dates, les heures et les montants sont formatés par `Intl` dans la langue
+d'envoi (`fr-FR` ou `en-US`) et **toujours** dans le fuseau de l'établissement :
+la langue choisit l'ordre des mots et le cycle horaire, jamais le fuseau.
 
 ## Les rebonds et les plaintes (#73)
 
@@ -700,11 +739,11 @@ la relecture et l'écriture, et c'est `notifications_live_once` qui l'arrête.
 | `notification-dispatch.controller.ts` | `POST /interne/notifications/dispatch` — la route que la Lambda d'envoi appelle |
 | `notification-renderer.ts` | Le **port** de rendu : modèle du salon d'abord, défaut de la plateforme sinon |
 | `notification-template.ts` | Le moteur — substitution, sections, échappement, mesure GSM-7 / UCS-2 |
-| `notification-default-templates.ts` | Les modèles **par défaut** de la plateforme, versionnés en code |
-| `notification-content.ts` | Le pont rendez-vous → variables : fuseau, montant, lien d'annulation |
-| `notification-templates.repository.ts` | Les personnalisations en base, toujours par le client scopé |
-| `notification-templates.service.ts` | La résolution du modèle effectif et la validation d'un modèle soumis |
-| `notification-templates.controller.ts` | Les quatre routes de personnalisation |
+| `notification-default-templates.ts` | Les modèles **par défaut** de la plateforme, versionnés en code, **par langue** |
+| `notification-content.ts` | Le pont rendez-vous → variables : fuseau, montant, lien d'annulation — formatés dans la langue d'envoi |
+| `notification-templates.repository.ts` | Les personnalisations en base, toujours par le client scopé, indexées par langue |
+| `notification-templates.service.ts` | La résolution du modèle effectif — dans sa langue, sans repli d'une langue sur l'autre —, l'aperçu rendu et la validation d'un modèle soumis |
+| `notification-templates.controller.ts` | Les cinq routes de personnalisation |
 | `booking-confirmation.listener.ts` | L'abonné à `appointment.created` (« enregistré, à confirmer par le salon »), à `appointment.confirmed` (« confirmé », #800) et à `appointment.rescheduled` (« déplacé ») |
 | `cancellation-notice.listener.ts` | L'abonné à `appointment.cancelled`, et le choix du destinataire |
 | `notifications.service.ts` | La lecture du journal, et son plafond |
