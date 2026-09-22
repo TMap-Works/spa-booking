@@ -1,0 +1,202 @@
+{
+  "nav": {
+    "label": "Mon compte",
+    "appointments": "Mes rendez-vous",
+    "history": "Historique",
+    "profile": "Mes coordonnées",
+    "signIn": "Se connecter",
+    "myAccount": "Mon compte",
+    "myAccountPrefix": "Mon compte : ",
+    "clientAccount": "Compte client",
+    "signOut": "Se déconnecter",
+    "signingOut": "Déconnexion en cours…"
+  },
+  "appointments": {
+    "heading": "Rendez-vous à venir",
+    "nextHeading": "Ensuite",
+    "serviceFallback": "Prestation",
+    "with": "Avec <name>{practitioner}</name>",
+    "directions": "Itinéraire",
+    "addToCalendar": "Ajouter à mon agenda",
+    "reschedule": "Reporter",
+    "pendingHold": "Votre créneau est retenu ; rien à faire de votre côté.",
+    "rescheduledNote": "Ce créneau a été libéré au profit d’un autre rendez-vous.",
+    "empty": {
+      "title": "Aucun rendez-vous à venir",
+      "action": "Prendre rendez-vous",
+      "lead": "Choisissez une prestation et un créneau pour réserver votre prochaine visite.",
+      "lastVisit": "Votre dernière visite : {service} · {duration}.",
+      "lastVisitWithPractitioner": "Votre dernière visite : {service} · {duration} · {practitioner}."
+    }
+  },
+  "ics": {
+    "summary": "{service} — {salon}",
+    "serviceFallback": "Rendez-vous",
+    "description": "Avec {practitioner}",
+    "filename": "rendez-vous-{reference}.ics"
+  },
+  "salonCard": {
+    "today": "Aujourd’hui",
+    "closed": "Fermé"
+  },
+  "history": {
+    "heading": "Historique",
+    "filterLabel": "Filtrer l’historique",
+    "timeZone": "Horaires donnés en {timeZone}.",
+    "more": "Voir {count} rendez-vous de plus",
+    "rebook": "Réserver à nouveau",
+    "rebookService": " — {service}",
+    "noteLabel": "Votre note au salon : ",
+    "count": {
+      "none": "Aucun rendez-vous · {filter}",
+      "some": "{shown} rendez-vous affichés sur {total} · {filter}"
+    },
+    "filters": {
+      "tous": {
+        "label": "Tous",
+        "empty": "Votre historique est vide."
+      },
+      "honores": {
+        "label": "Honorés",
+        "empty": "Aucune visite honorée dans votre historique pour l’instant."
+      },
+      "annules": {
+        "label": "Annulés",
+        "empty": "Aucun rendez-vous annulé — tant mieux."
+      }
+    },
+    "empty": {
+      "title": "Votre historique est vide",
+      "action": "Découvrir les prestations",
+      "lead": "Il se remplira dès qu’un de vos rendez-vous quittera la liste « Mes rendez-vous »."
+    }
+  },
+  "loading": {
+    "label": "Chargement de votre espace…"
+  },
+  "login": {
+    "title": "Se connecter",
+    "email": "Adresse e-mail",
+    "password": "Mot de passe",
+    "submit": "Se connecter",
+    "submitting": "Connexion en cours…",
+    "failureTitle": "Connexion refusée",
+    "invalidCredentials": "Adresse e-mail ou mot de passe incorrect.",
+    "noAccount": "Pas encore de compte ?",
+    "createAccount": "Créer mon compte",
+    "notices": {
+      "retry": "Réessayer",
+      "session-expiree": {
+        "title": "Votre session a expiré",
+        "body": "Reconnectez-vous pour retrouver vos rendez-vous."
+      },
+      "renouvellement-indisponible": {
+        "title": "Session non renouvelée pour l’instant",
+        "body": "Vous n’avez pas été déconnecté·e : nous n’avons pas pu renouveler votre session à l’instant. Réessayez dans quelques secondes."
+      }
+    }
+  },
+  "register": {
+    "title": "Créer mon compte",
+    "firstName": "Prénom",
+    "lastName": "Nom",
+    "email": "Adresse e-mail",
+    "emailHint": "C’est aussi votre identifiant de connexion.",
+    "phone": "Téléphone",
+    "phoneHint": "Facultatif — pour recevoir le rappel de votre rendez-vous par SMS.",
+    "password": "Mot de passe",
+    "passwordRulePending": "{min} caractères au minimum.",
+    "passwordRuleMet": "{min} caractères : c’est bon.",
+    "submit": "Créer mon compte",
+    "submitting": "Création du compte…",
+    "failureTitle": "Inscription refusée",
+    "emailAlreadyRegistered": "Un compte existe déjà pour cette adresse dans cet établissement. Connectez-vous plutôt.",
+    "haveAccount": "Vous avez déjà un compte ?",
+    "signIn": "Se connecter"
+  },
+  "profile": {
+    "title": "Mes coordonnées",
+    "identityLegend": "Identité",
+    "contactLegend": "Contact",
+    "languageLegend": "Langue",
+    "firstName": "Prénom",
+    "lastName": "Nom",
+    "phone": "Téléphone",
+    "phoneHint": "Laissez vide pour ne plus recevoir de rappel par SMS.",
+    "emailLabel": "Adresse e-mail",
+    "emailHint": "Votre identifiant de connexion. Contactez le salon pour en changer.",
+    "localeLabel": "Langue préférée",
+    "localeHint": "Elle s’applique à cet espace et aux e-mails et SMS que le salon vous envoie.",
+    "localeSalon": "Langue du salon",
+    "submit": "Enregistrer",
+    "submitting": "Enregistrement…",
+    "savedTitle": "Coordonnées enregistrées",
+    "savedBody": "Vos prochaines confirmations de rendez-vous utiliseront ces informations.",
+    "failureTitle": "L’enregistrement a échoué"
+  },
+  "cancel": {
+    "action": "Annuler",
+    "confirm": "Annuler ce rendez-vous ? Le créneau repart immédiatement à la réservation.",
+    "confirmAction": "Confirmer l’annulation",
+    "keep": "Garder ce rendez-vous",
+    "loading": "Annulation en cours…",
+    "failureTitle": "L’annulation n’a pas abouti"
+  },
+  "reschedule": {
+    "title": "Reporter mon rendez-vous",
+    "lead": "{service} — actuellement le <strong>{when}</strong>",
+    "serviceFallback": "Votre prestation",
+    "currentSlot": "actuel",
+    "submit": "Reporter au {when}",
+    "submitting": "Report en cours…",
+    "chooseSlot": "Choisissez un créneau",
+    "giveUp": "Renoncer au report",
+    "failureTitle": "Le report n’a pas abouti",
+    "slotTakenTitle": "Ce créneau vient d’être pris",
+    "slotTakenBody": "Votre rendez-vous n’a pas bougé. Choisissez un autre créneau dans la liste remise à jour.",
+    "emptyTitle": "Aucun créneau en {month}",
+    "emptyBody": "Le calendrier ne propose rien pour cette prestation ce mois-ci. Essayez un autre mois, ou contactez le salon pour convenir d’une autre date.",
+    "nextMonth": "Voir le mois suivant"
+  },
+  "notFound": {
+    "title": "Ce rendez-vous n’est plus disponible",
+    "lead": "Il a pu être annulé, déjà déplacé, ou avoir eu lieu depuis. Vos rendez-vous à venir sont toujours dans votre compte, et ceux-là peuvent encore être reportés.",
+    "back": "Revenir à mes rendez-vous"
+  },
+  "announcements": {
+    "appointment-cancelled": {
+      "title": "Votre rendez-vous est annulé",
+      "body": "Celui du {when} ne figure plus à l’agenda du salon : vous le retrouvez dans l’onglet « Historique »."
+    },
+    "appointment-rescheduled": {
+      "title": "Votre rendez-vous est déplacé",
+      "body": "Il est désormais fixé au {when}, sous « Rendez-vous à venir »."
+    },
+    "salon-confirmed": {
+      "title": "Le salon a confirmé votre rendez-vous",
+      "body": "Il apparaît désormais comme confirmé sous « Rendez-vous à venir »."
+    },
+    "salon-cancelled": {
+      "title": "Le salon a annulé votre rendez-vous",
+      "body": "Celui du {when} ne figure plus à l’agenda du salon : vous le retrouvez dans l’onglet « Historique »."
+    }
+  },
+  "pageError": {
+    "title": "Cette page de votre compte n’a pas pu s’afficher",
+    "message": "Une erreur inattendue a interrompu l’affichage de cette page. Merci de réessayer dans un instant."
+  },
+  "shellError": {
+    "title": "Votre espace n’a pas pu s’afficher",
+    "message": "Une erreur inattendue a interrompu l’affichage de votre espace. Merci de réessayer dans un instant."
+  },
+  "errors": {
+    "credentialsRequired": "Renseignez votre adresse e-mail et votre mot de passe.",
+    "registrationIncomplete": "Les informations d’inscription sont incomplètes.",
+    "unknownTenant": "Établissement inconnu.",
+    "invalidProfile": "Les coordonnées saisies sont invalides.",
+    "invalidCancellation": "La demande d’annulation est incomplète.",
+    "invalidReschedule": "La demande de report est incomplète.",
+    "invalidLocale": "Cette langue n’est pas proposée.",
+    "sessionExpired": "Votre session a expiré. Reconnectez-vous pour continuer."
+  }
+}

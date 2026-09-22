@@ -1,8 +1,9 @@
 'use client';
 
+import { useLocale, useTranslations } from 'next-intl';
 import { useParams } from 'next/navigation';
 
-import { PUBLIC_EXIT_LABELS } from '@/components/salon/public-exits';
+import { publicExitLabels } from '@/components/salon/public-exits';
 import { RouteError } from '@/components/ui/route-error';
 
 import { salonPath } from './compte/paths';
@@ -32,25 +33,31 @@ interface AccountShellErrorProps {
  * vitrine du salon pour issue — le seul chemin qui ne dépende pas du gabarit
  * tombé, nommé par le registre des sorties publiques. Le nom du salon manque :
  * c'est lui qui n'a pas pu être lu.
+ *
+ * ## Le titre est celui du gabarit, lu à la même clé (#847)
+ *
+ * `shell.account.title` et non une seconde entrée dans le catalogue de cet
+ * espace : cet écran **remplace** le gabarit tombé, et il doit donc porter le
+ * titre que celui-ci aurait écrit (`compte/layout.tsx`). Deux clés pour le même
+ * mot, c'est exactement la divergence que ce dépôt recolle ailleurs (#917).
  */
 export default function AccountShellError({ reset }: AccountShellErrorProps) {
+  const t = useTranslations('account.shellError');
+  const shell = useTranslations('shell.account');
+  const locale = useLocale();
   const { tenantSlug } = useParams<{ tenantSlug: string }>();
 
   return (
     <div className="spa-account">
       <header className="spa-account__header">
-        <h1 className="spa-account__title">Mon compte</h1>
+        <h1 className="spa-account__title">{shell('title')}</h1>
       </header>
       <main className="spa-account__main" id="contenu">
-        <RouteError
-          message="Une erreur inattendue a interrompu l’affichage de votre espace. Merci de réessayer dans un instant."
-          reset={reset}
-          title="Votre espace n’a pas pu s’afficher"
-        />
+        <RouteError message={t('message')} reset={reset} title={t('title')} />
       </main>
       <footer className="spa-account__footer">
         <a className="spa-account__back" href={salonPath(tenantSlug)}>
-          {PUBLIC_EXIT_LABELS.vitrine}
+          {publicExitLabels(locale).vitrine}
         </a>
       </footer>
     </div>

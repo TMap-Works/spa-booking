@@ -1,4 +1,5 @@
 import { MY_APPOINTMENTS_DEFAULT_LIMIT } from '@spa/shared';
+import { getTranslations } from 'next-intl/server';
 import Link from 'next/link';
 
 import { appointmentBrief } from '@/components/account/appointment-brief';
@@ -58,6 +59,7 @@ export default async function AccountHistoryPage({ params, searchParams }: Histo
   const { tenantSlug } = await params;
   const query = (await searchParams) ?? {};
   const here = accountPath(tenantSlug, '/historique');
+  const t = await getTranslations('account.history');
 
   const [tenant, services, past] = await Promise.all([
     accountTenant(tenantSlug),
@@ -84,24 +86,24 @@ export default async function AccountHistoryPage({ params, searchParams }: Histo
       {/* Le titre double l'onglet actif juste au-dessus : masqué, il garde à la
           région son nom accessible sans écrire deux fois le même mot. */}
       <h2 className="spa-visually-hidden" id="historique">
-        Historique
+        {t('heading')}
       </h2>
 
       {past.length === 0 ? (
         <EmptyState
           icon="clock"
-          title="Votre historique est vide"
+          title={t('empty.title')}
           action={
             // La vitrine et non le tunnel : l'historique se remplit d'un
             // rendez-vous, et un rendez-vous commence par le choix d'un soin.
             // Second rôle, donc `neutral` — l'accent appartient à l'onglet des
             // rendez-vous, qui commande le parcours (#745).
             <Link className="spa-button spa-button--neutral" href={salonPath(tenantSlug)}>
-              <span className="spa-button__label">Découvrir les prestations</span>
+              <span className="spa-button__label">{t('empty.action')}</span>
             </Link>
           }
         >
-          Il se remplira dès qu’un de vos rendez-vous quittera la liste « Mes rendez-vous ».
+          {t('empty.lead')}
         </EmptyState>
       ) : (
         <AppointmentHistory entries={entries} timeZone={tenant.timezone} />

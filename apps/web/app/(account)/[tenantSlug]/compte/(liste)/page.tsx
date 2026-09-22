@@ -1,12 +1,13 @@
 import type { BookedAppointment, PublicService } from '@spa/shared';
 import { MY_APPOINTMENTS_DEFAULT_LIMIT } from '@spa/shared';
+import { getLocale, getTranslations } from 'next-intl/server';
 import Link from 'next/link';
 
 import { appointmentBrief } from '@/components/account/appointment-brief';
 import { SalonAside } from '@/components/account/salon-aside';
 import { EmptyState } from '@/components/ui/empty-state';
 import { fetchMyAppointments, fetchPublicServices } from '@/lib/api-client';
-import { formatDuration } from '@/lib/format';
+import { formatDuration, type DisplayLocale } from '@/lib/format';
 import { isRenewalReturn, RENEWAL_PARAM } from '@/lib/session-refresh';
 
 import { AppointmentHero } from '../components/appointment-hero';
@@ -66,6 +67,8 @@ export default async function AccountPage({ params, searchParams }: AccountPageP
   const { tenantSlug } = await params;
   const query = (await searchParams) ?? {};
   const here = accountPath(tenantSlug);
+  const t = await getTranslations('account.appointments');
+  const locale = await getLocale();
 
   const [tenant, services, appointments] = await Promise.all([
     accountTenant(tenantSlug),
@@ -98,6 +101,7 @@ export default async function AccountPage({ params, searchParams }: AccountPageP
   ]);
 
   const [next, ...others] = appointments.upcoming;
+  const display: DisplayLocale = { locale, countryCode: tenant.address?.country ?? null };
 
   return (
     <div className="spa-account__columns">
@@ -107,11 +111,16 @@ export default async function AccountPage({ params, searchParams }: AccountPageP
             serait le mur de texte que l'audit relève. Masqué, il garde à la
             région son nom accessible (WCAG 1.3.1). */}
         <h2 className="spa-visually-hidden" id="rdv-a-venir">
-          Rendez-vous à venir
+          {t('heading')}
         </h2>
 
         {next === undefined ? (
-          <AucunRendezVous tenantSlug={tenantSlug} past={appointments.past} services={services} />
+          <AucunRendezVous
+            tenantSlug={tenantSlug}
+            lead={lastVisitSentence(t, appointments.past, services, display)}
+            title={t('empty.title')}
+            action={t('empty.action')}
+          />
         ) : (
           <>
             <AppointmentHero
@@ -124,7 +133,7 @@ export default async function AccountPage({ params, searchParams }: AccountPageP
             {others.length === 0 ? null : (
               <section className="spa-account__section" aria-labelledby="rdv-suivants">
                 <h3 className="spa-account__section-title" id="rdv-suivants">
-                  Ensuite
+                  {t('nextHeading')}
                 </h3>
                 <AppointmentList
                   tenantSlug={tenantSlug}
@@ -146,8 +155,9 @@ export default async function AccountPage({ params, searchParams }: AccountPageP
 
 interface AucunRendezVousProps {
   readonly tenantSlug: string;
-  readonly past: readonly BookedAppointment[];
-  readonly services: readonly PublicService[];
+  readonly title: string;
+  readonly action: string;
+  readonly lead: string;
 }
 
 /**
@@ -163,31 +173,64 @@ interface AucunRendezVousProps {
  * aucun paramètre d'URL aujourd'hui, et lui en ajouter un appartient à son
  * propre chantier. Nommer sans pré-remplir reste tenable — la phrase rappelle
  * quoi rechoisir —, promettre « en un clic » ne l'aurait pas été.
+ *
+ * ## Il reçoit ses phrases, il ne les lit pas (#847)
+ *
+ * `getTranslations` est asynchrone, et un composant asynchrone imbriqué dans le
+ * JSX d'un autre ne se résout que sous le moteur de rendu de Next : la suite
+ * `account-empty-state-actions` appelle la page comme une fonction, et n'aurait
+ * plus trouvé cet état vide dans l'arbre rendu. La page, qui est déjà
+ * asynchrone, traduit donc pour lui.
  */
-function AucunRendezVous({ tenantSlug, past, services }: AucunRendezVousProps) {
-  const derniere = past.find((appointment) => appointment.status === 'completed') ?? null;
-  const brief = derniere === null ? null : appointmentBrief(derniere, services);
-
+function AucunRendezVous({ tenantSlug, title, action, lead }: AucunRendezVousProps) {
   return (
     <EmptyState
       icon="calendar"
-      title="Aucun rendez-vous à venir"
+      title={title}
       action={
         // Un lien et non un bouton : c'est une **destination**, elle s'ouvre
         // dans un onglet et se copie.
         <Link className="spa-button spa-button--accent" href={bookingPath(tenantSlug)}>
-          <span className="spa-button__label">Prendre rendez-vous</span>
+          <span className="spa-button__label">{action}</span>
         </Link>
       }
     >
-      {brief === null || brief.serviceName === null ? (
-        'Choisissez une prestation et un créneau pour réserver votre prochaine visite.'
-      ) : (
-        <>
-          Votre dernière visite : {brief.serviceName} · {formatDuration(brief.durationMinutes)}
-          {brief.practitioner === null ? null : <> · {brief.practitioner}</>}.
-        </>
-      )}
+      {lead}
     </EmptyState>
   );
+}
+
+/**
+ * Ce que l'état vide raconte : la dernière prestation honorée quand il y en a
+ * une, la phrase générique sinon (`BM-HISTO-02`).
+ *
+ * La phrase entière est au catalogue, **ponctuation comprise** : une énumération
+ * « prestation · durée · praticien » ne se ponctue pas de la même façon d'une
+ * langue à l'autre, et la couper en morceaux de JSX aurait figé l'ordre français
+ * (#847). Deux messages plutôt qu'un fragment optionnel, pour la même raison —
+ * une langue peut vouloir dire « avec Hery » autrement qu'en ajoutant un
+ * élément à la fin d'une liste.
+ */
+function lastVisitSentence(
+  t: Awaited<ReturnType<typeof getTranslations<'account.appointments'>>>,
+  past: readonly BookedAppointment[],
+  services: readonly PublicService[],
+  display: DisplayLocale,
+): string {
+  const derniere = past.find((appointment) => appointment.status === 'completed') ?? null;
+  const brief = derniere === null ? null : appointmentBrief(derniere, services);
+
+  if (brief === null || brief.serviceName === null) {
+    return t('empty.lead');
+  }
+
+  const duration = formatDuration(brief.durationMinutes, display);
+
+  return brief.practitioner === null
+    ? t('empty.lastVisit', { service: brief.serviceName, duration })
+    : t('empty.lastVisitWithPractitioner', {
+        service: brief.serviceName,
+        duration,
+        practitioner: brief.practitioner,
+      });
 }

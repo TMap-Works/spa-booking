@@ -1,4 +1,8 @@
-import type { AppointmentStatus, TimeZone } from '@spa/shared';
+import type { AppointmentStatus, Locale, TimeZone } from '@spa/shared';
+
+import { formattingLocale, type DisplayLocale } from '@/lib/format';
+import en from '@/messages/en/account.json';
+import fr from '@/messages/fr/account.json';
 
 import type { AppointmentBrief } from './appointment-brief';
 
@@ -54,20 +58,31 @@ export interface HistoryFilterItem {
  * de cliente — et la rangée aurait défilé horizontalement avant d'avoir servi.
  * Les trois retenues sont celles que l'audit `d20260918-1` nomme, et « Tous »
  * reste la vue par défaut : aucune ligne n'est jamais hors d'atteinte.
+ *
+ * Les **identifiants** sont ici, les **mots** dans le catalogue (#847). Ce sont
+ * deux choses différentes : l'identifiant sert de valeur d'onglet et de clé
+ * d'`aria-controls`, il ne se traduit pas ; le libellé et la phrase d'état vide
+ * se lisent, donc ils se traduisent. Les séparer est ce qui laisse les tests du
+ * filtre éprouver l'ordre sans dépendre d'une langue.
  */
-export const HISTORY_FILTERS: readonly HistoryFilterItem[] = [
-  { id: 'tous', label: 'Tous', empty: 'Votre historique est vide.' },
-  {
-    id: 'honores',
-    label: 'Honorés',
-    empty: 'Aucune visite honorée dans votre historique pour l’instant.',
-  },
-  {
-    id: 'annules',
-    label: 'Annulés',
-    empty: 'Aucun rendez-vous annulé — tant mieux.',
-  },
-] as const;
+export const HISTORY_FILTER_IDS: readonly HistoryFilter[] = ['tous', 'honores', 'annules'];
+
+/** Les catalogues, dans les deux langues — la même source que les composants. */
+const CATALOG = { fr, en } as const;
+
+/** La langue employée quand l'appelant n'en passe pas — voir `appointment-brief.ts`. */
+const FALLBACK_LOCALE: Locale = 'fr';
+
+/** Les trois filtres, mots compris, dans l'ordre où la rangée les présente. */
+export function historyFilters(locale: Locale = FALLBACK_LOCALE): readonly HistoryFilterItem[] {
+  const words = CATALOG[locale].history.filters;
+
+  return HISTORY_FILTER_IDS.map((id) => ({
+    id,
+    label: words[id].label,
+    empty: words[id].empty,
+  }));
+}
 
 /**
  * Le rendez-vous entre-t-il dans ce filtre ?
@@ -116,16 +131,27 @@ export interface HistoryMonth {
 export function groupHistoryByMonth(
   entries: readonly HistoryEntry[],
   timeZone: TimeZone,
+  /**
+   * La langue et le pays de l'intertitre (#847) — « Septembre 2026 » d'un côté,
+   * « September 2026 » de l'autre.
+   *
+   * Le **fuseau** reste celui de l'établissement dans les deux cas : c'est lui
+   * qui décide *de quel mois* une visite relève, et la langue ne décide que de
+   * son nom. Les deux formateurs sont donc construits sur la même étiquette et
+   * le même fuseau — la clé technique, elle, ne dépend d'aucune langue.
+   */
+  display: DisplayLocale = { locale: FALLBACK_LOCALE },
 ): readonly HistoryMonth[] {
+  const tag = formattingLocale(display.locale, display.countryCode);
   // Les deux formateurs sont construits une fois pour toute la liste :
   // `Intl.DateTimeFormat` est coûteux à instancier, et le faire par ligne se
   // paierait à chaque frappe sur un filtre.
-  const monthParts = new Intl.DateTimeFormat('fr-FR', {
+  const monthParts = new Intl.DateTimeFormat(tag, {
     timeZone,
     year: 'numeric',
     month: 'numeric',
   });
-  const monthLabel = new Intl.DateTimeFormat('fr-FR', { timeZone, year: 'numeric', month: 'long' });
+  const monthLabel = new Intl.DateTimeFormat(tag, { timeZone, year: 'numeric', month: 'long' });
 
   const months = new Map<string, { label: string; entries: HistoryEntry[] }>();
 
@@ -135,7 +161,7 @@ export function groupHistoryByMonth(
     const month = months.get(key);
 
     if (month === undefined) {
-      months.set(key, { label: capitalize(monthLabel.format(date)), entries: [entry] });
+      months.set(key, { label: capitalize(monthLabel.format(date), tag), entries: [entry] });
     } else {
       month.entries.push(entry);
     }
@@ -188,7 +214,14 @@ function monthKey(format: Intl.DateTimeFormat, date: Date): string {
   return `${value('year').padStart(4, '0')}-${value('month').padStart(2, '0')}`;
 }
 
-/** « septembre 2026 » → « Septembre 2026 » : un intertitre commence une ligne. */
-function capitalize(label: string): string {
-  return label.charAt(0).toLocaleUpperCase('fr-FR') + label.slice(1);
+/**
+ * « septembre 2026 » → « Septembre 2026 » : un intertitre commence une ligne.
+ *
+ * La mise en casse reçoit l'étiquette complète : elle dépend de l'alphabet, et
+ * un `i` turc ne majuscule pas comme un `i` français. L'anglais, lui, écrit
+ * « September » d'emblée — la fonction est alors sans effet, ce qui est bien ce
+ * qu'on veut d'elle.
+ */
+function capitalize(label: string, tag: string): string {
+  return label.charAt(0).toLocaleUpperCase(tag) + label.slice(1);
 }

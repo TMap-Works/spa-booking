@@ -1,13 +1,14 @@
 'use client';
 
 import type { TimeZone } from '@spa/shared';
+import { useTranslations } from 'next-intl';
 import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
 
-import { appointmentTimeRange, RESCHEDULED_NOTE } from '@/components/account/appointment-brief';
+import { appointmentTimeRange, rescheduledNote } from '@/components/account/appointment-brief';
 import {
   groupHistoryByMonth,
-  HISTORY_FILTERS,
+  historyFilters,
   HISTORY_PAGE_SIZE,
   matchesHistoryFilter,
   sortHistoryMostRecentFirst,
@@ -19,8 +20,10 @@ import { Badge } from '@/components/ui/badge';
 import { DateBlock } from '@/components/ui/date-block';
 import { Icon } from '@/components/ui/icon';
 import { Tabs, tabPanelProps } from '@/components/ui/tabs';
-import { appointmentBadge, RESCHEDULED_LABEL } from '@/lib/appointment-status';
-import { formatDuration, formatMoney, timeZoneMention } from '@/lib/format';
+import { appointmentBadge } from '@/lib/appointment-status';
+import { formatDuration, formatMoney, timeZoneMention, type DisplayLocale } from '@/lib/format';
+
+import { useAccountDisplay } from './account-display-locale';
 
 /**
  * L'historique de l'espace client : une **liste**, groupée par mois, filtrable
@@ -66,6 +69,9 @@ interface AppointmentHistoryProps {
 const ID_PREFIX = 'historique';
 
 export function AppointmentHistory({ entries, timeZone }: AppointmentHistoryProps) {
+  const t = useTranslations('account.history');
+  const display = useAccountDisplay();
+  const filters = useMemo(() => historyFilters(display.locale), [display.locale]);
   const [filter, setFilter] = useState<HistoryFilter>('tous');
   const [visible, setVisible] = useState(HISTORY_PAGE_SIZE);
 
@@ -83,16 +89,16 @@ export function AppointmentHistory({ entries, timeZone }: AppointmentHistoryProp
 
   const counts = useMemo(
     () =>
-      HISTORY_FILTERS.map((item) => ({
+      filters.map((item) => ({
         ...item,
         count: entries.filter((entry) =>
           matchesHistoryFilter(entry.brief.appointment.status, item.id),
         ).length,
       })),
-    [entries],
+    [entries, filters],
   );
 
-  const currentLabel = HISTORY_FILTERS.find((item) => item.id === filter)?.label ?? '';
+  const currentLabel = filters.find((item) => item.id === filter)?.label ?? '';
   // Trié **avant** d'être coupé par « Voir plus » : la première page doit être
   // celle des dix rendez-vous les plus récents, quel que soit l'ordre où l'API
   // les a servis — `groupHistoryByMonth` ne trierait plus que la tranche.
@@ -104,19 +110,19 @@ export function AppointmentHistory({ entries, timeZone }: AppointmentHistoryProp
     [entries, filter],
   );
   const months = useMemo(
-    () => groupHistoryByMonth(shown.slice(0, visible), timeZone),
-    [shown, timeZone, visible],
+    () => groupHistoryByMonth(shown.slice(0, visible), timeZone, display),
+    [display, shown, timeZone, visible],
   );
 
   const remaining = shown.length - visible;
-  const mention = mounted ? timeZoneMention(timeZone) : null;
+  const mention = mounted ? timeZoneMention(timeZone, display) : null;
 
   /**
    * Le filtre repart de sa première page : « Voir plus » cliqué sur « Tous »
    * n'a rien à dire du nombre de lignes qu'« Annulés » mérite d'ouvrir.
    */
   const select = (id: string): void => {
-    const next = HISTORY_FILTERS.find((item) => item.id === id);
+    const next = filters.find((item) => item.id === id);
 
     if (next === undefined) {
       return;
@@ -132,7 +138,7 @@ export function AppointmentHistory({ entries, timeZone }: AppointmentHistoryProp
         <Tabs
           idPrefix={ID_PREFIX}
           items={counts.map((item) => ({ id: item.id, label: item.label, count: item.count }))}
-          label="Filtrer l’historique"
+          label={t('filterLabel')}
           onChange={select}
           value={filter}
           variant="segmented"
@@ -141,11 +147,11 @@ export function AppointmentHistory({ entries, timeZone }: AppointmentHistoryProp
         {/* Une fois, en tête de liste, et seulement si la visiteuse n'est pas
             déjà dans le fuseau du salon — au lieu d'une fois par ligne. */}
         {mention === null ? null : (
-          <p className="spa-history__timezone">Horaires donnés en {mention}.</p>
+          <p className="spa-history__timezone">{t('timeZone', { timeZone: mention })}</p>
         )}
       </div>
 
-      {HISTORY_FILTERS.map((item) => (
+      {filters.map((item) => (
         // `spa-history__panel` porte sa propre règle `[hidden] { display: none }` :
         // une classe qui pose `display` l'emporterait sinon sur la feuille de
         // l'agent utilisateur, et les trois panneaux resteraient visibles à la
@@ -157,7 +163,12 @@ export function AppointmentHistory({ entries, timeZone }: AppointmentHistoryProp
           hidden={item.id !== filter}
         >
           {item.id !== filter ? null : (
-            <HistoryMonths empty={item.empty} months={months} timeZone={timeZone} />
+            <HistoryMonths
+              empty={item.empty}
+              months={months}
+              timeZone={timeZone}
+              display={display}
+            />
           )}
         </div>
       ))}
@@ -173,7 +184,7 @@ export function AppointmentHistory({ entries, timeZone }: AppointmentHistoryProp
           {/* Le libellé dit ce que le clic va faire, et non « Voir plus » : la
               cliente sait alors s'il lui reste une page ou dix lignes. */}
           <span className="spa-button__label">
-            Voir {Math.min(HISTORY_PAGE_SIZE, remaining)} rendez-vous de plus
+            {t('more', { count: Math.min(HISTORY_PAGE_SIZE, remaining) })}
           </span>
         </button>
       )}
@@ -182,7 +193,13 @@ export function AppointmentHistory({ entries, timeZone }: AppointmentHistoryProp
           filtre : une rangée de pastilles qui masque huit lignes sur neuf ne se
           perçoit pas au clavier autrement. */}
       <p aria-live="polite" className="spa-visually-hidden">
-        {countSentence(Math.min(shown.length, visible), shown.length, currentLabel)}
+        {shown.length === 0
+          ? t('count.none', { filter: currentLabel })
+          : t('count.some', {
+              shown: Math.min(shown.length, visible),
+              total: shown.length,
+              filter: currentLabel,
+            })}
       </p>
     </div>
   );
@@ -193,6 +210,7 @@ interface HistoryMonthsProps {
   /** Ce que le filtre ouvert dit de lui-même quand il ne retient rien. */
   readonly empty: string;
   readonly timeZone: TimeZone;
+  readonly display: DisplayLocale;
 }
 
 /**
@@ -203,7 +221,7 @@ interface HistoryMonthsProps {
  * Chaque mois est une `<section>` nommée par son intertitre, donc un point de
  * repère de la navigation par régions d'un lecteur d'écran.
  */
-function HistoryMonths({ months, empty, timeZone }: HistoryMonthsProps) {
+function HistoryMonths({ months, empty, timeZone, display }: HistoryMonthsProps) {
   if (months.length === 0) {
     return <p className="spa-history__empty">{empty}</p>;
   }
@@ -222,7 +240,12 @@ function HistoryMonths({ months, empty, timeZone }: HistoryMonthsProps) {
 
           <ul className="spa-history__list">
             {month.entries.map((entry) => (
-              <HistoryRow key={entry.brief.appointment.id} entry={entry} timeZone={timeZone} />
+              <HistoryRow
+                key={entry.brief.appointment.id}
+                entry={entry}
+                timeZone={timeZone}
+                display={display}
+              />
             ))}
           </ul>
         </section>
@@ -234,6 +257,7 @@ function HistoryMonths({ months, empty, timeZone }: HistoryMonthsProps) {
 interface HistoryRowProps {
   readonly entry: HistoryEntry;
   readonly timeZone: TimeZone;
+  readonly display: DisplayLocale;
 }
 
 /**
@@ -246,14 +270,26 @@ interface HistoryRowProps {
  * ce qui fait passer l'écran de deux cartes et demie à cinq rendez-vous par
  * écran à 360 px, premier critère d'acceptation de #1054.
  */
-function HistoryRow({ entry, timeZone }: HistoryRowProps) {
+function HistoryRow({ entry, timeZone, display }: HistoryRowProps) {
+  const t = useTranslations('account');
   const { appointment, serviceName, practitioner, durationMinutes } = entry.brief;
-  const badge = appointmentBadge(appointment, 'past');
+  const badge = appointmentBadge(appointment, 'past', display.locale);
   const note = appointment.clientNote ?? '';
+  /**
+   * La ligne d'origine d'un report — un `cancelled` **sans auteur**, que
+   * l'espace nomme « Déplacé » (`lib/appointment-status.ts`).
+   *
+   * Le test portait sur le libellé de la pastille, comparé au littéral français
+   * `RESCHEDULED_LABEL` : il devenait faux dès que l'écran s'affichait en
+   * anglais, et la ligne d'explication disparaissait sans rien dire (#847).
+   * C'est donc le **fait** qui décide, comme dans `appointmentOutcomeLabel`.
+   */
+  const rescheduled =
+    appointment.status === 'cancelled' && (appointment.cancelledBy ?? null) === null;
 
   return (
     <li className="spa-history__row">
-      <DateBlock instant={appointment.startsAt} timeZone={timeZone} />
+      <DateBlock instant={appointment.startsAt} timeZone={timeZone} display={display} />
 
       <div className="spa-history__body">
         {/* Prestation à gauche, prix à droite sur la même ligne : c'est ce qui
@@ -261,15 +297,17 @@ function HistoryRow({ entry, timeZone }: HistoryRowProps) {
             droite le comprimait à la moitié de la largeur. Même appariement que
             la liste de prestations de la vitrine. */}
         <div className="spa-history__head">
-          <p className="spa-history__service">{serviceName ?? 'Prestation'}</p>
-          <p className="spa-history__price">{formatMoney(appointment.price)}</p>
+          <p className="spa-history__service">
+            {serviceName ?? t('appointments.serviceFallback')}
+          </p>
+          <p className="spa-history__price">{formatMoney(appointment.price, display)}</p>
         </div>
 
         {/* Sans la mention du fuseau : elle est en tête de liste, une fois. */}
         <p className="spa-history__meta">
-          {appointmentTimeRange(appointment, timeZone)}
+          {appointmentTimeRange(appointment, timeZone, display)}
           <span className="spa-history__dot"> · </span>
-          {formatDuration(durationMinutes)}
+          {formatDuration(durationMinutes, display)}
           {practitioner === null ? null : (
             <>
               <span className="spa-history__dot"> · </span>
@@ -283,8 +321,8 @@ function HistoryRow({ entry, timeZone }: HistoryRowProps) {
             que la carte compacte lui donnait déjà (#1053). Les autres pastilles
             de l'historique — « Honoré », « Annulé par vous », « Non honoré » —
             ne laissent aucune question ouverte, et ne reçoivent rien. */}
-        {badge.label !== RESCHEDULED_LABEL ? null : (
-          <p className="spa-history__status-note">{RESCHEDULED_NOTE}</p>
+        {!rescheduled ? null : (
+          <p className="spa-history__status-note">{rescheduledNote(display.locale)}</p>
         )}
 
         {note === '' ? null : <ClientNote note={note} />}
@@ -299,9 +337,11 @@ function HistoryRow({ entry, timeZone }: HistoryRowProps) {
                 dix liens « Réserver à nouveau » identiques ne se distinguent pas
                 dans une liste de liens (WCAG 2.4.4). */}
             <span className="spa-button__label">
-              Réserver à nouveau
+              {t('history.rebook')}
               {serviceName === null ? null : (
-                <span className="spa-visually-hidden"> — {serviceName}</span>
+                <span className="spa-visually-hidden">
+                  {t('history.rebookService', { service: serviceName })}
+                </span>
               )}
             </span>
           </Link>
@@ -326,23 +366,16 @@ function HistoryRow({ entry, timeZone }: HistoryRowProps) {
  * scripté, le pli fonctionne avant même l'hydratation.
  */
 function ClientNote({ note }: { readonly note: string }) {
+  const t = useTranslations('account.history');
+
   return (
     <details className="spa-history__note">
       <summary className="spa-history__note-summary">
         <Icon className="spa-history__note-chevron" name="chevron-down" />
         <span className="spa-history__note-text">
-          <span className="spa-visually-hidden">Votre note au salon : </span>« {note} »
+          <span className="spa-visually-hidden">{t('noteLabel')}</span>« {note} »
         </span>
       </summary>
     </details>
   );
-}
-
-/** « 5 rendez-vous sur 12 · Annulés » — pour la région animée, jamais à l'écran. */
-function countSentence(shown: number, total: number, label: string): string {
-  if (total === 0) {
-    return `Aucun rendez-vous · ${label}`;
-  }
-
-  return `${String(shown)} rendez-vous affichés sur ${String(total)} · ${label}`;
 }

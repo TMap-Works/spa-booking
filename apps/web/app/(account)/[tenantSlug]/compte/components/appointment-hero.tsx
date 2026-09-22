@@ -1,6 +1,7 @@
 'use client';
 
 import type { PublicTenant, TimeZone } from '@spa/shared';
+import { useTranslations } from 'next-intl';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
@@ -10,7 +11,7 @@ import {
   appointmentIcsHref,
   appointmentTimeRange,
   directionsUrl,
-  PENDING_HOLD_NOTE,
+  pendingHoldNote,
   type AppointmentBrief,
 } from '@/components/account/appointment-brief';
 import { addressLines } from '@/components/salon/salon-address';
@@ -19,15 +20,12 @@ import { Avatar } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
 import { DateBlock } from '@/components/ui/date-block';
 import { Icon } from '@/components/ui/icon';
-import {
-  appointmentBadge,
-  isStillActionable,
-  PENDING_CONFIRMATION_LABEL,
-} from '@/lib/appointment-status';
+import { appointmentBadge, isStillActionable } from '@/lib/appointment-status';
 import { formatDuration, formatMoney, timeZoneMention } from '@/lib/format';
 import { formatPhoneForDisplay } from '@/lib/phone';
 
 import { accountPath } from '../paths';
+import { useAccountDisplay } from './account-display-locale';
 import { CancelAppointmentControl } from './cancel-appointment-control';
 
 /**
@@ -64,6 +62,8 @@ interface AppointmentHeroProps {
 }
 
 export function AppointmentHero({ tenantSlug, brief, tenant, timeZone }: AppointmentHeroProps) {
+  const t = useTranslations('account.appointments');
+  const display = useAccountDisplay();
   const router = useRouter();
   const { appointment, serviceName, practitioner, durationMinutes } = brief;
 
@@ -80,37 +80,47 @@ export function AppointmentHero({ tenantSlug, brief, tenant, timeZone }: Appoint
     setMounted(true);
   }, []);
 
-  const badge = appointmentBadge(appointment, 'upcoming');
+  const badge = appointmentBadge(appointment, 'upcoming', display.locale);
   const actionable = isStillActionable(appointment);
-  const mention = mounted ? timeZoneMention(timeZone) : null;
+  const mention = mounted ? timeZoneMention(timeZone, display) : null;
   const directions = directionsUrl(tenant);
   const phone = tenant.contactPhone;
 
   return (
     <article className="spa-rdv-hero">
       <div className="spa-rdv-hero__head">
-        <DateBlock size="lg" instant={appointment.startsAt} timeZone={timeZone} />
+        <DateBlock size="lg" instant={appointment.startsAt} timeZone={timeZone} display={display} />
 
         <div className="spa-rdv-hero__when">
           <p className="spa-rdv-hero__time">
-            {appointmentTimeRange(appointment, timeZone)}
-            <span className="spa-rdv-hero__duration"> · {formatDuration(durationMinutes)}</span>
+            {appointmentTimeRange(appointment, timeZone, display)}
+            <span className="spa-rdv-hero__duration">
+              {' · '}
+              {formatDuration(durationMinutes, display)}
+            </span>
             {mention === null ? null : (
               <span className="spa-rdv-hero__timezone"> ({mention})</span>
             )}
           </p>
-          <h3 className="spa-rdv-hero__service">{serviceName ?? 'Prestation'}</h3>
-          <p className="spa-rdv-hero__price">{formatMoney(appointment.price)}</p>
+          <h3 className="spa-rdv-hero__service">{serviceName ?? t('serviceFallback')}</h3>
+          <p className="spa-rdv-hero__price">{formatMoney(appointment.price, display)}</p>
         </div>
 
         <div className="spa-rdv-hero__status">
           <Badge tone={badge.tone}>{badge.label}</Badge>
-          {badge.label === PENDING_CONFIRMATION_LABEL ? (
+          {appointment.status === 'pending' ? (
             // La ligne que les quatre lignes d'explication de la section disaient
             // avant #1053 : le créneau est déjà retenu — `pending` fait partie des
             // `BLOCKING_APPOINTMENT_STATUSES` —, l'attente ne demande rien à la
             // cliente. Aucun délai n'est chiffré : l'API n'en expose aucun.
-            <p className="spa-rdv-hero__status-note">{PENDING_HOLD_NOTE}</p>
+            //
+            // La condition porte sur le **statut** et non plus sur le libellé de
+            // la pastille (#847) : une comparaison de chaînes contre un libellé
+            // français devenait fausse dès que l'écran s'affichait en anglais, et
+            // la ligne disparaissait sans rien dire. Cette carte n'affiche que la
+            // moitié « à venir », si bien que `pending` y veut toujours dire « le
+            // salon n'a pas encore confirmé ».
+            <p className="spa-rdv-hero__status-note">{pendingHoldNote(display.locale)}</p>
           ) : null}
         </div>
       </div>
@@ -119,9 +129,10 @@ export function AppointmentHero({ tenantSlug, brief, tenant, timeZone }: Appoint
         {practitioner === null ? null : (
           <li className="spa-rdv-hero__fact">
             <Avatar name={practitioner} size="sm" />
-            <span>
-              Avec <strong>{practitioner}</strong>
-            </span>
+            {/* Le nom est un **paramètre du message** et non une concaténation :
+                l'ordre des mots ne survit pas à une traduction, et « With Hery »
+                ne place pas le nom là où le français le met. */}
+            <span>{t.rich('with', { practitioner, name: (parts) => <strong>{parts}</strong> })}</span>
           </li>
         )}
 
@@ -145,7 +156,7 @@ export function AppointmentHero({ tenantSlug, brief, tenant, timeZone }: Appoint
                   target="_blank"
                   rel="noreferrer"
                 >
-                  Itinéraire
+                  {t('directions')}
                   <Icon name="external" />
                 </a>
               )}
@@ -170,10 +181,10 @@ export function AppointmentHero({ tenantSlug, brief, tenant, timeZone }: Appoint
       <div className="spa-rdv-hero__actions">
         <a
           className="spa-button spa-button--neutral"
-          href={appointmentIcsHref({ brief, tenant })}
-          download={appointmentIcsFilename(appointment)}
+          href={appointmentIcsHref({ brief, tenant, locale: display.locale })}
+          download={appointmentIcsFilename(appointment, display.locale)}
         >
-          <span className="spa-button__label">Ajouter à mon agenda</span>
+          <span className="spa-button__label">{t('addToCalendar')}</span>
         </a>
 
         {!actionable ? null : (
@@ -182,7 +193,7 @@ export function AppointmentHero({ tenantSlug, brief, tenant, timeZone }: Appoint
               className="spa-button spa-button--neutral"
               href={accountPath(tenantSlug, `/rendez-vous/${appointment.id}/report`)}
             >
-              <span className="spa-button__label">Reporter</span>
+              <span className="spa-button__label">{t('reschedule')}</span>
             </Link>
             <CancelAppointmentControl
               tenantSlug={tenantSlug}

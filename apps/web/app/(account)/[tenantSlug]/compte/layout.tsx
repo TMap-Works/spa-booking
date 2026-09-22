@@ -1,12 +1,15 @@
 import type { PublicTenant } from '@spa/shared';
 import type { Metadata } from 'next';
 import { getTranslations } from 'next-intl/server';
+import { cookies } from 'next/headers';
 import { notFound } from 'next/navigation';
 import type { ReactNode } from 'react';
 
 import { AppointmentFeedProvider } from '@/components/live/appointment-feed';
 import { SalonShell } from '@/components/salon/salon-shell';
 import { PhoneCountryProvider } from '@/components/ui/phone-country';
+import { ACCOUNT_LOCALE_COOKIE, LOCALE_COOKIE } from '@/i18n/cookies';
+import { asLocale } from '@/i18n/resolve';
 import { readAccountPresence } from '@/lib/account-presence';
 import { ApiClientError } from '@/lib/api-client';
 
@@ -14,7 +17,9 @@ import {
   AccountAnnouncementProvider,
   AccountAnnouncementRegion,
 } from './components/account-announcement';
+import { AccountDisplayLocaleProvider } from './components/account-display-locale';
 import { AccountLiveAnnouncements } from './components/account-live-announcements';
+import { AccountLocaleSync } from './components/account-locale-sync';
 import { AccountTabs } from './components/account-tabs';
 import { LogoutButton } from './components/logout-button';
 import { accountFeedPath, bookingPath } from './paths';
@@ -148,6 +153,18 @@ export default async function AccountLayout({ children, params }: AccountLayoutP
   const signedIn = (await readAccessToken()) !== null || (await readRefreshToken()) !== null;
   const presence = signedIn ? await readAccountPresence() : null;
 
+  /*
+   * Les deux signaux de langue que l'espace client sait rapprocher (#847) : ce
+   * que le sélecteur a explicitement demandé sur ce navigateur, et ce que le
+   * compte a déjà enregistré. Le gabarit ne fait que les lire — c'est
+   * `AccountLocaleSync` qui décide, et l'action serveur qui écrit. Aucun appel à
+   * l'API n'est ajouté ici : les deux valeurs sont des cookies, posés par
+   * `account-locale.ts` à l'ouverture de session.
+   */
+  const localeCookies = await cookies();
+  const chosenLocale = asLocale(localeCookies.get(LOCALE_COOKIE)?.value);
+  const recordedLocale = asLocale(localeCookies.get(ACCOUNT_LOCALE_COOKIE)?.value);
+
   if (!signedIn) {
     return (
       <AccountAnnouncementProvider>
@@ -160,9 +177,13 @@ export default async function AccountLayout({ children, params }: AccountLayoutP
         >
           <main className="spa-account__main" id="contenu">
             <AccountAnnouncementRegion />
-            {/* L'indicatif par défaut de l'inscription et du profil (#825). */}
+            {/* L'indicatif par défaut de l'inscription et du profil (#825), et
+                la région de mise en forme des dates et des montants (#847) : le
+                même champ de la même fiche, lu une fois pour tout l'arbre. */}
             <PhoneCountryProvider country={tenant.address?.country ?? null}>
-              {children}
+              <AccountDisplayLocaleProvider countryCode={tenant.address?.country ?? null}>
+                {children}
+              </AccountDisplayLocaleProvider>
             </PhoneCountryProvider>
           </main>
         </SalonShell>
@@ -179,9 +200,25 @@ export default async function AccountLayout({ children, params }: AccountLayoutP
         une session : il n'y a rien à suivre sur l'écran de connexion. Voir
         `components/live/appointment-feed.tsx`.
       */}
-      <AppointmentFeedProvider feedPath={accountFeedPath(tenantSlug)}>
-        <AccountLiveAnnouncements tenantSlug={tenantSlug} timeZone={tenant.timezone} />
-      </AppointmentFeedProvider>
+      {/* La région de mise en forme l'enveloppe, comme elle enveloppe les
+          écrans : l'annonce écrit une heure de rendez-vous avant même qu'on
+          entre dans la page, et elle doit l'écrire comme la carte qu'elle
+          commente (#847). */}
+      <AccountDisplayLocaleProvider countryCode={tenant.address?.country ?? null}>
+        <AppointmentFeedProvider feedPath={accountFeedPath(tenantSlug)}>
+          <AccountLiveAnnouncements tenantSlug={tenantSlug} timeZone={tenant.timezone} />
+        </AppointmentFeedProvider>
+      </AccountDisplayLocaleProvider>
+      {/*
+        Le choix du sélecteur, reporté sur le compte (#847). Seulement avec une
+        session : c'est la seule situation où il y a un compte à mettre à jour.
+        Il ne peint rien.
+      */}
+      <AccountLocaleSync
+        tenantSlug={tenantSlug}
+        chosen={chosenLocale}
+        recorded={recordedLocale}
+      />
       <SalonShell
         tenantSlug={tenantSlug}
         tenant={tenant}
@@ -203,9 +240,13 @@ export default async function AccountLayout({ children, params }: AccountLayoutP
               avant ce qu'il reste à faire, et le lien d'évitement mène ici.
             */}
             <AccountAnnouncementRegion />
-            {/* L'indicatif par défaut de l'inscription et du profil (#825). */}
+            {/* L'indicatif par défaut de l'inscription et du profil (#825), et
+                la région de mise en forme des dates et des montants (#847) : le
+                même champ de la même fiche, lu une fois pour tout l'arbre. */}
             <PhoneCountryProvider country={tenant.address?.country ?? null}>
-              {children}
+              <AccountDisplayLocaleProvider countryCode={tenant.address?.country ?? null}>
+                {children}
+              </AccountDisplayLocaleProvider>
             </PhoneCountryProvider>
           </main>
         </div>

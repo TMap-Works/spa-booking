@@ -4,10 +4,11 @@ import type { AppointmentFeedEvent, TimeZone } from '@spa/shared';
 import { usePathname } from 'next/navigation';
 
 import { useAppointmentFeed } from '@/components/live/appointment-feed';
-import { formatDateTimeInTimeZone } from '@/lib/format';
+import { formatDateTimeInTimeZone, type DisplayLocale } from '@/lib/format';
 
 import { accountPath } from '../paths';
 import { useAccountAnnouncement, type AccountAnnouncementRequest } from './account-announcement';
+import { useAccountDisplay } from './account-display-locale';
 
 interface AccountLiveAnnouncementsProps {
   readonly tenantSlug: string;
@@ -35,6 +36,7 @@ interface AccountLiveAnnouncementsProps {
  */
 export function AccountLiveAnnouncements({ tenantSlug, timeZone }: AccountLiveAnnouncementsProps) {
   const announce = useAccountAnnouncement();
+  const display = useAccountDisplay();
   const path = usePathname();
 
   useAppointmentFeed((notice) => {
@@ -44,6 +46,7 @@ export function AccountLiveAnnouncements({ tenantSlug, timeZone }: AccountLiveAn
 
     const request = announcementFor(notice.event, {
       timeZone,
+      display,
       currentPath: path,
       listPath: accountPath(tenantSlug),
     });
@@ -59,10 +62,21 @@ export function AccountLiveAnnouncements({ tenantSlug, timeZone }: AccountLiveAn
 /** La demande d'annonce d'un changement, ou `null` s'il ne s'annonce pas ici. */
 export function announcementFor(
   event: AppointmentFeedEvent,
-  context: { readonly timeZone: TimeZone; readonly currentPath: string; readonly listPath: string },
+  context: {
+    readonly timeZone: TimeZone;
+    /**
+     * La langue et la région de la mise en forme (#847) — facultatives pour les
+     * suites, qui n'ont qu'une langue. Le **fuseau** reste celui du salon.
+     */
+    readonly display?: DisplayLocale;
+    readonly currentPath: string;
+    readonly listPath: string;
+  },
 ): AccountAnnouncementRequest | null {
   const when =
-    event.startsAt === undefined ? '' : formatDateTimeInTimeZone(event.startsAt, context.timeZone);
+    event.startsAt === undefined
+      ? ''
+      : formatDateTimeInTimeZone(event.startsAt, context.timeZone, context.display);
 
   switch (event.change) {
     case 'confirmed':

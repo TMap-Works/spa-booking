@@ -1,0 +1,202 @@
+{
+  "nav": {
+    "label": "My account",
+    "appointments": "My appointments",
+    "history": "History",
+    "profile": "My details",
+    "signIn": "Sign in",
+    "myAccount": "My account",
+    "myAccountPrefix": "My account: ",
+    "clientAccount": "Client account",
+    "signOut": "Sign out",
+    "signingOut": "Signing out…"
+  },
+  "appointments": {
+    "heading": "Upcoming appointments",
+    "nextHeading": "Next up",
+    "serviceFallback": "Service",
+    "with": "With <name>{practitioner}</name>",
+    "directions": "Directions",
+    "addToCalendar": "Add to my calendar",
+    "reschedule": "Reschedule",
+    "pendingHold": "Your slot is held; there is nothing for you to do.",
+    "rescheduledNote": "This slot was released in favour of another appointment.",
+    "empty": {
+      "title": "No upcoming appointments",
+      "action": "Book an appointment",
+      "lead": "Pick a service and a slot to book your next visit.",
+      "lastVisit": "Your last visit: {service} · {duration}.",
+      "lastVisitWithPractitioner": "Your last visit: {service} · {duration} · {practitioner}."
+    }
+  },
+  "ics": {
+    "summary": "{service} — {salon}",
+    "serviceFallback": "Appointment",
+    "description": "With {practitioner}",
+    "filename": "appointment-{reference}.ics"
+  },
+  "salonCard": {
+    "today": "Today",
+    "closed": "Closed"
+  },
+  "history": {
+    "heading": "History",
+    "filterLabel": "Filter history",
+    "timeZone": "Times shown in {timeZone}.",
+    "more": "Show {count} more appointments",
+    "rebook": "Book again",
+    "rebookService": " — {service}",
+    "noteLabel": "Your note to the salon: ",
+    "count": {
+      "none": "No appointments · {filter}",
+      "some": "{shown} of {total} appointments shown · {filter}"
+    },
+    "filters": {
+      "tous": {
+        "label": "All",
+        "empty": "Your history is empty."
+      },
+      "honores": {
+        "label": "Completed",
+        "empty": "No completed visit in your history yet."
+      },
+      "annules": {
+        "label": "Cancelled",
+        "empty": "No cancelled appointment — all the better."
+      }
+    },
+    "empty": {
+      "title": "Your history is empty",
+      "action": "Browse our services",
+      "lead": "It will fill up as soon as one of your appointments leaves the “My appointments” list."
+    }
+  },
+  "loading": {
+    "label": "Loading your account…"
+  },
+  "login": {
+    "title": "Sign in",
+    "email": "Email address",
+    "password": "Password",
+    "submit": "Sign in",
+    "submitting": "Signing in…",
+    "failureTitle": "Sign-in refused",
+    "invalidCredentials": "Incorrect email address or password.",
+    "noAccount": "No account yet?",
+    "createAccount": "Create my account",
+    "notices": {
+      "retry": "Try again",
+      "session-expiree": {
+        "title": "Your session has expired",
+        "body": "Sign in again to find your appointments."
+      },
+      "renouvellement-indisponible": {
+        "title": "Session not renewed for now",
+        "body": "You have not been signed out: we could not renew your session just now. Try again in a few seconds."
+      }
+    }
+  },
+  "register": {
+    "title": "Create my account",
+    "firstName": "First name",
+    "lastName": "Last name",
+    "email": "Email address",
+    "emailHint": "This is also your sign-in name.",
+    "phone": "Phone",
+    "phoneHint": "Optional — to receive your appointment reminder by text message.",
+    "password": "Password",
+    "passwordRulePending": "{min} characters minimum.",
+    "passwordRuleMet": "{min} characters: all good.",
+    "submit": "Create my account",
+    "submitting": "Creating your account…",
+    "failureTitle": "Sign-up refused",
+    "emailAlreadyRegistered": "An account already exists for this address at this salon. Sign in instead.",
+    "haveAccount": "Already have an account?",
+    "signIn": "Sign in"
+  },
+  "profile": {
+    "title": "My details",
+    "identityLegend": "Identity",
+    "contactLegend": "Contact",
+    "languageLegend": "Language",
+    "firstName": "First name",
+    "lastName": "Last name",
+    "phone": "Phone",
+    "phoneHint": "Leave empty to stop receiving text message reminders.",
+    "emailLabel": "Email address",
+    "emailHint": "Your sign-in name. Contact the salon to change it.",
+    "localeLabel": "Preferred language",
+    "localeHint": "It applies to this space and to the emails and text messages the salon sends you.",
+    "localeSalon": "Salon language",
+    "submit": "Save",
+    "submitting": "Saving…",
+    "savedTitle": "Details saved",
+    "savedBody": "Your next appointment confirmations will use these details.",
+    "failureTitle": "Saving failed"
+  },
+  "cancel": {
+    "action": "Cancel",
+    "confirm": "Cancel this appointment? The slot goes back on sale straight away.",
+    "confirmAction": "Confirm cancellation",
+    "keep": "Keep this appointment",
+    "loading": "Cancelling…",
+    "failureTitle": "The cancellation did not go through"
+  },
+  "reschedule": {
+    "title": "Reschedule my appointment",
+    "lead": "{service} — currently on <strong>{when}</strong>",
+    "serviceFallback": "Your service",
+    "currentSlot": "current",
+    "submit": "Reschedule to {when}",
+    "submitting": "Rescheduling…",
+    "chooseSlot": "Choose a slot",
+    "giveUp": "Give up rescheduling",
+    "failureTitle": "The reschedule did not go through",
+    "slotTakenTitle": "This slot has just been taken",
+    "slotTakenBody": "Your appointment has not moved. Choose another slot from the refreshed list.",
+    "emptyTitle": "No slot in {month}",
+    "emptyBody": "The calendar has nothing for this service this month. Try another month, or contact the salon to agree on another date.",
+    "nextMonth": "Show next month"
+  },
+  "notFound": {
+    "title": "This appointment is no longer available",
+    "lead": "It may have been cancelled, already moved, or taken place since. Your upcoming appointments are still in your account, and those can still be rescheduled.",
+    "back": "Back to my appointments"
+  },
+  "announcements": {
+    "appointment-cancelled": {
+      "title": "Your appointment is cancelled",
+      "body": "The one on {when} is no longer in the salon’s diary: you will find it in the “History” tab."
+    },
+    "appointment-rescheduled": {
+      "title": "Your appointment has moved",
+      "body": "It is now set for {when}, under “Upcoming appointments”."
+    },
+    "salon-confirmed": {
+      "title": "The salon confirmed your appointment",
+      "body": "It now shows as confirmed under “Upcoming appointments”."
+    },
+    "salon-cancelled": {
+      "title": "The salon cancelled your appointment",
+      "body": "The one on {when} is no longer in the salon’s diary: you will find it in the “History” tab."
+    }
+  },
+  "pageError": {
+    "title": "This page of your account could not be displayed",
+    "message": "An unexpected error interrupted this page. Please try again in a moment."
+  },
+  "shellError": {
+    "title": "Your account could not be displayed",
+    "message": "An unexpected error interrupted your account. Please try again in a moment."
+  },
+  "errors": {
+    "credentialsRequired": "Enter your email address and your password.",
+    "registrationIncomplete": "The sign-up details are incomplete.",
+    "unknownTenant": "Unknown salon.",
+    "invalidProfile": "The details you entered are invalid.",
+    "invalidCancellation": "The cancellation request is incomplete.",
+    "invalidReschedule": "The reschedule request is incomplete.",
+    "invalidLocale": "This language is not offered.",
+    "sessionExpired": "Your session has expired. Sign in again to continue."
+  }
+}

@@ -2,6 +2,7 @@
 
 import { zodResolver } from '@hookform/resolvers/zod';
 import { e164PhoneSchema, ERROR_CODES, PASSWORD_MIN_LENGTH, registerRequestSchema } from '@spa/shared';
+import { useTranslations } from 'next-intl';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useState } from 'react';
@@ -58,7 +59,7 @@ const registerFormSchema = registerRequestSchema.extend({
 type RegisterFormValues = z.input<typeof registerFormSchema>;
 
 /**
- * Le critère de longueur, dit au présent et coché en direct (#1052).
+ * Le critère de longueur est dit au présent et coché en direct (#1052).
  *
  * L'audit `d20260918-1` relève qu'« aucun bouton pour afficher le mot de passe »
  * et qu'on n'apprend la longueur exigée qu'en échouant. La phrase est portée par
@@ -67,16 +68,18 @@ type RegisterFormValues = z.input<typeof registerFormSchema>;
  * texte posé à côté du champ ne l'aurait pas été.
  *
  * La longueur vient du contrat (`PASSWORD_MIN_LENGTH`) et n'est pas recopiée :
- * la relever un jour ne doit pas laisser cet écran promettre l'ancienne.
+ * la relever un jour ne doit pas laisser cet écran promettre l'ancienne. Elle est
+ * donc un **paramètre du message** (`{min}`) depuis #847, et non une
+ * concaténation : « 8 characters minimum. » ne place pas le nombre où le
+ * français le met.
  */
-const PASSWORD_RULE_PENDING = `${String(PASSWORD_MIN_LENGTH)} caractères au minimum.`;
-const PASSWORD_RULE_MET = `${String(PASSWORD_MIN_LENGTH)} caractères : c’est bon.`;
 
 interface RegisterFormProps {
   readonly tenantSlug: string;
 }
 
 export function RegisterForm({ tenantSlug }: RegisterFormProps) {
+  const t = useTranslations('account.register');
   const router = useRouter();
   /*
    * Le retour reçu du lien « Créer mon compte » de la connexion, rejugé ici
@@ -151,9 +154,17 @@ export function RegisterForm({ tenantSlug }: RegisterFormProps) {
     });
 
     if (!result.ok) {
+      /*
+       * Le message du contrat dit « un compte existe déjà avec cette adresse » ;
+       * celui-ci ajoute les deux choses que cet écran-là sait et que le contrat
+       * ignore : l'unicité est bornée à **cet établissement**
+       * (`@@unique([tenantId, email])`), et la suite à donner est de se
+       * connecter. D'où une entrée en propre au catalogue plutôt que
+       * `errorMessage` (#847).
+       */
       setFailure(
         result.code === ERROR_CODES.EMAIL_ALREADY_REGISTERED
-          ? 'Un compte existe déjà pour cette adresse dans cet établissement. Connectez-vous plutôt.'
+          ? t('emailAlreadyRegistered')
           : result.message,
       );
       return;
@@ -167,11 +178,11 @@ export function RegisterForm({ tenantSlug }: RegisterFormProps) {
   return (
     <section className="spa-account__panel" aria-labelledby="inscription-titre">
       <h2 className="spa-account__section-title" id="inscription-titre">
-        Créer mon compte
+        {t('title')}
       </h2>
 
       {failure === null ? null : (
-        <Notification tone="danger" title="Inscription refusée">
+        <Notification tone="danger" title={t('failureTitle')}>
           <p>{failure}</p>
         </Notification>
       )}
@@ -187,7 +198,7 @@ export function RegisterForm({ tenantSlug }: RegisterFormProps) {
         <div className="spa-account__form-row">
           <Field
             id="register-first-name"
-            label="Prénom"
+            label={t('firstName')}
             autoComplete="given-name"
             required
             error={errors.firstName?.message}
@@ -195,7 +206,7 @@ export function RegisterForm({ tenantSlug }: RegisterFormProps) {
           />
           <Field
             id="register-last-name"
-            label="Nom"
+            label={t('lastName')}
             autoComplete="family-name"
             required
             error={errors.lastName?.message}
@@ -204,11 +215,11 @@ export function RegisterForm({ tenantSlug }: RegisterFormProps) {
         </div>
         <Field
           id="register-email"
-          label="Adresse e-mail"
+          label={t('email')}
           type="email"
           autoComplete="email"
           required
-          hint="C’est aussi votre identifiant de connexion."
+          hint={t('emailHint')}
           error={errors.email?.message}
           {...register('email')}
         />
@@ -218,8 +229,8 @@ export function RegisterForm({ tenantSlug }: RegisterFormProps) {
           render={({ field, fieldState }) => (
             <PhoneField
               id="register-phone"
-              label="Téléphone"
-              hint="Facultatif — pour recevoir le rappel de votre rendez-vous par SMS."
+              label={t('phone')}
+              hint={t('phoneHint')}
               invalid={fieldState.invalid}
               value={field.value ?? ''}
               onChange={field.onChange}
@@ -238,10 +249,14 @@ export function RegisterForm({ tenantSlug }: RegisterFormProps) {
         <div className="spa-account__password-rule" data-met={passwordRuleMet}>
           <PasswordField
             id="register-password"
-            label="Mot de passe"
+            label={t('password')}
             autoComplete="new-password"
             required
-            hint={passwordRuleMet ? PASSWORD_RULE_MET : PASSWORD_RULE_PENDING}
+            hint={
+              passwordRuleMet
+                ? t('passwordRuleMet', { min: PASSWORD_MIN_LENGTH })
+                : t('passwordRulePending', { min: PASSWORD_MIN_LENGTH })
+            }
             error={errors.password?.message}
             {...register('password')}
           />
@@ -268,17 +283,17 @@ export function RegisterForm({ tenantSlug }: RegisterFormProps) {
           variant="accent"
           block
           loading={isSubmitting}
-          loadingLabel="Création du compte…"
+          loadingLabel={t('submitting')}
         >
-          Créer mon compte
+          {t('submit')}
         </Button>
       </form>
 
       <p className="spa-account__switch">
-        Vous avez déjà un compte ?{' '}
+        {t('haveAccount')}{' '}
         {/* Le retour traverse le lien dans les deux sens (#1087). */}
         <Link href={withReturnPath(accountPath(tenantSlug, '/connexion'), returnTo)}>
-          Se connecter
+          {t('signIn')}
         </Link>
       </p>
     </section>

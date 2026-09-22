@@ -1,5 +1,6 @@
 import type {
   BookedAppointment,
+  Locale,
   PostalAddress,
   PublicService,
   PublicTenant,
@@ -8,7 +9,9 @@ import type {
 } from '@spa/shared';
 
 import { addressLines } from '@/components/salon/salon-address';
-import { formatTimeInTimeZone } from '@/lib/format';
+import { formatTimeInTimeZone, type DisplayLocale } from '@/lib/format';
+import en from '@/messages/en/account.json';
+import fr from '@/messages/fr/account.json';
 
 /**
  * Ce qu'une carte de rendez-vous de l'espace client a besoin de savoir, et la
@@ -28,7 +31,36 @@ import { formatTimeInTimeZone } from '@/lib/format';
  *
  * Il n'appelle rien et ne connaît aucune session : le catalogue public lui est
  * passé par la page, qui l'a déjà chargé pour nommer les prestations.
+ *
+ * ## Les mots viennent du catalogue, pas de ce fichier (#847)
+ *
+ * Par **import direct des deux fichiers JSON**, et non par `useTranslations` :
+ * ce module est fait de fonctions pures, appelées depuis des Server Components,
+ * des Client Components et des tests sans DOM. Un crochet de React l'aurait
+ * rendu inappelable dans les deux derniers. Même arbitrage, et même source, que
+ * `lib/appointment-status.ts` et `lib/format.ts`.
  */
+
+/** Les catalogues, dans les deux langues — la même source que les composants. */
+const CATALOG = { fr, en } as const;
+
+/**
+ * La langue employée quand l'appelant n'en passe pas.
+ *
+ * `'fr'`, comme `lib/format.ts` et `lib/appointment-status.ts` : les suites
+ * unitaires de cet espace sont écrites en français (`tests/support/next-intl.ts`),
+ * et un défaut anglais les aurait fait basculer sans qu'aucun écran ne change.
+ * Les écrans, eux, passent tous la langue résolue.
+ */
+const FALLBACK_LOCALE: Locale = 'fr';
+
+/** Le remplacement des paramètres d'un message lu hors de React — voir `lib/format.ts`. */
+function fill(message: string, values: Readonly<Record<string, string>>): string {
+  return Object.entries(values).reduce(
+    (text, [name, value]) => text.replaceAll(`{${name}}`, value),
+    message,
+  );
+}
 
 /** Un rendez-vous augmenté des noms que la carte affiche. */
 export interface AppointmentBrief {
@@ -48,7 +80,24 @@ export interface AppointmentBrief {
  * l'autre, et deux copies d'un même libellé de statut sont exactement ce que
  * `lib/appointment-status.ts` a dû recoller ailleurs (#917).
  */
-export const PENDING_HOLD_NOTE = 'Votre créneau est retenu ; rien à faire de votre côté.';
+export function pendingHoldNote(locale: Locale = FALLBACK_LOCALE): string {
+  return CATALOG[locale].appointments.pendingHold;
+}
+
+/**
+ * La même phrase, figée en français.
+ *
+ * @deprecated Transitoire (#847), même régime que les constantes de
+ * `lib/appointment-status.ts`. Elle n'a plus qu'un lecteur, et il est **hors de
+ * l'empreinte de ce ticket** : l'écran terminal du tunnel de réservation
+ * (`(booking)/…/steps/confirmation-step.tsx`), que #846 traduit dans le
+ * namespace `booking`. Ce ticket-là lui passera la langue résolue, et cette
+ * constante disparaîtra avec son dernier appelant. La garder évite de faire
+ * basculer en anglais un écran dont la traduction n'a pas encore été relue — et
+ * surtout d'aller réécrire un fichier qui appartient à un autre ticket de la
+ * même vague.
+ */
+export const PENDING_HOLD_NOTE: string = CATALOG[FALLBACK_LOCALE].appointments.pendingHold;
 
 /**
  * La phrase qui suit la pastille « Déplacé ».
@@ -61,7 +110,21 @@ export const PENDING_HOLD_NOTE = 'Votre créneau est retenu ; rien à faire de v
  * copie — c'est précisément ainsi que les libellés de statut avaient divergé sur
  * trois écrans (#917).
  */
-export const RESCHEDULED_NOTE = 'Ce créneau a été libéré au profit d’un autre rendez-vous.';
+export function rescheduledNote(locale: Locale = FALLBACK_LOCALE): string {
+  return CATALOG[locale].appointments.rescheduledNote;
+}
+
+/**
+ * Le nom qu'une carte affiche quand le catalogue public ne porte plus la
+ * prestation — retirée ou désactivée depuis la réservation.
+ *
+ * Il vit ici et non dans chaque écran : trois surfaces l'écrivaient
+ * (carte héros, carte compacte, ligne d'historique), et un mot répété trois fois
+ * est un mot qui finit par différer.
+ */
+export function serviceFallback(locale: Locale = FALLBACK_LOCALE): string {
+  return CATALOG[locale].appointments.serviceFallback;
+}
 
 /**
  * Le rendez-vous et les noms qui vont avec.
@@ -110,9 +173,17 @@ export function appointmentBrief(
 export function appointmentTimeRange(
   appointment: Pick<BookedAppointment, 'startsAt' | 'endsAt'>,
   timeZone: TimeZone,
+  /**
+   * La langue et le pays qui décident de la mise en forme de l'heure (#847).
+   *
+   * Le **fuseau** reste celui de l'établissement, toujours — la langue n'y
+   * touche pas. Ce qui change est l'écriture : « 14:10 » en `fr-FR`,
+   * « 2:10 PM » en `en-US`. Facultatif pour les suites, qui n'ont qu'une langue.
+   */
+  display?: DisplayLocale,
 ): string {
-  const start = formatTimeInTimeZone(appointment.startsAt, timeZone);
-  const end = formatTimeInTimeZone(appointment.endsAt, timeZone);
+  const start = formatTimeInTimeZone(appointment.startsAt, timeZone, display);
+  const end = formatTimeInTimeZone(appointment.endsAt, timeZone, display);
 
   return `${start}\u00a0–\u00a0${end}`;
 }
@@ -219,6 +290,16 @@ function foldIcsLine(line: string): string {
 interface IcsInput {
   readonly brief: AppointmentBrief;
   readonly tenant: PublicTenant;
+  /**
+   * La langue du fichier d'agenda — celle de l'écran qui propose le
+   * téléchargement (#847).
+   *
+   * Le résumé et la description sont lus par la cliente dans son propre agenda,
+   * des mois après : ce sont des textes d'interface comme les autres. Le reste du
+   * fichier — `PRODID`, `DTSTART`, la structure — est le protocole de la RFC 5545
+   * et ne se traduit pas.
+   */
+  readonly locale?: Locale;
 }
 
 /**
@@ -234,10 +315,15 @@ interface IcsInput {
  * aussi la seule écriture qui n'oblige pas à embarquer la définition du fuseau
  * du salon dans le fichier. L'agenda de la cliente le reprojettera dans le sien.
  */
-export function appointmentIcs({ brief, tenant }: IcsInput): string {
+export function appointmentIcs({ brief, tenant, locale = FALLBACK_LOCALE }: IcsInput): string {
   const { appointment, serviceName, practitioner } = brief;
-  const summary = `${serviceName ?? 'Rendez-vous'} — ${tenant.name}`;
-  const description = practitioner === null ? null : `Avec ${practitioner}`;
+  const words = CATALOG[locale].ics;
+  const summary = fill(words.summary, {
+    service: serviceName ?? words.serviceFallback,
+    salon: tenant.name,
+  });
+  const description =
+    practitioner === null ? null : fill(words.description, { practitioner });
   const location = tenant.address === undefined ? null : addressOneLine(tenant.name, tenant.address);
 
   const lines = [
@@ -268,8 +354,11 @@ export function appointmentIcs({ brief, tenant }: IcsInput): string {
 }
 
 /** Le nom du fichier téléchargé — la référence citable, jamais un UUID. */
-export function appointmentIcsFilename(appointment: Pick<BookedAppointment, 'reference'>): string {
-  return `rendez-vous-${appointment.reference}.ics`;
+export function appointmentIcsFilename(
+  appointment: Pick<BookedAppointment, 'reference'>,
+  locale: Locale = FALLBACK_LOCALE,
+): string {
+  return fill(CATALOG[locale].ics.filename, { reference: appointment.reference });
 }
 
 /**

@@ -2,6 +2,7 @@
 
 import { zodResolver } from '@hookform/resolvers/zod';
 import { ERROR_CODES, loginRequestSchema, type LoginRequest } from '@spa/shared';
+import { useTranslations } from 'next-intl';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useState } from 'react';
@@ -42,33 +43,27 @@ interface LoginFormProps {
 }
 
 /**
- * Ce que chaque motif dit — et ce qu'il se garde de dire (#860).
+ * Le **ton** de chaque motif — la seule part qui ne se traduise pas (#860, #847).
  *
- * `renouvellement-indisponible` est le cas que ce ticket sépare : la session
- * n'est pas fermée, ses cookies sont en place, et le renouvellement suivant
- * aboutira. L'annoncer comme une expiration enverrait ressaisir un mot de passe
- * dont personne n'a besoin — et, sur un quota partagé, cela arrivait à des gens
- * dont la session avait encore six jours devant elle.
+ * `renouvellement-indisponible` est le cas que #860 a séparé : la session n'est
+ * pas fermée, ses cookies sont en place, et le renouvellement suivant aboutira.
+ * L'annoncer comme une expiration enverrait ressaisir un mot de passe dont
+ * personne n'a besoin — et, sur un quota partagé, cela arrivait à des gens dont
+ * la session avait encore six jours devant elle.
  *
  * Le ton suit la même distinction : `warning` pour une session finie, `info`
- * pour une attente de quelques secondes.
+ * pour une attente de quelques secondes. Les phrases, elles, sont au catalogue
+ * sous `account.login.notices`, **à la clé du motif** : c'est la même chaîne que
+ * l'URL porte (`?motif=`), si bien qu'un motif ajouté à `SESSION_NOTICES` sans
+ * ses deux traductions fait échouer `tsc`.
  */
-const NOTICE_COPY: Readonly<
-  Record<SessionNotice, { readonly tone: NotificationTone; readonly title: string; readonly body: string }>
-> = {
-  'session-expiree': {
-    tone: 'warning',
-    title: 'Votre session a expiré',
-    body: 'Reconnectez-vous pour retrouver vos rendez-vous.',
-  },
-  'renouvellement-indisponible': {
-    tone: 'info',
-    title: 'Session non renouvelée pour l’instant',
-    body: 'Vous n’avez pas été déconnecté·e : nous n’avons pas pu renouveler votre session à l’instant. Réessayez dans quelques secondes.',
-  },
+const NOTICE_TONES: Readonly<Record<SessionNotice, NotificationTone>> = {
+  'session-expiree': 'warning',
+  'renouvellement-indisponible': 'info',
 };
 
 export function LoginForm({ tenantSlug, notice }: LoginFormProps) {
+  const t = useTranslations('account.login');
   const router = useRouter();
   /*
    * La destination de retour, lue dans l'adresse et **rejugée ici** (#1087).
@@ -102,9 +97,18 @@ export function LoginForm({ tenantSlug, notice }: LoginFormProps) {
     const result = await loginAction(tenantSlug, values);
 
     if (!result.ok) {
+      /*
+       * L'action rend déjà une phrase dans la langue de la requête
+       * (`errorMessage`, #847). Celle-ci est réécrite ici pour une seule raison :
+       * `INVALID_CREDENTIALS` doit rester **indistinct** — ni « adresse
+       * inconnue », ni « mot de passe faux » —, et c'est cet écran-là qui en
+       * répond. La formulation du catalogue est la même que celle du contrat ;
+       * l'avoir en propre est ce qui garantit qu'un durcissement du message
+       * générique ne la rendra jamais bavarde.
+       */
       setFailure(
         result.code === ERROR_CODES.INVALID_CREDENTIALS
-          ? 'Adresse e-mail ou mot de passe incorrect.'
+          ? t('invalidCredentials')
           : result.message,
       );
       return;
@@ -122,12 +126,15 @@ export function LoginForm({ tenantSlug, notice }: LoginFormProps) {
   return (
     <section className="spa-account__panel" aria-labelledby="connexion-titre">
       <h2 className="spa-account__section-title" id="connexion-titre">
-        Se connecter
+        {t('title')}
       </h2>
 
       {notice === null ? null : (
-        <Notification tone={NOTICE_COPY[notice].tone} title={NOTICE_COPY[notice].title}>
-          <p>{NOTICE_COPY[notice].body}</p>
+        <Notification
+          tone={NOTICE_TONES[notice]}
+          title={t(`notices.${notice}.title` as 'notices.session-expiree.title')}
+        >
+          <p>{t(`notices.${notice}.body` as 'notices.session-expiree.body')}</p>
           {/*
            * Une reprise, comme l'exige `docs/design/appointments/states.md`
            * (« Règles générales ») de tout état d'erreur. Elle vise l'espace
@@ -137,14 +144,14 @@ export function LoginForm({ tenantSlug, notice }: LoginFormProps) {
            */}
           {notice === 'renouvellement-indisponible' ? (
             <p>
-              <Link href={accountPath(tenantSlug)}>Réessayer</Link>
+              <Link href={accountPath(tenantSlug)}>{t('notices.retry')}</Link>
             </p>
           ) : null}
         </Notification>
       )}
 
       {failure === null ? null : (
-        <Notification tone="danger" title="Connexion refusée">
+        <Notification tone="danger" title={t('failureTitle')}>
           <p>{failure}</p>
         </Notification>
       )}
@@ -152,7 +159,7 @@ export function LoginForm({ tenantSlug, notice }: LoginFormProps) {
       <form className="spa-account__form" onSubmit={(event) => void submit(event)} noValidate>
         <Field
           id="login-email"
-          label="Adresse e-mail"
+          label={t('email')}
           type="email"
           autoComplete="email"
           required
@@ -168,7 +175,7 @@ export function LoginForm({ tenantSlug, notice }: LoginFormProps) {
         */}
         <PasswordField
           id="login-password"
-          label="Mot de passe"
+          label={t('password')}
           autoComplete="current-password"
           required
           error={errors.password?.message}
@@ -179,21 +186,21 @@ export function LoginForm({ tenantSlug, notice }: LoginFormProps) {
           variant="accent"
           block
           loading={isSubmitting}
-          loadingLabel="Connexion en cours…"
+          loadingLabel={t('submitting')}
         >
-          Se connecter
+          {t('submit')}
         </Button>
       </form>
 
       <p className="spa-account__switch">
-        Pas encore de compte ?{' '}
+        {t('noAccount')}{' '}
         {/*
           Le retour traverse le lien (#1087) : une cliente venue du tunnel sans
           compte le crée et revient au tunnel, pas dans un espace client qu'elle
           n'a pas demandé à voir.
         */}
         <Link href={withReturnPath(accountPath(tenantSlug, '/inscription'), returnTo)}>
-          Créer mon compte
+          {t('createAccount')}
         </Link>
       </p>
     </section>
