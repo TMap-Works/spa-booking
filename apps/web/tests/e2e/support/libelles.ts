@@ -23,11 +23,12 @@
  * `i18n/messages.ts` côté produit, et pour une raison voisine — plusieurs
  * lecteurs, une seule façon de lire.
  *
- * ## Ce qui n'est pas ici
+ * ## L'espace client aussi, depuis #1134
  *
- * Les écrans de l'espace client — connexion, inscription — ne sont pas encore
- * traduits : c'est leur propre ticket de l'épique #843. La scène les traverse
- * donc avec leurs libellés français, et le dit à l'endroit où elle le fait.
+ * Les écrans de l'espace client — connexion, inscription — ont été traduits par
+ * leur ticket de l'épique #843, et la scène lit désormais leurs libellés dans
+ * `account.json` comme elle lit ceux du tunnel dans `booking.json`. Le
+ * namespace est le seul écart : la clé reste complète et se résout pareil.
  */
 
 import { readFileSync } from 'node:fs';
