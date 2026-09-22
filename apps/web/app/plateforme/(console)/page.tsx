@@ -1,15 +1,17 @@
-import { TENANT_BILLING_STATUSES, type PlatformOverview } from '@spa/shared';
+import { TENANT_BILLING_STATUSES, type Locale, type PlatformOverview } from '@spa/shared';
+import { getLocale, getTranslations } from 'next-intl/server';
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 
 import { Icon } from '@/components/ui/icon';
 import { ApiClientError, fetchPlatformOverview } from '@/lib/api-client';
-import { formatMoney } from '@/lib/format';
+import { formatMoney, type DisplayLocale } from '@/lib/format';
 import {
-  BILLING_STATUS_LABELS,
   billingBadge,
+  billingStatusLabel,
   daysUntil,
   formatPlatformDate,
+  formatPlatformStamp,
   originLabel,
   tenantFilterSearch,
 } from '@/lib/platform-console';
@@ -36,6 +38,13 @@ import { PLATFORM_SESSION_END_PATH } from '../session/fin/path';
  *
  * Un 401 passe par la route qui efface la session, comme la liste : sans elle,
  * la connexion renverrait ici et la boucle serait refermée.
+ *
+ * ## La mise en forme n'a pas d'établissement de référence (#1106)
+ *
+ * `countryCode: null` : les chiffres de cet écran sont ceux de la **plateforme**,
+ * pas d'un salon. La région vient donc du repli documenté de `lib/format.ts`
+ * (`en` → `en-US`, `fr` → `fr-FR`) et non d'un pays arbitrairement emprunté à
+ * l'un des salons listés.
  */
 export default async function PlatformDashboardPage() {
   const accessToken = await readPlatformAccessToken();
@@ -43,6 +52,9 @@ export default async function PlatformDashboardPage() {
   if (accessToken === null) {
     redirect(PLATFORM_SESSION_END_PATH);
   }
+
+  const [t, locale] = await Promise.all([getTranslations('platform'), getLocale()]);
+  const display: DisplayLocale = { locale: locale as Locale, countryCode: null };
 
   let overview: PlatformOverview;
 
@@ -67,23 +79,22 @@ export default async function PlatformDashboardPage() {
     <section aria-labelledby="console-titre" className="spa-admin-dashboard">
       <header className="spa-admin-dashboard__hero">
         <div className="spa-admin-dashboard__greeting">
-          <span className="spa-admin-dashboard__eyebrow">Console plateforme</span>
+          <span className="spa-admin-dashboard__eyebrow">{t('dashboard.eyebrow')}</span>
           <h1 className="spa-admin__title" id="console-titre">
-            Vue d’ensemble
+            {t('dashboard.title')}
           </h1>
           <p className="spa-admin-dashboard__lead">
-            {open} salon{open > 1 ? 's' : ''} ouvert{open > 1 ? 's' : ''} · état au{' '}
-            {new Intl.DateTimeFormat('fr-FR', { dateStyle: 'long', timeStyle: 'short' }).format(now)}
+            {t('dashboard.lead', { count: open, stamp: formatPlatformStamp(now, display) })}
           </p>
         </div>
         <div className="spa-admin-dashboard__hero-actions">
           <Link className="spa-button spa-button--neutral" href={PLATFORM_TENANTS_PATH}>
             <Icon name="store" />
-            Tous les salons
+            {t('dashboard.allTenants')}
           </Link>
           <Link className="spa-button spa-button--accent" href={PLATFORM_NEW_TENANT_PATH}>
             <Icon name="sparkle" />
-            Ouvrir un salon
+            {t('dashboard.newTenant')}
           </Link>
         </div>
       </header>
@@ -91,35 +102,43 @@ export default async function PlatformDashboardPage() {
       <div className="spa-admin-dashboard__kpis">
         <PlatformKpi
           icon="chart"
-          label="Revenu mensuel récurrent"
+          label={t('dashboard.kpi.revenue')}
           tone="accent"
-          value={formatMoney(overview.revenue.monthlyRecurring)}
-          detail={`${String(status.active)} salon${status.active > 1 ? 's' : ''} abonné${status.active > 1 ? 's' : ''}`}
+          value={formatMoney(overview.revenue.monthlyRecurring, display)}
+          detail={t('dashboard.kpi.revenueDetail', { count: status.active })}
         />
         <PlatformKpi
           icon="sparkle"
-          label="Essais en cours"
+          label={t('dashboard.kpi.trials')}
           tone="success"
           value={String(status.trialing)}
-          detail={`${formatMoney(overview.revenue.inTrial)} / mois à convertir · ${String(overview.trialsEndingSoon.length)} sous 7 jours`}
+          detail={t('dashboard.kpi.trialsDetail', {
+            amount: formatMoney(overview.revenue.inTrial, display),
+            soon: overview.trialsEndingSoon.length,
+          })}
         />
         <PlatformKpi
           icon="bell"
-          label="Impayés"
+          label={t('dashboard.kpi.pastDue')}
           tone="warning"
           value={String(status.past_due)}
           detail={
             status.past_due === 0
-              ? 'Aucun salon en impayé'
-              : `${formatMoney(overview.revenue.atRisk)} / mois à risque`
+              ? t('dashboard.kpi.pastDueNone')
+              : t('dashboard.kpi.pastDueDetail', {
+                  amount: formatMoney(overview.revenue.atRisk, display),
+                })
           }
         />
         <PlatformKpi
           icon="lock"
-          label="Salons suspendus"
+          label={t('dashboard.kpi.suspended')}
           tone="danger"
           value={String(overview.tenants.suspended)}
-          detail={`${String(status.canceled)} résilié${status.canceled > 1 ? 's' : ''} · ${String(status.pending)} paiement${status.pending > 1 ? 's' : ''} en attente`}
+          detail={t('dashboard.kpi.suspendedDetail', {
+            canceled: status.canceled,
+            pending: status.pending,
+          })}
         />
       </div>
 
@@ -128,10 +147,10 @@ export default async function PlatformDashboardPage() {
           <section aria-labelledby="console-ouvertures" className="spa-admin__section">
             <div className="spa-admin-dashboard__section-head">
               <h2 className="spa-admin__section-title" id="console-ouvertures">
-                Ouvertures — 12 dernières semaines
+                {t('dashboard.openings.title')}
               </h2>
               <span className="spa-admin-toolbar__hint">
-                {openings} salon{openings > 1 ? 's' : ''}
+                {t('dashboard.openings.count', { count: openings })}
               </span>
             </div>
             <SignupWeeksChart weeks={overview.signupsByWeek} />
@@ -140,7 +159,7 @@ export default async function PlatformDashboardPage() {
           <section aria-labelledby="console-activation" className="spa-admin__section">
             <div className="spa-admin-dashboard__section-head">
               <h2 className="spa-admin__section-title" id="console-activation">
-                Activation des salons
+                {t('dashboard.activation.title')}
               </h2>
             </div>
             <ActivationFunnel activation={overview.activation} />
@@ -151,18 +170,18 @@ export default async function PlatformDashboardPage() {
           <section aria-labelledby="console-essais" className="spa-admin__section">
             <div className="spa-admin-dashboard__section-head">
               <h2 className="spa-admin__section-title" id="console-essais">
-                Essais qui se terminent
+                {t('dashboard.trials.title')}
               </h2>
               <Link
                 className="spa-admin-dashboard__more"
                 href={platformTenantsPath(tenantFilterSearch({ billingStatus: 'trialing' }))}
               >
-                Tous les essais
+                {t('dashboard.trials.all')}
                 <Icon name="arrow" />
               </Link>
             </div>
             {overview.trialsEndingSoon.length === 0 ? (
-              <p className="spa-admin-toolbar__hint">Aucun essai ne se termine dans les 7 jours.</p>
+              <p className="spa-admin-toolbar__hint">{t('dashboard.trials.none')}</p>
             ) : (
               <ul className="spa-console-list" role="list">
                 {overview.trialsEndingSoon.map((tenant) => {
@@ -175,7 +194,9 @@ export default async function PlatformDashboardPage() {
                       <span
                         className={`spa-admin-badge spa-admin-badge--${days <= 2 ? 'no-show' : 'pending'}`}
                       >
-                        {days === 0 ? 'Aujourd’hui' : `${String(days)} j`}
+                        {days === 0
+                          ? t('dashboard.trials.today')
+                          : t('dashboard.trials.days', { count: days })}
                       </span>
                     </li>
                   );
@@ -187,7 +208,7 @@ export default async function PlatformDashboardPage() {
           <section aria-labelledby="console-statuts" className="spa-admin__section">
             <div className="spa-admin-dashboard__section-head">
               <h2 className="spa-admin__section-title" id="console-statuts">
-                Salons par facturation
+                {t('dashboard.byBilling.title')}
               </h2>
             </div>
             <ul className="spa-console-list" role="list">
@@ -197,7 +218,7 @@ export default async function PlatformDashboardPage() {
                     className="spa-console-list__name"
                     href={platformTenantsPath(tenantFilterSearch({ billingStatus: billing }))}
                   >
-                    {BILLING_STATUS_LABELS[billing]}
+                    {billingStatusLabel(billing, display.locale)}
                   </Link>
                   <strong className="spa-console-list__count">{status[billing]}</strong>
                 </li>
@@ -208,15 +229,15 @@ export default async function PlatformDashboardPage() {
           <section aria-labelledby="console-recents" className="spa-admin__section">
             <div className="spa-admin-dashboard__section-head">
               <h2 className="spa-admin__section-title" id="console-recents">
-                Derniers salons ouverts
+                {t('dashboard.recent.title')}
               </h2>
               <Link className="spa-admin-dashboard__more" href={PLATFORM_TENANTS_PATH}>
-                Tous
+                {t('dashboard.recent.all')}
                 <Icon name="arrow" />
               </Link>
             </div>
             {overview.recent.length === 0 ? (
-              <p className="spa-admin-toolbar__hint">Aucun salon pour l’instant.</p>
+              <p className="spa-admin-toolbar__hint">{t('dashboard.recent.none')}</p>
             ) : (
               <ul className="spa-console-list" role="list">
                 {overview.recent.map((tenant) => (
@@ -226,11 +247,14 @@ export default async function PlatformDashboardPage() {
                         {tenant.name}
                       </Link>
                       <span>
-                        {originLabel(tenant)} · {formatPlatformDate(tenant.createdAt, tenant.timezone)}
+                        {originLabel(tenant, display.locale)} ·{' '}
+                        {formatPlatformDate(tenant.createdAt, tenant.timezone, display)}
                       </span>
                     </span>
-                    <span className={`spa-admin-badge spa-admin-badge--${billingBadge(tenant).tone}`}>
-                      {billingBadge(tenant).label}
+                    <span
+                      className={`spa-admin-badge spa-admin-badge--${billingBadge(tenant, display).tone}`}
+                    >
+                      {billingBadge(tenant, display).label}
                     </span>
                   </li>
                 ))}

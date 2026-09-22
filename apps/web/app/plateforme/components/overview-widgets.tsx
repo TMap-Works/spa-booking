@@ -1,6 +1,8 @@
-import type { PlatformOverview, PlatformSignupWeek } from '@spa/shared';
+import type { Locale, PlatformOverview, PlatformSignupWeek } from '@spa/shared';
+import { useLocale, useTranslations } from 'next-intl';
 
 import { Icon, type IconName } from '@/components/ui/icon';
+import { formattingLocale } from '@/lib/format';
 
 /**
  * Les briques du tableau de bord de l'éditeur — tuiles, ouvertures par semaine,
@@ -9,6 +11,10 @@ import { Icon, type IconName } from '@/components/ui/icon';
  * Mêmes classes que le tableau de bord d'un salon (`styles/admin/dashboard.css`)
  * pour les tuiles : la console et le back-office parlent la même langue
  * visuelle. Ce qui leur est propre vit dans `styles/admin/platform-console.css`.
+ *
+ * Des Server Components : `useTranslations` et `useLocale` s'y appellent comme
+ * dans un composant client, la seule contrainte étant de ne pas être asynchrone.
+ * Aucun état, aucun écouteur — il n'y a rien à hydrater ici.
  */
 
 export type KpiTone = 'accent' | 'success' | 'warning' | 'danger';
@@ -41,9 +47,15 @@ export function PlatformKpi({
   );
 }
 
-/** « 14 sept. » — l'étiquette d'une semaine, par son lundi. */
-function weekLabel(weekStart: string): string {
-  return new Intl.DateTimeFormat('fr-FR', {
+/**
+ * « 14 sept. », « Sep 14 » — l'étiquette d'une semaine, par son lundi.
+ *
+ * `timeZone: 'UTC'` et non le fuseau d'un salon : `weekStart` est une date civile
+ * découpée en UTC par l'API (`platformSignupWeekSchema`), et la reprojeter dans un
+ * autre fuseau la ferait reculer d'un jour à l'ouest de Greenwich.
+ */
+function weekLabel(weekStart: string, locale: Locale): string {
+  return new Intl.DateTimeFormat(formattingLocale(locale), {
     timeZone: 'UTC',
     day: 'numeric',
     month: 'short',
@@ -56,12 +68,14 @@ function weekLabel(weekStart: string): string {
  * détail est lu par les lecteurs d'écran.
  */
 export function SignupWeeksChart({ weeks }: { readonly weeks: readonly PlatformSignupWeek[] }) {
+  const t = useTranslations('platform');
+  const locale = useLocale() as Locale;
   const totals = weeks.map((week) => week.console + week.signup);
   const peak = Math.max(1, ...totals);
 
   return (
     <figure className="spa-console-weeks">
-      <ol aria-label="Ouvertures de salons par semaine" className="spa-console-weeks__bars" role="list">
+      <ol aria-label={t('widgets.weeksLabel')} className="spa-console-weeks__bars" role="list">
         {weeks.map((week, index) => {
           const total = totals[index] ?? 0;
           return (
@@ -78,10 +92,16 @@ export function SignupWeeksChart({ weeks }: { readonly weeks: readonly PlatformS
                 />
               </span>
               <span className="spa-console-weeks__label" aria-hidden="true">
-                {index % 2 === 0 || index === weeks.length - 1 ? weekLabel(week.weekStart) : ''}
+                {index % 2 === 0 || index === weeks.length - 1
+                  ? weekLabel(week.weekStart, locale)
+                  : ''}
               </span>
               <span className="spa-visually-hidden">
-                {`Semaine du ${weekLabel(week.weekStart)} : ${String(week.signup)} inscription${week.signup > 1 ? 's' : ''} en ligne, ${String(week.console)} ouverture${week.console > 1 ? 's' : ''} par la console`}
+                {t('widgets.weekSummary', {
+                  week: weekLabel(week.weekStart, locale),
+                  signup: week.signup,
+                  console: week.console,
+                })}
               </span>
             </li>
           );
@@ -89,21 +109,37 @@ export function SignupWeeksChart({ weeks }: { readonly weeks: readonly PlatformS
       </ol>
       <figcaption className="spa-console-legend">
         <span className="spa-console-legend__item">
-          <span aria-hidden="true" className="spa-console-legend__swatch spa-console-legend__swatch--signup" />
-          Inscription en ligne
+          <span
+            aria-hidden="true"
+            className="spa-console-legend__swatch spa-console-legend__swatch--signup"
+          />
+          {t('widgets.legendSignup')}
         </span>
         <span className="spa-console-legend__item">
-          <span aria-hidden="true" className="spa-console-legend__swatch spa-console-legend__swatch--console" />
-          Ouvert par la console
+          <span
+            aria-hidden="true"
+            className="spa-console-legend__swatch spa-console-legend__swatch--console"
+          />
+          {t('widgets.legendConsole')}
         </span>
       </figcaption>
     </figure>
   );
 }
 
-/** Un pourcentage entier — `—` quand la base est vide, plutôt qu'un 0 % trompeur. */
-function share(part: number, whole: number): string {
-  return whole === 0 ? '—' : `${String(Math.round((part / whole) * 100))} %`;
+/**
+ * Un pourcentage entier — `—` quand la base est vide, plutôt qu'un 0 % trompeur.
+ *
+ * Le chiffre passe par `Intl.NumberFormat` : l'espace avant le signe pour cent
+ * est insécable en français et absente en anglais, et c'est `Intl` qui le sait.
+ */
+function share(part: number, whole: number, locale: Locale): string {
+  return whole === 0
+    ? '—'
+    : new Intl.NumberFormat(formattingLocale(locale), {
+        style: 'percent',
+        maximumFractionDigits: 0,
+      }).format(part / whole);
 }
 
 /**
@@ -111,23 +147,29 @@ function share(part: number, whole: number): string {
  * rapportée aux salons ouverts — c'est la question qu'on se pose : « sur tous
  * ceux qu'on a ouverts, combien s'en servent ? ».
  */
-export function ActivationFunnel({ activation }: { readonly activation: PlatformOverview['activation'] }) {
+export function ActivationFunnel({
+  activation,
+}: {
+  readonly activation: PlatformOverview['activation'];
+}) {
+  const t = useTranslations('platform');
+  const locale = useLocale() as Locale;
   const steps = [
-    { key: 'ouverts', label: 'Salons ouverts', value: activation.opened },
-    { key: 'configures', label: 'Prestation et praticien en place', value: activation.configured },
-    { key: 'reserves', label: 'Au moins un rendez-vous', value: activation.booked },
-    { key: 'actifs', label: 'Un rendez-vous ces 30 derniers jours', value: activation.activeLast30Days },
-  ];
+    { key: 'opened', value: activation.opened },
+    { key: 'configured', value: activation.configured },
+    { key: 'booked', value: activation.booked },
+    { key: 'active', value: activation.activeLast30Days },
+  ] as const;
 
   return (
     <ol className="spa-console-funnel" role="list">
       {steps.map((step) => (
         <li className="spa-console-funnel__step" key={step.key}>
           <span className="spa-console-funnel__head">
-            <span className="spa-console-funnel__label">{step.label}</span>
+            <span className="spa-console-funnel__label">{t(`widgets.funnel.${step.key}`)}</span>
             <span className="spa-console-funnel__value">
               <strong>{step.value}</strong>
-              <span>{share(step.value, activation.opened)}</span>
+              <span>{share(step.value, activation.opened, locale)}</span>
             </span>
           </span>
           <span className="spa-console-funnel__track" aria-hidden="true">

@@ -1,4 +1,5 @@
-import type { PlatformTenant } from '@spa/shared';
+import type { Locale, PlatformTenant } from '@spa/shared';
+import { getLocale, getTranslations } from 'next-intl/server';
 import { NextResponse, type NextRequest } from 'next/server';
 
 import { ApiClientError, fetchPlatformTenants } from '@/lib/api-client';
@@ -14,6 +15,17 @@ import { PLATFORM_SESSION_END_PATH } from '../../../session/fin/path';
  * Il parcourt les pages de l'API par cent, le plafond serveur, et s'arrête à
  * cinquante pages : cinq mille salons, bien au-delà du MVP, et une borne qui
  * empêche une boucle de tourner sans fin si l'API renvoyait un total faux.
+ *
+ * ## La langue est celle de la requête d'export (#1106)
+ *
+ * `getLocale()` fonctionne ici comme dans un Server Component : une route
+ * handler est servie dans le contexte de sa requête, et la langue est résolue sur
+ * cette requête (`i18n/request.ts`). Les en-têtes de colonnes suivent donc la
+ * langue de l'interface **au moment où l'on clique** — c'est ce que la personne
+ * lit, et le fichier atterrit sur son poste.
+ *
+ * Le nom du fichier, lui, ne bouge pas : `salons-2026-09-23.csv` se trie dans un
+ * répertoire et s'écrit de la même façon dans les deux langues.
  */
 export const dynamic = 'force-dynamic';
 
@@ -46,14 +58,14 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     if (error instanceof ApiClientError && error.status === 401) {
       return redirectWithinSite(PLATFORM_SESSION_END_PATH);
     }
-    return new NextResponse('L’export n’a pas pu être produit. Merci de réessayer.', {
-      status: 502,
-    });
+    const t = await getTranslations('platform');
+    return new NextResponse(t('export.failed'), { status: 502 });
   }
 
+  const locale = (await getLocale()) as Locale;
   const day = new Date().toISOString().slice(0, 10);
 
-  return new NextResponse(tenantsCsv(tenants), {
+  return new NextResponse(tenantsCsv(tenants, locale), {
     status: 200,
     headers: {
       'content-type': 'text/csv; charset=utf-8',

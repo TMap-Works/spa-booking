@@ -1,4 +1,5 @@
-import { TENANT_BILLING_STATUSES, type PlatformTenantPage } from '@spa/shared';
+import { TENANT_BILLING_STATUSES, type Locale, type PlatformTenantPage } from '@spa/shared';
+import { getLocale, getTranslations } from 'next-intl/server';
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 
@@ -6,7 +7,7 @@ import { Field } from '@/components/ui/field';
 import { Select } from '@/components/ui/select';
 import { ApiClientError, fetchPlatformTenants } from '@/lib/api-client';
 import {
-  BILLING_STATUS_LABELS,
+  billingStatusLabel,
   hasTenantFilters,
   readTenantFilters,
   tenantFilterSearch,
@@ -29,6 +30,10 @@ import { PLATFORM_SESSION_END_PATH } from '../../session/fin/path';
  * du back-office : une liste filtrée se partage, survit à un rafraîchissement,
  * et l'export CSV reprend exactement ce qu'on voit. Le formulaire est un
  * `GET` natif — aucun script n'est nécessaire pour filtrer.
+ *
+ * Les **noms** des paramètres ne suivent pas la langue (voir
+ * `lib/platform-console.ts`) : une liste filtrée se partage entre deux personnes
+ * qui n'affichent pas la console dans la même langue.
  */
 
 interface PlatformTenantsPageProps {
@@ -42,6 +47,7 @@ export default async function PlatformTenantsPage({ searchParams }: PlatformTena
     redirect(PLATFORM_SESSION_END_PATH);
   }
 
+  const [t, locale] = await Promise.all([getTranslations('platform'), getLocale()]);
   const filters = readTenantFilters(await searchParams);
   const page = filters.page ?? 1;
   let tenants: PlatformTenantPage;
@@ -65,7 +71,7 @@ export default async function PlatformTenantsPage({ searchParams }: PlatformTena
   return (
     <section aria-labelledby="salons-titre">
       <h1 className="spa-admin__title" id="salons-titre">
-        Salons de la plateforme
+        {t('tenants.title')}
       </h1>
 
       <form action={PLATFORM_TENANTS_PATH} className="spa-console-filters" method="get" role="search">
@@ -73,37 +79,42 @@ export default async function PlatformTenantsPage({ searchParams }: PlatformTena
           <Field
             defaultValue={filters.q ?? ''}
             id="salons-recherche"
-            label="Rechercher"
+            label={t('tenants.searchLabel')}
             name="q"
-            placeholder="Nom, adresse, e-mail de contact ou d’un gérant"
+            placeholder={t('tenants.searchPlaceholder')}
             type="search"
           />
         </div>
         <Select
           defaultValue={filters.billingStatus ?? ''}
           id="salons-facturation"
-          label="Facturation"
+          label={t('tenants.billingLabel')}
           name="facturation"
         >
-          <option value="">Toutes</option>
+          <option value="">{t('tenants.billingAny')}</option>
           {TENANT_BILLING_STATUSES.map((status) => (
             <option key={status} value={status}>
-              {BILLING_STATUS_LABELS[status]}
+              {billingStatusLabel(status, locale as Locale)}
             </option>
           ))}
         </Select>
-        <Select defaultValue={filters.state ?? ''} id="salons-etat" label="État" name="etat">
-          <option value="">Tous</option>
-          <option value="active">Actif</option>
-          <option value="suspended">Suspendu</option>
+        <Select
+          defaultValue={filters.state ?? ''}
+          id="salons-etat"
+          label={t('tenants.stateLabel')}
+          name="etat"
+        >
+          <option value="">{t('tenants.stateAny')}</option>
+          <option value="active">{t('state.active')}</option>
+          <option value="suspended">{t('state.suspended')}</option>
         </Select>
         <div className="spa-console-filters__actions">
           <button className="spa-button spa-button--accent" type="submit">
-            <span className="spa-button__label">Filtrer</span>
+            <span className="spa-button__label">{t('tenants.filter')}</span>
           </button>
           {filtered ? (
             <Link className="spa-button spa-button--quiet" href={PLATFORM_TENANTS_PATH}>
-              Effacer
+              {t('tenants.clear')}
             </Link>
           ) : null}
         </div>
@@ -111,18 +122,19 @@ export default async function PlatformTenantsPage({ searchParams }: PlatformTena
 
       <div className="spa-admin-toolbar">
         <span className="spa-admin-toolbar__hint">
-          {tenants.totalItems} salon{tenants.totalItems > 1 ? 's' : ''}
-          {filtered ? ' correspondant aux filtres' : ''}
+          {filtered
+            ? t('tenants.countFiltered', { count: tenants.totalItems })
+            : t('tenants.count', { count: tenants.totalItems })}
         </span>
         <span className="spa-admin-toolbar__spacer" />
         <div className="spa-admin-toolbar__group">
           {tenants.totalItems > 0 ? (
             <a className="spa-button spa-button--neutral" download href={exportHref}>
-              Exporter en CSV
+              {t('tenants.export')}
             </a>
           ) : null}
           <Link className="spa-button spa-button--accent" href={PLATFORM_NEW_TENANT_PATH}>
-            Ouvrir un salon
+            {t('tenants.newTenant')}
           </Link>
         </div>
       </div>
@@ -132,23 +144,20 @@ export default async function PlatformTenantsPage({ searchParams }: PlatformTena
           <div className="spa-empty-state">
             {filtered ? (
               <>
-                <p className="spa-empty-state__title">Aucun salon ne correspond</p>
+                <p className="spa-empty-state__title">{t('tenants.emptyFiltered.title')}</p>
                 <p className="spa-empty-state__description">
-                  Élargissez la recherche, ou effacez les filtres pour revoir tous les salons.
+                  {t('tenants.emptyFiltered.description')}
                 </p>
                 <Link className="spa-button spa-button--neutral" href={PLATFORM_TENANTS_PATH}>
-                  <span className="spa-button__label">Effacer les filtres</span>
+                  <span className="spa-button__label">{t('tenants.emptyFiltered.action')}</span>
                 </Link>
               </>
             ) : (
               <>
-                <p className="spa-empty-state__title">Aucun salon ouvert pour l’instant</p>
-                <p className="spa-empty-state__description">
-                  Ouvrez le premier : vous obtiendrez le lien d’activation à envoyer au gérant,
-                  l’adresse de son back-office et sa page de réservation.
-                </p>
+                <p className="spa-empty-state__title">{t('tenants.empty.title')}</p>
+                <p className="spa-empty-state__description">{t('tenants.empty.description')}</p>
                 <Link className="spa-button spa-button--accent" href={PLATFORM_NEW_TENANT_PATH}>
-                  <span className="spa-button__label">Ouvrir un salon</span>
+                  <span className="spa-button__label">{t('tenants.empty.action')}</span>
                 </Link>
               </>
             )}
@@ -159,24 +168,24 @@ export default async function PlatformTenantsPage({ searchParams }: PlatformTena
           <TenantTable tenants={tenants.items} />
 
           {tenants.totalPages > 1 ? (
-            <nav className="spa-admin-toolbar" aria-label="Pages de la liste">
+            <nav className="spa-admin-toolbar" aria-label={t('tenants.pagination.label')}>
               {page > 1 ? (
                 <Link
                   className="spa-button spa-button--neutral"
                   href={platformTenantsPath(tenantFilterSearch({ ...filters, page: page - 1 }))}
                 >
-                  Page précédente
+                  {t('tenants.pagination.previous')}
                 </Link>
               ) : null}
               <span className="spa-admin-toolbar__hint">
-                Page {page} sur {tenants.totalPages}
+                {t('tenants.pagination.position', { page, pages: tenants.totalPages })}
               </span>
               {page < tenants.totalPages ? (
                 <Link
                   className="spa-button spa-button--neutral"
                   href={platformTenantsPath(tenantFilterSearch({ ...filters, page: page + 1 }))}
                 >
-                  Page suivante
+                  {t('tenants.pagination.next')}
                 </Link>
               ) : null}
             </nav>
