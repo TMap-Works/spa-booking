@@ -1,7 +1,8 @@
 # Marqueur de lint i18n — voir eslint-rules/i18n-markers.mjs.
-# La coquille partagée par la vitrine et l'espace client, et le registre des
-# sorties du parcours public, tous deux traduits par #845.
-# Les autres composants de ce répertoire sont des écrans : ils relèvent de
-# leurs propres tickets de l'épique #843, qui ajouteront leur ligne ici.
-public-exits.tsx
-salon-shell.tsx
+# #845 avait allumé la règle sur `salon-shell.tsx` et `public-exits.tsx`, les
+# deux seuls traduits alors — la coquille partagée par la vitrine et l'espace
+# client, et le registre des sorties du parcours public.
+# #846 a traduit les écrans de la vitrine : en-tête, identité, équipe,
+# catalogue, rubriques, barre de réservation, données structurées. Le
+# répertoire entier passe donc sous la règle, et un composant ajouté demain y
+# est pris sans qu'on ait à revenir ici.

@@ -1,0 +1,5 @@
+# Marqueur de lint i18n — voir eslint-rules/i18n-markers.mjs.
+# Le parcours public de réservation, traduit par #846 : la vitrine d'un salon,
+# le tunnel de la prestation à la confirmation, la politique de données, et les
+# `error.tsx` / `loading.tsx` de ces segments. Le sous-arbre entier est sous la
+# règle — il n'y reste aucun écran non traduit.

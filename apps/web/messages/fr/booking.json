@@ -1,0 +1,586 @@
+{
+  "home": {
+    "metadata": {
+      "title": "{platform} — la réservation en ligne des spas et salons",
+      "description": "Réservation en ligne 24 h/24, confirmations et rappels automatiques, planning, encaissement et suivi de l’activité : tout le parcours d’un rendez-vous de spa ou de salon, au même endroit."
+    },
+    "common": {
+      "accessSalon": "Accéder à mon salon",
+      "doorBackOffice": "Back-office du salon"
+    },
+    "nav": {
+      "label": "Sections de la page",
+      "features": "Fonctionnalités",
+      "howItWorks": "Comment ça marche",
+      "pricing": "Tarifs",
+      "questions": "Questions",
+      "trial": "Essai gratuit"
+    },
+    "hero": {
+      "eyebrow": "Spas · instituts · coiffure · barbiers · massage",
+      "title": "Des rendez-vous qui font du bien, <accent>de la réservation à l’encaissement.</accent>",
+      "lead": "Vos clientes réservent en quelques secondes, à toute heure. Votre équipe retrouve son planning, ses fiches clientes, sa caisse et ses chiffres au même endroit.",
+      "proofs": {
+        "always": "Réservation en ligne, jour et nuit",
+        "reminder": "Confirmation immédiate, rappel la veille",
+        "noDouble": "Aucun créneau réservé deux fois"
+      }
+    },
+    "returning": {
+      "eyebrow": "Votre salon"
+    },
+    "finder": {
+      "titleOther": "Un autre salon ?",
+      "lead": "Indiquez votre salon, puis choisissez ce que vous venez faire.",
+      "addressLabel": "Nom ou adresse du salon",
+      "addressHint": "Par exemple « Salon des Lilas », ou le lien reçu dans votre e-mail de confirmation.",
+      "errorTitle": "Vérification impossible",
+      "pending": {
+        "reservation": "Recherche du salon, puis ouverture de la réservation…",
+        "account": "Recherche du salon, puis ouverture de vos rendez-vous…",
+        "backOffice": "Recherche du salon, puis ouverture du back-office…"
+      }
+    },
+    "trust": {
+      "label": "Nos engagements",
+      "always": {
+        "title": "Ouvert 24 h/24",
+        "text": "Les créneaux libres se réservent à toute heure, au fuseau du salon."
+      },
+      "reminders": {
+        "title": "Rappels automatiques",
+        "text": "Une confirmation tout de suite, un rappel 24 h avant, par e-mail ou SMS."
+      },
+      "payment": {
+        "title": "Paiement sécurisé",
+        "text": "Confié à Stripe : aucune donnée de carte ne passe par nos serveurs."
+      },
+      "noDouble": {
+        "title": "Zéro double réservation",
+        "text": "Un créneau pris est verrouillé à l’instant même, pour tout le monde."
+      }
+    },
+    "trades": {
+      "eyebrow": "Pour qui c’est fait",
+      "title": "Tous les métiers du rendez-vous",
+      "lead": "Une prestation, une durée, un praticien, un créneau : la même mécanique sert un soin du visage comme une coupe de barbe.",
+      "spa": "Spas",
+      "beauty": "Instituts de beauté",
+      "hair": "Salons de coiffure",
+      "barber": "Barbershops"
+    },
+    "loop": {
+      "eyebrow": "Fonctionnalités",
+      "title": "Tout le parcours d’un rendez-vous, au même endroit",
+      "lead": "De la réservation au bilan de la journée, chaque étape passe la main à la suivante sans ressaisie.",
+      "book": {
+        "title": "Réserver",
+        "text": "La cliente choisit sa prestation, son praticien — ou le premier disponible — et un créneau libre en temps réel."
+      },
+      "confirm": {
+        "title": "Confirmer",
+        "text": "La confirmation part aussitôt, le rappel la veille. Un report ou une annulation prévient le salon comme la cliente."
+      },
+      "keep": {
+        "title": "Honorer",
+        "text": "L’équipe suit sa journée sur le planning, retrouve la fiche de chaque cliente et marque les absences."
+      },
+      "collect": {
+        "title": "Encaisser",
+        "text": "Au comptoir, par carte ou en espèces, prestations et produits compris, avec son ticket de caisse."
+      },
+      "measure": {
+        "title": "Mesurer",
+        "text": "Le revenu du jour, le volume de rendez-vous et les no-shows, sans tableur."
+      }
+    },
+    "audiences": {
+      "eyebrow": "Pour qui",
+      "title": "Pensé pour la clientèle comme pour l’équipe du salon",
+      "clients": {
+        "title": "Pour la clientèle",
+        "services": "Les prestations, leur durée et leur prix, avant de choisir",
+        "practitioner": "Le praticien de votre choix, ou le premier disponible",
+        "noAccount": "Une réservation sans compte, en quelques secondes",
+        "history": "Vos rendez-vous à venir et passés, dans votre espace",
+        "reschedule": "Un report ou une annulation en ligne, sans appeler",
+        "link": "Trouver mon salon"
+      },
+      "teams": {
+        "title": "Pour l’équipe du salon",
+        "schedule": "Le planning du jour et de la semaine, rendez-vous du comptoir compris",
+        "records": "Les fiches clientes : coordonnées, notes et historique des visites",
+        "staff": "Les comptes de l’équipe, leurs rôles, horaires et absences",
+        "checkout": "L’encaissement par carte ou en espèces, et l’historique des ventes",
+        "figures": "Le revenu, le volume de rendez-vous et les no-shows",
+        "link": "Ouvrir le back-office",
+        "signup": "Pas encore inscrit ? Créer mon salon"
+      }
+    },
+    "steps": {
+      "eyebrow": "Comment ça marche",
+      "title": "Réserver en trois gestes",
+      "service": {
+        "title": "Choisissez votre prestation",
+        "text": "Le catalogue du salon affiche la durée et le prix de chaque soin."
+      },
+      "slot": {
+        "title": "Choisissez votre créneau",
+        "text": "Avec le praticien de votre choix, parmi les horaires réellement libres."
+      },
+      "done": {
+        "title": "C’est confirmé",
+        "text": "Vous recevez la confirmation tout de suite, et un rappel la veille."
+      }
+    },
+    "preview": {
+      "category": "Soin visage",
+      "service": "Éclat hydratant",
+      "meta": "60 min · avec Inès",
+      "day": "Jeudi",
+      "toastTitle": "Rendez-vous confirmé",
+      "toastText": "Rappel envoyé la veille"
+    },
+    "pricing": {
+      "eyebrow": "Tarifs",
+      "title": "Une offre, tout compris",
+      "period": "par mois, sans engagement",
+      "trial": "{days, plural, one {# jour d’essai gratuit} other {# jours d’essai gratuit}} — la carte n’est débitée qu’à la fin de l’essai.",
+      "includes": {
+        "page": "Votre page de réservation en ligne, ouverte 24 h/24",
+        "reminders": "Confirmations et rappels automatiques",
+        "schedule": "Planning jour et semaine, équipe et horaires",
+        "records": "Fiches clientes, notes et historique des visites",
+        "checkout": "Encaissement au comptoir et reçus",
+        "figures": "Revenu, rendez-vous et absences en un coup d’œil"
+      },
+      "cta": "Démarrer mon essai gratuit"
+    },
+    "faq": {
+      "eyebrow": "Questions fréquentes",
+      "title": "Bon à savoir",
+      "address": {
+        "question": "Je ne connais pas l’adresse de mon salon.",
+        "answer": "Saisissez simplement son nom ci-dessus. Le lien exact figure aussi dans l’e-mail de confirmation de votre dernier rendez-vous, et le salon peut vous le transmettre."
+      },
+      "account": {
+        "question": "Faut-il créer un compte pour réserver ?",
+        "answer": "Non : vos coordonnées suffisent. Un compte vous permet ensuite de retrouver tous vos rendez-vous, et de les reporter ou de les annuler en ligne."
+      },
+      "reschedule": {
+        "question": "Comment reporter ou annuler un rendez-vous ?",
+        "answer": "Depuis « {door} », dans l’espace client de votre salon, tant que le délai fixé par le salon le permet. Le salon est prévenu automatiquement."
+      },
+      "card": {
+        "question": "Mes données de carte bancaire sont-elles conservées ?",
+        "answer": "Non. Le paiement est confié à Stripe : les données de votre carte vont directement de votre navigateur à Stripe, sans jamais passer par nos serveurs."
+      },
+      "price": {
+        "question": "Combien coûte la plateforme pour un salon ?",
+        "answer": "{days, plural, one {# jour gratuit} other {# jours gratuits}}, puis {price} par mois, sans engagement. Votre carte est enregistrée par Stripe à l’inscription et n’est débitée qu’à la fin de l’essai ; vous résiliez quand vous voulez depuis votre back-office."
+      },
+      "staff": {
+        "question": "Je travaille dans un salon : comment me connecter ?",
+        "answer": "Indiquez le salon ci-dessus puis choisissez « {door} ». Vos identifiants vous sont remis par la gérance du salon."
+      }
+    },
+    "closing": {
+      "title": "Votre prochain rendez-vous commence ici.",
+      "signup": "Ouvrir mon salon — {days, plural, one {# jour gratuit} other {# jours gratuits}}"
+    },
+    "footer": {
+      "text": "La réservation en ligne des spas, instituts, salons de coiffure, barbiers et studios de massage."
+    }
+  },
+  "salon": {
+    "metadata": {
+      "title": "{name} — prestations et réservation en ligne",
+      "descriptionBookable": "Découvrez les prestations de {name}, leurs durées et leurs tarifs, et réservez votre rendez-vous en ligne.",
+      "descriptionUnavailable": "{name} n’a pas encore publié ses prestations en ligne : la réservation en ligne n’est pas encore ouverte.",
+      "notFoundTitle": "Salon introuvable",
+      "fallbackTitle": "Réservation en ligne"
+    },
+    "hero": {
+      "directions": "— ouvrir l’itinéraire (nouvel onglet)",
+      "ledeBookable": "Découvrez les prestations de {name}, leurs durées et leurs tarifs, puis réservez votre rendez-vous en quelques minutes.",
+      "ledeUnavailable": "La réservation en ligne de {name} n’est pas encore ouverte.",
+      "call": "Appeler"
+    },
+    "hours": {
+      "unknownDay": "Jour {weekday}",
+      "closed": "Fermé",
+      "openUntil": "Ouvert — ferme à {time}",
+      "closedOpensAt": "Fermé — ouvre à {time}",
+      "closedOpensTomorrow": "Fermé — ouvre demain à {time}",
+      "closedOpensOnDay": "Fermé — ouvre {day} à {time}"
+    },
+    "catalog": {
+      "title": "Nos prestations",
+      "categoriesLabel": "Rubriques du catalogue",
+      "unclassified": "Autres prestations",
+      "durationLabel": "Durée :",
+      "staffLabel": "Praticiens :",
+      "unstaffed": "Aucun praticien — pas de créneau en ligne",
+      "priceLabel": "Tarif :",
+      "choose": "Choisir",
+      "emptyTitle": "Catalogue en cours de préparation",
+      "emptyDescription": "Ce salon n’a pas encore publié ses prestations en ligne.",
+      "emptyDescriptionWithContact": "Ce salon n’a pas encore publié ses prestations en ligne. Contactez-le directement pour connaître son offre."
+    },
+    "contact": {
+      "call": "Appeler le salon",
+      "email": "Écrire au salon"
+    },
+    "team": {
+      "title": "L’équipe"
+    },
+    "info": {
+      "label": "Informations pratiques",
+      "emptyTitle": "Informations non communiquées",
+      "emptyBookable": "Ce salon n’a pas encore publié ses coordonnées, son adresse ni ses horaires. La réservation en ligne reste ouverte.",
+      "emptyUnavailable": "Ce salon n’a pas encore publié ses coordonnées, son adresse ni ses horaires.",
+      "hoursTitle": "Horaires",
+      "today": "(aujourd’hui)",
+      "timeZoneHint": "Heures données dans le fuseau du salon ({timeZone}).",
+      "placeTitle": "Nous trouver",
+      "directions": "Itinéraire",
+      "newTab": "(nouvel onglet)"
+    },
+    "bookingBar": {
+      "serviceCount": "{count, plural, one {# prestation} other {# prestations}}"
+    },
+    "structuredData": {
+      "catalogName": "Prestations — {name}"
+    },
+    "loading": {
+      "announcement": "Chargement de la page du salon…"
+    },
+    "error": {
+      "title": "La page du salon n’a pas pu être chargée"
+    }
+  },
+  "tunnel": {
+    "page": {
+      "metadataTitle": "Prendre rendez-vous chez {salon}",
+      "metadataDescription": "Choisissez votre prestation, votre praticien et votre horaire, puis réservez en ligne chez {salon}.",
+      "title": "Prendre rendez-vous",
+      "errorTitle": "La page de réservation n’a pas pu être chargée"
+    },
+    "loading": {
+      "label": "Chargement de votre réservation…"
+    },
+    "header": {
+      "back": "Retour",
+      "leave": "Quitter",
+      "leaveTitle": "Quitter la réservation ?",
+      "leaveConfirm": "Quitter sans réserver",
+      "stay": "Rester",
+      "leaveNotice": "Votre rendez-vous n’est pas encore pris. Votre prestation, votre créneau et vos coordonnées restent enregistrés le temps de cet onglet : vous les retrouverez en revenant ici."
+    },
+    "progress": {
+      "count": "Étape {rank} sur {total}",
+      "titles": {
+        "prestation": "Quelle prestation ?",
+        "creneau": "Quand souhaitez-vous venir ?",
+        "coordonnees": "Comment vous joindre ?",
+        "recapitulatif": "Tout est-il exact ?",
+        "confirmation": "Votre rendez-vous"
+      },
+      "timeZone": "Horaires affichés en {zone}."
+    },
+    "notices": {
+      "slotLost": {
+        "title": "Ce créneau n’est plus disponible",
+        "body": "Ce créneau n’est plus réservable : il vient d’être pris, ou il est sorti des horaires ouverts à la réservation. Votre prestation et vos coordonnées sont conservées : il ne vous reste qu’à choisir un autre horaire ci-dessous.",
+        "bodyWithSlot": "Le {slot} n’est plus réservable : il vient d’être pris, ou il est sorti des horaires ouverts à la réservation. Votre prestation et vos coordonnées sont conservées : il ne vous reste qu’à choisir un autre horaire ci-dessous."
+      },
+      "sessionEnded": {
+        "title": "Votre session a pris fin",
+        "body": "Connectez-vous de nouveau pour confirmer ce rendez-vous : votre prestation et votre horaire sont conservés."
+      }
+    },
+    "skeleton": {
+      "loading": {
+        "prestation": "Chargement des prestations…",
+        "creneau": "Chargement des disponibilités…",
+        "coordonnees": "Chargement du formulaire de contact…",
+        "recapitulatif": "Chargement du récapitulatif…",
+        "confirmation": "Chargement de votre rendez-vous…"
+      }
+    },
+    "serviceStep": {
+      "submitDisabled": "Choisissez une prestation",
+      "submit": "Choisir un créneau"
+    },
+    "serviceChoice": {
+      "legend": "Prestation",
+      "tabsLabel": "Rubriques de prestations",
+      "tabsMarked": "prestation retenue",
+      "durationPrefix": "Durée :",
+      "pricePrefix": "Tarif :",
+      "emptyTitle": "Aucune prestation réservable en ligne",
+      "emptyDescription": "Ce salon ne propose aucune prestation à la réservation en ligne pour le moment. Contactez-le directement pour connaître son offre."
+    },
+    "staffChoice": {
+      "legend": "Praticien",
+      "noPreference": "Premier disponible",
+      "noPreferenceBenefit": "Le plus de créneaux",
+      "hint": "Sans préférence, le salon vous attribue le premier praticien disponible.",
+      "noStaffNotice": "Aucun praticien ne propose cette prestation actuellement : le salon n’a aucun créneau à offrir pour elle."
+    },
+    "slotStep": {
+      "label": "Choix du praticien et du créneau",
+      "staffChip": "Avec : {staff}",
+      "staffChipLabel": "Praticien : {staff}. Choisir un praticien",
+      "staffSheetTitle": "Choisir un praticien",
+      "unknownStaff": "ce praticien",
+      "errorTitle": "Les disponibilités n’ont pas pu être chargées",
+      "retry": "Réessayer",
+      "retrying": "Nouvelle tentative en cours…",
+      "emptyTitle": "Aucun créneau",
+      "emptyTitleMonth": "Aucun créneau en {month}",
+      "emptyTitleStaff": "Aucun créneau avec {staff}",
+      "emptyTitleStaffMonth": "Aucun créneau avec {staff} en {month}",
+      "emptyDescription": "Essayez un autre mois, une autre prestation, ou contactez le salon directement.",
+      "emptyDescriptionStaff": "Un autre mois ou un autre praticien a peut-être de la place, sinon contactez le salon directement.",
+      "nextMonth": "Voir le mois suivant",
+      "allStaff": "Voir tous les praticiens"
+    },
+    "calendar": {
+      "previousMonth": "Mois précédent",
+      "nextMonth": "Mois suivant",
+      "gridLabel": "Journée — {month}",
+      "weekdayInitials": {
+        "monday": "L",
+        "tuesday": "M",
+        "wednesday": "M",
+        "thursday": "J",
+        "friday": "V",
+        "saturday": "S",
+        "sunday": "D"
+      },
+      "weekdays": {
+        "monday": "lundi",
+        "tuesday": "mardi",
+        "wednesday": "mercredi",
+        "thursday": "jeudi",
+        "friday": "vendredi",
+        "saturday": "samedi",
+        "sunday": "dimanche"
+      },
+      "dayLabel": "{date} — {state}",
+      "slotCount": "{count, plural, one {# créneau} other {# créneaux}}",
+      "loading": "disponibilités en cours de chargement",
+      "outsideWindow": "hors de la période de réservation",
+      "closed": "fermé",
+      "full": "complet"
+    },
+    "dateBand": {
+      "previousDays": "Jours précédents",
+      "nextDays": "Jours suivants",
+      "openCalendar": "Ouvrir le calendrier — {month}",
+      "gridLabel": "Jour du rendez-vous — {month}"
+    },
+    "slotPicker": {
+      "chooseDate": "Choisir une date",
+      "announce": "{count, plural, one {# créneau} other {# créneaux}} le {date}.",
+      "announceWithZone": "{count, plural, one {# créneau} other {# créneaux}} le {date}, {zone}.",
+      "emptyWindow": "Aucun créneau sur ces journées",
+      "fullWindow": "Complet du {from} au {to}",
+      "previousSlot": "Créneau précédent : {date} à {time}",
+      "nextSlot": "Prochain créneau : {date} à {time}",
+      "dayHeading": "Créneaux du {date}",
+      "dayHeadingWithZone": "Créneaux du {date} — {zone}",
+      "moments": {
+        "morning": "Matin",
+        "afternoon": "Après-midi",
+        "evening": "Soir"
+      },
+      "spokenSeparator": " h ",
+      "lockedSlot": "{time} ({note})"
+    },
+    "summaryBar": {
+      "service": "Prestation",
+      "staff": "Praticien",
+      "dateTime": "Date et heure",
+      "total": "Total",
+      "openDetail": "— voir le détail de votre réservation",
+      "title": "Votre réservation",
+      "cancellation": "Annulation sans frais tant que le rendez-vous n’a pas eu lieu."
+    },
+    "contactStep": {
+      "identityLabel": "Réservé au nom de",
+      "firstName": "Prénom",
+      "lastName": "Nom",
+      "email": "Adresse e-mail",
+      "emailHint": "La confirmation y sera envoyée.",
+      "phone": "Téléphone",
+      "phoneHint": "Facultatif, pour le rappel par SMS.",
+      "note": "Un mot pour le salon",
+      "noteHint": "Allergie, préférence, retard annoncé — facultatif.",
+      "submit": "Vérifier ma réservation",
+      "errors": {
+        "required": "ce champ est obligatoire",
+        "tooLong": "ce champ fait au plus {max} caractères",
+        "email": "adresse e-mail invalide",
+        "invalid": "cette valeur n’est pas valide"
+      }
+    },
+    "consent": {
+      "booking": {
+        "intro": "Vos coordonnées servent à gérer ce rendez-vous — confirmation par e-mail, rappel la veille par SMS si vous laissez un numéro — et à rien d’autre : aucune prospection, aucune revente.",
+        "label": "J’ai lu ces informations et j’accepte que mes données soient utilisées pour ce rendez-vous."
+      },
+      "account": {
+        "intro": "Vos coordonnées servent à tenir votre compte et vos rendez-vous — connexion, historique, confirmations par e-mail, rappels par SMS si vous laissez un numéro — et à rien d’autre : aucune prospection, aucune revente.",
+        "label": "J’ai lu ces informations et j’accepte que mes données soient utilisées pour gérer mon compte et mes rendez-vous."
+      },
+      "policyLink": "<policy>Lire la politique de données (nouvel onglet)</policy>",
+      "summary": "Ce que nous faisons de vos données",
+      "purposes": {
+        "identity": {
+          "data": "Prénom et nom",
+          "why": "identifier votre rendez-vous auprès du salon. Nécessaires : sans eux, il n’y a pas de réservation à honorer."
+        },
+        "email": {
+          "data": "Adresse e-mail",
+          "why": "vous envoyer la confirmation, puis tout avis d’annulation ou de report. Nécessaire : c’est le canal par lequel le salon vous répond."
+        },
+        "emailAccount": {
+          "why": "vous envoyer la confirmation, puis tout avis d’annulation ou de report. Nécessaire : c’est le canal par lequel le salon vous répond. C’est aussi votre identifiant de connexion."
+        },
+        "phone": {
+          "data": "Téléphone",
+          "why": "vous envoyer par SMS le rappel de la veille. Facultatif : sans numéro, le rappel arrive par e-mail seulement."
+        },
+        "note": {
+          "data": "Le mot pour le salon",
+          "why": "transmettre au praticien ce qu’il doit savoir pour la prestation. Facultatif : n’y écrivez qu’une information dont le salon a besoin ce jour-là."
+        },
+        "password": {
+          "data": "Mot de passe",
+          "why": "protéger l’accès à votre compte. Nécessaire, et conservé sous forme chiffrée : personne, dans l’établissement comme chez nous, ne peut le relire."
+        }
+      },
+      "rights": "L’établissement conserve ces données le temps du suivi de sa clientèle. Vous pouvez les consulter, les corriger ou en demander la suppression à tout moment, depuis votre espace client ou en écrivant à l’établissement.",
+      "error": "cochez cette case pour continuer : sans votre accord, nous ne pouvons pas traiter vos données"
+    },
+    "gateStep": {
+      "title": "Identifiez-vous",
+      "label": "Connexion requise pour réserver",
+      "lead": "Un compte {salon} est nécessaire pour réserver. Votre prestation et votre horaire sont conservés : vous reviendrez ici juste après.",
+      "signIn": "Se connecter",
+      "register": "Créer un compte"
+    },
+    "summaryStep": {
+      "label": "Récapitulatif de votre réservation",
+      "emailRefusedTitle": "Cette adresse e-mail ne peut pas être utilisée ici",
+      "emailRefusedBody": "La réservation en ligne n’accepte pas cette adresse pour cet établissement. Reprenez vos coordonnées pour en saisir une autre : votre prestation et votre créneau sont conservés. Si vous tenez à cette adresse, contactez directement l’établissement.",
+      "failureTitle": "La réservation n’a pas abouti",
+      "fixContact": "Corriger mes coordonnées",
+      "termsTitle": "Avant de confirmer",
+      "termsPayment": "<label>Règlement sur place</label>, le jour du rendez-vous.",
+      "termsCancellation": "<label>Annulation sans frais</label> tant que le rendez-vous n’a pas eu lieu.",
+      "submitting": "Réservation en cours…",
+      "submit": "Confirmer la réservation"
+    },
+    "recap": {
+      "title": "Vos coordonnées",
+      "editTarget": "mes coordonnées",
+      "name": "Au nom de",
+      "email": "Adresse e-mail",
+      "phone": "Téléphone",
+      "note": "Votre mot au salon"
+    },
+    "appointmentCard": {
+      "serviceFallback": "Prestation",
+      "withStaff": "Avec <name>{staff}</name>",
+      "total": "Total",
+      "editSlotTarget": "la date et l’heure",
+      "editServiceTarget": "la prestation et le praticien"
+    },
+    "confirmationStep": {
+      "label": "Confirmation de votre réservation",
+      "snapshotTitle": "Votre dernière réservation dans cet onglet",
+      "snapshotBody": "Ce récapitulatif date du moment où vous avez réservé : il n’a pas été relu depuis. Un report ou une annulation faits ailleurs n’y apparaissent pas — c’est l’agenda du salon qui fait foi.",
+      "cancelledTitle": "Votre rendez-vous est annulé",
+      "cancelledLine": "Il ne figure plus à l’agenda du salon. Vous pouvez en prendre un nouveau quand vous le souhaitez.",
+      "pendingTitle": "Demande envoyée",
+      "pendingLine": "{confirmation}. {hold}",
+      "pendingHold": "Votre créneau est retenu ; rien à faire de votre côté.",
+      "bookedTitle": "C’est réservé !",
+      "bookedLine": "Le salon a confirmé votre rendez-vous.",
+      "reference": "Réf.",
+      "sent": "Un e-mail récapitulatif part vers <address>{email}</address>, et un second quand le salon aura confirmé. Avec un compte client chez {salon}, ce rendez-vous se retrouve dans votre espace, d’où il se reporte et s’annule.",
+      "cancelFailedTitle": "L’annulation n’a pas abouti",
+      "confirmCancel": "Confirmer l’annulation",
+      "cancelling": "Annulation en cours…",
+      "keep": "Garder mon rendez-vous",
+      "addToCalendar": "Ajouter à mon agenda",
+      "myAppointments": "Voir mes rendez-vous",
+      "bookAgain": "Réserver à nouveau",
+      "cancel": "Annuler ce rendez-vous"
+    },
+    "actions": {
+      "edit": "Modifier",
+      "changeService": "Changer de prestation",
+      "changeSlot": "Changer de créneau",
+      "unexpectedError": "Une erreur inattendue est survenue. Merci de réessayer.",
+      "availabilityIncomplete": "La demande de disponibilités est incomplète.",
+      "bookingIncomplete": "Les informations de réservation sont incomplètes.",
+      "signInRequired": "Connectez-vous pour réserver.",
+      "cancelIncomplete": "La demande d’annulation est incomplète."
+    }
+  },
+  "dataPolicy": {
+    "metadata": {
+      "title": "Politique de données — {salonName}",
+      "description": "Quelles données {salonName} collecte lorsque vous réservez ou créez un compte, à quoi elles servent, combien de temps elles sont conservées, et comment exercer vos droits.",
+      "fallbackTitle": "Politique de données"
+    },
+    "loadError": "La politique de données n’a pas pu être chargée",
+    "heading": {
+      "title": "Politique de données",
+      "lede": "Ce que {salonName} collecte lorsque vous réservez ou créez un compte, à quoi cela sert, combien de temps c’est conservé, et ce que vous pouvez en demander à tout moment."
+    },
+    "controller": {
+      "title": "Qui traite vos données",
+      "body": "L’établissement <salon>{salonName}</salon> décide de ce qui est collecté et de ce qui en est fait : c’est lui votre interlocuteur, et c’est à lui que s’adressent les demandes ci-dessous. Cette plateforme de réservation héberge et traite ces données pour son compte, et pour aucun autre usage.",
+      "isolation": "Vos données restent celles de cet établissement : elles ne sont partagées avec aucun autre salon utilisant la même plateforme."
+    },
+    "purposes": {
+      "bookingTitle": "Quand vous prenez rendez-vous",
+      "accountTitle": "Quand vous créez un compte",
+      "checkboxWording": "La case à cocher de cet écran porte exactement ces mots : <quote>« {label} »</quote>"
+    },
+    "legalBasis": {
+      "title": "Sur quelle base, et ce que nous en gardons comme preuve",
+      "blocking": "La case à cocher des deux écrans est bloquante : le formulaire ne part pas tant qu’elle ne l’est pas.",
+      "proof": "Que vous <strong>preniez rendez-vous</strong> ou que vous <strong>créiez un compte</strong>, cet accord est de surcroît enregistré avec la <strong>date et l’heure exactes</strong> auxquelles vous l’avez donné, parce que l’établissement doit pouvoir démontrer qu’il l’a bien reçu. Dans les deux cas, la demande est refusée sans lui — y compris si elle nous parvient autrement que par le formulaire.",
+      "serverClock": "Cette date est relevée par nos serveurs au moment où votre accord nous parvient : elle n’est jamais fournie par l’appareil depuis lequel vous écrivez, pour qu’elle garde sa valeur de preuve.",
+      "serviceMessages": "Trois traitements n’en dépendent pas, et il faut le dire : la confirmation de votre rendez-vous, le rappel de la veille et l’avis d’annulation relèvent de l’exécution du service que vous avez demandé. Les couper vous priverait précisément de ce que vous êtes venue chercher."
+    },
+    "recipients": {
+      "title": "Qui d’autre les voit",
+      "team": "<strong>L’équipe de l’établissement</strong> — les personnes qui tiennent l’agenda et le comptoir.",
+      "senders": "<strong>Les services d’envoi</strong> — un prestataire d’e-mail et un prestataire de SMS, qui reçoivent votre adresse ou votre numéro le temps de vous transmettre le message, et rien d’autre.",
+      "paymentProvider": "<strong>Le prestataire de paiement</strong> — si vous réglez en ligne. Vos données de carte sont saisies chez lui et <strong>n’atteignent jamais nos serveurs</strong> : nous n’en conservons qu’une référence opaque, qui ne permet ni de rejouer un paiement ni de reconstituer un numéro.",
+      "noSale": "Aucune donnée n’est vendue, échangée ou cédée à un tiers à des fins commerciales."
+    },
+    "retention": {
+      "title": "Combien de temps, et vos droits",
+      "anonymisation": "Une demande de suppression n’efface pas l’historique comptable des règlements déjà encaissés, que le commerçant est tenu de conserver : votre fiche est alors <strong>anonymisée</strong> — nom, coordonnées et notes retirés — et ce qui subsiste n’est plus rattachable à vous.",
+      "selfService": "Vous pouvez corriger vos coordonnées vous-même depuis <account>votre espace client</account>. Pour un export ou une suppression, écrivez à l’établissement — il est votre interlocuteur et dispose des outils pour y répondre."
+    },
+    "backToSalon": {
+      "title": "Revenir au salon",
+      "services": "Les prestations de {salonName}",
+      "booking": "Prendre rendez-vous",
+      "account": "Mon espace client"
+    }
+  },
+  "errors": {
+    "serviceUnavailable": "Le service de réservation est momentanément injoignable. Merci de réessayer dans un instant.",
+    "unexpected": "Une erreur inattendue est survenue. Merci de réessayer dans un instant."
+  }
+}

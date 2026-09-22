@@ -1,0 +1,586 @@
+{
+  "home": {
+    "metadata": {
+      "title": "{platform} — online booking for spas and salons",
+      "description": "Online booking around the clock, automatic confirmations and reminders, scheduling, checkout and activity tracking: everything an appointment at a spa or a salon involves, in one place."
+    },
+    "common": {
+      "accessSalon": "Go to my salon",
+      "doorBackOffice": "Salon back office"
+    },
+    "nav": {
+      "label": "Page sections",
+      "features": "Features",
+      "howItWorks": "How it works",
+      "pricing": "Pricing",
+      "questions": "Questions",
+      "trial": "Free trial"
+    },
+    "hero": {
+      "eyebrow": "Spas · beauty institutes · hair · barbers · massage",
+      "title": "Appointments that do you good, <accent>from booking to checkout.</accent>",
+      "lead": "Your clients book in seconds, at any hour. Your team finds its schedule, its client records, its register and its figures in one place.",
+      "proofs": {
+        "always": "Online booking, day and night",
+        "reminder": "Instant confirmation, reminder the day before",
+        "noDouble": "No slot ever booked twice"
+      }
+    },
+    "returning": {
+      "eyebrow": "Your salon"
+    },
+    "finder": {
+      "titleOther": "Another salon?",
+      "lead": "Tell us your salon, then choose what you came to do.",
+      "addressLabel": "Salon name or address",
+      "addressHint": "For example “Lilac Spa”, or the link from your confirmation email.",
+      "errorTitle": "Could not check",
+      "pending": {
+        "reservation": "Looking up the salon, then opening booking…",
+        "account": "Looking up the salon, then opening your appointments…",
+        "backOffice": "Looking up the salon, then opening the back office…"
+      }
+    },
+    "trust": {
+      "label": "Our commitments",
+      "always": {
+        "title": "Open around the clock",
+        "text": "Free slots can be booked at any hour, in the salon's time zone."
+      },
+      "reminders": {
+        "title": "Automatic reminders",
+        "text": "A confirmation straight away, a reminder 24 hours before, by email or text message."
+      },
+      "payment": {
+        "title": "Secure payment",
+        "text": "Entrusted to Stripe: no card data ever passes through our servers."
+      },
+      "noDouble": {
+        "title": "No double bookings",
+        "text": "A booked slot is locked that very instant, for everyone."
+      }
+    },
+    "trades": {
+      "eyebrow": "Who it is built for",
+      "title": "Every trade built on appointments",
+      "lead": "A service, a duration, a practitioner, a slot: the same mechanics serve a facial and a beard trim alike.",
+      "spa": "Spas",
+      "beauty": "Beauty institutes",
+      "hair": "Hair salons",
+      "barber": "Barbershops"
+    },
+    "loop": {
+      "eyebrow": "Features",
+      "title": "Every step of an appointment, in one place",
+      "lead": "From booking to the end-of-day figures, each step hands over to the next with nothing to retype.",
+      "book": {
+        "title": "Book",
+        "text": "Your client picks a service, a practitioner — or the first one available — and a slot that is free right now."
+      },
+      "confirm": {
+        "title": "Confirm",
+        "text": "The confirmation goes out at once, the reminder the day before. A reschedule or a cancellation tells the salon and the client alike."
+      },
+      "keep": {
+        "title": "Keep the appointment",
+        "text": "The team follows its day on the schedule, pulls up each client's record and marks the no-shows."
+      },
+      "collect": {
+        "title": "Take payment",
+        "text": "At the counter, by card or in cash, services and products alike, with a printed receipt."
+      },
+      "measure": {
+        "title": "Measure",
+        "text": "The day's revenue, the appointment volume and the no-shows, without a spreadsheet."
+      }
+    },
+    "audiences": {
+      "eyebrow": "Who it is for",
+      "title": "Designed for your clients and for the salon team",
+      "clients": {
+        "title": "For clients",
+        "services": "Services, their duration and their price, before choosing",
+        "practitioner": "The practitioner of your choice, or the first one available",
+        "noAccount": "A booking without an account, in seconds",
+        "history": "Your upcoming and past appointments, in your own area",
+        "reschedule": "Rescheduling or cancelling online, without a phone call",
+        "link": "Find my salon"
+      },
+      "teams": {
+        "title": "For the salon team",
+        "schedule": "The day's and the week's schedule, counter bookings included",
+        "records": "Client records: contact details, notes and visit history",
+        "staff": "Team accounts, their roles, hours and time off",
+        "checkout": "Checkout by card or in cash, and the sales history",
+        "figures": "Revenue, appointment volume and no-shows",
+        "link": "Open the back office",
+        "signup": "Not signed up yet? Create my salon"
+      }
+    },
+    "steps": {
+      "eyebrow": "How it works",
+      "title": "Book in three moves",
+      "service": {
+        "title": "Choose your service",
+        "text": "The salon's catalogue shows the duration and the price of every treatment."
+      },
+      "slot": {
+        "title": "Choose your slot",
+        "text": "With the practitioner you want, among the times that are genuinely free."
+      },
+      "done": {
+        "title": "It's confirmed",
+        "text": "You get the confirmation straight away, and a reminder the day before."
+      }
+    },
+    "preview": {
+      "category": "Facial",
+      "service": "Hydrating Glow",
+      "meta": "60 min · with Inès",
+      "day": "Thursday",
+      "toastTitle": "Appointment confirmed",
+      "toastText": "Reminder sent the day before"
+    },
+    "pricing": {
+      "eyebrow": "Pricing",
+      "title": "One plan, everything included",
+      "period": "per month, no commitment",
+      "trial": "{days, plural, one {# day} other {# days}} of free trial — your card is not charged until the trial ends.",
+      "includes": {
+        "page": "Your online booking page, open around the clock",
+        "reminders": "Automatic confirmations and reminders",
+        "schedule": "Day and week schedule, team and working hours",
+        "records": "Client records, notes and visit history",
+        "checkout": "Checkout at the counter, and receipts",
+        "figures": "Revenue, appointments and no-shows at a glance"
+      },
+      "cta": "Start my free trial"
+    },
+    "faq": {
+      "eyebrow": "Frequently asked questions",
+      "title": "Good to know",
+      "address": {
+        "question": "I do not know my salon's address.",
+        "answer": "Just type its name above. The exact link is also in the confirmation email for your last appointment, and the salon can send it to you."
+      },
+      "account": {
+        "question": "Do I need an account to book?",
+        "answer": "No: your contact details are enough. An account then lets you find all your appointments, and reschedule or cancel them online."
+      },
+      "reschedule": {
+        "question": "How do I reschedule or cancel an appointment?",
+        "answer": "From “{door}”, in your salon's client area, for as long as the notice period the salon has set allows. The salon is notified automatically."
+      },
+      "card": {
+        "question": "Is my card data stored?",
+        "answer": "No. Payment is entrusted to Stripe: your card data goes straight from your browser to Stripe, and never through our servers."
+      },
+      "price": {
+        "question": "How much does the platform cost a salon?",
+        "answer": "{days, plural, one {# day} other {# days}} free, then {price} a month, with no commitment. Your card is registered by Stripe when you sign up and is only charged at the end of the trial; you can cancel whenever you like from your back office."
+      },
+      "staff": {
+        "question": "I work in a salon: how do I sign in?",
+        "answer": "Enter the salon above, then choose “{door}”. Your credentials are issued to you by the salon's management."
+      }
+    },
+    "closing": {
+      "title": "Your next appointment starts here.",
+      "signup": "Open my salon — {days, plural, one {# day} other {# days}} free"
+    },
+    "footer": {
+      "text": "Online booking for spas, beauty institutes, hair salons, barbers and massage studios."
+    }
+  },
+  "salon": {
+    "metadata": {
+      "title": "{name} — services and online booking",
+      "descriptionBookable": "Browse the services at {name}, how long they take and what they cost, then book your appointment online.",
+      "descriptionUnavailable": "{name} has not published its services online yet: online booking is not open.",
+      "notFoundTitle": "Salon not found",
+      "fallbackTitle": "Online booking"
+    },
+    "hero": {
+      "directions": "— open directions (new tab)",
+      "ledeBookable": "Browse the services at {name}, how long they take and what they cost, then book your appointment in a few minutes.",
+      "ledeUnavailable": "Online booking is not open yet at {name}.",
+      "call": "Call"
+    },
+    "hours": {
+      "unknownDay": "Day {weekday}",
+      "closed": "Closed",
+      "openUntil": "Open — closes at {time}",
+      "closedOpensAt": "Closed — opens at {time}",
+      "closedOpensTomorrow": "Closed — opens tomorrow at {time}",
+      "closedOpensOnDay": "Closed — opens {day} at {time}"
+    },
+    "catalog": {
+      "title": "Our services",
+      "categoriesLabel": "Catalogue sections",
+      "unclassified": "Other services",
+      "durationLabel": "Duration:",
+      "staffLabel": "Practitioners:",
+      "unstaffed": "No practitioner — no slot bookable online",
+      "priceLabel": "Price:",
+      "choose": "Choose",
+      "emptyTitle": "Catalogue being prepared",
+      "emptyDescription": "This salon has not published its services online yet.",
+      "emptyDescriptionWithContact": "This salon has not published its services online yet. Get in touch directly to find out what it offers."
+    },
+    "contact": {
+      "call": "Call the salon",
+      "email": "Email the salon"
+    },
+    "team": {
+      "title": "The team"
+    },
+    "info": {
+      "label": "Practical information",
+      "emptyTitle": "No information published",
+      "emptyBookable": "This salon has not published its contact details, address or opening hours yet. Online booking is still open.",
+      "emptyUnavailable": "This salon has not published its contact details, address or opening hours yet.",
+      "hoursTitle": "Opening hours",
+      "today": "(today)",
+      "timeZoneHint": "Times are given in the salon time zone ({timeZone}).",
+      "placeTitle": "Find us",
+      "directions": "Directions",
+      "newTab": "(new tab)"
+    },
+    "bookingBar": {
+      "serviceCount": "{count, plural, one {# service} other {# services}}"
+    },
+    "structuredData": {
+      "catalogName": "Services — {name}"
+    },
+    "loading": {
+      "announcement": "Loading the salon page…"
+    },
+    "error": {
+      "title": "The salon page could not be loaded"
+    }
+  },
+  "tunnel": {
+    "page": {
+      "metadataTitle": "Book an appointment at {salon}",
+      "metadataDescription": "Pick your service, your practitioner and your time, then book online at {salon}.",
+      "title": "Book an appointment",
+      "errorTitle": "The booking page could not be loaded"
+    },
+    "loading": {
+      "label": "Loading your booking…"
+    },
+    "header": {
+      "back": "Back",
+      "leave": "Leave",
+      "leaveTitle": "Leave this booking?",
+      "leaveConfirm": "Leave without booking",
+      "stay": "Stay",
+      "leaveNotice": "Your appointment is not booked yet. Your service, your time slot and your details stay saved for as long as this tab is open: you will find them here when you come back."
+    },
+    "progress": {
+      "count": "Step {rank} of {total}",
+      "titles": {
+        "prestation": "Which service?",
+        "creneau": "When would you like to come?",
+        "coordonnees": "How can we reach you?",
+        "recapitulatif": "Is everything correct?",
+        "confirmation": "Your appointment"
+      },
+      "timeZone": "All times in {zone}."
+    },
+    "notices": {
+      "slotLost": {
+        "title": "This time is no longer available",
+        "body": "This time can no longer be booked: it has just been taken, or it has moved outside the hours open for booking. Your service and your details are saved — all that is left is to pick another time below.",
+        "bodyWithSlot": "Your time on {slot} can no longer be booked: it has just been taken, or it has moved outside the hours open for booking. Your service and your details are saved — all that is left is to pick another time below."
+      },
+      "sessionEnded": {
+        "title": "Your session has ended",
+        "body": "Sign in again to confirm this appointment: your service and your time are saved."
+      }
+    },
+    "skeleton": {
+      "loading": {
+        "prestation": "Loading services…",
+        "creneau": "Loading availability…",
+        "coordonnees": "Loading the contact form…",
+        "recapitulatif": "Loading the summary…",
+        "confirmation": "Loading your appointment…"
+      }
+    },
+    "serviceStep": {
+      "submitDisabled": "Choose a service",
+      "submit": "Choose a time"
+    },
+    "serviceChoice": {
+      "legend": "Service",
+      "tabsLabel": "Service categories",
+      "tabsMarked": "service selected",
+      "durationPrefix": "Duration:",
+      "pricePrefix": "Price:",
+      "emptyTitle": "No service can be booked online",
+      "emptyDescription": "This salon has no service open to online booking at the moment. Contact the salon directly to find out what it offers."
+    },
+    "staffChoice": {
+      "legend": "Staff",
+      "noPreference": "First available",
+      "noPreferenceBenefit": "Most time slots",
+      "hint": "With no preference, the salon assigns the first available practitioner.",
+      "noStaffNotice": "No practitioner offers this service at the moment: the salon has no time slot for it."
+    },
+    "slotStep": {
+      "label": "Practitioner and time",
+      "staffChip": "With: {staff}",
+      "staffChipLabel": "Practitioner: {staff}. Choose a practitioner",
+      "staffSheetTitle": "Choose a practitioner",
+      "unknownStaff": "this practitioner",
+      "errorTitle": "Availability could not be loaded",
+      "retry": "Try again",
+      "retrying": "Trying again…",
+      "emptyTitle": "No available times",
+      "emptyTitleMonth": "No available times in {month}",
+      "emptyTitleStaff": "No available times with {staff}",
+      "emptyTitleStaffMonth": "No available times with {staff} in {month}",
+      "emptyDescription": "Try another month, another service, or contact the salon directly.",
+      "emptyDescriptionStaff": "Another month or another practitioner may have room; otherwise contact the salon directly.",
+      "nextMonth": "See next month",
+      "allStaff": "See all practitioners"
+    },
+    "calendar": {
+      "previousMonth": "Previous month",
+      "nextMonth": "Next month",
+      "gridLabel": "Day — {month}",
+      "weekdayInitials": {
+        "monday": "M",
+        "tuesday": "T",
+        "wednesday": "W",
+        "thursday": "T",
+        "friday": "F",
+        "saturday": "S",
+        "sunday": "S"
+      },
+      "weekdays": {
+        "monday": "Monday",
+        "tuesday": "Tuesday",
+        "wednesday": "Wednesday",
+        "thursday": "Thursday",
+        "friday": "Friday",
+        "saturday": "Saturday",
+        "sunday": "Sunday"
+      },
+      "dayLabel": "{date} — {state}",
+      "slotCount": "{count, plural, =0 {no slot} one {# slot} other {# slots}}",
+      "loading": "availability still loading",
+      "outsideWindow": "outside the booking period",
+      "closed": "closed",
+      "full": "fully booked"
+    },
+    "dateBand": {
+      "previousDays": "Previous days",
+      "nextDays": "Next days",
+      "openCalendar": "Open the calendar — {month}",
+      "gridLabel": "Appointment day — {month}"
+    },
+    "slotPicker": {
+      "chooseDate": "Choose a date",
+      "announce": "{count, plural, =0 {No slot} one {# slot} other {# slots}} on {date}.",
+      "announceWithZone": "{count, plural, =0 {No slot} one {# slot} other {# slots}} on {date}, {zone}.",
+      "emptyWindow": "No slot on these days",
+      "fullWindow": "Fully booked from {from} to {to}",
+      "previousSlot": "Previous slot: {date} at {time}",
+      "nextSlot": "Next slot: {date} at {time}",
+      "dayHeading": "Slots on {date}",
+      "dayHeadingWithZone": "Slots on {date} — {zone}",
+      "moments": {
+        "morning": "Morning",
+        "afternoon": "Afternoon",
+        "evening": "Evening"
+      },
+      "spokenSeparator": ":",
+      "lockedSlot": "{time} ({note})"
+    },
+    "summaryBar": {
+      "service": "Service",
+      "staff": "Staff",
+      "dateTime": "Date and time",
+      "total": "Total",
+      "openDetail": "— see your booking details",
+      "title": "Your booking",
+      "cancellation": "Free cancellation until the appointment takes place."
+    },
+    "contactStep": {
+      "identityLabel": "Booked for",
+      "firstName": "First name",
+      "lastName": "Last name",
+      "email": "Email address",
+      "emailHint": "The confirmation will be sent there.",
+      "phone": "Phone",
+      "phoneHint": "Optional, for the SMS reminder.",
+      "note": "A note for the salon",
+      "noteHint": "Allergy, preference, running late — optional.",
+      "submit": "Review my booking",
+      "errors": {
+        "required": "this field is required",
+        "tooLong": "this field is {max} characters at most",
+        "email": "invalid email address",
+        "invalid": "this value is not valid"
+      }
+    },
+    "consent": {
+      "booking": {
+        "intro": "Your details are used to manage this appointment — email confirmation, SMS reminder the day before if you leave a number — and nothing else: no marketing, no resale.",
+        "label": "I have read this information and agree that my data is used for this appointment."
+      },
+      "account": {
+        "intro": "Your details are used to keep your account and your appointments — sign-in, history, email confirmations, SMS reminders if you leave a number — and nothing else: no marketing, no resale.",
+        "label": "I have read this information and agree that my data is used to manage my account and my appointments."
+      },
+      "policyLink": "<policy>Read the data policy (new tab)</policy>",
+      "summary": "What we do with your data",
+      "purposes": {
+        "identity": {
+          "data": "First and last name",
+          "why": "identify your appointment at the salon. Required: without them, there is no booking to honour."
+        },
+        "email": {
+          "data": "Email address",
+          "why": "send you the confirmation, then any cancellation or reschedule notice. Required: it is the channel the salon replies on."
+        },
+        "emailAccount": {
+          "why": "send you the confirmation, then any cancellation or reschedule notice. Required: it is the channel the salon replies on. It is also your sign-in name."
+        },
+        "phone": {
+          "data": "Phone",
+          "why": "send you the reminder by SMS the day before. Optional: without a number, the reminder comes by email only."
+        },
+        "note": {
+          "data": "Note for the salon",
+          "why": "pass on to the practitioner what they need to know for the service. Optional: only write what the salon needs on the day."
+        },
+        "password": {
+          "data": "Password",
+          "why": "protect access to your account. Required, and kept encrypted: nobody, at the salon or here, can read it back."
+        }
+      },
+      "rights": "The salon keeps this data for as long as it follows up with its clients. You can view it, correct it or ask for its deletion at any time, from your account or by writing to the salon.",
+      "error": "tick this box to continue: without your consent, we cannot process your data"
+    },
+    "gateStep": {
+      "title": "Sign in",
+      "label": "Sign-in required to book",
+      "lead": "A {salon} account is needed to book. Your service and your time are saved: you will come straight back here.",
+      "signIn": "Sign in",
+      "register": "Create an account"
+    },
+    "summaryStep": {
+      "label": "Your booking summary",
+      "emailRefusedTitle": "This email address cannot be used here",
+      "emailRefusedBody": "Online booking does not accept this address for this salon. Go back to your details to enter another one: your service and your time are saved. If you would rather keep this address, contact the salon directly.",
+      "failureTitle": "The booking did not go through",
+      "fixContact": "Correct my details",
+      "termsTitle": "Before you confirm",
+      "termsPayment": "<label>Payment on site</label>, on the day of your appointment.",
+      "termsCancellation": "<label>Free cancellation</label> for as long as the appointment has not taken place.",
+      "submitting": "Booking…",
+      "submit": "Confirm booking"
+    },
+    "recap": {
+      "title": "Your details",
+      "editTarget": "my details",
+      "name": "In the name of",
+      "email": "Email address",
+      "phone": "Phone",
+      "note": "Your note to the salon"
+    },
+    "appointmentCard": {
+      "serviceFallback": "Service",
+      "withStaff": "With <name>{staff}</name>",
+      "total": "Total",
+      "editSlotTarget": "the date and time",
+      "editServiceTarget": "the service and the practitioner"
+    },
+    "confirmationStep": {
+      "label": "Your booking confirmation",
+      "snapshotTitle": "Your latest booking in this tab",
+      "snapshotBody": "This summary dates from the moment you booked: it has not been checked since. A reschedule or a cancellation made elsewhere does not show up here — the salon's diary is what counts.",
+      "cancelledTitle": "Your appointment is cancelled",
+      "cancelledLine": "It is no longer in the salon's diary. You can book a new one whenever you like.",
+      "pendingTitle": "Request sent",
+      "pendingLine": "{confirmation}. {hold}",
+      "pendingHold": "Your slot is on hold; there is nothing else for you to do.",
+      "bookedTitle": "You're booked!",
+      "bookedLine": "The salon has confirmed your appointment.",
+      "reference": "Ref.",
+      "sent": "A summary email is on its way to <address>{email}</address>, and a second one once the salon has confirmed. With a client account at {salon}, this appointment appears in your space, where it can be rescheduled and cancelled.",
+      "cancelFailedTitle": "The cancellation did not go through",
+      "confirmCancel": "Confirm cancellation",
+      "cancelling": "Cancelling…",
+      "keep": "Keep my appointment",
+      "addToCalendar": "Add to my calendar",
+      "myAppointments": "See my appointments",
+      "bookAgain": "Book again",
+      "cancel": "Cancel this appointment"
+    },
+    "actions": {
+      "edit": "Edit",
+      "changeService": "Change service",
+      "changeSlot": "Change time",
+      "unexpectedError": "Something went wrong. Please try again.",
+      "availabilityIncomplete": "The availability request is incomplete.",
+      "bookingIncomplete": "The booking details are incomplete.",
+      "signInRequired": "Sign in to book.",
+      "cancelIncomplete": "The cancellation request is incomplete."
+    }
+  },
+  "dataPolicy": {
+    "metadata": {
+      "title": "Data policy — {salonName}",
+      "description": "What data {salonName} collects when you book or create an account, what it is used for, how long it is kept, and how to exercise your rights.",
+      "fallbackTitle": "Data policy"
+    },
+    "loadError": "The data policy could not be loaded",
+    "heading": {
+      "title": "Data policy",
+      "lede": "What {salonName} collects when you book or create an account, what it is used for, how long it is kept, and what you can ask for at any time."
+    },
+    "controller": {
+      "title": "Who processes your data",
+      "body": "<salon>{salonName}</salon> decides what is collected and what is done with it: the salon is your point of contact, and the requests set out below are addressed to it. This booking platform hosts and processes that data on its behalf, and for no other purpose.",
+      "isolation": "Your data stays with this salon: it is not shared with any other salon using the same platform."
+    },
+    "purposes": {
+      "bookingTitle": "When you book an appointment",
+      "accountTitle": "When you create an account",
+      "checkboxWording": "The checkbox on that screen reads, word for word: <quote>“{label}”</quote>"
+    },
+    "legalBasis": {
+      "title": "On what basis, and what we keep as proof",
+      "blocking": "The checkbox on both screens is blocking: the form does not go through until it is ticked.",
+      "proof": "Whether you <strong>book an appointment</strong> or <strong>create an account</strong>, that agreement is also recorded with the <strong>exact date and time</strong> at which you gave it, because the salon must be able to demonstrate that it received it. In both cases the request is refused without it — including when it reaches us by some route other than the form.",
+      "serverClock": "That timestamp is taken by our servers at the moment your agreement reaches us: it is never supplied by the device you are writing from, so that it keeps its value as proof.",
+      "serviceMessages": "Three processing activities do not depend on it, and that has to be said: your appointment confirmation, the day-before reminder and the cancellation notice are part of performing the service you asked for. Switching them off would deprive you of exactly what you came for."
+    },
+    "recipients": {
+      "title": "Who else sees it",
+      "team": "<strong>The salon team</strong> — the people who keep the diary and run the counter.",
+      "senders": "<strong>The sending services</strong> — an email provider and an SMS provider, which receive your address or your number for as long as it takes to deliver the message, and nothing else.",
+      "paymentProvider": "<strong>The payment provider</strong> — if you pay online. Your card details are entered with them and <strong>never reach our servers</strong>: we keep nothing but an opaque reference, which allows neither replaying a payment nor reconstructing a number.",
+      "noSale": "No data is sold, exchanged or passed on to a third party for commercial purposes."
+    },
+    "retention": {
+      "title": "How long, and your rights",
+      "anonymisation": "A deletion request does not erase the accounting record of payments already taken, which the business is required to keep: your record is <strong>anonymised</strong> instead — name, contact details and notes removed — and what is left can no longer be linked to you.",
+      "selfService": "You can correct your contact details yourself from <account>your client area</account>. For an export or a deletion, write to the salon — it is your point of contact and has the tools to answer."
+    },
+    "backToSalon": {
+      "title": "Back to the salon",
+      "services": "Services at {salonName}",
+      "booking": "Book an appointment",
+      "account": "My client area"
+    }
+  },
+  "errors": {
+    "serviceUnavailable": "The booking service is temporarily unreachable. Please try again in a moment.",
+    "unexpected": "Something went wrong. Please try again in a moment."
+  }
+}
