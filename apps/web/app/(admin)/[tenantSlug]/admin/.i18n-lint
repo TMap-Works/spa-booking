@@ -5,3 +5,15 @@
 layout.tsx
 components/admin-rail.tsx
 components/admin-topbar.tsx
+
+# #853 — connexion, invitation et réglages. Les trois écrans portent leur propre
+# marqueur dans leur répertoire ; ce qui suit est ce qu'ils partagent avec le
+# reste du back-office et qui n'a nulle part ailleurs où être déclaré.
+error.tsx
+guard.tsx
+components/admin-login-form.tsx
+components/admin-invitation-form.tsx
+components/admin-logout-button.tsx
+components/admin-retry-button.tsx
+components/establishment-switcher.tsx
+components/tenant-settings-form.tsx

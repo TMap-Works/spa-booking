@@ -1,8 +1,9 @@
+import { getLocale, getTranslations } from 'next-intl/server';
 import { notFound, redirect } from 'next/navigation';
 
 import { AuthScreen, type AuthHighlight } from '@/components/auth/auth-screen';
 import { PHOTOS } from '@/lib/photos';
-import { PUBLIC_EXIT_LABELS } from '@/components/salon/public-exits';
+import { publicExitLabels } from '@/components/salon/public-exits';
 import { PLATFORM_HOME_PATH, PLATFORM_NAME } from '@/lib/platform';
 import { readSalonIdentity } from '@/lib/salon-identity';
 import { salonPath } from '@/app/(account)/[tenantSlug]/compte/paths';
@@ -23,15 +24,13 @@ import { adminCalendarPath } from '../paths';
  *
  * Même conduite que la connexion : servie sans session, redirigée quand il y en
  * a une (#760) — une session ouverte n'a pas de compte à activer.
+ *
+ * Ses mots viennent du catalogue `admin-auth` (#853), comme ceux de la
+ * connexion, et par le même chemin : `getTranslations`, la page étant
+ * asynchrone.
  */
 
 export const dynamic = 'force-dynamic';
-
-const WELCOME_HIGHLIGHTS: readonly AuthHighlight[] = [
-  { icon: 'store', text: 'Vos prestations, vos horaires et votre vitrine' },
-  { icon: 'users', text: 'Votre équipe et vos fiches clientes' },
-  { icon: 'calendar', text: 'Le planning et les réservations en ligne' },
-];
 
 interface AdminInvitationPageProps {
   readonly params: Promise<{ readonly tenantSlug: string }>;
@@ -56,17 +55,24 @@ export default async function AdminInvitationPage({
   }
 
   const { token } = await searchParams;
+  const [t, locale] = await Promise.all([getTranslations('admin-auth'), getLocale()]);
+
+  const highlights: readonly AuthHighlight[] = [
+    { icon: 'store', text: t('invitation.highlights.store') },
+    { icon: 'users', text: t('invitation.highlights.users') },
+    { icon: 'calendar', text: t('invitation.highlights.calendar') },
+  ];
 
   return (
     <AuthScreen
       salonName={salon.status === 'found' ? salon.name : null}
-      headline="Bienvenue dans votre back-office"
-      lead="Choisissez votre mot de passe : vous arriverez directement dans votre espace."
-      highlights={WELCOME_HIGHLIGHTS}
+      headline={t('invitation.headline')}
+      lead={t('invitation.lead')}
+      highlights={highlights}
       photo={PHOTOS.soinVisage}
       exits={[
-        { href: salonPath(tenantSlug), label: PUBLIC_EXIT_LABELS.vitrine },
-        { href: PLATFORM_HOME_PATH, label: `Accueil ${PLATFORM_NAME}` },
+        { href: salonPath(tenantSlug), label: publicExitLabels(locale).vitrine },
+        { href: PLATFORM_HOME_PATH, label: t('platformHome', { platform: PLATFORM_NAME }) },
       ]}
     >
       <AdminInvitationForm

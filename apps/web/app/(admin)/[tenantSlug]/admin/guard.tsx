@@ -1,4 +1,5 @@
-import { ERROR_CODES, type Permission } from '@spa/shared';
+import { ERROR_CODES, errorMessage, type Locale, type Permission } from '@spa/shared';
+import { useLocale, useTranslations } from 'next-intl';
 import type { ReactElement } from 'react';
 import { redirect } from 'next/navigation';
 
@@ -87,25 +88,42 @@ export async function requireAdminAccessToken(
 }
 
 /**
- * Ce que le back-office dit d'une API injoignable — et qui n'est pas ce que le
- * client public en dit (#755).
+ * Ce que le back-office dit d'un échec de chargement — dans la langue de la
+ * requête (#755, #853).
+ *
+ * ## Le texte de la panne est le nôtre
  *
  * `lib/api-client.ts` construit, pour une coupure réseau, un
  * `SERVICE_UNAVAILABLE` dont le message nomme « le service de réservation ». Il
  * est juste devant un visiteur en train de réserver ; il ne l'est plus sur
  * l'encaissement, le planning ou les réglages, où il fait chercher à l'opérateur
- * ce que la réservation vient faire dans son écran de comptoir.
+ * ce que la réservation vient faire dans son écran de comptoir. Le back-office
+ * écrit donc la sienne, au catalogue `admin-auth.guard`.
+ *
+ * ## Les autres refus viennent du contrat, non du corps de la réponse
  *
  * C'est le **`code`** qui est lu et non le message, comme le veulent
  * `web-frontend` §2 et `docs/design/appointments/states.md` : le message est ce
- * qui change d'une version d'API à l'autre, le code est ce qui tient.
+ * qui change d'une version d'API à l'autre — et il n'est pas traduit, l'API
+ * l'écrivant pour un journal —, le code est ce qui tient. `errorMessage(code,
+ * locale)` de `@spa/shared` en porte une phrase par langue (#845).
+ *
+ * ## Pourquoi un composant et non une fonction
+ *
+ * `adminLoadFailure` est **synchrone** — huit écrans l'appellent depuis un
+ * composant asynchrone, où aucun crochet ne s'appelle. La langue se lit donc là
+ * où elle peut se lire : dans un Server Component non asynchrone, rendu par
+ * React au moment où l'encart se peint. Rendre `adminLoadFailure` asynchrone
+ * aurait demandé de réécrire ses huit appelants, tous hors de l'empreinte de ce
+ * ticket.
  */
-const UNREACHABLE_MESSAGE =
-  'Le serveur du salon est momentanément injoignable. Réessayez dans un instant.';
+function AdminFailureMessage({ code }: { readonly code: string }) {
+  const t = useTranslations('admin-auth.guard');
+  const locale = useLocale() as Locale;
 
-/** Le texte à afficher pour cet échec — le nôtre s'il s'agit d'une panne. */
-function failureMessage(error: ApiClientError): string {
-  return error.code === ERROR_CODES.SERVICE_UNAVAILABLE ? UNREACHABLE_MESSAGE : error.message;
+  return (
+    <p>{code === ERROR_CODES.SERVICE_UNAVAILABLE ? t('unreachable') : errorMessage(code, locale)}</p>
+  );
 }
 
 /**
@@ -227,7 +245,7 @@ export function adminLoadFailure(
 
   return (
     <Notification tone="danger" title={options.failedTitle}>
-      <p>{failureMessage(error)}</p>
+      <AdminFailureMessage code={error.code} />
       <AdminRetryButton />
     </Notification>
   );

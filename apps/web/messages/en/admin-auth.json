@@ -1,0 +1,91 @@
+{
+  "platformHome": "{platform} home",
+  "login": {
+    "headline": "Your salon's back office",
+    "lead": "Your whole day in one place: schedule, clients, till and activity.",
+    "highlights": {
+      "calendar": "The schedule for the day and the week",
+      "users": "Client records and the salon team",
+      "card": "Front-desk checkout, by card or in cash",
+      "chart": "Revenue, appointments and no-shows"
+    },
+    "title": "Back office — sign in",
+    "email": "Email address",
+    "password": "Password",
+    "submit": "Sign in",
+    "submitting": "Signing in…",
+    "notices": {
+      "session-expiree": {
+        "title": "Your session has expired",
+        "body": "Sign in again to pick up where you left off."
+      },
+      "renouvellement-indisponible": {
+        "title": "Session not renewed for now",
+        "body": "You have not been signed out: renewing your session did not go through just now. Try again in a few seconds."
+      },
+      "retry": "Try again"
+    },
+    "failures": {
+      "invalidCredentials": {
+        "title": "Sign-in refused",
+        "message": "Incorrect email address or password."
+      },
+      "unreachable": {
+        "title": "Service unavailable",
+        "message": "The service is temporarily unreachable. Please try again in a moment."
+      },
+      "throttled": {
+        "title": "Too many attempts",
+        "message": "Too many sign-in attempts in a short time. Wait a minute before trying again."
+      },
+      "unknownTitle": "Sign-in failed"
+    },
+    "noAccess": {
+      "title": "No back-office screen for this account",
+      "closed": "The back office opens no section for you, and the session has just been closed. Your appointments are available from your client area.",
+      "stillOpen": "The back office opens no section for you. The session could not be closed: close this tab, or sign out from your client area, where your appointments are available."
+    }
+  },
+  "invitation": {
+    "headline": "Welcome to your back office",
+    "lead": "Choose your password: you will land straight in your workspace.",
+    "highlights": {
+      "store": "Your services, your opening hours and your storefront",
+      "users": "Your team and your client records",
+      "calendar": "The schedule and online bookings"
+    },
+    "title": "Activate your account",
+    "password": "Password",
+    "passwordHint": "Twelve characters minimum.",
+    "confirmation": "Confirm the password",
+    "mismatch": "the two passwords do not match",
+    "submit": "Activate my account",
+    "submitting": "Activating…",
+    "missingToken": {
+      "title": "Incomplete link",
+      "body": "This link carries no activation code. Open the full link you received, without shortening it."
+    },
+    "failureTitle": "Activation failed",
+    "expiredLink": "This activation link is no longer valid: it has expired, or it has already been used. Ask for a new link from the person who sent it to you — or, if your account is already active, sign in.",
+    "goToLogin": "Go to sign-in"
+  },
+  "logout": {
+    "label": "Sign out",
+    "pending": "Signing out…"
+  },
+  "retry": {
+    "label": "Try again",
+    "pending": "Retrying…"
+  },
+  "error": {
+    "title": "Screen unavailable",
+    "noticeTitle": "This screen could not be displayed",
+    "noticeMessage": "An unexpected error interrupted this screen. Try again in a moment."
+  },
+  "guard": {
+    "unreachable": "The salon server is temporarily unreachable. Try again in a moment."
+  },
+  "establishment": {
+    "switchLabel": "Change establishment"
+  }
+}

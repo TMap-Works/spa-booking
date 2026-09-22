@@ -1,5 +1,7 @@
 'use client';
 
+import { useTranslations } from 'next-intl';
+
 import { RouteError } from '@/components/ui/route-error';
 
 interface AdminErrorProps {
@@ -19,18 +21,23 @@ interface AdminErrorProps {
  *
  * Le titre de niveau 1 remplace celui de l'écran qui n'a pas pu s'afficher : la
  * zone de contenu ne reste pas sans nom.
+ *
+ * ## La langue tient, même ici (#853)
+ *
+ * Une frontière d'erreur est un Client Component rendu **dans** l'arbre du
+ * `NextIntlClientProvider` du gabarit racine : `useTranslations` y fonctionne
+ * comme ailleurs, et l'écran de panne reste dans la langue de la session plutôt
+ * que de retomber en français au pire moment.
  */
 export default function AdminError({ reset }: AdminErrorProps) {
+  const t = useTranslations('admin-auth.error');
+
   return (
     <section aria-labelledby="ecran-indisponible-titre">
       <h1 className="spa-admin__title" id="ecran-indisponible-titre">
-        Écran indisponible
+        {t('title')}
       </h1>
-      <RouteError
-        message="Une erreur inattendue a interrompu l’affichage de cet écran. Réessayez dans un instant."
-        reset={reset}
-        title="Cet écran n’a pas pu s’afficher"
-      />
+      <RouteError message={t('noticeMessage')} reset={reset} title={t('noticeTitle')} />
     </section>
   );
 }

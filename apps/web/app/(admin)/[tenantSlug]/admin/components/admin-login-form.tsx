@@ -1,10 +1,18 @@
 'use client';
 
 import { zodResolver } from '@hookform/resolvers/zod';
-import { ERROR_CODES, loginRequestSchema, type LoginRequest } from '@spa/shared';
+import {
+  ERROR_CODES,
+  errorMessage,
+  loginRequestSchema,
+  zodErrorMap,
+  type Locale,
+  type LoginRequest,
+} from '@spa/shared';
+import { useLocale, useTranslations } from 'next-intl';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useForm } from 'react-hook-form';
 
 import { Button } from '@/components/ui/button';
@@ -83,6 +91,17 @@ import { adminLandingPath } from './navigation';
  *
  * `block` sur le bouton n'en devient que plus juste : il mesure désormais une
  * colonne bornée, et non la fenêtre (`styles/README.md` §2).
+ *
+ * ## Les mots viennent du catalogue `admin-auth` (#853)
+ *
+ * Titres, libellés et encarts sont lus par `useTranslations`. Ce qui change en
+ * plus des libellés, c'est la **source du texte d'un refus** : jusqu'ici l'écran
+ * réaffichait le `message` que l'API met dans son corps, écrit dans une langue
+ * qui n'est pas négociée et destiné au diagnostic. Il lit désormais
+ * `errorMessage(code, locale)` du contrat partagé (#845), qui porte une phrase
+ * par code et par langue — c'est la règle que l'espace client suit depuis #847,
+ * et celle qu'énonce `errors/error-codes.ts` : *« le front réagit sur `code`,
+ * jamais sur `message` »*.
  */
 
 /** Ce qu'un échec affiche : un titre **et** son explication, jamais l'un sans l'autre. */
@@ -92,52 +111,8 @@ interface AdminLoginFailure {
 }
 
 /**
- * Ce que l'écran écrit lui-même d'une cause d'échec — le titre, et le texte
- * quand répéter celui de l'API ne va pas.
- */
-interface FailureCopy {
-  readonly title: string;
-  /**
-   * Le texte de l'encart, quand cet écran l'écrit plutôt que de répéter le
-   * `message` de l'API. Absent, c'est le message de l'API qui s'affiche : il en
-   * dit souvent plus que ce qu'on réécrirait par-dessus.
-   */
-  readonly message?: string;
-}
-
-/**
- * Le quota de la route d'authentification est atteint.
- *
- * Dix tentatives par minute **sur ce compte** — l'établissement et l'adresse
- * saisie — sur `POST /auth/login` (`auth.controller.ts`, #1127) : passé ce
- * quota, ce sont les essais qui sont refusés, pas le mot de passe — et le
- * réécrire n'y changerait rien. Le texte reste juste maintenant que le compteur
- * a changé, et il l'est même davantage : jusqu'à #1127 le quota était celui de
- * la plateforme entière, et cet encart pouvait s'afficher sur un premier essai,
- * parce qu'un autre salon venait de consommer les dix.
- *
- * Le texte vient d'ici et non de l'API : `ThrottlerGuard` répond
- * « ThrottlerException: Too Many Requests », une phrase anglaise qui nomme une
- * classe d'exception. `checkout-summary.ts` écrit la sienne pour ce code, pour
- * la même raison.
- */
-const THROTTLED: FailureCopy = {
-  title: 'Trop de tentatives',
-  message:
-    'Trop de tentatives de connexion en peu de temps. Patientez une minute avant de réessayer.',
-};
-
-/** Le service n'a pas répondu — vu de la passerelle, qui n'a pas de message à nous. */
-const UNREACHABLE: FailureCopy = {
-  title: 'Service indisponible',
-  // Le repli de `api-client.ts` est un « une erreur inattendue est survenue »
-  // qui n'apprend rien : la même panne mérite la même phrase que celle qu'il
-  // écrit quand il la reconnaît lui-même.
-  message: 'Le service est momentanément injoignable. Merci de réessayer dans un instant.',
-};
-
-/**
- * Ce que porte chaque cause d'échec (#759).
+ * Les causes d'échec que cet écran sait nommer, et la clé de catalogue de
+ * chacune (#759, #853).
  *
  * ## Le défaut corrigé : un titre constant au-dessus d'un corps variable
  *
@@ -149,16 +124,17 @@ const UNREACHABLE: FailureCopy = {
  * titre que l'œil lit d'abord — un gérant en conclut qu'il s'est trompé de mot
  * de passe et va changer ce qui n'avait rien.
  *
- * Les deux moitiés se décident donc **ici, ensemble** : les séparer, c'était
- * précisément ce qui les avait laissées diverger.
+ * Les deux moitiés se décident donc **ensemble**, sous une clé unique : les
+ * séparer, c'était précisément ce qui les avait laissées diverger.
  *
  * ## Pourquoi le `code` et non le `message`
  *
  * `web-frontend` §2 et `docs/design/appointments/states.md` (« Règles
  * générales ») demandent de réagir sur le **`code`** de l'erreur typée
  * (`{ code, message, details }`), jamais sur le `message` : le message est ce
- * qui change d'une version d'API à l'autre, le code est ce qui tient. C'est
- * déjà ce que fait `guard.tsx` pour le texte des pages du back-office.
+ * qui change d'une version d'API à l'autre — et il n'est pas traduit —, le code
+ * est ce qui tient. C'est déjà ce que fait `guard.tsx` pour le texte des pages
+ * du back-office.
  *
  * ## Les `HTTP_<statut>` sont énumérés avec leur code de contrat
  *
@@ -171,6 +147,12 @@ const UNREACHABLE: FailureCopy = {
  * `lib/admin/checkout-summary.ts` apparie les deux écritures pour cette raison ;
  * ces codes-là ne sont pas des codes du contrat et ne heurtent pas le garde de
  * littéraux de `packages/shared` (#546).
+ *
+ * Le quota, lui, est celui de la route d'authentification : dix tentatives par
+ * minute **sur ce compte** — l'établissement et l'adresse saisie — sur
+ * `POST /auth/login` (`auth.controller.ts`, #1127). Passé ce quota, ce sont les
+ * essais qui sont refusés, pas le mot de passe, et le réécrire n'y changerait
+ * rien.
  *
  * ## Ce que le repli dit, et ce qu'il se garde de dire
  *
@@ -191,38 +173,19 @@ const UNREACHABLE: FailureCopy = {
  * objet, que `<Notification>` ne sait pas afficher — l'écran tomberait au lieu
  * d'afficher un refus. Une `Map` n'a pas de chaîne de prototype à traverser.
  */
-const FAILURE_COPY: ReadonlyMap<string, FailureCopy> = new Map<string, FailureCopy>([
-  [
-    ERROR_CODES.INVALID_CREDENTIALS,
-    {
-      title: 'Connexion refusée',
-      // L'API ne dit jamais **lequel** des deux est faux, et cet écran non plus.
-      message: 'Adresse e-mail ou mot de passe incorrect.',
-    },
-  ],
-  // Le message de l'API nomme déjà la panne quand elle vient de notre propre
-  // `fetch` ; on le laisse dire, et l'on n'écrit à sa place que lorsqu'il manque.
-  [ERROR_CODES.SERVICE_UNAVAILABLE, { title: UNREACHABLE.title }],
-  ['HTTP_503', UNREACHABLE],
-  [ERROR_CODES.TOO_MANY_REQUESTS, THROTTLED],
-  ['HTTP_429', THROTTLED],
+type FailureKey = 'invalidCredentials' | 'unreachable' | 'throttled';
+
+const FAILURE_KEYS: ReadonlyMap<string, FailureKey> = new Map<string, FailureKey>([
+  [ERROR_CODES.INVALID_CREDENTIALS, 'invalidCredentials'],
+  [ERROR_CODES.SERVICE_UNAVAILABLE, 'unreachable'],
+  ['HTTP_503', 'unreachable'],
+  [ERROR_CODES.TOO_MANY_REQUESTS, 'throttled'],
+  ['HTTP_429', 'throttled'],
 ]);
 
-/** Le titre d'un échec dont le code ne nomme aucune cause connue de cet écran. */
-const UNKNOWN_FAILURE_TITLE = 'Connexion impossible';
-
-/** L'encart à afficher pour ce refus — titre et texte décidés du même geste. */
-function failureNotice(code: string, message: string): AdminLoginFailure {
-  const copy = FAILURE_COPY.get(code);
-
-  return {
-    title: copy?.title ?? UNKNOWN_FAILURE_TITLE,
-    message: copy?.message ?? message,
-  };
-}
-
 /**
- * Ce que l'écran dit du chemin qui y mène — et qu'il ne disait pas (#860).
+ * Le **ton** de chaque motif de retour — la seule part qui ne se traduise pas
+ * (#860, #853).
  *
  * Le back-office ne portait aucun motif : un renouvellement refusé par le
  * limiteur déposait l'opérateur devant ce formulaire, muet, qui ne se lit que
@@ -233,27 +196,18 @@ function failureNotice(code: string, message: string): AdminLoginFailure {
  * dit qu'il ne faut rien faire d'autre qu'attendre. Le ton suit — `warning` pour
  * une session finie, `info` pour une attente de quelques secondes.
  *
- * Séparé de `FAILURE_COPY` à dessein : celle-ci écrit ce qu'une **tentative de
- * connexion** a donné, celle-là ce qui a **amené ici**. Les deux encarts peuvent
- * d'ailleurs coexister — on peut échouer à se connecter sur un écran où l'on
- * vient d'arriver par un renouvellement raté.
+ * Séparé des causes d'échec à dessein : celles-ci disent ce qu'une **tentative
+ * de connexion** a donné, celui-là ce qui a **amené ici**. Les deux encarts
+ * peuvent d'ailleurs coexister — on peut échouer à se connecter sur un écran où
+ * l'on vient d'arriver par un renouvellement raté.
+ *
+ * Les phrases sont au catalogue sous `admin-auth.login.notices`, **à la clé du
+ * motif** : c'est la même chaîne que l'URL porte (`?motif=`), si bien qu'un
+ * motif ajouté à `SESSION_NOTICES` sans ses deux traductions fait échouer `tsc`.
  */
-const NOTICE_COPY: Readonly<
-  Record<
-    SessionNotice,
-    { readonly tone: NotificationTone; readonly title: string; readonly body: string }
-  >
-> = {
-  'session-expiree': {
-    tone: 'warning',
-    title: 'Votre session a expiré',
-    body: 'Reconnectez-vous pour reprendre là où vous en étiez.',
-  },
-  'renouvellement-indisponible': {
-    tone: 'info',
-    title: 'Session non renouvelée pour l’instant',
-    body: 'Vous n’avez pas été déconnecté·e : le renouvellement de votre session n’a pas abouti à l’instant. Réessayez dans quelques secondes.',
-  },
+const NOTICE_TONES: Readonly<Record<SessionNotice, NotificationTone>> = {
+  'session-expiree': 'warning',
+  'renouvellement-indisponible': 'info',
 };
 
 interface AdminLoginFormProps {
@@ -263,25 +217,54 @@ interface AdminLoginFormProps {
 }
 
 export function AdminLoginForm({ tenantSlug, notice }: AdminLoginFormProps) {
+  const t = useTranslations('admin-auth.login');
+  const locale = useLocale() as Locale;
   const router = useRouter();
   const [failure, setFailure] = useState<AdminLoginFailure | null>(null);
+  // Les refus des champs viennent de zod, donc de `zodErrorMap` — « adresse
+  // e-mail attendue » et non « Invalid email » sous un formulaire français, ni
+  // l'inverse sous un formulaire anglais (#845). Mémoïsé sur la langue, comme
+  // les deux autres formulaires de cette surface : un résolveur neuf à chaque
+  // frappe serait reconstruit par `react-hook-form` sans rien changer.
+  //
+  // `path` et `async` sont là pour le **typage** de `@hookform/resolvers`,
+  // qui déclare `ParseParams` entier là où zod n'en lit qu'une partie : au
+  // runtime, `safeParseAsync` force `async: true` et retombe sur `path: []`.
+  const resolver = useMemo(
+    () => zodResolver(loginRequestSchema, { errorMap: zodErrorMap(locale), path: [], async: true }),
+    [locale],
+  );
 
   const {
     register,
     handleSubmit,
     formState: { errors, isSubmitting },
   } = useForm<LoginRequest>({
-    resolver: zodResolver(loginRequestSchema),
+    resolver,
     defaultValues: { email: '', password: '' },
     mode: 'onTouched',
   });
+
+  /** L'encart à afficher pour ce refus — titre et texte décidés du même geste. */
+  function failureNotice(code: string): AdminLoginFailure {
+    const key = FAILURE_KEYS.get(code);
+
+    if (key === undefined) {
+      return { title: t('failures.unknownTitle'), message: errorMessage(code, locale) };
+    }
+
+    return {
+      title: t(`failures.${key}.title` as 'failures.unreachable.title'),
+      message: t(`failures.${key}.message` as 'failures.unreachable.message'),
+    };
+  }
 
   const submit = handleSubmit(async (values) => {
     setFailure(null);
     const result = await adminLoginAction(tenantSlug, values);
 
     if (!result.ok) {
-      setFailure(failureNotice(result.code, result.message));
+      setFailure(failureNotice(result.code));
       return;
     }
 
@@ -301,10 +284,8 @@ export function AdminLoginForm({ tenantSlug, notice }: AdminLoginFormProps) {
       // Le mot de passe était bon : ce n'est pas un refus d'identité, et le dire
       // comme tel enverrait chercher une faute de frappe qui n'existe pas.
       setFailure({
-        title: 'Aucun écran du back-office pour ce compte',
-        message: closed
-          ? 'Le back-office ne vous ouvre aucune section, et la session vient d’être refermée. Vos rendez-vous se consultent depuis votre espace client.'
-          : 'Le back-office ne vous ouvre aucune section. La session n’a pas pu être refermée : fermez cet onglet ou déconnectez-vous depuis votre espace client, où se consultent vos rendez-vous.',
+        title: t('noAccess.title'),
+        message: closed ? t('noAccess.closed') : t('noAccess.stillOpen'),
       });
       return;
     }
@@ -324,12 +305,15 @@ export function AdminLoginForm({ tenantSlug, notice }: AdminLoginFormProps) {
       noValidate
     >
       <h1 className="spa-admin__section-title" id="admin-connexion-titre">
-        Back-office — se connecter
+        {t('title')}
       </h1>
 
       {notice === null ? null : (
-        <Notification tone={NOTICE_COPY[notice].tone} title={NOTICE_COPY[notice].title}>
-          <p>{NOTICE_COPY[notice].body}</p>
+        <Notification
+          tone={NOTICE_TONES[notice]}
+          title={t(`notices.${notice}.title` as 'notices.session-expiree.title')}
+        >
+          <p>{t(`notices.${notice}.body` as 'notices.session-expiree.body')}</p>
           {/*
            * Une reprise, comme l'exige `docs/design/appointments/states.md`
            * (« Règles générales ») de tout état d'erreur — et comme `guard.tsx`
@@ -340,7 +324,7 @@ export function AdminLoginForm({ tenantSlug, notice }: AdminLoginFormProps) {
            */}
           {notice === 'renouvellement-indisponible' ? (
             <p>
-              <Link href={adminCalendarPath(tenantSlug)}>Réessayer</Link>
+              <Link href={adminCalendarPath(tenantSlug)}>{t('notices.retry')}</Link>
             </p>
           ) : null}
         </Notification>
@@ -354,7 +338,7 @@ export function AdminLoginForm({ tenantSlug, notice }: AdminLoginFormProps) {
 
       <Field
         id="admin-login-email"
-        label="Adresse e-mail"
+        label={t('email')}
         type="email"
         autoComplete="email"
         required
@@ -363,7 +347,7 @@ export function AdminLoginForm({ tenantSlug, notice }: AdminLoginFormProps) {
       />
       <Field
         id="admin-login-password"
-        label="Mot de passe"
+        label={t('password')}
         type="password"
         autoComplete="current-password"
         required
@@ -375,9 +359,9 @@ export function AdminLoginForm({ tenantSlug, notice }: AdminLoginFormProps) {
         variant="accent"
         block
         loading={isSubmitting}
-        loadingLabel="Connexion en cours…"
+        loadingLabel={t('submitting')}
       >
-        Se connecter
+        {t('submit')}
       </Button>
     </form>
   );
