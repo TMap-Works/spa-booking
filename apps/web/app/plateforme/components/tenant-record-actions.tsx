@@ -3,9 +3,11 @@
 import {
   ERROR_CODES,
   PLATFORM_NOTE_MAX_LENGTH,
+  PLATFORM_STATUS_REASON_MIN_LENGTH,
   PLATFORM_STATUS_REASON_MAX_LENGTH,
   type TenantAccessLinks,
 } from '@spa/shared';
+import { useTranslations } from 'next-intl';
 import { useRouter } from 'next/navigation';
 import { useState, type FormEvent } from 'react';
 
@@ -29,10 +31,32 @@ import { AccessLinks } from './access-links';
  * Chacun passe par une action serveur, et chacun laisse une ligne dans
  * l'historique : la fiche se relit après coup (`router.refresh()`), plutôt que
  * d'insérer d'elle-même une ligne que la base n'aurait pas confirmée.
+ *
+ * ## Les refus sont lus sur le code (#1106)
+ *
+ * Les messages que portent les refus — ceux du contrat partagé comme ceux de
+ * l'API — sont écrits en français côté serveur. Chaque panneau traduit donc le
+ * **code**, avec un message qui dit ce que *ce* geste a refusé : un
+ * `VALIDATION_ERROR` sur la suspension parle du motif manquant, le même code sur
+ * une note parle de la note.
  */
 
-/** Une session expirée renvoie à la connexion ; tout autre refus s'affiche. */
-function useRefusal(): (result: PlatformActionResult<unknown>) => string | null {
+type GenericErrorKey = 'tooManyRequests' | 'unavailable' | 'unexpected';
+
+/** Les refus qui ne dépendent pas du geste, et ce qu'ils disent. */
+const GENERIC_ERROR_KEYS: Readonly<Record<string, GenericErrorKey>> = {
+  [ERROR_CODES.TOO_MANY_REQUESTS]: 'tooManyRequests',
+  [ERROR_CODES.SERVICE_UNAVAILABLE]: 'unavailable',
+};
+
+/**
+ * Une session expirée renvoie à la connexion ; tout autre refus rend la clé de
+ * ce qu'il faut afficher.
+ *
+ * `null` couvre les deux cas où l'écran n'a rien à dire : le geste a réussi, ou
+ * la navigation est déjà partie vers la connexion.
+ */
+function useRefusal(): (result: PlatformActionResult<unknown>) => GenericErrorKey | null {
   const router = useRouter();
 
   return (result) => {
@@ -43,7 +67,7 @@ function useRefusal(): (result: PlatformActionResult<unknown>) => string | null 
       router.replace(PLATFORM_SESSION_END_PATH);
       return null;
     }
-    return result.message;
+    return GENERIC_ERROR_KEYS[result.code] ?? 'unexpected';
   };
 }
 
@@ -52,6 +76,7 @@ function useRefusal(): (result: PlatformActionResult<unknown>) => string | null 
  * l'historique garde.
  */
 export function TenantAccessPanel({ tenantId }: { readonly tenantId: string }) {
+  const t = useTranslations('platform');
   const router = useRouter();
   const refusal = useRefusal();
   const [pending, setPending] = useState(false);
@@ -68,11 +93,12 @@ export function TenantAccessPanel({ tenantId }: { readonly tenantId: string }) {
         router.refresh();
         return;
       }
-      setError(
-        result.code === ERROR_CODES.TENANT_ADMIN_MISSING
-          ? 'Ce salon n’a aucun compte administrateur à réinviter.'
-          : refusal(result),
-      );
+      if (result.code === ERROR_CODES.TENANT_ADMIN_MISSING) {
+        setError(t('actions.noAdmin'));
+        return;
+      }
+      const key = refusal(result);
+      setError(key === null ? null : t(`errors.${key}`));
     } finally {
       setPending(false);
     }
@@ -80,27 +106,25 @@ export function TenantAccessPanel({ tenantId }: { readonly tenantId: string }) {
 
   return (
     <div className="spa-console-record__stack">
-      <p className="spa-admin-toolbar__hint">
-        Émet une nouvelle invitation pour l’administrateur et affiche les trois liens à lui
-        remettre. Sans effet sur un compte déjà activé, sinon de redonner l’adresse du
-        back-office.
-      </p>
+      <p className="spa-admin-toolbar__hint">{t('actions.accessHint')}</p>
       <Button
         loading={pending}
-        loadingLabel="Réémission de l’invitation…"
+        loadingLabel={t('actions.accessPending')}
         onClick={() => void reissue()}
         variant="neutral"
       >
-        {links === null ? 'Renvoyer les liens d’accès' : 'Réémettre à nouveau'}
+        {links === null ? t('actions.accessSend') : t('actions.accessAgain')}
       </Button>
       {error === null ? null : (
-        <Notification tone="danger" title="Liens indisponibles">
+        <Notification tone="danger" title={t('actions.linksUnavailable')}>
           <p>{error}</p>
         </Notification>
       )}
       {links === null ? null : (
         <>
-          <p className="spa-admin-toolbar__hint">Nouvelle invitation émise pour {links.email}.</p>
+          <p className="spa-admin-toolbar__hint">
+            {t('actions.accessIssued', { email: links.email })}
+          </p>
           <AccessLinks idPrefix={`fiche-${tenantId}`} links={links.links} />
         </>
       )}
@@ -122,6 +146,7 @@ export function TenantStatusPanel({
   readonly tenantId: string;
   readonly isActive: boolean;
 }) {
+  const t = useTranslations('platform');
   const router = useRouter();
   const refusal = useRefusal();
   const [open, setOpen] = useState(false);
@@ -131,8 +156,8 @@ export function TenantStatusPanel({
 
   const submit = async (event: FormEvent<HTMLFormElement>): Promise<void> => {
     event.preventDefault();
-    if (reason.trim().length < 3) {
-      setError('Indiquez le motif — il est gardé dans l’historique du salon.');
+    if (reason.trim().length < PLATFORM_STATUS_REASON_MIN_LENGTH) {
+      setError(t('actions.reasonRequired'));
       return;
     }
     setPending(true);
@@ -148,7 +173,12 @@ export function TenantStatusPanel({
         router.refresh();
         return;
       }
-      setError(refusal(result));
+      if (result.code === ERROR_CODES.VALIDATION_ERROR) {
+        setError(t('actions.reasonRequired'));
+        return;
+      }
+      const key = refusal(result);
+      setError(key === null ? null : t(`errors.${key}`));
     } finally {
       setPending(false);
     }
@@ -158,9 +188,7 @@ export function TenantStatusPanel({
     return (
       <div className="spa-console-record__stack">
         <p className="spa-admin-toolbar__hint">
-          {isActive
-            ? 'La suspension ferme la vitrine, la réservation et la connexion au back-office, et coupe les sessions ouvertes. Réversible.'
-            : 'Le salon est suspendu : sa vitrine et son back-office répondent « introuvable ».'}
+          {isActive ? t('actions.suspendHint') : t('actions.suspendedHint')}
         </p>
         <Button
           onClick={() => {
@@ -168,7 +196,7 @@ export function TenantStatusPanel({
           }}
           variant={isActive ? 'danger' : 'accent'}
         >
-          {isActive ? 'Suspendre le salon' : 'Réactiver le salon'}
+          {isActive ? t('actions.suspend') : t('actions.reactivate')}
         </Button>
       </div>
     );
@@ -178,9 +206,9 @@ export function TenantStatusPanel({
     <form className="spa-console-record__stack" noValidate onSubmit={(event) => void submit(event)}>
       <TextArea
         error={error ?? undefined}
-        hint="Gardé dans l’historique du salon, visible des autres opérateurs."
+        hint={t('actions.reasonHint')}
         id={`statut-motif-${tenantId}`}
-        label={isActive ? 'Motif de la suspension' : 'Motif de la réactivation'}
+        label={isActive ? t('actions.suspendReason') : t('actions.reactivateReason')}
         maxLength={PLATFORM_STATUS_REASON_MAX_LENGTH}
         onChange={(event) => {
           setReason(event.target.value);
@@ -192,11 +220,11 @@ export function TenantStatusPanel({
       <div className="spa-console-record__buttons">
         <Button
           loading={pending}
-          loadingLabel={isActive ? 'Suspension…' : 'Réactivation…'}
+          loadingLabel={isActive ? t('actions.suspending') : t('actions.reactivating')}
           type="submit"
           variant={isActive ? 'danger' : 'accent'}
         >
-          {isActive ? 'Confirmer la suspension' : 'Confirmer la réactivation'}
+          {isActive ? t('actions.confirmSuspend') : t('actions.confirmReactivate')}
         </Button>
         <Button
           disabled={pending}
@@ -206,7 +234,7 @@ export function TenantStatusPanel({
           }}
           variant="quiet"
         >
-          Annuler
+          {t('actions.cancel')}
         </Button>
       </div>
     </form>
@@ -215,6 +243,7 @@ export function TenantStatusPanel({
 
 /** Ajoute une note interne à l'historique du salon. */
 export function TenantNoteForm({ tenantId }: { readonly tenantId: string }) {
+  const t = useTranslations('platform');
   const router = useRouter();
   const refusal = useRefusal();
   const [body, setBody] = useState('');
@@ -224,7 +253,7 @@ export function TenantNoteForm({ tenantId }: { readonly tenantId: string }) {
   const submit = async (event: FormEvent<HTMLFormElement>): Promise<void> => {
     event.preventDefault();
     if (body.trim() === '') {
-      setError('La note est vide.');
+      setError(t('actions.noteEmpty'));
       return;
     }
     setPending(true);
@@ -236,7 +265,12 @@ export function TenantNoteForm({ tenantId }: { readonly tenantId: string }) {
         router.refresh();
         return;
       }
-      setError(refusal(result));
+      if (result.code === ERROR_CODES.VALIDATION_ERROR) {
+        setError(t('actions.noteInvalid'));
+        return;
+      }
+      const key = refusal(result);
+      setError(key === null ? null : t(`errors.${key}`));
     } finally {
       setPending(false);
     }
@@ -246,20 +280,20 @@ export function TenantNoteForm({ tenantId }: { readonly tenantId: string }) {
     <form className="spa-console-record__stack" noValidate onSubmit={(event) => void submit(event)}>
       <TextArea
         error={error ?? undefined}
-        hint="Visible des seuls opérateurs. Pas de données de clientes."
+        hint={t('actions.noteHint')}
         id={`note-${tenantId}`}
-        label="Ajouter une note"
+        label={t('actions.noteLabel')}
         maxLength={PLATFORM_NOTE_MAX_LENGTH}
         onChange={(event) => {
           setBody(event.target.value);
         }}
-        placeholder="Ex. : gérante relancée par téléphone, rappel prévu lundi."
+        placeholder={t('actions.notePlaceholder')}
         rows={3}
         value={body}
       />
       <div className="spa-console-record__buttons">
-        <Button loading={pending} loadingLabel="Enregistrement…" type="submit" variant="accent">
-          Enregistrer la note
+        <Button loading={pending} loadingLabel={t('actions.noteSaving')} type="submit" variant="accent">
+          {t('actions.noteSubmit')}
         </Button>
       </div>
     </form>
