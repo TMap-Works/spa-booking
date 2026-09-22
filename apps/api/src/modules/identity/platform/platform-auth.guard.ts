@@ -11,6 +11,7 @@ import { ApiBearerAuth, ApiUnauthorizedResponse } from '@nestjs/swagger';
 import type { Request } from 'express';
 
 import { getTenantId } from '../../../common/tenant';
+import { bearerToken } from '../jwt-auth.guard';
 import { PlatformRepository } from './platform.repository';
 import { PlatformTokenService } from './platform-token.service';
 import type { AuthenticatedOperator } from './platform.types';
@@ -55,7 +56,7 @@ export class PlatformAuthGuard implements CanActivate {
   public async canActivate(context: ExecutionContext): Promise<boolean> {
     const request = context.switchToHttp().getRequest<Request>();
 
-    const token = PlatformAuthGuard.bearerToken(request);
+    const token = bearerToken(request);
     if (token === null) {
       throw new UnauthorizedException('Jeton de console absent ou mal formé.');
     }
@@ -84,27 +85,6 @@ export class PlatformAuthGuard implements CanActivate {
 
     setAuthenticatedOperator(request, { operatorId: operator.id, email: operator.email });
     return true;
-  }
-
-  /**
-   * Extrait le jeton de l'en-tête `Authorization`, schéma comparé sans tenir
-   * compte de la casse et valeur non vide — la lecture de `JwtAuthGuard`, à
-   * l'identique.
-   */
-  private static bearerToken(request: Request): string | null {
-    const header = request.headers.authorization;
-    if (typeof header !== 'string') {
-      return null;
-    }
-    const separator = header.indexOf(' ');
-    if (separator === -1) {
-      return null;
-    }
-    if (header.slice(0, separator).toLowerCase() !== 'bearer') {
-      return null;
-    }
-    const token = header.slice(separator + 1).trim();
-    return token === '' ? null : token;
   }
 }
 
