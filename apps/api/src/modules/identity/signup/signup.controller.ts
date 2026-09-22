@@ -31,6 +31,21 @@ type SignupBody = z.output<typeof salonSignupRequestSchema>;
  *
  * Trois inscriptions par minute et par IP : un salon s'inscrit une fois, et ce
  * plafond borne la création de salons en masse.
+ *
+ * ## Pourquoi cette route garde son compteur d'adresse (#1127)
+ *
+ * Elle partage l'angle mort des routes d'authentification — le front l'appelle
+ * par une action serveur, donc l'adresse vue est celle de la tâche ECS et le
+ * quota vaut pour le produit entier. Elle n'en tire pas la même conclusion, et
+ * c'est délibéré : il n'y a **aucune cible** à compter ici. L'établissement
+ * n'existe pas encore, et le compte non plus — les deux sont ce que l'appel
+ * crée. Le seul compteur possible serait l'adresse e-mail demandée, qu'un
+ * créateur en masse varie à chaque essai, et qui ne bornerait donc rien.
+ *
+ * Trois créations de salon par minute pour la plateforme est par ailleurs un
+ * frein assumé et non un rationnement : un salon s'inscrit une fois dans sa vie,
+ * là où un gérant se connecte tous les matins. Voir
+ * `../identity-throttler.guard.ts` pour le cas inverse.
  */
 @ApiTags('signup')
 @Controller({ path: 'signup', version: '1' })

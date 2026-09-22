@@ -1,7 +1,8 @@
 import { Body, Controller, HttpCode, HttpStatus, Post, UseGuards } from '@nestjs/common';
 import { ApiOkResponse, ApiOperation, ApiTags, ApiUnauthorizedResponse } from '@nestjs/swagger';
-import { Throttle, ThrottlerGuard } from '@nestjs/throttler';
+import { Throttle } from '@nestjs/throttler';
 
+import { IdentityThrottlerGuard, ThrottleByTarget } from '../identity-throttler.guard';
 import { PlatformLoginDto, PlatformSessionDto } from './dto/platform.dto';
 import { PlatformService } from './platform.service';
 
@@ -19,22 +20,27 @@ import { PlatformService } from './platform.service';
  *
  * ## Limitation de débit
  *
- * Cinq tentatives par minute et par IP — deux fois plus strict que la connexion
- * d'un salon, et pour deux raisons. La console compte quelques opérateurs, là où
- * un salon compte des clientes : un humain qui se trompe n'a pas besoin de dix
- * essais. Et ce qu'une réussite ouvre — l'ouverture d'établissements au nom de la
- * plateforme — ne se compare pas à ce qu'ouvre la connexion d'une cliente.
+ * Cinq tentatives par minute et par **opérateur visé** — deux fois plus strict
+ * que la connexion d'un salon, et pour deux raisons. La console compte quelques
+ * opérateurs, là où un salon compte des clientes : un humain qui se trompe n'a
+ * pas besoin de dix essais. Et ce qu'une réussite ouvre — l'ouverture
+ * d'établissements au nom de la plateforme — ne se compare pas à ce qu'ouvre la
+ * connexion d'une cliente.
  *
- * Le compteur porte sur l'adresse IP, avec le même angle mort que le contrôleur
- * d'authentification : la console appellera l'API par une action serveur, si
- * bien que le quota vaut pour le produit entier plutôt que par visiteur. Le
- * fermer demande le compteur par compte en Redis que le MVP n'a pas câblé — et
- * le **second facteur** rend ici la fenêtre bien moins intéressante : forcer le
- * mot de passe ne suffit pas à entrer.
+ * Le compteur portait sur l'adresse IP, avec le même angle mort que le
+ * contrôleur d'authentification : la console appelle l'API par une action
+ * serveur, si bien que le quota valait pour le produit entier plutôt que par
+ * opérateur — cinq essais par minute pour toute la console, et le sixième
+ * opérateur de la matinée refusé. #1127 le rattache à la **cible**, ici
+ * l'adresse e-mail seule : il n'y a pas d'établissement à joindre, un opérateur
+ * n'appartenant à aucun salon (ADR 0012). Voir `identity-throttler.guard.ts`.
+ *
+ * Le **second facteur** rend de toute façon la fenêtre peu intéressante :
+ * forcer le mot de passe ne suffit pas à entrer.
  */
 @ApiTags('platform')
 @Controller({ path: 'platform/auth', version: '1' })
-@UseGuards(ThrottlerGuard)
+@UseGuards(IdentityThrottlerGuard)
 export class PlatformAuthController {
   public constructor(private readonly platform: PlatformService) {}
 
@@ -49,6 +55,7 @@ export class PlatformAuthController {
    * passe faux, code faux, compte désactivé.
    */
   @Post('login')
+  @ThrottleByTarget({ account: 'email' })
   @Throttle({ default: { limit: 5, ttl: 60_000 } })
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Ouvrir une session de console plateforme (MFA exigée)' })
