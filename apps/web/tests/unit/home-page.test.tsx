@@ -90,6 +90,16 @@ describe('une première visite', () => {
     ).toBe(true);
   });
 
+  it('offre le choix du thème dans le pied de page, et laisse la barre à la navigation (#1114)', async () => {
+    await rendreLAccueil();
+
+    // Dans la barre, les trois pastilles faisaient passer la marque et deux
+    // ancres sur deux lignes, même à 1280 px.
+    const selecteur = { name: 'Thème d’affichage' };
+    expect(within(screen.getByRole('contentinfo')).getByRole('group', selecteur)).toBeDefined();
+    expect(within(screen.getByRole('banner')).queryByRole('group', selecteur)).toBeNull();
+  });
+
   it('mène chaque renvoi vers le formulaire à une cible qui existe', async () => {
     const page = await rendreLAccueil();
 

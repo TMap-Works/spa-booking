@@ -80,6 +80,25 @@ Toute rampe substituée doit conserver les rapports de contraste vérifiés par
 ci-dessus sont celles que les composants peignent sous du texte blanc ; les
 vérifier avant de livrer un thème évite un bouton « Réserver » illisible.
 
+### Thème clair / sombre
+
+Le jeu sombre est défini une fois, dans `tokens.css`, pour tout le produit. Sans
+choix, il suit `prefers-color-scheme` ; le sélecteur `components/ui/theme-toggle.tsx`
+(Système / Clair / Sombre) pose `data-theme` sur `<html>` et mémorise le choix dans
+le cookie `spa-theme`, que le script d'amorçage du layout racine relit avant le
+premier rendu (`lib/theme.ts`). Un seul cookie : le choix fait sur la vitrine vaut
+au back-office, et inversement.
+
+| Surface | Où vit le sélecteur |
+|---|---|
+| Back-office, console plateforme | la barre du haut (#1058, #1065) |
+| Gabarit public du salon — vitrine, politique de données, espace client, connexion | l'en-tête au-delà de 48 rem, le pied de page en dessous (#1114) |
+| Accueil `/` | le pied de page : la barre n'a pas la place de ses trois pastilles (#1114) |
+| Tunnel de réservation | aucun — son en-tête se borne à revenir et quitter (BM-TUNNEL-10) ; il applique le choix fait ailleurs |
+
+Deux exemplaires sur une même page restent d'accord : chacun suit `data-theme`
+sur `<html>`, pas son propre état.
+
 ### Familles disponibles
 
 | Famille | Préfixe | Échelle |

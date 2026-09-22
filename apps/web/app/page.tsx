@@ -6,6 +6,7 @@ import Link from 'next/link';
 import { BookingPreview } from '@/components/home/booking-preview';
 import { SalonFinder } from '@/components/home/salon-finder';
 import { Icon, type IconName } from '@/components/ui/icon';
+import { ThemeToggle } from '@/components/ui/theme-toggle';
 import { PHOTOS, type Photo } from '@/lib/photos';
 import { PLAN_PRICE_LABEL, PLAN_PROMISE } from '@/lib/plan';
 import { PLATFORM_HOME_PATH, PLATFORM_NAME } from '@/lib/platform';
@@ -617,6 +618,11 @@ export default async function HomePage() {
             La réservation en ligne des spas, instituts, salons de coiffure, barbiers et studios de
             massage.
           </p>
+          {/* Le sélecteur de thème du back-office, sur le même cookie (#1114).
+              Dans le pied et non dans la barre : même à 1280 px, ses trois
+              pastilles faisaient passer la marque et deux ancres sur deux
+              lignes. */}
+          <ThemeToggle className="spa-home-footer__theme" />
         </div>
       </footer>
     </div>
