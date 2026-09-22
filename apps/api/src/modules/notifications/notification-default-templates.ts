@@ -1,3 +1,5 @@
+import type { Locale } from '@spa/shared';
+
 import type {
   NotificationChannel,
   NotificationTemplateSource,
@@ -6,7 +8,8 @@ import type {
 
 /**
  * Les **modèles par défaut de la plateforme** — premier critère d'acceptation de
- * #69, « avec un modèle par défaut au niveau plateforme ».
+ * #69, « avec un modèle par défaut au niveau plateforme », et de #854, « des
+ * modèles par défaut en `fr` et en `en` pour chaque type et chaque canal ».
  *
  * ## Pourquoi ils sont en code et non en base
  *
@@ -17,7 +20,7 @@ import type {
  * aurait demandé un `tenant_id` nullable — c'est-à-dire une ligne que l'extension
  * de scoping ne sait pas borner, dans la table même qui décide de ce que les
  * clientes de chaque salon reçoivent. La seule autre issue aurait été de recopier
- * les quatre modèles dans chaque établissement à sa création : une correction de
+ * les modèles dans chaque établissement à sa création : une correction de
  * coquille serait alors devenue une migration de données sur tous les tenants.
  *
  * Le code est donc le bon endroit, et il l'est pour une raison de fond : le
@@ -30,7 +33,28 @@ import type {
  * tenant » — et l'effacement d'une ligne rend l'établissement au défaut, sans
  * qu'aucun contenu n'ait à être recopié.
  *
- * ## Ce qu'ils reproduisent
+ * ## Deux langues, et le repli ne traverse jamais la frontière — #854
+ *
+ * `DEFAULT_TEMPLATES` est désormais indexé par langue **d'abord**. Un envoi en
+ * anglais qui ne trouve pas de personnalisation anglaise retombe sur le défaut
+ * **anglais**, jamais sur la personnalisation française du salon : c'est le
+ * quatrième critère d'acceptation, et c'est la raison pour laquelle ce fichier a
+ * dû exister dans les deux langues avant que la colonne `locale` ait le moindre
+ * intérêt. Sans lui, « pas de personnalisation dans cette langue » n'aurait eu
+ * d'autre issue que de servir l'autre langue.
+ *
+ * ## Les deux jeux ne sont pas des traductions mot à mot
+ *
+ * Ils disent la même chose, et ce sont les **mêmes contraintes** qui les
+ * gouvernent : pas de salutation nominative sur un message à deux publics, le
+ * fuseau toujours nommé à côté d'une heure, l'origine d'annulation sous section,
+ * et — sur le canal SMS — un coût borné, mesuré plutôt qu'espéré. Ce qui change
+ * est l'idiome, pas la structure : `notification-default-templates.spec.ts`
+ * vérifie que les deux langues couvrent exactement les mêmes couples
+ * `(type, canal)`, faute de quoi une cliente perdrait son message en changeant de
+ * langue.
+ *
+ * ## Ce que les modèles français reproduisent
  *
  * Les messages que #70 et #71 ont livrés, à la balise près. Ce fichier n'était
  * pas une réécriture : c'était le même texte, dont les variables sont désormais
@@ -43,17 +67,11 @@ import type {
  * annonçait un rendez-vous « confirmé » alors qu'elle part sur la création,
  * c'est-à-dire sur un rendez-vous encore `PENDING`. Ce n'est pas un changement de
  * ton, c'est la correction d'un fait faux.
- *
- * ## `CANCELLATION` en a un depuis #72
- *
- * Il en manquait un jusque-là, délibérément : servir à un avis d'annulation le
- * modèle du rappel aurait dit « nous vous attendons » à qui vient d'annuler,
- * pire qu'un message absent. C'est ce ticket qui l'écrit, et il est le seul des
- * trois à s'adresser **à deux publics** — la cliente et le praticien (CDC §1.4,
- * « avis d'annulation au staff et au client »). D'où sa forme : il ne tutoie
- * personne, ne dit ni « votre cliente » ni « votre praticien », et nomme les
- * deux parties dans son récapitulatif.
  */
+
+// ---------------------------------------------------------------------------
+// Français
+// ---------------------------------------------------------------------------
 
 /**
  * Le récapitulatif, en lignes de tableau HTML.
@@ -77,7 +95,7 @@ import type {
  * elle appelle pour déplacer. L'avis d'annulation, lui, a son propre
  * récapitulatif et ne la porte pas — il n'y a plus de rendez-vous à citer.
  */
-const HTML_SUMMARY =
+const HTML_SUMMARY_FR =
   '<tr><th align="left">Référence</th><td>{{reference}}</td></tr>' +
   '<tr><th align="left">Prestation</th><td>{{service}}</td></tr>' +
   '<tr><th align="left">Avec</th><td>{{praticien}}</td></tr>' +
@@ -93,7 +111,7 @@ const HTML_SUMMARY =
  * Les sections emportent leur saut de ligne : `{{#adresse}}Adresse : …\n{{/adresse}}`
  * ne laisse aucune ligne vide quand l'adresse manque.
  */
-const TEXT_SUMMARY = [
+const TEXT_SUMMARY_FR = [
   'Référence : {{reference}}',
   'Prestation : {{service}}',
   'Avec : {{praticien}}',
@@ -121,12 +139,6 @@ const TEXT_SUMMARY = [
  * l'espace client qui affichait, sur ce rendez-vous-là, « À confirmer par le
  * salon ».
  *
- * Le libellé repris est **celui de #743**, au mot près
- * (`(account)/[tenantSlug]/compte/components/appointment-status.ts`,
- * `PENDING_CONFIRMATION_LABEL`). Il est recopié plutôt qu'importé : `apps/api`
- * ne dépend pas de `apps/web`, et un contrat partagé pour un libellé de gabarit
- * qu'un salon peut de toute façon réécrire n'aurait rien garanti de plus.
- *
  * Le message dit **deux choses**, dans cet ordre : la réservation est
  * enregistrée — c'est ce qui rassure quelqu'un qui vient de cliquer —, et la
  * confirmation est attendue du salon — c'est ce qui nomme l'acteur, pour que la
@@ -146,7 +158,7 @@ const TEXT_SUMMARY = [
  * Le SMS, lui, ne l'annonce pas : il coûte déjà 152 septets sur 160, et la
  * phrase le ferait passer à deux segments. Le second message suffit à la dire.
  */
-const BOOKING_CONFIRMATION_EMAIL: NotificationTemplateSource = {
+const BOOKING_CONFIRMATION_EMAIL_FR: NotificationTemplateSource = {
   subject: 'À confirmer par le salon : votre rendez-vous du {{date}} — {{salon}}',
   html: [
     '<!DOCTYPE html>',
@@ -154,7 +166,7 @@ const BOOKING_CONFIRMATION_EMAIL: NotificationTemplateSource = {
     '<p>Bonjour {{client}},</p>',
     '<p>Votre rendez-vous chez {{salon}} est enregistré. Il reste à confirmer par le salon : ' +
       'vous recevrez un message dès que ce sera fait.</p>',
-    `<table role="presentation">${HTML_SUMMARY}</table>`,
+    `<table role="presentation">${HTML_SUMMARY_FR}</table>`,
     '<p>Les horaires sont donnés à l’heure de {{fuseau}}.</p>',
     '<p><a href="{{lien_annulation}}">Modifier ou annuler mon rendez-vous</a></p>',
     '<p>À bientôt,<br />{{salon}}</p>',
@@ -165,7 +177,7 @@ const BOOKING_CONFIRMATION_EMAIL: NotificationTemplateSource = {
     '',
     'Votre rendez-vous chez {{salon}} est enregistré. Il reste à confirmer par le salon : vous recevrez un message dès que ce sera fait.',
     '',
-    TEXT_SUMMARY,
+    TEXT_SUMMARY_FR,
     'Les horaires sont donnés à l’heure de {{fuseau}}.',
     '',
     'Modifier ou annuler mon rendez-vous : {{lien_annulation}}',
@@ -200,7 +212,7 @@ const BOOKING_CONFIRMATION_EMAIL: NotificationTemplateSource = {
  * **doublé son coût** (notifications §5) — d'où la minuscule, obtenue en plaçant
  * la locution en seconde partie de phrase plutôt qu'en tête.
  *
- * Mesuré sur `SMS_REFERENCE_VARIABLES` — dont le nom de salon vaut le pire cas de
+ * Mesuré sur le rendu de référence — dont le nom de salon vaut le pire cas de
  * 40 caractères —, le modèle coûte 152 septets : **un** segment, et
  * `notification-template.spec.ts` le vérifie plutôt que de l'espérer.
  *
@@ -215,11 +227,10 @@ const BOOKING_CONFIRMATION_EMAIL: NotificationTemplateSource = {
  * Les huit septets de marge qui restent ici sont donc une marge réelle, pas une
  * garantie : avant #911 le modèle en coûtait 123 et absorbait n'importe quel
  * fuseau IANA. Le jour où un établissement d'un tel fuseau s'inscrit, c'est
- * `SMS_REFERENCE_VARIABLES.fuseau` qu'il faut porter au pire cas — et les trois
- * modèles de la plateforme qu'il faut alors raccourcir, `CANCELLATION` (153
- * septets) au même titre que celui-ci.
+ * `REFERENCE_ZONE` qu'il faut porter au pire cas — et les modèles de SMS de la
+ * plateforme qu'il faut alors raccourcir, dans les deux langues.
  */
-const BOOKING_CONFIRMATION_SMS: NotificationTemplateSource = {
+const BOOKING_CONFIRMATION_SMS_FR: NotificationTemplateSource = {
   subject: '',
   html: '',
   text: '{{salon}} : rendez-vous du {{date}} ({{fuseau}}) enregistré, à confirmer par le salon.',
@@ -251,14 +262,14 @@ const BOOKING_CONFIRMATION_SMS: NotificationTemplateSource = {
  * `CONFIRMED` et pas encore commencé. Une confirmation suivie d'une annulation
  * dans la minute ne fait donc pas partir « confirmé » après « annulé ».
  */
-const APPOINTMENT_CONFIRMED_EMAIL: NotificationTemplateSource = {
+const APPOINTMENT_CONFIRMED_EMAIL_FR: NotificationTemplateSource = {
   subject: 'Rendez-vous confirmé : le {{date}} — {{salon}}',
   html: [
     '<!DOCTYPE html>',
     '<html lang="fr"><body>',
     '<p>Bonjour {{client}},</p>',
     '<p>{{salon}} a confirmé votre rendez-vous. Nous vous attendons le {{date}}.</p>',
-    `<table role="presentation">${HTML_SUMMARY}</table>`,
+    `<table role="presentation">${HTML_SUMMARY_FR}</table>`,
     '<p>Les horaires sont donnés à l’heure de {{fuseau}}.</p>',
     '<p><a href="{{lien_annulation}}">Modifier ou annuler mon rendez-vous</a></p>',
     '<p>À bientôt,<br />{{salon}}</p>',
@@ -269,7 +280,7 @@ const APPOINTMENT_CONFIRMED_EMAIL: NotificationTemplateSource = {
     '',
     '{{salon}} a confirmé votre rendez-vous. Nous vous attendons le {{date}}.',
     '',
-    TEXT_SUMMARY,
+    TEXT_SUMMARY_FR,
     'Les horaires sont donnés à l’heure de {{fuseau}}.',
     '',
     'Modifier ou annuler mon rendez-vous : {{lien_annulation}}',
@@ -281,13 +292,13 @@ const APPOINTMENT_CONFIRMED_EMAIL: NotificationTemplateSource = {
 
 /**
  * Le SMS de confirmation par le salon — l'avis, et rien d'autre, comme les
- * trois autres.
+ * autres.
  *
  * Tout y est en GSM-7 — le `é` de « confirmé » compris —, et il tient en un
- * segment sur `SMS_REFERENCE_VARIABLES` : `notification-template.spec.ts` le
+ * segment sur le rendu de référence : `notification-template.spec.ts` le
  * mesure plutôt que de l'espérer.
  */
-const APPOINTMENT_CONFIRMED_SMS: NotificationTemplateSource = {
+const APPOINTMENT_CONFIRMED_SMS_FR: NotificationTemplateSource = {
   subject: '',
   html: '',
   text: '{{salon}} : votre rendez-vous du {{date}} ({{fuseau}}) est confirmé.',
@@ -322,14 +333,14 @@ const APPOINTMENT_CONFIRMED_SMS: NotificationTemplateSource = {
  * encore son créneau et n'a pas commencé : deux reports enchaînés ne font pas
  * arriver l'heure intermédiaire après la dernière.
  */
-const APPOINTMENT_RESCHEDULED_EMAIL: NotificationTemplateSource = {
+const APPOINTMENT_RESCHEDULED_EMAIL_FR: NotificationTemplateSource = {
   subject: 'Rendez-vous déplacé au {{date}} — {{salon}}',
   html: [
     '<!DOCTYPE html>',
     '<html lang="fr"><body>',
     '<p>Bonjour {{client}},</p>',
     '<p>Votre rendez-vous chez {{salon}} a été déplacé. Nous vous attendons désormais le {{date}}.</p>',
-    `<table role="presentation">${HTML_SUMMARY}</table>`,
+    `<table role="presentation">${HTML_SUMMARY_FR}</table>`,
     '<p>Les horaires sont donnés à l’heure de {{fuseau}}.</p>',
     '<p><a href="{{lien_annulation}}">Modifier ou annuler mon rendez-vous</a></p>',
     '<p>À bientôt,<br />{{salon}}</p>',
@@ -340,7 +351,7 @@ const APPOINTMENT_RESCHEDULED_EMAIL: NotificationTemplateSource = {
     '',
     'Votre rendez-vous chez {{salon}} a été déplacé. Nous vous attendons désormais le {{date}}.',
     '',
-    TEXT_SUMMARY,
+    TEXT_SUMMARY_FR,
     'Les horaires sont donnés à l’heure de {{fuseau}}.',
     '',
     'Modifier ou annuler mon rendez-vous : {{lien_annulation}}',
@@ -355,7 +366,7 @@ const APPOINTMENT_RESCHEDULED_EMAIL: NotificationTemplateSource = {
  * GSM-7 — les `é` compris —, et `notification-template.spec.ts` le mesure à un
  * segment plutôt que de l'espérer.
  */
-const APPOINTMENT_RESCHEDULED_SMS: NotificationTemplateSource = {
+const APPOINTMENT_RESCHEDULED_SMS_FR: NotificationTemplateSource = {
   subject: '',
   html: '',
   text: '{{salon}} : votre rendez-vous est déplacé au {{date}} ({{fuseau}}).',
@@ -373,14 +384,14 @@ const APPOINTMENT_RESCHEDULED_SMS: NotificationTemplateSource = {
  * tombe presque toujours la veille — et « presque toujours » n'est pas une
  * garantie qu'un modèle a le droit de prendre.
  */
-const REMINDER_EMAIL: NotificationTemplateSource = {
+const REMINDER_EMAIL_FR: NotificationTemplateSource = {
   subject: 'Rappel : votre rendez-vous du {{date}} — {{salon}}',
   html: [
     '<!DOCTYPE html>',
     '<html lang="fr"><body>',
     '<p>Bonjour {{client}},</p>',
     '<p>Nous vous attendons chez {{salon}} le {{date}}.</p>',
-    `<table role="presentation">${HTML_SUMMARY}</table>`,
+    `<table role="presentation">${HTML_SUMMARY_FR}</table>`,
     '<p>Les horaires sont donnés à l’heure de {{fuseau}}.</p>',
     '<p>Un empêchement ? <a href="{{lien_annulation}}">Annulez ou déplacez votre rendez-vous</a> — ' +
       'cela libère le créneau pour quelqu’un d’autre.</p>',
@@ -392,7 +403,7 @@ const REMINDER_EMAIL: NotificationTemplateSource = {
     '',
     'Nous vous attendons chez {{salon}} le {{date}}.',
     '',
-    TEXT_SUMMARY,
+    TEXT_SUMMARY_FR,
     'Les horaires sont donnés à l’heure de {{fuseau}}.',
     '',
     'Un empêchement ? Annulez ou déplacez votre rendez-vous : {{lien_annulation}}',
@@ -403,7 +414,7 @@ const REMINDER_EMAIL: NotificationTemplateSource = {
 };
 
 /** Le SMS de rappel — même économie que celui de la confirmation. */
-const REMINDER_SMS: NotificationTemplateSource = {
+const REMINDER_SMS_FR: NotificationTemplateSource = {
   subject: '',
   html: '',
   text: '{{salon}} : rappel de votre rendez-vous le {{date}} ({{fuseau}}).',
@@ -412,7 +423,7 @@ const REMINDER_SMS: NotificationTemplateSource = {
 /**
  * Le récapitulatif d'un rendez-vous **annulé**, en lignes de tableau HTML.
  *
- * Il diffère de `HTML_SUMMARY` sur deux points, et les deux tiennent au fait
+ * Il diffère de `HTML_SUMMARY_FR` sur deux points, et les deux tiennent au fait
  * qu'il est lu par la cliente **ou** par le praticien :
  *
  * 1. il nomme la **cliente**. Les deux autres messages n'en ont pas besoin — ils
@@ -423,7 +434,7 @@ const REMINDER_SMS: NotificationTemplateSource = {
  *    à préparer ni à régler. Les faire figurer aurait donné à un avis
  *    d'annulation l'allure d'une facture.
  */
-const CANCELLATION_HTML_SUMMARY =
+const CANCELLATION_HTML_SUMMARY_FR =
   '<tr><th align="left">Client</th><td>{{client}}</td></tr>' +
   '<tr><th align="left">Prestation</th><td>{{service}}</td></tr>' +
   '<tr><th align="left">Avec</th><td>{{praticien}}</td></tr>' +
@@ -431,7 +442,7 @@ const CANCELLATION_HTML_SUMMARY =
   '{{#telephone}}<tr><th align="left">Téléphone du salon</th><td>{{telephone}}</td></tr>{{/telephone}}';
 
 /** Le même récapitulatif en texte brut — même grammaire de sections. */
-const CANCELLATION_TEXT_SUMMARY = [
+const CANCELLATION_TEXT_SUMMARY_FR = [
   'Client : {{client}}',
   'Prestation : {{service}}',
   'Avec : {{praticien}}',
@@ -445,12 +456,12 @@ const CANCELLATION_TEXT_SUMMARY = [
  *
  * ## Il ne salue personne par son nom
  *
- * « Bonjour, » et non « Bonjour {{client}}, ». Le modèle est unique par canal —
- * l'unique de `notification_templates` est `(tenant_id, type, channel)` — et il
- * part aussi bien à la cliente qu'au praticien. Le nom de la cliente est donc
- * dans le récapitulatif, où il est une **information** pour l'un et une
- * confirmation pour l'autre, et non dans la salutation, où il aurait salué le
- * praticien du nom de sa cliente.
+ * « Bonjour, » et non « Bonjour {{client}}, ». Le modèle est unique par canal et
+ * par langue — l'unique de `notification_templates` est
+ * `(tenant_id, type, channel, locale)` — et il part aussi bien à la cliente qu'au
+ * praticien. Le nom de la cliente est donc dans le récapitulatif, où il est une
+ * **information** pour l'un et une confirmation pour l'autre, et non dans la
+ * salutation, où il aurait salué le praticien du nom de sa cliente.
  *
  * ## L'origine est sous section
  *
@@ -480,14 +491,14 @@ const CANCELLATION_TEXT_SUMMARY = [
  * C'est ce qui permet de corriger la faute **sans** dégrader l'e-mail de la
  * cliente, ce qu'une reformulation neutre aurait fait.
  */
-const CANCELLATION_EMAIL: NotificationTemplateSource = {
+const CANCELLATION_EMAIL_FR: NotificationTemplateSource = {
   subject: 'Annulation du rendez-vous du {{date}} — {{salon}}',
   html: [
     '<!DOCTYPE html>',
     '<html lang="fr"><body>',
     '<p>Bonjour,</p>',
     '<p>Le rendez-vous ci-dessous chez {{salon}} a été annulé{{#origine}} {{origine}}{{/origine}}.</p>',
-    `<table role="presentation">${CANCELLATION_HTML_SUMMARY}</table>`,
+    `<table role="presentation">${CANCELLATION_HTML_SUMMARY_FR}</table>`,
     '<p>Les horaires sont donnés à l’heure de {{fuseau}}. Le créneau est de nouveau disponible.</p>',
     '{{#destinataire_client}}<p><a href="{{lien_annulation}}">Prendre un nouveau rendez-vous</a></p>{{/destinataire_client}}',
     '<p>{{salon}}</p>',
@@ -498,7 +509,7 @@ const CANCELLATION_EMAIL: NotificationTemplateSource = {
     '',
     'Le rendez-vous ci-dessous chez {{salon}} a été annulé{{#origine}} {{origine}}{{/origine}}.',
     '',
-    CANCELLATION_TEXT_SUMMARY,
+    CANCELLATION_TEXT_SUMMARY_FR,
     'Les horaires sont donnés à l’heure de {{fuseau}}. Le créneau est de nouveau disponible.',
     // La ligne vide est **dans** la section : sans cela, un avis au praticien
     // aurait laissé deux lignes vides à la place du lien.
@@ -510,7 +521,7 @@ const CANCELLATION_EMAIL: NotificationTemplateSource = {
 };
 
 /**
- * Le SMS d'annulation — même économie que les deux autres.
+ * Le SMS d'annulation — même économie que les autres.
  *
  * Il ne porte ni récapitulatif ni lien : le détail est dans l'e-mail, qui part
  * toujours (notifications §6). Ce qu'un SMS doit faire ici est **arrêter le
@@ -521,7 +532,7 @@ const CANCELLATION_EMAIL: NotificationTemplateSource = {
  * donc en un segment, et `notification-template.spec.ts` le mesure sur le rendu
  * de référence plutôt que de le supposer.
  */
-const CANCELLATION_SMS: NotificationTemplateSource = {
+const CANCELLATION_SMS_FR: NotificationTemplateSource = {
   subject: '',
   html: '',
   text: '{{salon}} : rendez-vous du {{date}} ({{fuseau}}) annulé{{#origine}} {{origine}}{{/origine}}.',
@@ -560,8 +571,8 @@ const CANCELLATION_SMS: NotificationTemplateSource = {
  * plutôt que substituée par une variable : `PASSWORD_RESET_TOKEN_TTL_SECONDS`
  * vit dans `identity`, ce module n'en dépend pas, et une variable de gabarit de
  * plus n'aurait servi qu'à ce seul texte. La contrepartie est explicite — changer
- * la durée demande de reprendre cette phrase, et c'est écrit ici pour qu'on le
- * sache.
+ * la durée demande de reprendre cette phrase **dans les deux langues**, et c'est
+ * écrit ici pour qu'on le sache.
  *
  * ## Aucun `{{fuseau}}`
  *
@@ -569,7 +580,7 @@ const CANCELLATION_SMS: NotificationTemplateSource = {
  * des cinq messages dans ce cas, et c'est ce qui le distingue le plus
  * nettement des quatre autres : il ne parle pas d'un rendez-vous.
  */
-const PASSWORD_RESET_EMAIL: NotificationTemplateSource = {
+const PASSWORD_RESET_EMAIL_FR: NotificationTemplateSource = {
   subject: 'Réinitialisation de votre mot de passe — {{salon}}',
   html: [
     '<!DOCTYPE html>',
@@ -599,52 +610,442 @@ const PASSWORD_RESET_EMAIL: NotificationTemplateSource = {
   ].join('\n'),
 };
 
+// ---------------------------------------------------------------------------
+// Anglais — #854
+// ---------------------------------------------------------------------------
+
 /**
- * Les modèles de la plateforme, par type puis par canal.
+ * Le récapitulatif anglais — même structure de lignes, mêmes sections.
  *
- * Les trois messages du CDC §1.4 y sont désormais, sur les deux canaux. La
- * structure reste **partielle** — `Partial<Record<…>>` — et `defaultTemplateFor`
- * continue de rendre `null` : une entrée absente veut dire « aucun modèle par
- * défaut », et non « modèle vide ». C'est la forme qui accueillera un quatrième
- * message sans que le renderer ait à changer, et c'est elle qui garantit qu'un
- * type ajouté à l'énumération sans son modèle échoue en `FAILED` plutôt que de
- * partir vide.
+ * Les libellés sont ceux qu'emploie un salon nord-américain : `Service` plutôt
+ * que `Treatment`, `With` pour le praticien, `Ends` pour la fin prévue. Ce sont
+ * des mots courts, et c'est délibéré — la colonne d'un tableau d'e-mail se lit
+ * sur un téléphone, où une étiquette qui déborde repousse la valeur d'une ligne.
  */
-export const DEFAULT_TEMPLATES: Readonly<
-  Partial<
-    Record<NotificationType, Readonly<Partial<Record<NotificationChannel, NotificationTemplateSource>>>>
-  >
-> = {
-  BOOKING_CONFIRMATION: { EMAIL: BOOKING_CONFIRMATION_EMAIL, SMS: BOOKING_CONFIRMATION_SMS },
-  REMINDER_24H: { EMAIL: REMINDER_EMAIL, SMS: REMINDER_SMS },
-  CANCELLATION: { EMAIL: CANCELLATION_EMAIL, SMS: CANCELLATION_SMS },
-  // **E-mail seulement**, et c'est le quatrième critère de #809 au mot près :
-  // « modèle `password_reset`, canal e-mail ». Le SMS n'a délibérément pas de
-  // défaut, et c'est la structure partielle de cette table qui le permet — un
-  // couple absent se lit « aucun modèle par défaut », et `defaultTemplateFor`
-  // rend `null`.
-  //
-  // Pourquoi pas de SMS : un lien de 66 caractères sur les 160 d'un segment ne
-  // laisse rien pour la phrase qui dit quoi en faire, et un lien tronqué par un
-  // opérateur est un lien mort. Surtout, un SMS ne prouve pas la possession de
-  // l'**adresse** — or c'est bien l'adresse qui a été saisie dans le formulaire,
-  // et c'est elle que la procédure vérifie.
-  //
-  // Un salon reste libre d'écrire le sien : `NotificationTemplatesService.save`
-  // l'acceptera, et `SMS_REFERENCE_VARIABLES.lien_mot_de_passe` est là pour que
-  // la mesure de coût le refuse s'il dépasse trois segments.
-  PASSWORD_RESET: { EMAIL: PASSWORD_RESET_EMAIL },
-  APPOINTMENT_CONFIRMED: { EMAIL: APPOINTMENT_CONFIRMED_EMAIL, SMS: APPOINTMENT_CONFIRMED_SMS },
-  APPOINTMENT_RESCHEDULED: {
-    EMAIL: APPOINTMENT_RESCHEDULED_EMAIL,
-    SMS: APPOINTMENT_RESCHEDULED_SMS,
+const HTML_SUMMARY_EN =
+  '<tr><th align="left">Reference</th><td>{{reference}}</td></tr>' +
+  '<tr><th align="left">Service</th><td>{{service}}</td></tr>' +
+  '<tr><th align="left">With</th><td>{{praticien}}</td></tr>' +
+  '<tr><th align="left">Date</th><td>{{date}}</td></tr>' +
+  '<tr><th align="left">Ends</th><td>{{fin}}</td></tr>' +
+  '<tr><th align="left">Price</th><td>{{prix}}</td></tr>' +
+  '{{#adresse}}<tr><th align="left">Address</th><td>{{adresse}}</td></tr>{{/adresse}}' +
+  '{{#telephone}}<tr><th align="left">Phone</th><td>{{telephone}}</td></tr>{{/telephone}}';
+
+/** Le même récapitulatif en texte brut — les sections emportent leur saut de ligne. */
+const TEXT_SUMMARY_EN = [
+  'Reference: {{reference}}',
+  'Service: {{service}}',
+  'With: {{praticien}}',
+  'Date: {{date}}',
+  'Ends: {{fin}}',
+  'Price: {{prix}}',
+  '{{#adresse}}Address: {{adresse}}',
+  '{{/adresse}}{{#telephone}}Phone: {{telephone}}',
+  '{{/telephone}}',
+].join('\n');
+
+/**
+ * La confirmation de réservation, en anglais.
+ *
+ * Elle dit les mêmes deux choses que sa jumelle française, dans le même ordre :
+ * la réservation est enregistrée, et c'est le salon qui doit la confirmer. « The
+ * salon still has to confirm it » nomme l'acteur, exactement comme « il reste à
+ * confirmer par le salon » — un passif (« it is awaiting confirmation ») aurait
+ * laissé la cliente se croire redevable d'un geste.
+ *
+ * L'heure est **toujours** suivie de son fuseau, ici aussi : « 2:30 PM » sans
+ * mention est tout aussi ambigu que « 14:30 » pour qui voyage, et ce produit
+ * sert une clientèle qui traverse des fuseaux.
+ */
+const BOOKING_CONFIRMATION_EMAIL_EN: NotificationTemplateSource = {
+  subject: 'Awaiting confirmation: your appointment on {{date}} — {{salon}}',
+  html: [
+    '<!DOCTYPE html>',
+    '<html lang="en"><body>',
+    '<p>Hello {{client}},</p>',
+    '<p>Your appointment at {{salon}} is booked. The salon still has to confirm it: ' +
+      'you will receive a message as soon as that is done.</p>',
+    `<table role="presentation">${HTML_SUMMARY_EN}</table>`,
+    '<p>Times are shown in {{fuseau}} time.</p>',
+    '<p><a href="{{lien_annulation}}">Change or cancel my appointment</a></p>',
+    '<p>See you soon,<br />{{salon}}</p>',
+    '</body></html>',
+  ].join(''),
+  text: [
+    'Hello {{client}},',
+    '',
+    'Your appointment at {{salon}} is booked. The salon still has to confirm it: you will receive a message as soon as that is done.',
+    '',
+    TEXT_SUMMARY_EN,
+    'Times are shown in {{fuseau}} time.',
+    '',
+    'Change or cancel my appointment: {{lien_annulation}}',
+    '',
+    'See you soon,',
+    '{{salon}}',
+  ].join('\n'),
+};
+
+/**
+ * Le SMS de confirmation, en anglais.
+ *
+ * Tout y est en ASCII, donc en GSM-7 : l'anglais n'a pas le problème d'accents
+ * qui contraint la formulation française, et aucune de ses phrases ne peut à elle
+ * seule doubler la facture. Ce qui le contraint est la **longueur** — la date
+ * anglaise fait six caractères de plus que la française — et c'est
+ * `notification-default-templates.spec.ts` qui le mesure, sur le même rendu de
+ * référence et contre la même borne que les modèles français : c'est le septième
+ * critère d'acceptation de #854.
+ */
+const BOOKING_CONFIRMATION_SMS_EN: NotificationTemplateSource = {
+  subject: '',
+  html: '',
+  text: '{{salon}}: appointment on {{date}} ({{fuseau}}) booked, awaiting confirmation.',
+};
+
+/** « Votre rendez-vous est confirmé », en anglais — le salon est nommé comme auteur. */
+const APPOINTMENT_CONFIRMED_EMAIL_EN: NotificationTemplateSource = {
+  subject: 'Appointment confirmed: {{date}} — {{salon}}',
+  html: [
+    '<!DOCTYPE html>',
+    '<html lang="en"><body>',
+    '<p>Hello {{client}},</p>',
+    '<p>{{salon}} has confirmed your appointment. We look forward to seeing you on {{date}}.</p>',
+    `<table role="presentation">${HTML_SUMMARY_EN}</table>`,
+    '<p>Times are shown in {{fuseau}} time.</p>',
+    '<p><a href="{{lien_annulation}}">Change or cancel my appointment</a></p>',
+    '<p>See you soon,<br />{{salon}}</p>',
+    '</body></html>',
+  ].join(''),
+  text: [
+    'Hello {{client}},',
+    '',
+    '{{salon}} has confirmed your appointment. We look forward to seeing you on {{date}}.',
+    '',
+    TEXT_SUMMARY_EN,
+    'Times are shown in {{fuseau}} time.',
+    '',
+    'Change or cancel my appointment: {{lien_annulation}}',
+    '',
+    'See you soon,',
+    '{{salon}}',
+  ].join('\n'),
+};
+
+/** Le SMS de confirmation par le salon, en anglais. */
+const APPOINTMENT_CONFIRMED_SMS_EN: NotificationTemplateSource = {
+  subject: '',
+  html: '',
+  text: '{{salon}}: your appointment on {{date}} ({{fuseau}}) is confirmed.',
+};
+
+/**
+ * « Votre rendez-vous a été déplacé », en anglais.
+ *
+ * Le passif y est aussi délibéré qu'en français — « has been moved » ne nomme
+ * personne, et le report part des deux côtés du comptoir : c'est une
+ * confirmation pour celle qui vient de le faire, une information pour celle
+ * dont le salon l'a fait.
+ *
+ * Il porte le récapitulatif entier, pour la même raison : c'est le seul message
+ * qui donne la **nouvelle** heure, et c'est donc celui que la cliente gardera.
+ */
+const APPOINTMENT_RESCHEDULED_EMAIL_EN: NotificationTemplateSource = {
+  subject: 'Appointment moved to {{date}} — {{salon}}',
+  html: [
+    '<!DOCTYPE html>',
+    '<html lang="en"><body>',
+    '<p>Hello {{client}},</p>',
+    '<p>Your appointment at {{salon}} has been moved. We now look forward to seeing you on {{date}}.</p>',
+    `<table role="presentation">${HTML_SUMMARY_EN}</table>`,
+    '<p>Times are shown in {{fuseau}} time.</p>',
+    '<p><a href="{{lien_annulation}}">Change or cancel my appointment</a></p>',
+    '<p>See you soon,<br />{{salon}}</p>',
+    '</body></html>',
+  ].join(''),
+  text: [
+    'Hello {{client}},',
+    '',
+    'Your appointment at {{salon}} has been moved. We now look forward to seeing you on {{date}}.',
+    '',
+    TEXT_SUMMARY_EN,
+    'Times are shown in {{fuseau}} time.',
+    '',
+    'Change or cancel my appointment: {{lien_annulation}}',
+    '',
+    'See you soon,',
+    '{{salon}}',
+  ].join('\n'),
+};
+
+/**
+ * Le SMS de report, en anglais — l'avis, et rien d'autre : la nouvelle heure.
+ *
+ * Tout y est en ASCII, donc en GSM-7, et c'est la **longueur** qui le contraint :
+ * la date anglaise du rendu de référence est plus longue que la française. C'est
+ * `notification-default-templates.spec.ts` qui le mesure, contre la même borne
+ * que son jumeau français — septième critère d'acceptation de #854.
+ */
+const APPOINTMENT_RESCHEDULED_SMS_EN: NotificationTemplateSource = {
+  subject: '',
+  html: '',
+  text: '{{salon}}: your appointment is moved to {{date}} ({{fuseau}}).',
+};
+
+/**
+ * Le rappel J-1, en anglais.
+ *
+ * Il ne dit pas « tomorrow », pour la raison qui fait que le français ne dit pas
+ * « demain » : le rappel part entre 24 et 25 heures avant, ce qui tombe presque
+ * toujours la veille — et « presque toujours » n'est pas une garantie qu'un
+ * modèle a le droit de prendre.
+ *
+ * La seconde phrase est sa raison d'être, ici comme en français : une annulation
+ * la veille libère un créneau que le salon peut encore vendre.
+ */
+const REMINDER_EMAIL_EN: NotificationTemplateSource = {
+  subject: 'Reminder: your appointment on {{date}} — {{salon}}',
+  html: [
+    '<!DOCTYPE html>',
+    '<html lang="en"><body>',
+    '<p>Hello {{client}},</p>',
+    '<p>We look forward to seeing you at {{salon}} on {{date}}.</p>',
+    `<table role="presentation">${HTML_SUMMARY_EN}</table>`,
+    '<p>Times are shown in {{fuseau}} time.</p>',
+    '<p>Something came up? <a href="{{lien_annulation}}">Cancel or reschedule your appointment</a> — ' +
+      'it frees the slot for someone else.</p>',
+    '<p>See you very soon,<br />{{salon}}</p>',
+    '</body></html>',
+  ].join(''),
+  text: [
+    'Hello {{client}},',
+    '',
+    'We look forward to seeing you at {{salon}} on {{date}}.',
+    '',
+    TEXT_SUMMARY_EN,
+    'Times are shown in {{fuseau}} time.',
+    '',
+    'Something came up? Cancel or reschedule your appointment: {{lien_annulation}}',
+    '',
+    'See you very soon,',
+    '{{salon}}',
+  ].join('\n'),
+};
+
+/** Le SMS de rappel, en anglais — même économie que celui de la confirmation. */
+const REMINDER_SMS_EN: NotificationTemplateSource = {
+  subject: '',
+  html: '',
+  text: '{{salon}}: reminder of your appointment on {{date}} ({{fuseau}}).',
+};
+
+/** Le récapitulatif d'un rendez-vous annulé, en anglais — il nomme la cliente. */
+const CANCELLATION_HTML_SUMMARY_EN =
+  '<tr><th align="left">Client</th><td>{{client}}</td></tr>' +
+  '<tr><th align="left">Service</th><td>{{service}}</td></tr>' +
+  '<tr><th align="left">With</th><td>{{praticien}}</td></tr>' +
+  '<tr><th align="left">Date</th><td>{{date}}</td></tr>' +
+  '{{#telephone}}<tr><th align="left">Salon phone</th><td>{{telephone}}</td></tr>{{/telephone}}';
+
+/** Le même récapitulatif en texte brut. */
+const CANCELLATION_TEXT_SUMMARY_EN = [
+  'Client: {{client}}',
+  'Service: {{service}}',
+  'With: {{praticien}}',
+  'Date: {{date}}',
+  '{{#telephone}}Salon phone: {{telephone}}',
+  '{{/telephone}}',
+].join('\n');
+
+/**
+ * L'avis d'annulation, en anglais.
+ *
+ * Il ne salue personne par son nom — « Hello, » et non « Hello {{client}}, » —
+ * pour la raison qui vaut en français : le modèle est unique par canal et par
+ * langue, et il part aussi bien à la cliente qu'au praticien.
+ *
+ * `{{#origine}}` et `{{#destinataire_client}}` jouent exactement le même rôle
+ * que dans le modèle français, et pour les mêmes raisons : l'origine s'efface si
+ * elle est vide, et « Book a new appointment » ne s'affiche que pour la cliente —
+ * un praticien y serait renvoyé vers un espace qui n'est pas son agenda.
+ */
+const CANCELLATION_EMAIL_EN: NotificationTemplateSource = {
+  subject: 'Appointment on {{date}} cancelled — {{salon}}',
+  html: [
+    '<!DOCTYPE html>',
+    '<html lang="en"><body>',
+    '<p>Hello,</p>',
+    '<p>The appointment below at {{salon}} has been cancelled{{#origine}} {{origine}}{{/origine}}.</p>',
+    `<table role="presentation">${CANCELLATION_HTML_SUMMARY_EN}</table>`,
+    '<p>Times are shown in {{fuseau}} time. The slot is available again.</p>',
+    '{{#destinataire_client}}<p><a href="{{lien_annulation}}">Book a new appointment</a></p>{{/destinataire_client}}',
+    '<p>{{salon}}</p>',
+    '</body></html>',
+  ].join(''),
+  text: [
+    'Hello,',
+    '',
+    'The appointment below at {{salon}} has been cancelled{{#origine}} {{origine}}{{/origine}}.',
+    '',
+    CANCELLATION_TEXT_SUMMARY_EN,
+    'Times are shown in {{fuseau}} time. The slot is available again.',
+    // La ligne vide est **dans** la section, comme en français : sans cela, un
+    // avis au praticien aurait laissé deux lignes vides à la place du lien.
+    '{{#destinataire_client}}',
+    'Book a new appointment: {{lien_annulation}}',
+    '{{/destinataire_client}}',
+    '{{salon}}',
+  ].join('\n'),
+};
+
+/**
+ * Le SMS d'annulation, en anglais.
+ *
+ * C'est le plus long des quatre modèles de SMS anglais, parce qu'il porte
+ * l'origine sous section et que la plus longue des trois — « automatically by the
+ * system » — s'ajoute à une date déjà plus longue qu'en français. Il tient
+ * malgré tout en un segment sur le rendu de référence, et la suite le mesure
+ * plutôt que de l'espérer.
+ */
+const CANCELLATION_SMS_EN: NotificationTemplateSource = {
+  subject: '',
+  html: '',
+  text: '{{salon}}: appointment on {{date}} ({{fuseau}}) cancelled{{#origine}} {{origine}}{{/origine}}.',
+};
+
+/**
+ * Le lien de réinitialisation d'un mot de passe, en anglais.
+ *
+ * Même discipline que la version française, et ce n'est pas une question de
+ * style : il ne salue personne par son nom et ne nomme aucun compte — « an
+ * account », jamais « your account » suivi d'un nom —, parce que rien ne garantit
+ * que la personne qui relève l'adresse soit celle qui a demandé. Il annonce les
+ * trente minutes en toutes lettres, et il dit quoi faire si on n'a rien demandé :
+ * rien.
+ */
+const PASSWORD_RESET_EMAIL_EN: NotificationTemplateSource = {
+  subject: 'Reset your password — {{salon}}',
+  html: [
+    '<!DOCTYPE html>',
+    '<html lang="en"><body>',
+    '<p>Hello,</p>',
+    '<p>A password reset was requested for a {{salon}} account linked to this address.</p>',
+    '<p><a href="{{lien_mot_de_passe}}">Choose a new password</a></p>',
+    '<p>This link is valid for <strong>thirty minutes</strong> and can only be used once.</p>',
+    '<p>If you did not request it, ignore this message: your password is unchanged, ' +
+      'and no one can access your account without this link.</p>',
+    '<p>{{salon}}</p>',
+    '</body></html>',
+  ].join(''),
+  text: [
+    'Hello,',
+    '',
+    'A password reset was requested for a {{salon}} account linked to this address.',
+    '',
+    'Choose a new password: {{lien_mot_de_passe}}',
+    '',
+    'This link is valid for thirty minutes and can only be used once.',
+    '',
+    'If you did not request it, ignore this message: your password is unchanged, and no one can access your account without this link.',
+    '',
+    '{{salon}}',
+  ].join('\n'),
+};
+
+// ---------------------------------------------------------------------------
+// La table
+// ---------------------------------------------------------------------------
+
+/** Les modèles d'une langue, par type puis par canal. */
+type LocaleTemplates = Readonly<
+  Partial<Record<NotificationType, Readonly<Partial<Record<NotificationChannel, NotificationTemplateSource>>>>>
+>;
+
+/**
+ * Les modèles de la plateforme, par **langue**, puis par type, puis par canal.
+ *
+ * La langue vient en premier et non en dernier, et ce n'est pas un détail
+ * d'écriture : la question que pose le rendu est « ai-je un défaut pour ce
+ * message, dans cette langue ? », et l'indexation suit la question. Elle rend
+ * aussi lisible d'un coup d'œil ce que la suite vérifie — que les deux langues
+ * couvrent les mêmes couples.
+ *
+ * La structure reste **partielle** à chaque étage — `Partial<Record<…>>` — et
+ * `defaultTemplateFor` continue de rendre `null` : une entrée absente veut dire
+ * « aucun modèle par défaut », et non « modèle vide ». C'est la forme qui
+ * accueillera un message de plus sans que le renderer ait à changer, et c'est
+ * elle qui garantit qu'un type ajouté à l'énumération sans ses modèles échoue en
+ * `FAILED` plutôt que de partir vide.
+ */
+export const DEFAULT_TEMPLATES: Readonly<Record<Locale, LocaleTemplates>> = {
+  fr: {
+    BOOKING_CONFIRMATION: {
+      EMAIL: BOOKING_CONFIRMATION_EMAIL_FR,
+      SMS: BOOKING_CONFIRMATION_SMS_FR,
+    },
+    REMINDER_24H: { EMAIL: REMINDER_EMAIL_FR, SMS: REMINDER_SMS_FR },
+    CANCELLATION: { EMAIL: CANCELLATION_EMAIL_FR, SMS: CANCELLATION_SMS_FR },
+    // **E-mail seulement**, et c'est le quatrième critère de #809 au mot près :
+    // « modèle `password_reset`, canal e-mail ». Le SMS n'a délibérément pas de
+    // défaut, et c'est la structure partielle de cette table qui le permet — un
+    // couple absent se lit « aucun modèle par défaut », et `defaultTemplateFor`
+    // rend `null`.
+    //
+    // Pourquoi pas de SMS : un lien de 66 caractères sur les 160 d'un segment ne
+    // laisse rien pour la phrase qui dit quoi en faire, et un lien tronqué par un
+    // opérateur est un lien mort. Surtout, un SMS ne prouve pas la possession de
+    // l'**adresse** — or c'est bien l'adresse qui a été saisie dans le formulaire,
+    // et c'est elle que la procédure vérifie.
+    //
+    // Un salon reste libre d'écrire le sien : `NotificationTemplatesService.save`
+    // l'acceptera, et la variable `lien_mot_de_passe` du rendu de référence est là
+    // pour que la mesure de coût le refuse s'il dépasse trois segments.
+    PASSWORD_RESET: { EMAIL: PASSWORD_RESET_EMAIL_FR },
+    APPOINTMENT_CONFIRMED: {
+      EMAIL: APPOINTMENT_CONFIRMED_EMAIL_FR,
+      SMS: APPOINTMENT_CONFIRMED_SMS_FR,
+    },
+    APPOINTMENT_RESCHEDULED: {
+      EMAIL: APPOINTMENT_RESCHEDULED_EMAIL_FR,
+      SMS: APPOINTMENT_RESCHEDULED_SMS_FR,
+    },
+  },
+  en: {
+    BOOKING_CONFIRMATION: {
+      EMAIL: BOOKING_CONFIRMATION_EMAIL_EN,
+      SMS: BOOKING_CONFIRMATION_SMS_EN,
+    },
+    REMINDER_24H: { EMAIL: REMINDER_EMAIL_EN, SMS: REMINDER_SMS_EN },
+    CANCELLATION: { EMAIL: CANCELLATION_EMAIL_EN, SMS: CANCELLATION_SMS_EN },
+    // Même absence délibérée qu'en français, et pour les mêmes raisons : la
+    // couverture des deux langues doit être **identique**, sans quoi une cliente
+    // perdrait un message en changeant de langue. C'est ce que la suite vérifie.
+    PASSWORD_RESET: { EMAIL: PASSWORD_RESET_EMAIL_EN },
+    APPOINTMENT_CONFIRMED: {
+      EMAIL: APPOINTMENT_CONFIRMED_EMAIL_EN,
+      SMS: APPOINTMENT_CONFIRMED_SMS_EN,
+    },
+    APPOINTMENT_RESCHEDULED: {
+      EMAIL: APPOINTMENT_RESCHEDULED_EMAIL_EN,
+      SMS: APPOINTMENT_RESCHEDULED_SMS_EN,
+    },
   },
 };
 
-/** Le modèle de plateforme pour ce message, s'il en existe un. */
+/**
+ * Le modèle de plateforme pour ce message, dans cette langue, s'il en existe un.
+ *
+ * Le repli ne traverse **jamais** la frontière de langue : une langue sans
+ * modèle rend `null`, et l'appelant échoue, plutôt que de servir l'autre langue.
+ * C'est le quatrième critère d'acceptation de #854, et la raison en est qu'un
+ * message dans une langue qu'on ne lit pas est pire qu'un message absent — il
+ * fait croire qu'on a été prévenu.
+ */
 export function defaultTemplateFor(
   type: NotificationType,
   channel: NotificationChannel,
+  locale: Locale,
 ): NotificationTemplateSource | null {
-  return DEFAULT_TEMPLATES[type]?.[channel] ?? null;
+  return DEFAULT_TEMPLATES[locale][type]?.[channel] ?? null;
 }
