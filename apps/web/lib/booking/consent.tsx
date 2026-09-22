@@ -43,10 +43,46 @@
  * aurait divergé au premier changement de texte. Le consentement porte sur le
  * même traitement — réserver, confirmer, rappeler — quelle que soit la porte par
  * laquelle on entre.
+ *
+ * ## La langue (#846)
+ *
+ * Les phrases vivent dans le catalogue, sous `tunnel.consent`, et elles n'y sont
+ * écrites **qu'une fois** pour les deux écrans — c'est la raison d'être de ce
+ * fichier, transposée au catalogue. La variante n'en choisit que deux clés,
+ * l'introduction et le libellé de la case ; le reste — les finalités, le
+ * dépliant, les droits — est commun.
+ *
+ * Le lien vers la politique de données est un `t.rich` : c'est un élément JSX au
+ * milieu d'une phrase, et le découper en trois chaînes rendrait la phrase
+ * intraduisible (modèle `shell.salon.poweredBy`).
+ *
+ * `consentCopy` prend son traducteur en paramètre plutôt que de le chercher
+ * lui-même : la page publique de la politique de données est un Server Component
+ * **asynchrone**, et un crochet y serait inappelable. Le composant, lui, est
+ * client et lit le catalogue de son côté.
  */
 
+import { useTranslations } from 'next-intl';
 import type { InputHTMLAttributes, Ref } from 'react';
 import { z } from 'zod';
+
+import fr from '@/messages/fr/booking.json';
+
+/**
+ * La clé du refus de la case — c'est **elle** que le schéma porte en guise de
+ * message, et c'est l'écran qui la traduit au point de rendu (#846).
+ *
+ * Le schéma est monté hors de React — un `z.object` de module, passé à
+ * `zodResolver` — et n'a donc aucun moyen de lire le catalogue ; Zod 3, de son
+ * côté, ne prend là qu'une **chaîne**, pas une fonction qu'on rappellerait au
+ * rendu. Porter la clé plutôt qu'une phrase est la forme que l'épique #843
+ * prescrit à un module pur : il dit **quoi** dire, l'écran dit dans quelle
+ * langue.
+ *
+ * Côté écran, cela tient en une ligne au point de rendu :
+ * `error={erreur === undefined ? undefined : t(erreur as typeof CONSENT_ERROR_KEY)}`.
+ */
+export const CONSENT_ERROR_KEY = 'tunnel.consent.error';
 
 /**
  * La case cochée, et rien d'autre.
@@ -60,10 +96,14 @@ import { z } from 'zod';
  * pas satisfait — le geste est donc impossible à sauter, là où un simple
  * `required` HTML aurait été neutralisé par le `noValidate` que les deux
  * formulaires portent déjà.
+ *
+ * Son message est la **clé** du refus depuis #846, et non plus la phrase
+ * française : voir {@link CONSENT_ERROR_KEY} pour pourquoi, et pour ce que
+ * l'écran a à en faire. Sa forme, elle, ne bouge pas — les deux formulaires
+ * l'ajoutent au leur exactement comme avant.
  */
 export const consentSchema = z.boolean().refine((accepted) => accepted, {
-  message:
-    'cochez cette case pour continuer : sans votre accord, nous ne pouvons pas traiter vos données',
+  message: CONSENT_ERROR_KEY,
 });
 
 /**
@@ -106,104 +146,154 @@ export interface ConsentCopy {
   readonly label: string;
 }
 
+/** Lequel des deux écrans demande le consentement. */
+export type ConsentVariant = 'booking' | 'account';
+
 /**
- * Ce qui n'est écrit nulle part parce que le produit ne le fait pas : la
+ * Les clés du namespace `booking` que la copie de consentement lit.
+ *
+ * Énumérées plutôt que déduites d'un gabarit : le traducteur de `next-intl` est
+ * typé sur les clés **exactes** du catalogue, et une union plus large que la
+ * sienne ne l'accepterait pas en paramètre. La liste fait donc aussi office
+ * d'inventaire — ajouter une finalité sans l'écrire dans les deux catalogues
+ * échoue à la compilation.
+ */
+type ConsentMessageKey =
+  | 'tunnel.consent.summary'
+  | 'tunnel.consent.rights'
+  | 'tunnel.consent.booking.intro'
+  | 'tunnel.consent.booking.label'
+  | 'tunnel.consent.account.intro'
+  | 'tunnel.consent.account.label'
+  | 'tunnel.consent.purposes.identity.data'
+  | 'tunnel.consent.purposes.identity.why'
+  | 'tunnel.consent.purposes.email.data'
+  | 'tunnel.consent.purposes.email.why'
+  | 'tunnel.consent.purposes.emailAccount.why'
+  | 'tunnel.consent.purposes.phone.data'
+  | 'tunnel.consent.purposes.phone.why'
+  | 'tunnel.consent.purposes.note.data'
+  | 'tunnel.consent.purposes.note.why'
+  | 'tunnel.consent.purposes.password.data'
+  | 'tunnel.consent.purposes.password.why';
+
+/**
+ * Le traducteur du namespace `booking`, réduit à ce que cette copie demande.
+ *
+ * Il accepte aussi bien celui de `useTranslations('booking')` que celui d'un
+ * `await getTranslations('booking')` : un traducteur qui connaît **plus** de
+ * clés se passe pour un traducteur qui en demande moins.
+ */
+export type ConsentTranslator = (key: ConsentMessageKey) => string;
+
+/**
+ * Les finalités communes aux deux écrans, dans l'ordre où les champs se
+ * présentent.
+ *
+ * Communes par construction : la promesse est la même des deux côtés du
+ * parcours, et deux rédactions auraient divergé au premier changement de
+ * formulation — ce que l'en-tête de ce fichier donne précisément comme motif de
+ * le faire exister. Seul le quatrième champ change, et la variante le nomme.
+ */
+const SHARED_PURPOSE_KEYS = ['identity', 'email', 'phone'] as const;
+
+/**
+ * La copie de consentement d'un écran, lue dans le catalogue.
+ *
+ * Ce qui n'y est écrit **nulle part**, parce que le produit ne le fait pas : la
  * prospection. Le périmètre MVP est figé et n'a ni marketing ni revente
  * (CDC §1.4), et le dire est une information, pas une promesse commerciale —
  * c'est même la première question que pose un formulaire qui demande un
- * téléphone.
+ * téléphone. Depuis #1050 la phrase est **soudée** à l'introduction plutôt que
+ * posée en seconde phrase : l'encart faisait huit lignes au-dessus du bouton de
+ * l'étape à 360 px, et la moitié de sa hauteur venait de là. Elle reste hors du
+ * dépliant — c'est la promesse que la cliente est sûre d'avoir lue au moment où
+ * elle coche, et la reléguer derrière un clic aurait été la retirer (CDC §5.1).
  *
- * Depuis #1050 la phrase est **soudée à celle qui la précède** plutôt que posée
- * en seconde phrase : l'encart faisait huit lignes au-dessus du bouton de
- * l'étape à 360 px, et la moitié de sa hauteur venait de là. Elle reste
- * néanmoins **hors du dépliant** — c'est la promesse que la cliente est sûre
- * d'avoir lue au moment où elle coche, et la reléguer derrière un clic aurait
- * été la retirer (CDC §5.1).
+ * `rights` porte la troisième exigence de CDC §5.1, *« Mécanismes d'accès, de
+ * rectification, d'export et de suppression des données »* : l'espace client y
+ * est nommé parce qu'il existe, et le salon à côté parce qu'une cliente qui a
+ * réservé sans compte n'a pas d'espace client où aller.
  */
-const NO_MARKETING = 'et à rien d’autre : aucune prospection, aucune revente.';
+export function consentCopy(t: ConsentTranslator, variant: ConsentVariant): ConsentCopy {
+  const shared = SHARED_PURPOSE_KEYS.map((key) => ({
+    // Clés construites, et c'est assumé : les trois finalités communes ne
+    // diffèrent que par ce segment, et six `t(...)` littéraux diraient six fois
+    // la même chose. L'`as` désigne une clé réelle du catalogue, ce que
+    // l'inventaire de `ConsentMessageKey` ci-dessus garantit — même détour que
+    // `components/ui/locale-switcher.tsx`.
+    data: t(`tunnel.consent.purposes.${key}.data` as 'tunnel.consent.purposes.email.data'),
+    why:
+      key === 'email' && variant === 'account'
+        ? // L'adresse sert une chose de plus quand elle ouvre un compte : elle
+          // en est l'identifiant. La phrase est écrite en entier dans le
+          // catalogue plutôt que concaténée ici — une langue peut avoir à la
+          // tourner autrement qu'en ajoutant une phrase à la fin.
+          t('tunnel.consent.purposes.emailAccount.why')
+        : t(`tunnel.consent.purposes.${key}.why` as 'tunnel.consent.purposes.email.why'),
+  }));
 
-const IDENTITY_PURPOSE: ConsentPurpose = {
-  data: 'Prénom et nom',
-  why: 'identifier votre rendez-vous auprès du salon. Nécessaires : sans eux, il n’y a pas de réservation à honorer.',
-};
-
-const EMAIL_PURPOSE: ConsentPurpose = {
-  data: 'Adresse e-mail',
-  why: 'vous envoyer la confirmation, puis tout avis d’annulation ou de report. Nécessaire : c’est le canal par lequel le salon vous répond.',
-};
-
-const PHONE_PURPOSE: ConsentPurpose = {
-  data: 'Téléphone',
-  why: 'vous envoyer par SMS le rappel de la veille. Facultatif : sans numéro, le rappel arrive par e-mail seulement.',
-};
+  return {
+    intro: t(
+      variant === 'booking' ? 'tunnel.consent.booking.intro' : 'tunnel.consent.account.intro',
+    ),
+    summary: t('tunnel.consent.summary'),
+    purposes: [
+      ...shared,
+      variant === 'booking'
+        ? {
+            data: t('tunnel.consent.purposes.note.data'),
+            why: t('tunnel.consent.purposes.note.why'),
+          }
+        : {
+            data: t('tunnel.consent.purposes.password.data'),
+            why: t('tunnel.consent.purposes.password.why'),
+          },
+    ],
+    rights: t('tunnel.consent.rights'),
+    label: t(
+      variant === 'booking' ? 'tunnel.consent.booking.label' : 'tunnel.consent.account.label',
+    ),
+  };
+}
 
 /**
- * Ce qu'annonce le dépliant, écrit une fois pour les deux écrans.
+ * La copie française, figée — **le temps que l'espace client soit traduit**.
  *
- * Même raison que `NO_MARKETING` ci-dessus : la phrase est la même des deux
- * côtés du parcours, et deux copies auraient divergé au premier changement de
- * formulation — ce que l'en-tête de ce fichier donne précisément comme motif de
- * le faire exister.
- */
-const SUMMARY = 'Ce que nous faisons de vos données';
-
-/**
- * Conservation et droits — la troisième exigence de CDC §5.1, *« Mécanismes
- * d'accès, de rectification, d'export et de suppression des données »*.
+ * `app/(account)/…/compte/components/register-form.tsx` rend cette copie, et il
+ * est hors de l'empreinte de #846 : c'est le ticket de l'espace client, qui
+ * ouvre son propre namespace, qui le reprendra. D'ici là, retirer ces deux
+ * constantes aurait cassé sa compilation, et lui passer la copie du catalogue
+ * sans qu'il sache la demander l'aurait laissé afficher l'anglais à qui lit le
+ * reste de son écran en français — un demi-écran traduit est pire qu'un écran
+ * qui ne l'est pas.
  *
- * L'espace client est nommé parce qu'il existe : `/{salon}/compte/coordonnees`
- * rectifie, et l'export comme la suppression sont servis par l'API depuis #81.
- * Le salon est nommé à côté parce qu'une cliente qui a réservé sans compte n'a
- * pas d'espace client où aller.
+ * Elles ne **dupliquent aucun texte** : elles lisent le catalogue français,
+ * exactement les clés que `consentCopy` lit. Le jour où l'espace client passe à
+ * `variant`, ces trois déclarations disparaissent d'un bloc et rien d'autre ne
+ * bouge.
+ *
+ * Le même motif qu'ailleurs dans ce dépôt pour un module lu hors de React :
+ * `lib/format.ts` (`WORDS = { fr, en }`) et `components/salon/public-exits.tsx`.
+ *
+ * @deprecated Employer `consentCopy(t, variant)`, ou `variant` sur
+ * {@link ConsentField}.
  */
-const RIGHTS =
-  'L’établissement conserve ces données le temps du suivi de sa clientèle. ' +
-  'Vous pouvez les consulter, les corriger ou en demander la suppression à tout ' +
-  'moment, depuis votre espace client ou en écrivant à l’établissement.';
+const FRENCH_CONSENT: ConsentTranslator = (key) =>
+  // Le catalogue est un arbre de JSON dont TypeScript connaît la forme exacte ;
+  // la descendre par une clé composée à l'exécution demande de relâcher la
+  // contrainte le temps du parcours, une fois, ici. L'inventaire de
+  // `ConsentMessageKey` garantit que chacune de ces clés existe.
+  key.split('.').reduce<unknown>(
+    (node, segment) => (node as Record<string, unknown>)[segment],
+    fr as unknown,
+  ) as string;
 
-/** L'étape « Coordonnées » du tunnel — wireframes.md, étape 4. */
-export const BOOKING_CONSENT: ConsentCopy = {
-  intro:
-    'Vos coordonnées servent à gérer ce rendez-vous — confirmation par e-mail, ' +
-    `rappel la veille par SMS si vous laissez un numéro — ${NO_MARKETING}`,
-  summary: SUMMARY,
-  purposes: [
-    IDENTITY_PURPOSE,
-    EMAIL_PURPOSE,
-    PHONE_PURPOSE,
-    {
-      data: 'Le mot pour le salon',
-      why: 'transmettre au praticien ce qu’il doit savoir pour la prestation. Facultatif : n’y écrivez qu’une information dont le salon a besoin ce jour-là.',
-    },
-  ],
-  rights: RIGHTS,
-  label:
-    'J’ai lu ces informations et j’accepte que mes données soient utilisées pour ce rendez-vous.',
-};
+/** @deprecated Voir {@link FRENCH_CONSENT}. */
+export const BOOKING_CONSENT: ConsentCopy = consentCopy(FRENCH_CONSENT, 'booking');
 
-/** La création de compte — `/{salon}/compte/inscription`. */
-export const ACCOUNT_CONSENT: ConsentCopy = {
-  intro:
-    'Vos coordonnées servent à tenir votre compte et vos rendez-vous — ' +
-    'connexion, historique, confirmations par e-mail, rappels par SMS si vous ' +
-    `laissez un numéro — ${NO_MARKETING}`,
-  summary: SUMMARY,
-  purposes: [
-    IDENTITY_PURPOSE,
-    {
-      ...EMAIL_PURPOSE,
-      why: `${EMAIL_PURPOSE.why} C’est aussi votre identifiant de connexion.`,
-    },
-    PHONE_PURPOSE,
-    {
-      data: 'Mot de passe',
-      why: 'protéger l’accès à votre compte. Nécessaire, et conservé sous forme chiffrée : personne, dans l’établissement comme chez nous, ne peut le relire.',
-    },
-  ],
-  rights: RIGHTS,
-  label:
-    'J’ai lu ces informations et j’accepte que mes données soient utilisées pour gérer mon compte et mes rendez-vous.',
-};
+/** @deprecated Voir {@link FRENCH_CONSENT}. */
+export const ACCOUNT_CONSENT: ConsentCopy = consentCopy(FRENCH_CONSENT, 'account');
 
 /**
  * `checked` et `defaultChecked` sont retirés au même titre que `type` et `id` :
@@ -219,7 +309,29 @@ interface ConsentFieldProps
     'checked' | 'className' | 'defaultChecked' | 'id' | 'type'
   > {
   readonly id: string;
-  readonly copy: ConsentCopy;
+  /**
+   * Lequel des deux écrans demande l'accord — la copie en découle.
+   *
+   * Une variante et non la copie elle-même depuis #846 : ce composant est
+   * client, il lit donc le catalogue de son côté, et le lui faire passer de
+   * l'extérieur obligerait chacun de ses deux appelants à composer la même
+   * chose. `consentCopy` reste exportée pour la page publique de la politique
+   * de données, qui rend ces finalités hors de tout formulaire.
+   *
+   * Facultatif tant que {@link ACCOUNT_CONSENT} existe : l'écran d'inscription
+   * de l'espace client passe encore `copy`, et il est hors de l'empreinte de
+   * #846. L'un des deux est exigé — sans quoi la case naîtrait sans texte, ce
+   * qui n'est pas un consentement éclairé —, et c'est {@link ConsentField} qui
+   * s'en assure.
+   */
+  readonly variant?: ConsentVariant;
+  /**
+   * La copie toute faite, pour l'écran qui n'est pas encore traduit.
+   *
+   * @deprecated Passer `variant` : le composant lit alors le catalogue dans la
+   * langue de la requête. Voir {@link FRENCH_CONSENT}.
+   */
+  readonly copy?: ConsentCopy;
   /**
    * L'établissement dont on lit la politique de données (#790).
    *
@@ -271,10 +383,37 @@ interface ConsentFieldProps
  * rattacher l'une à l'autre : rien ne change pour un lecteur d'écran, qui
  * annonce toujours les finalités avec la case.
  */
-export function ConsentField({ id, copy, tenantSlug, error, ref, ...input }: ConsentFieldProps) {
+export function ConsentField({
+  id,
+  variant,
+  copy: given,
+  tenantSlug,
+  error,
+  ref,
+  ...input
+}: ConsentFieldProps) {
+  const t = useTranslations('booking');
+  // `variant` d'abord : la copie passée en propriété est le régime transitoire
+  // de l'écran d'inscription, pas celui qu'on veut. Le repli sur « booking »
+  // n'est jamais atteint par les deux appelants du dépôt — il évite seulement
+  // qu'un troisième écran naisse avec une case sans texte.
+  const copy = variant === undefined ? (given ?? consentCopy(t, 'booking')) : consentCopy(t, variant);
   const introId = `${id}-finalites`;
   const errorId = `${id}-error`;
-  const describedBy = [introId, error === undefined ? null : errorId]
+  /*
+   * Le refus de la case arrive parfois sous forme de **clé** (#846).
+   *
+   * `consentSchema` est bâti hors de React et ne peut pas traduire son propre
+   * message : il porte `CONSENT_ERROR_KEY`, et c'est un point de rendu qui le
+   * convertit. Le faire **ici** plutôt que chez chaque appelant est ce qui
+   * permet à l'écran d'inscription — hors de l'empreinte de #846 — de continuer
+   * à passer `errors.dataConsent?.message` tel quel sans afficher une clé brute
+   * à qui s'inscrit.
+   *
+   * Une phrase déjà traduite passe au travers : elle n'est pas la clé.
+   */
+  const message = error === CONSENT_ERROR_KEY ? t(CONSENT_ERROR_KEY) : error;
+  const describedBy = [introId, message === undefined ? null : errorId]
     .filter((value) => value !== null)
     .join(' ');
 
@@ -303,10 +442,19 @@ export function ConsentField({ id, copy, tenantSlug, error, ref, ...input }: Con
           {/* Aucune classe : le socle (`styles/base.css`) donne déjà à tout `a` la
               couleur d'accent et le soulignement, et une classe sans règle est une
               promesse de style que rien ne tient. Le lien ressort donc du gris de
-              ce paragraphe sans qu'on ait à le redire. */}
-          <a href={dataPolicyPath(tenantSlug)} target="_blank" rel="noopener noreferrer">
-            Lire la politique de données (nouvel onglet)
-          </a>
+              ce paragraphe sans qu'on ait à le redire.
+
+              `t.rich` et non deux chaînes autour d'une balise : le libellé et sa
+              parenthèse se traduisent d'un bloc, et la langue reste libre de
+              placer la mention du nouvel onglet où elle l'entend (modèle
+              `shell.salon.poweredBy`). */}
+          {t.rich('tunnel.consent.policyLink', {
+            policy: (chunks) => (
+              <a href={dataPolicyPath(tenantSlug)} target="_blank" rel="noopener noreferrer">
+                {chunks}
+              </a>
+            ),
+          })}
         </p>
 
         <details className="spa-consent__details">
@@ -332,7 +480,7 @@ export function ConsentField({ id, copy, tenantSlug, error, ref, ...input }: Con
           id={id}
           ref={ref}
           className="spa-consent__control"
-          aria-invalid={error === undefined ? undefined : true}
+          aria-invalid={message === undefined ? undefined : true}
           aria-describedby={describedBy}
         />
         <label className="spa-consent__label" htmlFor={id}>
@@ -340,9 +488,9 @@ export function ConsentField({ id, copy, tenantSlug, error, ref, ...input }: Con
         </label>
       </div>
 
-      {error === undefined ? null : (
+      {message === undefined ? null : (
         <p id={errorId} className="spa-consent__error" role="alert">
-          {error}
+          {message}
         </p>
       )}
     </div>
