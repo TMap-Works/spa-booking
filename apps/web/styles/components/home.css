@@ -1111,3 +1111,9 @@
   font-size: var(--spa-font-size-sm);
   color: var(--spa-color-text-muted);
 }
+
+/* Le sélecteur de thème (#1114) : centré sur la ligne, et non sur la ligne de
+ * base du texte, qu'une pastille n'a pas. */
+.spa-home-footer__theme {
+  align-self: center;
+}
