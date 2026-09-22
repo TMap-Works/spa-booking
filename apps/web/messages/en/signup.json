@@ -1,0 +1,74 @@
+{
+  "metadata": {
+    "title": "Open my salon — {platform}",
+    "description": "Set up your online booking page in minutes: {promise}, no commitment."
+  },
+  "plan": {
+    "promise": "{days} days free, then {price} a month"
+  },
+  "intro": {
+    "headline": "Take your salon online",
+    "lead": "A few minutes is all it takes: your booking page, your schedule and your checkout, in one place.",
+    "highlights": {
+      "booking": "Your clients book online, around the clock",
+      "reminders": "Confirmations and reminders sent for you",
+      "team": "Schedule, team and client records",
+      "trial": "{promise} — no commitment"
+    },
+    "home": "{platform} home"
+  },
+  "form": {
+    "title": "Create my salon",
+    "salonLegend": "Your salon",
+    "ownerLegend": "You",
+    "name": "Salon name",
+    "slug": "Your page address",
+    "slugHint": "Your clients will book at /your-address. Lower-case letters, digits and hyphens.",
+    "addressLine1": "Address",
+    "postalCode": "Postal code",
+    "city": "City",
+    "country": "Country",
+    "timezone": "Time zone",
+    "currency": "Your price currency",
+    "language": "Salon language",
+    "languageHint": "The language your booking page opens in. You can change it later in your settings.",
+    "firstName": "First name",
+    "lastName": "Last name",
+    "email": "Email address",
+    "password": "Password",
+    "passwordHint": "Twelve characters minimum.",
+    "confirmation": "Confirm your password",
+    "confirmationMismatch": "the two passwords do not match",
+    "consent": "I agree that my data and my salon’s data may be processed to create and run my workspace.",
+    "consentRequired": "Tick this box to create your salon.",
+    "submit": "Continue to secure payment",
+    "submitting": "Creating your salon…",
+    "fineprint": "{promise}. Your card is stored by Stripe and is only charged at the end of the trial. Cancel any time."
+  },
+  "fieldErrors": {
+    "name": "Enter your salon’s name.",
+    "slug": "Lower-case letters, digits and hyphens only — 63 characters at most.",
+    "slugReserved": "This name is reserved by the platform — please choose another one.",
+    "addressLine1": "Enter your street address.",
+    "postalCode": "This postal code is too long.",
+    "city": "Enter your city.",
+    "countryCode": "Choose your country.",
+    "timezone": "Choose your time zone.",
+    "defaultCurrency": "Choose the currency of your prices.",
+    "defaultLocale": "Choose the language your salon opens in.",
+    "firstName": "Enter your first name.",
+    "lastName": "Enter your last name.",
+    "email": "Enter a valid email address.",
+    "password": "Your password must be at least twelve characters."
+  },
+  "errors": {
+    "title": "Sign-up did not go through",
+    "slugTaken": "This address is already taken — please choose another one.",
+    "emailTaken": "An account already exists with this email address. Sign in, or use another address.",
+    "invalidLink": "This link is no longer valid. Please ask for a new one.",
+    "validation": "The form contains an error.",
+    "tooManyRequests": "Too many attempts. Please wait a moment and try again.",
+    "unavailable": "The service is momentarily unavailable. Please try again in a few seconds.",
+    "unexpected": "Something went wrong. Please try again."
+  }
+}

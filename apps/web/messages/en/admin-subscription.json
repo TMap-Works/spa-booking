@@ -1,0 +1,83 @@
+{
+  "metadata": {
+    "title": "Subscription"
+  },
+  "title": "Subscription",
+  "denied": {
+    "title": "Subscription is for the salon owner only",
+    "hint": "Only the salon’s administrator can view and settle its platform subscription.",
+    "failedTitle": "Subscription unavailable"
+  },
+  "plan": {
+    "eyebrow": "Your plan",
+    "period": " / month, no commitment",
+    "included": {
+      "booking": "Online booking around the clock, on a page in your name",
+      "reminders": "Automatic confirmations and reminders by email and SMS",
+      "backOffice": "Schedule, team, client records and counter checkout",
+      "reporting": "Revenue, appointments and no-shows at a glance"
+    }
+  },
+  "return": {
+    "welcome": {
+      "title": "Welcome! Your salon is open",
+      "body": "Your {days}-day free trial has started. Next step: add your services, so they show up on your booking page.",
+      "catalog": "Add my services",
+      "dashboard": "See my dashboard"
+    },
+    "confirming": {
+      "title": "Payment being confirmed",
+      "body": "Stripe has not confirmed your card yet. This takes a few seconds.",
+      "refresh": "Refresh"
+    },
+    "canceled": {
+      "title": "Payment interrupted",
+      "body": "No card was saved. You can pick this up whenever you like."
+    }
+  },
+  "status": {
+    "managed": {
+      "title": "Salon supported by the platform",
+      "body": "Your salon was opened by the platform team: there is no subscription for you to settle here."
+    },
+    "pending": {
+      "title": "Your free trial has not started yet",
+      "body": "Save your card to open your salon: nothing is charged during the {days}-day trial, and you can cancel at any time. Until the trial starts, your booking page stays closed.",
+      "action": "Start my free trial"
+    },
+    "trialing": {
+      "title": "Free trial under way",
+      "titleUntil": "Free trial until {date}",
+      "body": "Your salon is open. The first charge of {price} will be taken at the end of the trial, unless you cancel before then.",
+      "action": "Manage my subscription"
+    },
+    "active": {
+      "title": "Subscription active",
+      "body": "Your salon is open.",
+      "bodyUntil": "Your salon is open. Next charge on {date}.",
+      "action": "Manage my subscription"
+    },
+    "past_due": {
+      "title": "The last payment failed",
+      "body": "Your salon stays open while the payment is retried. Update your card to avoid it closing.",
+      "action": "Update my card"
+    },
+    "canceled": {
+      "title": "Subscription cancelled",
+      "body": "Your salon is closed: online booking and the back office are suspended. Your services, your team and your client records are kept — everything reopens as soon as you reactivate.",
+      "action": "Reactivate my subscription"
+    }
+  },
+  "redirect": {
+    "loading": "Opening Stripe…",
+    "failureTitle": "Stripe could not be opened",
+    "errors": {
+      "notApplicable": "This subscription cannot be changed from here right now. Refresh the page to see where it stands.",
+      "accountMissing": "No payment method has been saved yet. Start your free trial first.",
+      "unavailable": "Stripe is momentarily unavailable. Please try again in a few seconds.",
+      "session": "Your session has expired. Sign in again to continue.",
+      "unexpected": "Something went wrong. Please try again."
+    }
+  },
+  "secure": "Payment secured by Stripe: your card details never pass through our servers."
+}

@@ -1,0 +1,83 @@
+{
+  "metadata": {
+    "title": "Abonnement"
+  },
+  "title": "Abonnement",
+  "denied": {
+    "title": "Abonnement réservé à l’administrateur",
+    "hint": "Seul l’administrateur du salon peut consulter et régler son abonnement à la plateforme.",
+    "failedTitle": "Abonnement indisponible"
+  },
+  "plan": {
+    "eyebrow": "Votre offre",
+    "period": " / mois, sans engagement",
+    "included": {
+      "booking": "Réservation en ligne 24 h/24, sur votre page à votre nom",
+      "reminders": "Confirmations et rappels automatiques par e-mail et SMS",
+      "backOffice": "Planning, équipe, fiches clientes et encaissement au comptoir",
+      "reporting": "Suivi du chiffre d’affaires, des rendez-vous et des absences"
+    }
+  },
+  "return": {
+    "welcome": {
+      "title": "Bienvenue ! Votre salon est ouvert",
+      "body": "Votre essai gratuit de {days} jours a commencé. Prochaine étape : ajoutez vos prestations, pour qu’elles apparaissent sur votre page de réservation.",
+      "catalog": "Ajouter mes prestations",
+      "dashboard": "Voir mon tableau de bord"
+    },
+    "confirming": {
+      "title": "Paiement en cours de confirmation",
+      "body": "Stripe n’a pas encore confirmé l’enregistrement de votre carte. Cela prend quelques secondes.",
+      "refresh": "Actualiser"
+    },
+    "canceled": {
+      "title": "Paiement interrompu",
+      "body": "Aucune carte n’a été enregistrée. Vous pouvez reprendre quand vous voulez."
+    }
+  },
+  "status": {
+    "managed": {
+      "title": "Salon accompagné par la plateforme",
+      "body": "Votre salon a été ouvert par l’équipe de la plateforme : vous n’avez aucun abonnement à régler ici."
+    },
+    "pending": {
+      "title": "Votre essai gratuit n’a pas encore commencé",
+      "body": "Enregistrez votre carte pour ouvrir votre salon : rien n’est prélevé pendant les {days} jours d’essai, et vous pouvez résilier à tout moment. Tant que l’essai n’a pas commencé, votre page de réservation reste fermée.",
+      "action": "Démarrer mon essai gratuit"
+    },
+    "trialing": {
+      "title": "Essai gratuit en cours",
+      "titleUntil": "Essai gratuit jusqu’au {date}",
+      "body": "Votre salon est ouvert. Le premier prélèvement de {price} aura lieu à la fin de l’essai, sauf résiliation d’ici là.",
+      "action": "Gérer mon abonnement"
+    },
+    "active": {
+      "title": "Abonnement actif",
+      "body": "Votre salon est ouvert.",
+      "bodyUntil": "Votre salon est ouvert. Prochaine échéance le {date}.",
+      "action": "Gérer mon abonnement"
+    },
+    "past_due": {
+      "title": "Le dernier paiement a échoué",
+      "body": "Votre salon reste ouvert pendant que le paiement est retenté. Mettez à jour votre carte pour éviter sa fermeture.",
+      "action": "Mettre à jour ma carte"
+    },
+    "canceled": {
+      "title": "Abonnement résilié",
+      "body": "Votre salon est fermé : la réservation en ligne et le back-office sont suspendus. Vos prestations, votre équipe et vos fiches clientes sont conservées — tout rouvre dès la réactivation.",
+      "action": "Réactiver mon abonnement"
+    }
+  },
+  "redirect": {
+    "loading": "Ouverture de Stripe…",
+    "failureTitle": "Stripe n’a pas pu être ouvert",
+    "errors": {
+      "notApplicable": "Cet abonnement ne peut pas être modifié d’ici pour l’instant. Actualisez la page pour voir où il en est.",
+      "accountMissing": "Aucun moyen de paiement n’est encore enregistré. Démarrez d’abord votre essai gratuit.",
+      "unavailable": "Stripe est momentanément indisponible. Réessayez dans quelques secondes.",
+      "session": "Votre session a expiré. Reconnectez-vous pour continuer.",
+      "unexpected": "Une erreur inattendue est survenue. Merci de réessayer."
+    }
+  },
+  "secure": "Paiement sécurisé par Stripe : vos données de carte ne transitent jamais par nos serveurs."
+}

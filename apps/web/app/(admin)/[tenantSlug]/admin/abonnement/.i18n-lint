@@ -1,0 +1,4 @@
+# Marqueur de lint i18n — voir eslint-rules/i18n-markers.mjs.
+# L'abonnement du salon à la plateforme, traduit par #1105. Le répertoire entier
+# est sous la règle ; le panneau qui l'affiche, `components/billing-panel.tsx`,
+# porte sa ligne dans le marqueur de `components/`.
