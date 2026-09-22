@@ -29,7 +29,9 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { PENDING_CONFIRMATION_LABEL } from '@/lib/appointment-status';
+import { PENDING_HOLD_NOTE } from '@/components/account/appointment-brief';
 import { ConfirmationStep } from '@/app/(booking)/[tenantSlug]/reservation/steps/confirmation-step';
+import fr from '@/messages/fr/booking.json';
 
 import { contact, service, tenant } from './fixtures';
 
@@ -409,5 +411,24 @@ describe('la carte du rendez-vous', () => {
     renderConfirmation();
 
     expect(screen.queryByRole('button', { name: /^Modifier/ })).toBeNull();
+  });
+});
+
+describe('la phrase de la retenue, écrite des deux côtés du parcours (#846)', () => {
+  it('dit exactement la même chose au tunnel et à l’espace client', () => {
+    // Le tunnel lit `tunnel.confirmationStep.pendingHold` dans le catalogue, et
+    // le rend donc dans la langue du visiteur. L'espace client, lui, n'est pas
+    // encore traduit : ses deux cartes affichent `PENDING_HOLD_NOTE`, un
+    // littéral français de `components/account/appointment-brief.ts`, qui
+    // relève de l'empreinte du ticket voisin de l'épique #843.
+    //
+    // Les deux écritures coexistent donc le temps de l'épique, et rien dans le
+    // code ne les tient ensemble : c'est précisément le doublon que #743 et
+    // #917 ont dû recoller ailleurs, après qu'un même statut eut fini par se
+    // dire de deux façons. Ce test est la couture provisoire — il tombe à la
+    // première divergence, et nomme celle qui aura bougé.
+    //
+    // Il disparaîtra avec la constante, quand l'espace client lira cette clé.
+    expect(PENDING_HOLD_NOTE).toBe(fr.tunnel.confirmationStep.pendingHold);
   });
 });

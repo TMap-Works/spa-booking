@@ -18,10 +18,12 @@
  * sont exactement celles que le rapport d'échec désignera.
  */
 
+import type { Locale } from '@spa/shared';
 import { test as base, expect, type Locator, type Page } from '@playwright/test';
 
 import { CLIENTE, MOT_DE_PASSE, chemins, dansNJours } from './environnement';
 import { lireJeuDessai, type JeuDessai } from './jeu-dessai';
+import { debuteParLibelle, libelle } from './libelles';
 
 export interface Fixtures {
   readonly jeu: JeuDessai;
@@ -133,13 +135,33 @@ function ligneDe(carte: Locator): Locator {
  *
  * Chaque écran est franchi comme le ferait une cliente : c'est la partie du
  * parcours qui n'a le droit de rien devoir à l'API.
+ *
+ * ## Les libellés viennent du catalogue (#846)
+ *
+ * Le parcours public se sert en français et en anglais, et le huitième critère
+ * d'acceptation de #846 demande que **le même scénario** passe dans les deux.
+ * Les cibles sont donc désignées par clé de catalogue (`support/libelles.ts`) et
+ * non par une chaîne écrite ici : une scène qui chercherait « Choisir un
+ * créneau » ne décrirait plus le produit, mais une de ses deux langues.
+ *
+ * `langue` est ce que le navigateur annonce — `test.use({ locale })` — et donc
+ * ce que la résolution de `i18n/resolve.ts` va servir : les deux doivent
+ * s'accorder, sinon la scène cherche des libellés que l'écran n'affiche pas.
+ *
+ * **Deux écrans font exception**, et c'est écrit à l'endroit où on les
+ * traverse : la connexion et l'inscription de l'espace client ne sont pas
+ * encore traduites — c'est leur propre ticket de l'épique #843.
  */
-export async function reserverParLeTunnel(page: Page): Promise<Reservation> {
+export async function reserverParLeTunnel(page: Page, langue: Locale = 'fr'): Promise<Reservation> {
   await test.step('1. Vitrine — entrer dans le tunnel', async () => {
     await page.goto(chemins.salon());
     // Le bouton de la vitrine, dans le contenu : l'en-tête et le pied du salon
-    // portent aussi un « Prendre rendez-vous » depuis #1045.
-    await page.getByRole('main').getByRole('link', { name: 'Prendre rendez-vous' }).click();
+    // portent aussi un « Prendre rendez-vous » depuis #1045. Son libellé est
+    // celui du registre des sorties publiques (#749), namespace `public-exits`.
+    await page
+      .getByRole('main')
+      .getByRole('link', { name: libelle(langue, 'public-exits.exits.reservation') })
+      .click();
     // La navigation d'abord : sans elle, l'étape se conclurait sur la vitrine,
     // et la faute apparaîtrait deux étapes plus loin (voir `cartesPrestation`).
     await page.waitForURL(`**${chemins.reservation()}`);
@@ -162,11 +184,15 @@ export async function reserverParLeTunnel(page: Page): Promise<Reservation> {
     // Le praticien reste « Premier disponible », retenu d'emblée : le parcours
     // n'éprouve pas *quel* praticien est choisi, et le laisser tel quel est le
     // chemin de la cliente qui n'a pas de préférence.
-    await page.getByRole('button', { name: 'Choisir un créneau' }).click();
+    await page
+      .getByRole('button', { name: libelle(langue, 'booking.tunnel.serviceStep.submit') })
+      .click();
   });
 
   await test.step('3. Créneau — retenir le premier jour ouvert de la bande', async () => {
-    const etape = page.getByRole('region', { name: 'Choix du praticien et du créneau' });
+    const etape = page.getByRole('region', {
+      name: libelle(langue, 'booking.tunnel.slotStep.label'),
+    });
     await expect(etape).toBeVisible();
 
     // Le choix de la date est une **bande de jours** depuis #1049, le mois
@@ -174,21 +200,24 @@ export async function reserverParLeTunnel(page: Page): Promise<Reservation> {
     // Deux `grid` cohabitent donc dans l'étape, et chacune se désigne par son nom
     // accessible plutôt que par son rang : la bande s'appelle « Jour du
     // rendez-vous — <mois> », la grille d'heures « Créneaux du <jour> ».
-    const bande = etape.getByRole('grid', { name: /^Jour du rendez-vous —/ });
+    const bande = etape.getByRole('grid', {
+      name: debuteParLibelle(langue, 'booking.tunnel.dateBand.gridLabel'),
+    });
     await expect(bande).toBeVisible({ timeout: 20_000 });
 
-    // Les journées pleines s'annoncent « complet », celles hors fenêtre « hors
-    // de la période de réservation » et celles en cours de chargement
-    // « disponibilités en cours de chargement » : ne retenir que celles dont le
-    // libellé se termine par un décompte évite d'avoir à interroger
-    // `aria-disabled`.
-    const jourOuvert = bande.getByRole('button', { name: /\d+ créneaux?$/ }).first();
+    // Les journées pleines, hors fenêtre ou encore en chargement portent
+    // `aria-disabled` (`components/booking/date-band.tsx`). C'est ce qui les
+    // écarte ici — et non plus le décompte en toutes lettres qui fermait leur
+    // nom accessible : ce décompte est une forme plurielle du catalogue, donc
+    // une chaîne différente dans chaque langue, là où l'attribut est le même.
+    const jourOuvert = bande.locator('button:not([aria-disabled="true"])').first();
     await expect(jourOuvert).toBeVisible({ timeout: 20_000 });
     await jourOuvert.click();
 
-    // La grille d'heures, elle, se nomme par la journée qu'elle détaille.
+    // La grille d'heures, elle, se nomme par la journée qu'elle détaille : seule
+    // sa tête est un libellé, la date qui suit vient d'`Intl`.
     const creneau = etape
-      .getByRole('grid', { name: /^Créneaux du/ })
+      .getByRole('grid', { name: debuteParLibelle(langue, 'booking.tunnel.slotPicker.dayHeading') })
       .getByRole('gridcell')
       .locator('button')
       .first();
@@ -201,9 +230,20 @@ export async function reserverParLeTunnel(page: Page): Promise<Reservation> {
     // s'arrête ici, le créneau rappelé, et mène à la connexion du salon. Le
     // lien est cherché dans le contenu : l'en-tête du tunnel n'en porte pas,
     // mais c'est ce qui le garantit.
-    await expect(page.getByRole('heading', { level: 1, name: 'Identifiez-vous' })).toBeVisible();
-    await page.getByRole('main').getByRole('link', { name: 'Se connecter' }).click();
+    await expect(
+      page.getByRole('heading', { level: 1, name: libelle(langue, 'booking.tunnel.gateStep.title') }),
+    ).toBeVisible();
+    await page
+      .getByRole('main')
+      .getByRole('link', { name: libelle(langue, 'booking.tunnel.gateStep.signIn') })
+      .click();
 
+    // **Libellés français en dur, et c'est voulu** : l'écran de connexion de
+    // l'espace client n'est pas dans l'empreinte de #846 — il a son propre
+    // ticket dans l'épique #843, avec son propre namespace. Tant qu'il n'est pas
+    // traduit, il s'affiche en français quelle que soit la langue résolue, et
+    // c'est bien ce que la scène doit traverser. Ces trois lignes passeront au
+    // catalogue avec lui.
     await page.getByLabel('Adresse e-mail').fill(CLIENTE.email);
     await page.getByLabel('Mot de passe').fill(MOT_DE_PASSE);
     await page.getByRole('button', { name: 'Se connecter' }).click();
@@ -211,7 +251,9 @@ export async function reserverParLeTunnel(page: Page): Promise<Reservation> {
     // Le retour au tunnel (#1087) : le brouillon de l'onglet est repris, et
     // l'étape s'ouvre sur l'encart du compte au lieu de ses champs (#1050).
     await page.waitForURL(`**${chemins.reservation()}**`);
-    await expect(page.getByText('Réservé au nom de')).toBeVisible({ timeout: 20_000 });
+    await expect(
+      page.getByText(libelle(langue, 'booking.tunnel.contactStep.identityLabel')),
+    ).toBeVisible({ timeout: 20_000 });
   });
 
   await test.step('5. Coordonnées — donner son accord', async () => {
@@ -220,27 +262,35 @@ export async function reserverParLeTunnel(page: Page): Promise<Reservation> {
     // décochée d'origine et retient la soumission tant qu'elle l'est. C'est le
     // seul `checkbox` de l'écran.
     await page.getByRole('checkbox').check();
-    await page.getByRole('button', { name: 'Vérifier ma réservation' }).click();
+    await page
+      .getByRole('button', { name: libelle(langue, 'booking.tunnel.contactStep.submit') })
+      .click();
   });
 
   await test.step('6. Récapitulatif — confirmer la réservation', async () => {
     const recapitulatif = page.getByRole('region', {
-      name: 'Récapitulatif de votre réservation',
+      name: libelle(langue, 'booking.tunnel.summaryStep.label'),
     });
     await expect(recapitulatif).toBeVisible();
-    await page.getByRole('button', { name: 'Confirmer la réservation' }).click();
+    await page
+      .getByRole('button', { name: libelle(langue, 'booking.tunnel.summaryStep.submit') })
+      .click();
   });
 
   return test.step('7. Confirmation — relever la référence', async () => {
     const confirmation = page.getByRole('region', {
-      name: 'Confirmation de votre réservation',
+      name: libelle(langue, 'booking.tunnel.confirmationStep.label'),
     });
     await expect(confirmation).toBeVisible({ timeout: 20_000 });
     // L'issue annoncée est celle du statut **réel** (#1051) : un rendez-vous
     // public naît `PENDING` côté API (`appointments.repository.ts`), donc
     // « Demande envoyée » et non « C'est réservé ! », que seul un rendez-vous
     // déjà confirmé par le salon affiche.
-    await expect(page.getByRole('heading', { name: 'Demande envoyée' })).toBeVisible();
+    await expect(
+      page.getByRole('heading', {
+        name: libelle(langue, 'booking.tunnel.confirmationStep.pendingTitle'),
+      }),
+    ).toBeVisible();
 
     // Ce que la cliente lit : la référence courte du wireframe — Étape 6,
     // « Réf. RDV-8F3K-27 » (#736). L'écran rendait l'identifiant tel quel
