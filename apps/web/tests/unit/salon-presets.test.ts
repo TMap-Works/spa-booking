@@ -6,6 +6,8 @@ import {
   CURRENCY_CHOICES,
   DEFAULT_COUNTRY,
   TIMEZONE_CHOICES,
+  countryChoices,
+  countryLabel,
   countryPreset,
   timezoneChoices,
 } from '@/lib/salon-presets';
@@ -193,5 +195,61 @@ describe('les devises proposées', () => {
     expect(CURRENCY_CHOICES).toContain('USD');
     expect(CURRENCY_CHOICES).toContain('CAD');
     expect(new Set(CURRENCY_CHOICES).size).toBe(CURRENCY_CHOICES.length);
+  });
+});
+
+/**
+ * Les noms de pays suivent la langue lue — #1105, troisième critère
+ * d'acceptation.
+ *
+ * Le `label` figé des préréglages est français : un salon américain lisait
+ * « États-Unis » sur le formulaire qui l'ouvrait. Les noms viennent désormais
+ * d'`Intl.DisplayNames`, pour la même raison que les décimales d'une devise
+ * viennent d'`Intl` — une table maison aurait fini par diverger de la norme.
+ */
+describe('les noms de pays (#1105)', () => {
+  it('nomme chaque pays dans la langue demandée', () => {
+    expect(countryLabel('US', 'en')).toBe('United States');
+    expect(countryLabel('US', 'fr')).toBe('États-Unis');
+    expect(countryLabel('CA', 'en')).toBe('Canada');
+    expect(countryLabel('FR', 'en')).toBe('France');
+    expect(countryLabel('FR', 'fr')).toBe('France');
+  });
+
+  it('nomme tous les pays proposés, sans jamais rendre un code nu', () => {
+    for (const locale of ['fr', 'en'] as const) {
+      for (const country of COUNTRY_PRESETS) {
+        const label = countryLabel(country.code, locale);
+
+        expect(label, `${country.code}/${locale}`).not.toBe(country.code);
+        expect(label.length, `${country.code}/${locale}`).toBeGreaterThan(1);
+      }
+    }
+  });
+
+  it('retombe sur le préréglage, puis sur le code, pour ce qu’`Intl` ne connaît pas', () => {
+    // « QQ » est un code à usage privé : ni `Intl` ni les préréglages ne le
+    // portent, et il vaut mieux voir le code qu'une case vide dans une liste.
+    // (« ZZ », lui, est le code CLDR de la région inconnue — `Intl` le nomme.)
+    expect(countryLabel('QQ', 'en')).toBe('QQ');
+  });
+
+  it('garde l’ordre des préréglages, qui porte la présélection', () => {
+    // Trier sur le nom traduit ferait dépendre de la langue le pays qui ouvre la
+    // liste — or ce premier rang est une décision produit (#1103).
+    for (const locale of ['fr', 'en'] as const) {
+      const choices = countryChoices(locale);
+
+      expect(choices.map((choice) => choice.code)).toEqual(
+        COUNTRY_PRESETS.map((country) => country.code),
+      );
+      expect(choices[0]?.code).toBe(DEFAULT_COUNTRY.code);
+    }
+  });
+
+  it('rend les mêmes noms que `countryLabel`, choix par choix', () => {
+    for (const choice of countryChoices('en')) {
+      expect(choice.label).toBe(countryLabel(choice.code, 'en'));
+    }
   });
 });
