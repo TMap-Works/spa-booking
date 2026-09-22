@@ -1,4 +1,7 @@
-import { hasAtLeastRole, type UserRole } from '@spa/shared';
+import { hasAtLeastRole, type Locale, type UserRole } from '@spa/shared';
+
+import en from '@/messages/en/shell.json';
+import fr from '@/messages/fr/shell.json';
 
 import { adminClientsPath } from '../clients/paths';
 import {
@@ -57,21 +60,40 @@ export interface AdminNavEntry {
 }
 
 /**
- * Les libellés de rôle, écrits une fois.
+ * ## Les mots viennent du catalogue (#845)
+ *
+ * Les libellés du sommaire et ceux des rôles sont lus dans
+ * `messages/<langue>/shell.json`, sous `admin.rail` — le même namespace que le
+ * reste de la coquille du back-office. Ils y sont lus par **import direct des
+ * deux fichiers JSON**, et non par `useTranslations` : ce module est fait de
+ * fonctions pures, appelées par le rail (un composant client), par la
+ * redirection d'après-connexion (`adminLandingPath`, côté serveur) et par des
+ * tests sans DOM. Un crochet de React l'aurait rendu inappelable dans les deux
+ * derniers. Même motif que `lib/appointment-status.ts`.
+ *
+ * `locale` a une valeur par défaut — `'fr'` —, et c'est **transitoire**, pour la
+ * même raison qu'ailleurs dans l'épique #843 : les appelants hors de l'empreinte
+ * de #845 gardent le comportement d'avant le ticket jusqu'à ce que leur propre
+ * ticket leur passe la langue résolue.
+ */
+const CATALOG = { fr, en } as const;
+
+/** La langue employée quand l'appelant n'en passe pas encore. */
+const FALLBACK_LOCALE: Locale = 'fr';
+
+/**
+ * Le rôle, tel qu'on l'écrit à l'écran.
  *
  * Le rail annonce qui est connecté **et à quel titre** : c'est ce qui explique
  * qu'une entrée manque, sur un poste partagé entre plusieurs personnes.
  */
-const ROLE_LABELS: Readonly<Record<UserRole, string>> = {
-  client: 'compte client',
-  staff: 'praticien·ne',
-  manager: 'gérant·e',
-  admin: 'administrateur·rice',
-};
+export function roleLabel(role: UserRole, locale: Locale = FALLBACK_LOCALE): string {
+  return CATALOG[locale].admin.rail.roles[role];
+}
 
-/** Le rôle, tel qu'on l'écrit à l'écran. */
-export function roleLabel(role: UserRole): string {
-  return ROLE_LABELS[role];
+/** Le libellé d'une section du sommaire, dans la langue demandée. */
+function entryLabel(key: keyof typeof en.admin.rail.entries, locale: Locale): string {
+  return CATALOG[locale].admin.rail.entries[key];
 }
 
 /**
@@ -81,18 +103,22 @@ export function roleLabel(role: UserRole): string {
  * puis ce qu'on ouvre à la demande, puis ce qu'on paramètre une fois par
  * trimestre. Les réglages ferment donc la liste, et non l'inverse.
  */
-export function adminNavigation(tenantSlug: string, role: UserRole): readonly AdminNavEntry[] {
+export function adminNavigation(
+  tenantSlug: string,
+  role: UserRole,
+  locale: Locale = FALLBACK_LOCALE,
+): readonly AdminNavEntry[] {
   const entries: readonly AdminNavEntry[] = [
     {
       key: 'tableau-de-bord',
-      label: 'Tableau de bord',
+      label: entryLabel('tableau-de-bord', locale),
       href: adminDashboardPath(tenantSlug),
       minimumRole: 'manager',
       upcoming: null,
     },
     {
       key: 'mon-planning',
-      label: 'Mon planning',
+      label: entryLabel('mon-planning', locale),
       href: adminMyPlanningPath(tenantSlug),
       /*
        * `GET /v1/me/*` — `agenda:read:own`, que la matrice donne à tout rôle
@@ -107,7 +133,7 @@ export function adminNavigation(tenantSlug: string, role: UserRole): readonly Ad
     },
     {
       key: 'planning',
-      label: 'Planning',
+      label: entryLabel('planning', locale),
       href: adminCalendarPath(tenantSlug),
       /*
        * `GET /v1/appointments` — l'agenda du comptoir se lit dès le rang staff,
@@ -126,7 +152,7 @@ export function adminNavigation(tenantSlug: string, role: UserRole): readonly Ad
     },
     {
       key: 'clients',
-      label: 'Clients',
+      label: entryLabel('clients', locale),
       /*
        * Le fichier client est servi depuis #54 : l'entrée porte donc son chemin,
        * et l'écran cesse de n'être atteignable qu'en tapant son URL (#480).
@@ -144,7 +170,7 @@ export function adminNavigation(tenantSlug: string, role: UserRole): readonly Ad
     },
     {
       key: 'prestations',
-      label: 'Prestations',
+      label: entryLabel('prestations', locale),
       href: adminCatalogPath(tenantSlug),
       // `GET /v1/services` — @AuthAtLeast('STAFF').
       minimumRole: 'staff',
@@ -152,7 +178,7 @@ export function adminNavigation(tenantSlug: string, role: UserRole): readonly Ad
     },
     {
       key: 'personnel',
-      label: 'Personnel',
+      label: entryLabel('personnel', locale),
       // Le personnel et les fiches praticien sont servis depuis #53 (#480).
       href: adminStaffPath(tenantSlug),
       /*
@@ -178,7 +204,7 @@ export function adminNavigation(tenantSlug: string, role: UserRole): readonly Ad
     },
     {
       key: 'encaissement',
-      label: 'Encaissement',
+      label: entryLabel('encaissement', locale),
       /*
        * L'encaissement au comptoir est servi depuis #59 (PR #460, `e7008b5`) :
        * l'entrée porte donc son chemin, et l'écran cesse de n'être atteignable
@@ -209,7 +235,7 @@ export function adminNavigation(tenantSlug: string, role: UserRole): readonly Ad
     },
     {
       key: 'reporting',
-      label: 'Reporting',
+      label: entryLabel('reporting', locale),
       /*
        * L'écran d'indicateurs est servi depuis #75 : l'entrée porte donc son
        * chemin, et cesse d'être inerte. Quatrième entrée à passer de l'annonce
@@ -237,7 +263,7 @@ export function adminNavigation(tenantSlug: string, role: UserRole): readonly Ad
     },
     {
       key: 'reglages',
-      label: 'Réglages',
+      label: entryLabel('reglages', locale),
       href: adminSettingsPath(tenantSlug),
       // `GET /v1/tenant` — @AuthAtLeast('ADMIN'). Proposé plus bas, l'écran
       // répondrait 403 à un rang gérant.
@@ -246,7 +272,7 @@ export function adminNavigation(tenantSlug: string, role: UserRole): readonly Ad
     },
     {
       key: 'abonnement',
-      label: 'Abonnement',
+      label: entryLabel('abonnement', locale),
       href: adminBillingPath(tenantSlug),
       // `GET /v1/billing/subscription` — `settings:write`, l'administrateur seul
       // (ADR 0016).

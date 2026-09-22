@@ -172,6 +172,19 @@
   background-color: var(--spa-color-surface-inverse-raised);
 }
 
+/*
+ * Le sélecteur de langue tient dans ce même pied de rail (#845) et n'y demande
+ * **aucune règle propre** : `.spa-locale-switcher` (design system partagé) le
+ * met en ligne, et la correction de couleur ci-dessus l'atteint déjà par
+ * descendance — ses boutons sont des `.spa-button--quiet`, sauf celui de la
+ * langue affichée, une pastille `--neutral` dont le contraste est celui d'une
+ * surface claire à texte sombre, la paire que `contrast.test.mjs` vérifie.
+ *
+ * Une classe admin de plus aurait été du style que seule une feuille connaît,
+ * sans maquette pour la montrer — ce que `admin-mockups.test.mjs` refuse, et à
+ * raison.
+ */
+
 /* --- Zone principale ------------------------------------------------------- */
 
 .spa-admin__main {

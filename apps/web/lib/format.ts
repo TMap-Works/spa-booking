@@ -12,14 +12,132 @@
  *   montant lui-même.
  */
 
-import { AMOUNT_MINOR_MAX, type CalendarDate, type Money, type TimeZone, type UtcInstant } from '@spa/shared';
+import {
+  AMOUNT_MINOR_MAX,
+  type CalendarDate,
+  type Locale,
+  type Money,
+  type TimeZone,
+  type UtcInstant,
+} from '@spa/shared';
 
-/** Locale d'affichage du MVP — une seule, l'internationalisation est hors périmètre. */
-const LOCALE = 'fr-FR';
+import en from '@/messages/en/format.json';
+import fr from '@/messages/fr/format.json';
+
+/**
+ * ## La langue du formatage (#845)
+ *
+ * Chaque fonction de ce module reçoit la langue, en dernier paramètre. Ce n'est
+ * pas la même chose que la langue des **mots** : un libellé vient du catalogue,
+ * une date vient d'`Intl`, et c'est `Intl` qui sait que le 1er septembre s'écrit
+ * « lundi 1 septembre » en français et « Monday, 1 September » en anglais.
+ *
+ * ### La région, et d'où elle vient
+ *
+ * Une langue ne suffit pas à formater : `en-US` écrit « 9/1/2026 » là où
+ * `en-GB` écrit « 01/09/2026 », et les deux sont de l'anglais. La région vient
+ * donc du **pays de l'établissement** (`Tenant.countryCode`, lu sur l'adresse de
+ * la fiche publique) : un salon montréalais écrit ses dates comme le Québec, un
+ * salon londonien comme le Royaume-Uni.
+ *
+ * Quand le champ est vide — un salon qui n'a pas publié d'adresse —, le repli
+ * est **documenté et figé**, comme l'exige le dixième critère d'acceptation de
+ * #845 : `en` → `en-US`, `fr` → `fr-FR`. Ce sont les régions des deux marchés du
+ * produit ; deviner autre chose (la région du serveur, celle du navigateur)
+ * ferait varier l'affichage d'une machine à l'autre pour un même salon.
+ *
+ * ### Ce qui ne change pas
+ *
+ * Le **fuseau** reste celui de l'établissement, toujours passé explicitement :
+ * la langue n'y touche pas, et un rendez-vous mal fuseau-horairé est un bug de
+ * sévérité haute (`CLAUDE.md`). Les **montants** restent des entiers accompagnés
+ * d'un code devise ; seule leur mise en forme suit la langue.
+ *
+ * ### Pourquoi un paramètre facultatif
+ *
+ * Les quarante et quelques appelants de ce module sont hors de l'empreinte de
+ * #845 : chacun passera la langue résolue dans son propre ticket de l'épique
+ * #843. D'ici là, le défaut garde le comportement d'avant le ticket — le
+ * français — plutôt que de faire basculer en anglais des écrans dont personne
+ * n'a encore relu la traduction. Le défaut tombe avec le dernier ticket
+ * d'écran, et `tsc` nommera alors ce qui reste à brancher.
+ */
+
+/** La langue employée quand l'appelant n'en passe pas encore — voir ci-dessus. */
+const FALLBACK_LOCALE: Locale = 'fr';
+
+/**
+ * Ce qui décide de la mise en forme : une langue, et le pays de
+ * l'établissement.
+ *
+ * Un objet et non deux paramètres positionnels : il se passe de main en main à
+ * travers les composants sans qu'aucun n'ait à se souvenir de l'ordre, et le
+ * jour où une troisième dimension s'y ajoute — un calendrier, un système
+ * d'unités — les quarante appelants n'ont pas à changer de signature.
+ */
+export interface DisplayLocale {
+  readonly locale: Locale;
+  /** `Tenant.countryCode` — ISO 3166-1 alpha-2, ou rien. */
+  readonly countryCode?: string | null | undefined;
+}
+
+/** Le repli transitoire de l'épique #843 — voir l'en-tête. */
+const FALLBACK_DISPLAY: DisplayLocale = { locale: FALLBACK_LOCALE };
+
+/** Les mots que `Intl` ne sait pas dire, dans les deux langues. */
+const WORDS = { fr, en } as const;
+
+/** L'étiquette `Intl` de ce contexte d'affichage. */
+function tag(display: DisplayLocale): string {
+  return formattingLocale(display.locale, display.countryCode);
+}
+
+/**
+ * Le remplacement des paramètres d'un message lu **hors de React**.
+ *
+ * Ce module est fait de fonctions pures, appelées depuis des Server Components,
+ * des Client Components et des tests sans DOM : aucun crochet de `next-intl` n'y
+ * est disponible. Les quatre messages concernés n'ont qu'un paramètre chacun et
+ * aucune forme plurielle — un remplacement littéral suffit, et évite d'embarquer
+ * un formateur ICU dans le chemin de chaque date affichée.
+ */
+function fill(message: string, values: Readonly<Record<string, string>>): string {
+  return Object.entries(values).reduce(
+    (text, [name, value]) => text.replaceAll(`{${name}}`, value),
+    message,
+  );
+}
+
+/** Les régions de repli, quand l'établissement n'a pas publié son pays. */
+const FALLBACK_REGION: Readonly<Record<Locale, string>> = { fr: 'FR', en: 'US' };
+
+/**
+ * L'étiquette BCP 47 complète à passer à `Intl` — « fr-CA », « en-US ».
+ *
+ * `countryCode` est celui de l'établissement (ISO 3166-1 alpha-2). Une valeur
+ * qui n'a pas cette forme est ignorée plutôt que recopiée : `Intl` lève un
+ * `RangeError` sur une étiquette mal formée, et une adresse mal saisie ferait
+ * alors tomber l'écran entier au lieu d'afficher une date.
+ */
+export function formattingLocale(
+  locale: Locale = FALLBACK_LOCALE,
+  countryCode?: string | null | undefined,
+): string {
+  const region =
+    typeof countryCode === 'string' && /^[A-Za-z]{2}$/.test(countryCode)
+      ? countryCode.toUpperCase()
+      : FALLBACK_REGION[locale];
+
+  return `${locale}-${region}`;
+}
 
 /** « lundi 1 septembre 2026 à 11:00 », dans le fuseau de l'établissement. */
-export function formatDateTimeInTimeZone(instant: UtcInstant, timeZone: TimeZone): string {
-  return new Intl.DateTimeFormat(LOCALE, {
+export function formatDateTimeInTimeZone(
+  instant: UtcInstant,
+  timeZone: TimeZone,
+  display: DisplayLocale = FALLBACK_DISPLAY,
+): string {
+  return new Intl.DateTimeFormat(tag(display), {
     timeZone,
     dateStyle: 'full',
     timeStyle: 'short',
@@ -31,8 +149,12 @@ export function formatDateTimeInTimeZone(instant: UtcInstant, timeZone: TimeZone
  * salon. Court et chiffré, comme sur un rouleau de 80 mm, où le jour de la
  * semaine en toutes lettres ne tiendrait pas sur une ligne.
  */
-export function formatTicketDateTime(instant: UtcInstant, timeZone: TimeZone): string {
-  return new Intl.DateTimeFormat(LOCALE, {
+export function formatTicketDateTime(
+  instant: UtcInstant,
+  timeZone: TimeZone,
+  display: DisplayLocale = FALLBACK_DISPLAY,
+): string {
+  return new Intl.DateTimeFormat(tag(display), {
     timeZone,
     day: '2-digit',
     month: '2-digit',
@@ -45,21 +167,28 @@ export function formatTicketDateTime(instant: UtcInstant, timeZone: TimeZone): s
 }
 
 /** « 11:00 » — pour une liste de créneaux, où la date est déjà en titre. */
-export function formatTimeInTimeZone(instant: UtcInstant, timeZone: TimeZone): string {
-  return new Intl.DateTimeFormat(LOCALE, { timeZone, timeStyle: 'short' }).format(
+export function formatTimeInTimeZone(
+  instant: UtcInstant,
+  timeZone: TimeZone,
+  display: DisplayLocale = FALLBACK_DISPLAY,
+): string {
+  return new Intl.DateTimeFormat(tag(display), { timeZone, timeStyle: 'short' }).format(
     new Date(instant),
   );
 }
 
 /** « lundi 1 septembre 2026 » — l'en-tête d'une journée de créneaux. */
-export function formatCalendarDate(date: CalendarDate): string {
+export function formatCalendarDate(
+  date: CalendarDate,
+  display: DisplayLocale = FALLBACK_DISPLAY,
+): string {
   // Une date civile **est déjà** celle de l'établissement : le serveur l'a
   // découpée dans son fuseau (`dayAvailabilitySchema`). La reprojeter dans ce
   // fuseau la décalerait — `2026-09-01T12:00Z` lu à Auckland (UTC+12/+13) est
   // déjà le 2 septembre, et l'en-tête annoncerait un jour de plus que les
   // créneaux qu'il coiffe. On la met donc en forme telle quelle, en lisant
   // minuit UTC dans le référentiel UTC : la sortie ne dépend d'aucun fuseau.
-  return new Intl.DateTimeFormat(LOCALE, { timeZone: 'UTC', dateStyle: 'full' }).format(
+  return new Intl.DateTimeFormat(tag(display), { timeZone: 'UTC', dateStyle: 'full' }).format(
     new Date(`${date}T00:00:00Z`),
   );
 }
@@ -71,10 +200,15 @@ export function formatCalendarDate(date: CalendarDate): string {
  * Rendu `null` quand le visiteur est déjà dans ce fuseau : la mention n'apprend
  * alors rien et alourdit chaque ligne du parcours.
  */
-export function timeZoneMention(timeZone: TimeZone): string | null {
+export function timeZoneMention(
+  timeZone: TimeZone,
+  display: DisplayLocale = FALLBACK_DISPLAY,
+): string | null {
   const viewerTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
-  return viewerTimeZone === timeZone ? null : `heure de ${timeZone.replace(/_/g, ' ')}`;
+  return viewerTimeZone === timeZone
+    ? null
+    : fill(WORDS[display.locale].timeZoneMention, { timeZone: timeZone.replace(/_/g, ' ') });
 }
 
 /**
@@ -82,12 +216,12 @@ export function timeZoneMention(timeZone: TimeZone): string | null {
  * yen. Lu d'`Intl` plutôt que codé en dur : une table locale finirait par
  * diverger de la norme ISO 4217.
  */
-function fractionDigitsOf(currency: string): number {
+function fractionDigitsOf(currency: string, intlTag: string): number {
   // `maximumFractionDigits` est déclaré optionnel : le repli à deux décimales
   // est celui de la très grande majorité des devises, et il vaut mieux qu'une
   // exception au milieu d'un montant affiché.
   return (
-    new Intl.NumberFormat(LOCALE, { style: 'currency', currency }).resolvedOptions()
+    new Intl.NumberFormat(intlTag, { style: 'currency', currency }).resolvedOptions()
       .maximumFractionDigits ?? 2
   );
 }
@@ -100,10 +234,11 @@ function fractionDigitsOf(currency: string): number {
  * précision de la devise, et les montants du MVP tiennent dans un entier 32 bits
  * — donc très en deçà du seuil où un `number` cesse d'être exact.
  */
-export function formatMoney(amount: Money): string {
-  const digits = fractionDigitsOf(amount.currency);
+export function formatMoney(amount: Money, display: DisplayLocale = FALLBACK_DISPLAY): string {
+  const intlTag = tag(display);
+  const digits = fractionDigitsOf(amount.currency, intlTag);
 
-  return new Intl.NumberFormat(LOCALE, {
+  return new Intl.NumberFormat(intlTag, {
     style: 'currency',
     currency: amount.currency,
     minimumFractionDigits: digits,
@@ -144,13 +279,17 @@ export function formatMoney(amount: Money): string {
  * millier : sous l'unité, elle n'abrège rien et la place gagnée ne manque à
  * personne.
  */
-export function formatMoneyCompact(amount: Money): string {
-  const digits = fractionDigitsOf(amount.currency);
+export function formatMoneyCompact(
+  amount: Money,
+  display: DisplayLocale = FALLBACK_DISPLAY,
+): string {
+  const intlTag = tag(display);
+  const digits = fractionDigitsOf(amount.currency, intlTag);
   // Le seul flottant du chemin, et il ne sert qu'à choisir une précision
   // d'affichage — voir {@link formatMoney} sur pourquoi il est sans risque ici.
   const major = amount.amountMinor / 10 ** digits;
 
-  return new Intl.NumberFormat(LOCALE, {
+  return new Intl.NumberFormat(intlTag, {
     style: 'currency',
     currency: amount.currency,
     notation: 'compact',
@@ -175,7 +314,10 @@ export function formatMoneyCompact(amount: Money): string {
  * décimales inventées sur l'une des formes et pas sur l'autre.
  */
 function formatMajorUnits(amount: Money, decimalSeparator: string): string {
-  const digits = fractionDigitsOf(amount.currency);
+  // L'étiquette est sans effet ici : seule la précision de la devise est lue, et
+  // elle ne dépend pas de la langue. Elle est passée pour que `fractionDigitsOf`
+  // n'ait qu'une seule façon d'être appelée.
+  const digits = fractionDigitsOf(amount.currency, tag(FALLBACK_DISPLAY));
   const sign = amount.amountMinor < 0 ? '-' : '';
   const raw = String(Math.abs(amount.amountMinor)).padStart(digits + 1, '0');
   const units = raw.slice(0, raw.length - digits);
@@ -230,7 +372,9 @@ export function formatAmountMachine(amount: Money): string {
  * la gérante du prix qu'elle vend.
  */
 export function parseAmountInput(text: string, currency: string): Money | null {
-  const digits = fractionDigitsOf(currency);
+  // Même raison que `formatMajorUnits` : on ne lit ici que la précision de la
+  // devise, qui ne dépend d'aucune langue.
+  const digits = fractionDigitsOf(currency, tag(FALLBACK_DISPLAY));
   // Espaces de groupement compris : la classe `\s` de JavaScript couvre
   // l'insécable (U+00A0) et l'espace fine insécable (U+202F), celles qu'`Intl`
   // insère dans « 1 200,00 € » et qui reviennent telles quelles quand on
@@ -255,13 +399,19 @@ export function parseAmountInput(text: string, currency: string): Money | null {
 }
 
 /** « 1 h 15 » à partir d'une durée en minutes. */
-export function formatDuration(minutes: number): string {
+export function formatDuration(minutes: number, display: DisplayLocale = FALLBACK_DISPLAY): string {
+  const words = WORDS[display.locale];
   const hours = Math.floor(minutes / 60);
   const rest = minutes % 60;
 
   if (hours === 0) {
-    return `${String(rest)} min`;
+    return fill(words.durationMinutes, { minutes: String(rest) });
   }
 
-  return rest === 0 ? `${String(hours)} h` : `${String(hours)} h ${String(rest).padStart(2, '0')}`;
+  return rest === 0
+    ? fill(words.durationHours, { hours: String(hours) })
+    : fill(words.durationHoursMinutes, {
+        hours: String(hours),
+        minutes: String(rest).padStart(2, '0'),
+      });
 }

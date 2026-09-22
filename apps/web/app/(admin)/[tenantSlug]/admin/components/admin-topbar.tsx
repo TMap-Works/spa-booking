@@ -1,8 +1,10 @@
-import type { UserRole } from '@spa/shared';
+import type { Locale, UserRole } from '@spa/shared';
+import { useLocale, useTranslations } from 'next-intl';
 import Link from 'next/link';
 
 import { Icon } from '@/components/ui/icon';
 import { ThemeToggle } from '@/components/ui/theme-toggle';
+import { formattingLocale } from '@/lib/format';
 
 import type { AdminShellBilling } from '../layout';
 import { adminBillingPath } from '../paths';
@@ -14,6 +16,14 @@ import { adminBillingPath } from '../paths';
  *
  * Elle ne porte **pas** le titre de l'écran : chaque page rend déjà son
  * `<h1 className="spa-admin__title">`.
+ *
+ * ## La langue (#845)
+ *
+ * Ses libellés viennent du namespace `shell`, et la date du jour est mise en
+ * forme dans la langue résolue plutôt qu'en `fr-FR` codé en dur. Le **fuseau**,
+ * lui, ne bouge pas : c'est celui du salon, et il le reste quelle que soit la
+ * langue de qui lit — une date affichée dans le fuseau du lecteur ferait
+ * annoncer une autre journée que celle que le planning montre.
  */
 
 interface AdminTopbarProps {
@@ -42,6 +52,8 @@ function BillingPill({
   role: UserRole;
   tenantSlug: string;
 }) {
+  const t = useTranslations('shell.admin.topbar');
+
   if (billing === null) {
     return null;
   }
@@ -50,13 +62,13 @@ function BillingPill({
   let tone: 'trial' | 'closed';
   if (billing.status === 'trialing' && billing.trialEndsAt !== null) {
     const days = trialDaysLeft(billing.trialEndsAt);
-    label = days <= 1 ? 'Essai gratuit · dernier jour' : `Essai gratuit · ${String(days)} jours restants`;
+    label = days <= 1 ? t('trialLastDay') : t('trialDaysLeft', { days });
     tone = 'trial';
   } else if (billing.status === 'pending' || billing.status === 'canceled') {
-    label = billing.status === 'pending' ? 'Abonnement à activer' : 'Abonnement inactif';
+    label = billing.status === 'pending' ? t('subscriptionPending') : t('subscriptionCanceled');
     tone = 'closed';
   } else if (billing.status === 'past_due') {
-    label = 'Paiement à régulariser';
+    label = t('subscriptionPastDue');
     tone = 'closed';
   } else {
     return null;
@@ -73,8 +85,8 @@ function BillingPill({
   );
 }
 
-function todayIn(timeZone: string): string {
-  const formatted = new Intl.DateTimeFormat('fr-FR', {
+function todayIn(timeZone: string, locale: Locale): string {
+  const formatted = new Intl.DateTimeFormat(formattingLocale(locale), {
     weekday: 'long',
     day: 'numeric',
     month: 'long',
@@ -85,19 +97,24 @@ function todayIn(timeZone: string): string {
 }
 
 export function AdminTopbar({ tenantSlug, salonName, timeZone, billing, role }: AdminTopbarProps) {
+  const t = useTranslations('shell.admin.topbar');
+  const locale = useLocale() as Locale;
+
   return (
     <header className="spa-admin-topbar">
       <div className="spa-admin-topbar__context">
         <span className="spa-admin-topbar__eyebrow">{salonName}</span>
         {/* Pas de date sans fuseau : elle serait celle d'un autre endroit. */}
-        {timeZone === null ? null : <span className="spa-admin-topbar__date">{todayIn(timeZone)}</span>}
+        {timeZone === null ? null : (
+          <span className="spa-admin-topbar__date">{todayIn(timeZone, locale)}</span>
+        )}
       </div>
       <div className="spa-admin-topbar__actions">
         <BillingPill billing={billing} role={role} tenantSlug={tenantSlug} />
         <a className="spa-admin-topbar__link" href={`/${tenantSlug}`} rel="noopener" target="_blank">
           <Icon name="external" />
-          <span>Voir ma vitrine</span>
-          <span className="spa-visually-hidden"> (nouvel onglet)</span>
+          <span>{t('storefront')}</span>
+          <span className="spa-visually-hidden">{t('newTab')}</span>
         </a>
         <ThemeToggle />
       </div>

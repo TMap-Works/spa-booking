@@ -1,5 +1,6 @@
 'use client';
 
+import { useTranslations } from 'next-intl';
 import { useState, type InputHTMLAttributes, type Ref } from 'react';
 
 import { Icon } from '@/components/ui/icon';
@@ -27,6 +28,7 @@ interface PasswordFieldProps
  * libellé qui change se contredirait.
  */
 export function PasswordField({ id, label, hint, error, required = false, ref, ...input }: PasswordFieldProps) {
+  const t = useTranslations('ui.password');
   const [visible, setVisible] = useState(false);
   const hintId = `${id}-hint`;
   const errorId = `${id}-error`;
@@ -66,15 +68,15 @@ export function PasswordField({ id, label, hint, error, required = false, ref, .
         >
           <Icon name={visible ? 'eye-off' : 'eye'} />
           <span className="spa-password__toggle-label" aria-hidden="true">
-            {visible ? 'Masquer' : 'Afficher'}
+            {visible ? t('hide') : t('show')}
           </span>
           <span className="spa-visually-hidden">
-            {visible ? 'Masquer le mot de passe' : 'Afficher le mot de passe'}
+            {visible ? t('hideFull') : t('showFull')}
           </span>
         </button>
       </div>
       <p className="spa-visually-hidden" aria-live="polite">
-        {visible ? 'Votre mot de passe est affiché.' : ''}
+        {visible ? t('shown') : ''}
       </p>
       {hint === undefined ? null : (
         <p id={hintId} className="spa-field__hint">

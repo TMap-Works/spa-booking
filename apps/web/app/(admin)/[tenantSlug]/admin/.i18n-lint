@@ -1,0 +1,7 @@
+# Marqueur de lint i18n — voir eslint-rules/i18n-markers.mjs.
+# La coquille du back-office, traduite par #845 : l'enveloppe, le rail et la
+# barre haute. Les écrans du back-office relèvent de leurs propres tickets de
+# l'épique #843, qui ajouteront leur ligne ici.
+layout.tsx
+components/admin-rail.tsx
+components/admin-topbar.tsx

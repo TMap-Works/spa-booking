@@ -1,5 +1,6 @@
 'use client';
 
+import { useTranslations } from 'next-intl';
 import { useRouter } from 'next/navigation';
 import { useTransition } from 'react';
 
@@ -48,6 +49,7 @@ interface RouteErrorProps {
  * double clic ne relance qu'une reprise.
  */
 export function RouteError({ title, message, reset }: RouteErrorProps) {
+  const t = useTranslations('ui.routeError');
   const router = useRouter();
   const [retrying, startRetry] = useTransition();
 
@@ -56,7 +58,7 @@ export function RouteError({ title, message, reset }: RouteErrorProps) {
       <p>{message}</p>
       <Button
         loading={retrying}
-        loadingLabel="Nouvelle tentative en cours…"
+        loadingLabel={t('retrying')}
         onClick={() => {
           startRetry(() => {
             router.refresh();
@@ -65,7 +67,7 @@ export function RouteError({ title, message, reset }: RouteErrorProps) {
         }}
         variant="neutral"
       >
-        Réessayer
+        {t('retry')}
       </Button>
     </Notification>
   );

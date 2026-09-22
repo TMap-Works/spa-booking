@@ -1,0 +1,9 @@
+# Marqueur de lint i18n — voir eslint-rules/i18n-markers.mjs.
+# Les briques du design system qui portent du texte, traduites par #845. Les
+# autres n'en portent pas : elles s'ajoutent ici le jour où elles en portent.
+button.tsx
+locale-switcher.tsx
+password-field.tsx
+route-error.tsx
+sheet.tsx
+theme-toggle.tsx

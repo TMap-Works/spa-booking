@@ -1,5 +1,6 @@
 'use client';
 
+import { useTranslations } from 'next-intl';
 import { useEffect, useId, useRef, type MouseEvent, type ReactNode } from 'react';
 
 import { Icon } from '@/components/ui/icon';
@@ -27,6 +28,7 @@ interface SheetProps {
  * un clic sur le voile — passe par `onClose`.
  */
 export function Sheet({ open, onClose, title, children, footer }: SheetProps) {
+  const t = useTranslations('ui.sheet');
   const dialog = useRef<HTMLDialogElement>(null);
   const titleId = useId();
 
@@ -78,7 +80,7 @@ export function Sheet({ open, onClose, title, children, footer }: SheetProps) {
           </h2>
           <button type="button" className="spa-sheet__close" onClick={onClose}>
             <Icon name="close" />
-            <span className="spa-visually-hidden">Fermer</span>
+            <span className="spa-visually-hidden">{t('close')}</span>
           </button>
         </header>
         <div className="spa-sheet__body">{children}</div>

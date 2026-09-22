@@ -1,3 +1,4 @@
+import { useTranslations } from 'next-intl';
 import Link from 'next/link';
 import type { CSSProperties, ReactNode } from 'react';
 
@@ -106,6 +107,7 @@ export function AuthScreen({
   photo,
   children,
 }: AuthScreenProps) {
+  const t = useTranslations('auth');
   const introClassName =
     photo === undefined ? 'spa-auth__intro' : 'spa-auth__intro spa-auth__intro--photo';
   // L'URL est une donnée du registre, pas une règle : elle change d'un écran à
@@ -147,7 +149,7 @@ export function AuthScreen({
       </div>
 
       {exits.length === 0 ? null : (
-        <nav className="spa-auth__exits" aria-label="Autres pages">
+        <nav className="spa-auth__exits" aria-label={t('exits')}>
           {exits.map((exit) => (
             <Link className="spa-auth__exit" href={exit.href} key={exit.href}>
               {exit.label}
