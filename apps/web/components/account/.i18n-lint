@@ -1,0 +1,4 @@
+# Marqueur de lint i18n — voir eslint-rules/i18n-markers.mjs.
+# Les briques de l'espace client, traduites par #847 : entrée du compte, carte
+# du salon, résumé d'un rendez-vous et rangement de l'historique. Le répertoire
+# entier est sous la règle — il n'appartient qu'à cet espace.

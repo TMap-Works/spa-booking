@@ -1,0 +1,6 @@
+# Marqueur de lint i18n — voir eslint-rules/i18n-markers.mjs.
+# La frontière d'erreur du gabarit de l'espace client, traduite par #847.
+# Énumérée et non laissée au sous-arbre : `compte/` porte son propre marqueur,
+# et deux marqueurs qui se recouvriraient produiraient deux blocs de
+# configuration pour les mêmes fichiers.
+error.tsx
