@@ -14,6 +14,7 @@ import {
   type ActionAccess,
 } from '@/lib/session-refresh';
 
+import { clearAccountLocaleCookie } from './account-locale';
 import { accountPath, loginPath, refreshPath, sessionEndPath } from './paths';
 
 /**
@@ -202,12 +203,20 @@ export function attachSessionCookies(
  * Le `path` est reconstruit plutôt que deviné : un cookie posé sur
  * `/{slug}/compte` et effacé sur `/` survit, et la visiteuse resterait connectée
  * après avoir cliqué sur « se déconnecter ».
+ *
+ * Le miroir de la langue du compte part avec (#847) : il n'annonce qu'une
+ * préférence, mais il l'annonce pour **quelqu'un**. Le laisser derrière ferait
+ * lire à la visiteuse suivante de ce navigateur la langue de la précédente,
+ * sans qu'aucune session ne subsiste pour l'expliquer. Le choix explicite du
+ * sélecteur, lui, n'est pas touché : il appartient au navigateur, pas à la
+ * session (`account-locale.ts`).
  */
 export function clearSessionCookies(target: WritableCookies, tenantSlug: string): void {
   for (const name of [ACCESS_COOKIE, REFRESH_COOKIE]) {
     target.set(name, '', sessionCookieOptions(tenantSlug, 0));
   }
   target.set(PRESENCE_COOKIE, '', presenceCookieOptions(tenantSlug, 0));
+  clearAccountLocaleCookie(target);
 }
 
 /** Le jeton d'accès courant, ou `null` s'il a expiré — voir l'en-tête. */
