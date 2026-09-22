@@ -1,3 +1,5 @@
+import type { Locale } from '@spa/shared';
+
 import {
   buildTemplateVariables,
   cancellationUrl,
@@ -31,7 +33,24 @@ import type {
  * base n'a rien changé à ce qu'une cliente lit. Les quatre fonctions locales
  * ci-dessous ne font que rendre le défaut du couple `(type, canal)` — elles
  * n'existent que pour que les assertions restent lisibles.
+ *
+ * ## Ce que #854 y a changé, et ce qu'il n'y a pas changé non plus
+ *
+ * Le rendu prend désormais une **langue**. Cette suite garde la sienne fixée au
+ * français, et c'est délibéré : ses assertions portent sur des mots — « Adresse »,
+ * « septembre », « à très vite » — et les traduire toutes aurait transformé le
+ * témoin du contenu français en témoin de rien. Ce que les modèles anglais
+ * doivent tenir — exister pour chaque type, chaque canal, et rester sous le même
+ * plafond de segments — est éprouvé là où cela se prouve, dans
+ * `notification-default-templates.spec.ts`.
+ *
+ * La langue est donc un **paramètre par défaut** ici, et non une constante
+ * cachée : une suite qui veut l'anglais la nomme, et le fait qu'elle soit
+ * nommable est ce qui empêche ce fichier de redevenir implicitement francophone.
  */
+
+/** La langue de cette suite — celle de ses assertions. */
+const FR: Locale = 'fr';
 
 /**
  * Rend le modèle **par défaut** de ce message — ce que reçoit un salon qui n'a
@@ -48,16 +67,17 @@ function renderDefault(
   context: AppointmentMessageContext,
   cancelUrl: string,
   recipientUserId: string = context.clientId,
+  locale: Locale = FR,
 ): RenderedNotification {
-  const source = defaultTemplateFor(type, channel);
+  const source = defaultTemplateFor(type, channel, locale);
 
   if (source === null) {
-    throw new Error(`Aucun modèle par défaut pour ${type} / ${channel}.`);
+    throw new Error(`Aucun modèle par défaut pour ${type} / ${channel} / ${locale}.`);
   }
 
   return renderNotification(
     source,
-    buildTemplateVariables(context, cancelUrl, channel, recipientUserId),
+    buildTemplateVariables(context, cancelUrl, channel, recipientUserId, locale),
     channel,
   );
 }
@@ -133,16 +153,16 @@ const CANCEL_URL = 'https://maison-lotus.reservation.test/compte';
 describe('notifications — l’heure est celle du salon, jamais UTC', () => {
   it('convertit l’instant UTC au fuseau du tenant', () => {
     // 12:30 UTC = 14:30 à Paris en septembre.
-    expect(formatDateTimeInTenantTimeZone(PARIS.startsAt, 'Europe/Paris')).toContain('14:30');
+    expect(formatDateTimeInTenantTimeZone(PARIS.startsAt, 'Europe/Paris', FR)).toContain('14:30');
   });
 
   it('rend le même instant différemment selon le fuseau de l’établissement', () => {
     // La preuve que la conversion a bien lieu : le même `Date`, deux salons.
     // 12:30 UTC = 15:30 à Antananarivo (UTC+3, sans heure d'été).
-    expect(formatDateTimeInTenantTimeZone(PARIS.startsAt, 'Indian/Antananarivo')).toContain(
+    expect(formatDateTimeInTenantTimeZone(PARIS.startsAt, 'Indian/Antananarivo', FR)).toContain(
       '15:30',
     );
-    expect(formatDateTimeInTenantTimeZone(PARIS.startsAt, 'Europe/Paris')).toContain('14:30');
+    expect(formatDateTimeInTenantTimeZone(PARIS.startsAt, 'Europe/Paris', FR)).toContain('14:30');
   });
 
   it('suit le changement d’heure — le même mur d’horloge, deux décalages', () => {
@@ -151,12 +171,34 @@ describe('notifications — l’heure est celle du salon, jamais UTC', () => {
     const hiver = new Date('2026-01-08T11:30:00Z');
     const ete = new Date('2026-07-08T11:30:00Z');
 
-    expect(formatDateTimeInTenantTimeZone(hiver, 'Europe/Paris')).toContain('12:30');
-    expect(formatDateTimeInTenantTimeZone(ete, 'Europe/Paris')).toContain('13:30');
+    expect(formatDateTimeInTenantTimeZone(hiver, 'Europe/Paris', FR)).toContain('12:30');
+    expect(formatDateTimeInTenantTimeZone(ete, 'Europe/Paris', FR)).toContain('13:30');
+  });
+
+  it('le fuseau reste celui du salon quelle que soit la langue — #854', () => {
+    // Troisième critère d'acceptation, et sa moitié la moins évidente : traduire
+    // un message ne le déplace pas. Le rendez-vous est à 14:30 à Paris, qu'on
+    // l'annonce en français ou en anglais — c'est le **fuseau du salon** qui fixe
+    // l'heure, et la langue qui fixe son écriture. Les confondre aurait fait
+    // arriver une cliente anglophone deux heures plus tôt.
+    expect(formatDateTimeInTenantTimeZone(PARIS.startsAt, 'Europe/Paris', 'en')).toContain('2:30');
+    expect(formatDateTimeInTenantTimeZone(PARIS.startsAt, 'Europe/Paris', 'en')).toContain('PM');
+  });
+
+  it('écrit la date en toutes lettres, dans la langue d’envoi — #854', () => {
+    // Le même instant, deux langues : c'est la preuve que le formatage suit la
+    // langue du message et non une constante du code. « septembre » en dur dans
+    // `notification-content.ts` aurait passé la moitié de ce témoin.
+    expect(formatDateTimeInTenantTimeZone(PARIS.startsAt, 'Europe/Paris', 'en')).toContain(
+      'September',
+    );
+    expect(formatDateTimeInTenantTimeZone(PARIS.startsAt, 'Europe/Paris', 'en')).not.toContain(
+      'septembre',
+    );
   });
 
   it('écrit la date en toutes lettres, en français', () => {
-    expect(formatDateTimeInTenantTimeZone(PARIS.startsAt, 'Europe/Paris')).toContain('septembre');
+    expect(formatDateTimeInTenantTimeZone(PARIS.startsAt, 'Europe/Paris', FR)).toContain('septembre');
   });
 });
 
@@ -181,10 +223,18 @@ describe('notifications — le récapitulatif de la confirmation', () => {
   it('donne le prix sans jamais passer par un flottant du domaine', () => {
     // 6 500 centimes = 65,00 €. Le domaine ne manipule que l'entier ; la
     // division n'a lieu qu'ici, pour l'écriture.
-    expect(formatMoney(6_500, 'EUR')).toContain('65');
+    expect(formatMoney(6_500, 'EUR', FR)).toContain('65');
     // Une devise sans décimale n'est pas divisée par cent : `Intl` le sait.
-    expect(formatMoney(6_500, 'JPY')).toContain('6');
-    expect(formatMoney(6_500, 'JPY')).not.toContain('65,00');
+    expect(formatMoney(6_500, 'JPY', FR)).toContain('6');
+    expect(formatMoney(6_500, 'JPY', FR)).not.toContain('65,00');
+  });
+
+  it('écrit le montant selon la langue, sans changer la valeur — #854', () => {
+    // Le français met le symbole après et sépare par une virgule décimale,
+    // l'anglais met le symbole avant et sépare par un point. C'est une écriture
+    // qui change, jamais un montant : les deux disent soixante-cinq euros.
+    expect(formatMoney(6_500, 'EUR', 'en')).toContain('65');
+    expect(formatMoney(6_500, 'EUR', 'en')).not.toContain('65,00');
   });
 
   it('omet l’adresse et le téléphone quand le salon ne les a pas renseignés', () => {
@@ -251,7 +301,7 @@ describe('notifications — ce que la confirmation affirme', () => {
 
     expect(text).toContain('vous recevrez un message dès que ce sera fait');
     expect(html).toContain('vous recevrez un message dès que ce sera fait');
-    expect(defaultTemplateFor('APPOINTMENT_CONFIRMED', 'EMAIL')).not.toBeNull();
+    expect(defaultTemplateFor('APPOINTMENT_CONFIRMED', 'EMAIL', FR)).not.toBeNull();
   });
 });
 

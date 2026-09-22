@@ -34,6 +34,7 @@ const TRACE: NotificationTrace = {
   type: 'BOOKING_CONFIRMATION',
   channel: 'EMAIL',
   status: 'SENT',
+  locale: 'en',
   scheduledFor: null,
   sentAt: new Date('2026-09-06T08:00:01Z'),
   attemptCount: 1,
@@ -105,10 +106,30 @@ describe('notifications — la sérialisation d’une trace', () => {
       type: 'booking_confirmation',
       channel: 'email',
       status: 'sent',
+      locale: 'en',
       sentAt: '2026-09-06T08:00:01.000Z',
       attemptCount: 1,
       createdAt: '2026-09-06T08:00:00.000Z',
     });
+  });
+
+  it('rend la langue telle quelle, sans conversion de casse — #854', () => {
+    // Les trois voisines de ce champ descendent toutes d'une énumération
+    // PostgreSQL en majuscules et se convertissent ici. La langue, elle, est déjà
+    // dans la casse du contrat — c'est ce que #844 a acheté en préférant une
+    // `VARCHAR` bornée à un `CREATE TYPE`. Un `toLowerCase()` y serait sans effet
+    // aujourd'hui et faux le jour d'une étiquette régionale (`fr-CA`).
+    expect(toNotificationDto({ ...TRACE, locale: 'fr' })).toMatchObject({ locale: 'fr' });
+  });
+
+  it('la langue n’est jamais omise — la colonne est `NOT NULL`', () => {
+    // Contrairement à `sentAt` ou `appointmentId`, il n'existe pas de trace sans
+    // langue : un message qui n'aurait pas été rendu n'aurait pas de ligne.
+    // L'omettre aurait laissé le back-office afficher un envoi sans langue.
+    expect(toNotificationDto({ ...TRACE, sentAt: null, appointmentId: null })).toHaveProperty(
+      'locale',
+      'en',
+    );
   });
 
   it('omet les champs nuls plutôt que de les rendre à `null`', () => {

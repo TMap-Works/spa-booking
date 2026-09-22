@@ -14,6 +14,20 @@
  */
 
 /**
+ * La langue vient du **contrat partagé**, et de nulle part ailleurs — #844,
+ * premier critère d'acceptation : « `Locale` est déclaré là et nulle part
+ * ailleurs : ni dans un `enum` Prisma, ni dans une constante de module API ».
+ *
+ * C'est l'exception assumée à la règle du reste de ce fichier, qui recopie les
+ * énumérations du schéma plutôt que de les importer. La raison de cette règle
+ * est que ces énumérations *sont* des types Prisma ; la langue, non — elle est
+ * une valeur du contrat, la colonne ne la stocke que sous forme de chaîne bornée
+ * par une contrainte `CHECK`, et quatorze tickets de l'épique #843 consomment le
+ * même vocabulaire.
+ */
+import type { Locale } from '@spa/shared';
+
+/**
  * Import **de type seul**, et il compte : `delivery-event.ts` importe en retour
  * `EmailSuppressionReason` d'ici. Un import de valeur formerait un cycle à
  * l'exécution ; un `import type` est effacé à la compilation et n'en forme
@@ -322,6 +336,8 @@ export interface NotificationRecord {
   readonly type: NotificationType;
   readonly channel: NotificationChannel;
   readonly status: NotificationStatus;
+  /** La langue dans laquelle ce message est parti — #854. */
+  readonly locale: Locale;
   readonly dedupeKey: string;
   readonly providerMessageId: string | null;
   readonly attemptCount: number;
@@ -345,6 +361,15 @@ export interface NotificationTrace {
   readonly type: NotificationType;
   readonly channel: NotificationChannel;
   readonly status: NotificationStatus;
+  /**
+   * La langue dans laquelle le message est parti — #854.
+   *
+   * Elle est au journal parce qu'elle répond à une question de comptoir : « ma
+   * cliente dit n'avoir rien compris au SMS ». Sans elle, la seule façon de
+   * savoir en quelle langue un message est parti serait de rejouer la résolution
+   * — donc de lire des préférences qui ont pu changer depuis.
+   */
+  readonly locale: Locale;
   readonly scheduledFor: Date | null;
   readonly sentAt: Date | null;
   readonly attemptCount: number;
@@ -745,6 +770,15 @@ export type NotificationTemplateOrigin = (typeof NOTIFICATION_TEMPLATE_ORIGINS)[
 export interface NotificationTemplateView {
   readonly type: NotificationType;
   readonly channel: NotificationChannel;
+  /**
+   * La langue de ce modèle — #854.
+   *
+   * Un modèle effectif est désormais désigné par **quatre** coordonnées, et non
+   * trois : le même message, sur le même canal, a un texte par langue. L'origine
+   * se lit par langue elle aussi — un salon peut avoir écrit son français et
+   * laisser son anglais au modèle de plateforme.
+   */
+  readonly locale: Locale;
   readonly origin: NotificationTemplateOrigin;
   readonly source: NotificationTemplateSource;
   /** Quand le salon l'a écrit. `null` sur un modèle de plateforme. */
@@ -762,6 +796,39 @@ export interface NotificationTemplateView {
 export interface StoredNotificationTemplate {
   readonly type: NotificationType;
   readonly channel: NotificationChannel;
+  /** La langue de la personnalisation — quatrième membre de l'unique (#854). */
+  readonly locale: Locale;
   readonly source: NotificationTemplateSource;
   readonly updatedAt: Date;
+}
+
+/**
+ * Ce qu'un aperçu de modèle rend — #854, cinquième critère.
+ *
+ * ## Pourquoi un aperçu existe, et ce qu'il n'est pas
+ *
+ * « L'API des modèles (lecture, écriture, aperçu) accepte la langue » : jusqu'ici
+ * le module n'avait pas d'aperçu, et l'absence se payait au moment où la langue
+ * est entrée en jeu. Lire un modèle rend **des balises** — `{{date}}`,
+ * `{{#adresse}}…{{/adresse}}` —, ce qui suffisait tant qu'un salon relisait son
+ * propre français. Une personne qui rédige dans une langue qu'elle ne pratique
+ * pas a besoin de voir la phrase, pas la grammaire : c'est là que le formatage
+ * des dates et des montants se vérifie, et c'est exactement ce que le troisième
+ * critère d'acceptation demande de rendre juste.
+ *
+ * Ce n'est **pas** un envoi d'essai : aucun message ne part, aucune ligne
+ * `notifications` n'est écrite, et les valeurs substituées sont celles de
+ * référence — jamais un rendez-vous réel, dont l'aperçu n'aurait de toute façon
+ * pas à exposer la cliente.
+ */
+export interface NotificationTemplatePreview {
+  readonly type: NotificationType;
+  readonly channel: NotificationChannel;
+  readonly locale: Locale;
+  /** D'où vient le modèle rendu — `TENANT` seulement si l'aperçu n'a pas de brouillon. */
+  readonly origin: NotificationTemplateOrigin;
+  /** Le message tel qu'il partirait, balises substituées. */
+  readonly rendered: RenderedNotification;
+  /** Ce qu'il coûterait en SMS. `null` sur le canal e-mail. */
+  readonly sms: SmsCost | null;
 }

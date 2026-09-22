@@ -1,3 +1,5 @@
+import type { Locale } from '@spa/shared';
+
 import { runWithTenant } from '../../../common/tenant';
 import type { AppConfigService } from '../../../config/app-config.service';
 import { AppointmentNotificationRenderer } from '../notification-renderer';
@@ -22,6 +24,18 @@ import { FakeNotificationTemplates } from './notifications.doubles';
 
 const SALON = '11111111-1111-4111-8111-111111111111';
 const RDV = '33333333-3333-4333-8333-333333333333';
+
+/**
+ * La langue que l'expédition passe au rendu — #854.
+ *
+ * `fr` pour les cas antérieurs à ce ticket, et ce n'est pas arbitraire : leurs
+ * assertions citent le texte des modèles de plateforme, qui n'existaient qu'en
+ * français. La leur imposer garde intacte la propriété que chacun éprouve —
+ * l'échappement, le fuseau, le lien composé par la configuration — sans la
+ * confondre avec la langue, qui a ses propres cas plus bas.
+ */
+const FR: Locale = 'fr';
+const EN: Locale = 'en';
 
 const CONTEXTE: AppointmentMessageContext = {
   tenantName: 'Maison Lotus',
@@ -86,7 +100,7 @@ describe('rendu à l’envoi — quel modèle part', () => {
   it('emploie le modèle de la plateforme quand le salon n’a rien écrit', async () => {
     const templates = new FakeNotificationTemplates();
 
-    const rendered = await runWithTenant(SALON, () => rendererOn(templates).render(MESSAGE));
+    const rendered = await runWithTenant(SALON, () => rendererOn(templates).render(MESSAGE, FR));
 
     // Le mot de #743, celui que l'espace client affiche au même instant sur ce
     // rendez-vous-là. Le défaut disait « est confirmé » d'un rendez-vous que le
@@ -102,6 +116,7 @@ describe('rendu à l’envoi — quel modèle part', () => {
       tenantId: SALON,
       type: 'BOOKING_CONFIRMATION',
       channel: 'EMAIL',
+      locale: FR,
       source: {
         subject: 'C’est noté, {{client}} !',
         html: '<p>Le {{date}} chez {{salon}}.</p>',
@@ -109,7 +124,7 @@ describe('rendu à l’envoi — quel modèle part', () => {
       },
     });
 
-    const rendered = await runWithTenant(SALON, () => rendererOn(templates).render(MESSAGE));
+    const rendered = await runWithTenant(SALON, () => rendererOn(templates).render(MESSAGE, FR));
 
     expect(rendered.subject).toBe('C’est noté, Amina Rakoto !');
     // 12:30 UTC = 14:30 à Paris : le modèle nomme la date, il ne la calcule pas.
@@ -125,12 +140,14 @@ describe('rendu à l’envoi — quel modèle part', () => {
       tenantId: SALON,
       type: 'BOOKING_CONFIRMATION',
       channel: 'EMAIL',
+      locale: FR,
       source: { subject: 'x', html: '<p>{{client}}</p>', text: '{{client}}' },
     });
 
     const rendered = await runWithTenant(SALON, () =>
       rendererOn(templates, { ...CONTEXTE, clientLastName: '<img src=x onerror=1>' }).render(
         MESSAGE,
+        FR,
       ),
     );
 
@@ -143,7 +160,7 @@ describe('rendu à l’envoi — quel modèle part', () => {
   it('fournit toujours une version texte à côté du HTML', async () => {
     const templates = new FakeNotificationTemplates();
 
-    const rendered = await runWithTenant(SALON, () => rendererOn(templates).render(MESSAGE));
+    const rendered = await runWithTenant(SALON, () => rendererOn(templates).render(MESSAGE, FR));
 
     expect(rendered.html.length).toBeGreaterThan(0);
     expect(rendered.text.length).toBeGreaterThan(0);
@@ -159,10 +176,11 @@ describe('rendu à l’envoi — quel modèle part', () => {
       tenantId: SALON,
       type: 'BOOKING_CONFIRMATION',
       channel: 'EMAIL',
+      locale: FR,
       source: { subject: 'x', html: '<a href="{{lien_annulation}}">a</a>', text: '{{lien_annulation}}' },
     });
 
-    const rendered = await runWithTenant(SALON, () => rendererOn(templates).render(MESSAGE));
+    const rendered = await runWithTenant(SALON, () => rendererOn(templates).render(MESSAGE, FR));
 
     // Sur le sous-domaine du salon depuis #837 (arbitrage du PO, #832). La forme
     // elle-même est éprouvée dans `tenant-subdomain-links.spec.ts` ; ce qui se
@@ -177,10 +195,10 @@ describe('rendu à l’envoi — quel modèle part', () => {
     const templates = new FakeNotificationTemplates();
 
     const rendered = await runWithTenant(SALON, () =>
-      rendererOn(templates, { ...CONTEXTE, cancelledBy: 'STAFF' }).render({
-        ...MESSAGE,
-        type: 'CANCELLATION',
-      }),
+      rendererOn(templates, { ...CONTEXTE, cancelledBy: 'STAFF' }).render(
+        { ...MESSAGE, type: 'CANCELLATION' },
+        FR,
+      ),
     );
 
     expect(rendered.subject).toContain('Annulation');
@@ -191,7 +209,7 @@ describe('rendu à l’envoi — quel modèle part', () => {
     const templates = new FakeNotificationTemplates();
 
     await expect(
-      runWithTenant(SALON, () => rendererOn(templates).render({ ...MESSAGE, type: SANS_MODELE })),
+      runWithTenant(SALON, () => rendererOn(templates).render({ ...MESSAGE, type: SANS_MODELE }, FR)),
     ).rejects.toBeInstanceOf(UnrenderableNotificationError);
   });
 
@@ -201,11 +219,12 @@ describe('rendu à l’envoi — quel modèle part', () => {
       tenantId: SALON,
       type: 'CANCELLATION',
       channel: 'EMAIL',
+      locale: FR,
       source: { subject: 'Annulé', html: '<p>{{date}}</p>', text: '{{date}}' },
     });
 
     const rendered = await runWithTenant(SALON, () =>
-      rendererOn(templates).render({ ...MESSAGE, type: 'CANCELLATION' }),
+      rendererOn(templates).render({ ...MESSAGE, type: 'CANCELLATION' }, FR),
     );
 
     expect(rendered.subject).toBe('Annulé');
@@ -215,7 +234,7 @@ describe('rendu à l’envoi — quel modèle part', () => {
     const templates = new FakeNotificationTemplates();
 
     await expect(
-      runWithTenant(SALON, () => rendererOn(templates, null).render(MESSAGE)),
+      runWithTenant(SALON, () => rendererOn(templates, null).render(MESSAGE, FR)),
     ).rejects.toBeInstanceOf(NotificationContextGoneError);
   });
 
@@ -235,10 +254,125 @@ describe('rendu à l’envoi — quel modèle part', () => {
     const renderer = new AppointmentNotificationRenderer(repository, templates.repository, CONFIG);
 
     await runWithTenant(SALON, () =>
-      renderer.render({ ...MESSAGE, type: SANS_MODELE }).catch(() => undefined),
+      renderer.render({ ...MESSAGE, type: SANS_MODELE }, FR).catch(() => undefined),
     );
 
     expect(lectures).toBe(0);
+  });
+
+  /**
+   * La langue de l'envoi — #854, deuxième et quatrième critères.
+   *
+   * Ce qui se prouve ici et nulle part ailleurs : que la langue **passée** par
+   * l'expédition choisit réellement le modèle, et que le repli d'une langue sans
+   * personnalisation reste **dans cette langue**. Le service des modèles couvre
+   * la même règle pour l'écran de configuration ; le renderer est ce qui décide
+   * de ce qui part chez la cliente.
+   */
+  describe('la langue de l’envoi', () => {
+    it('emploie le modèle de plateforme de la langue demandée', async () => {
+      const templates = new FakeNotificationTemplates();
+
+      const rendered = await runWithTenant(SALON, () => rendererOn(templates).render(MESSAGE, EN));
+
+      expect(rendered.subject).toContain('Awaiting confirmation');
+      expect(rendered.subject).not.toContain('À confirmer par le salon');
+    });
+
+    it('ne sert jamais l’autre langue en repli — c’est tout le quatrième critère', async () => {
+      // Le salon a réécrit son **français** et n'a rien écrit en anglais. Une
+      // cliente anglophone doit recevoir le modèle de plateforme anglais, jamais
+      // le texte français du salon : un message dans une langue qu'on ne lit pas
+      // fait croire qu'on a été prévenu.
+      const templates = new FakeNotificationTemplates();
+      templates.seed({
+        tenantId: SALON,
+        type: 'BOOKING_CONFIRMATION',
+        channel: 'EMAIL',
+        locale: 'fr',
+        source: {
+          subject: 'C’est noté, {{client}} !',
+          html: '<p>Le {{date}} chez {{salon}}.</p>',
+          text: 'Le {{date}} chez {{salon}}.',
+        },
+      });
+
+      const rendered = await runWithTenant(SALON, () => rendererOn(templates).render(MESSAGE, EN));
+
+      expect(rendered.subject).not.toContain('C’est noté');
+      expect(rendered.subject).toContain('Awaiting confirmation');
+    });
+
+    it('sert la personnalisation de la langue quand le salon l’a écrite', async () => {
+      const templates = new FakeNotificationTemplates();
+      templates.seed({
+        tenantId: SALON,
+        type: 'BOOKING_CONFIRMATION',
+        channel: 'EMAIL',
+        locale: 'fr',
+        source: { subject: 'Noté !', html: '<p>fr</p>', text: 'fr' },
+      });
+      templates.seed({
+        tenantId: SALON,
+        type: 'BOOKING_CONFIRMATION',
+        channel: 'EMAIL',
+        locale: 'en',
+        source: { subject: 'Noted!', html: '<p>en</p>', text: 'en' },
+      });
+
+      const enAnglais = await runWithTenant(SALON, () =>
+        rendererOn(templates).render(MESSAGE, EN),
+      );
+      const enFrancais = await runWithTenant(SALON, () =>
+        rendererOn(templates).render(MESSAGE, FR),
+      );
+
+      expect(enAnglais.subject).toBe('Noted!');
+      expect(enFrancais.subject).toBe('Noté !');
+    });
+
+    it('formate la date dans la langue d’envoi, et dans le fuseau du salon', async () => {
+      // Troisième critère. La même instant — 12:30 UTC, soit 14:30 à Paris —
+      // s'écrit différemment dans les deux langues, et le fuseau ne change pas
+      // avec la langue.
+      const templates = new FakeNotificationTemplates();
+      for (const locale of [FR, EN]) {
+        templates.seed({
+          tenantId: SALON,
+          type: 'BOOKING_CONFIRMATION',
+          channel: 'EMAIL',
+          locale,
+          source: { subject: '{{date}}', html: '<p>{{date}}</p>', text: '{{date}}' },
+        });
+      }
+
+      const enAnglais = await runWithTenant(SALON, () =>
+        rendererOn(templates).render(MESSAGE, EN),
+      );
+      const enFrancais = await runWithTenant(SALON, () =>
+        rendererOn(templates).render(MESSAGE, FR),
+      );
+
+      expect(enFrancais.subject).toContain('septembre');
+      expect(enAnglais.subject).toContain('September');
+      // 14:30 à Paris des deux côtés : la langue met en forme, elle ne convertit
+      // pas. L'anglais l'écrit sur douze heures.
+      expect(enFrancais.subject).toContain('14:30');
+      expect(enAnglais.subject).toContain('2:30');
+    });
+
+    it('refuse plutôt que de partir quand la langue demandée n’a aucun modèle', async () => {
+      // Le refus laisse la ligne en `FAILED`, donc reprenable — le régime que le
+      // renderer applique déjà à un type sans modèle. Servir l'autre langue
+      // aurait été le seul repli vraiment fautif.
+      const templates = new FakeNotificationTemplates();
+
+      await expect(
+        runWithTenant(SALON, () =>
+          rendererOn(templates).render({ ...MESSAGE, type: SANS_MODELE }, EN),
+        ),
+      ).rejects.toBeInstanceOf(UnrenderableNotificationError);
+    });
   });
 
   /**
@@ -291,7 +425,7 @@ describe('rendu à l’envoi — quel modèle part', () => {
 
     it('envoie une cliente vers son espace compte', async () => {
       const rendered = await runWithTenant(SALON, () =>
-        resetRendererOn(CONTEXTE_CLIENTE).render(RESET_MESSAGE),
+        resetRendererOn(CONTEXTE_CLIENTE).render(RESET_MESSAGE, FR),
       );
 
       expect(rendered.html).toContain('/compte/mot-de-passe');
@@ -314,7 +448,7 @@ describe('rendu à l’envoi — quel modèle part', () => {
       // comprise.
       for (const role of ['STAFF', 'MANAGER', 'ADMIN']) {
         const rendered = await runWithTenant(SALON, () =>
-          resetRendererOn({ ...CONTEXTE_CLIENTE, role }).render(RESET_MESSAGE),
+          resetRendererOn({ ...CONTEXTE_CLIENTE, role }).render(RESET_MESSAGE, FR),
         );
 
         expect(rendered.html).toContain('/admin/mot-de-passe');
@@ -327,7 +461,7 @@ describe('rendu à l’envoi — quel modèle part', () => {
       // L'écran client est le défaut : il ne suppose aucun droit, là où la
       // console d'administration en suppose.
       const rendered = await runWithTenant(SALON, () =>
-        resetRendererOn({ ...CONTEXTE_CLIENTE, role: 'COMPTABLE' }).render(RESET_MESSAGE),
+        resetRendererOn({ ...CONTEXTE_CLIENTE, role: 'COMPTABLE' }).render(RESET_MESSAGE, FR),
       );
 
       expect(rendered.html).toContain('/compte/mot-de-passe');
@@ -340,7 +474,7 @@ describe('rendu à l’envoi — quel modèle part', () => {
       // jusqu'à cinq réceptions — une décision d'envoi se prend à l'envoi.
       await expect(
         runWithTenant(SALON, () =>
-          resetRendererOn({ ...CONTEXTE_CLIENTE, isActive: false }).render(RESET_MESSAGE),
+          resetRendererOn({ ...CONTEXTE_CLIENTE, isActive: false }).render(RESET_MESSAGE, FR),
         ),
       ).rejects.toBeInstanceOf(NotificationContextGoneError);
     });
@@ -349,7 +483,7 @@ describe('rendu à l’envoi — quel modèle part', () => {
       // Le client scopé ne distingue pas les deux, et c'est ce qui fait qu'une
       // enveloppe nommant le salon A ne peut rien rendre du salon B.
       await expect(
-        runWithTenant(SALON, () => resetRendererOn(null).render(RESET_MESSAGE)),
+        runWithTenant(SALON, () => resetRendererOn(null).render(RESET_MESSAGE, FR)),
       ).rejects.toBeInstanceOf(NotificationContextGoneError);
     });
 
@@ -357,7 +491,7 @@ describe('rendu à l’envoi — quel modèle part', () => {
       const { passwordResetToken: _ignore, ...sansJeton } = RESET_MESSAGE;
 
       await expect(
-        runWithTenant(SALON, () => resetRendererOn(CONTEXTE_CLIENTE).render(sansJeton)),
+        runWithTenant(SALON, () => resetRendererOn(CONTEXTE_CLIENTE).render(sansJeton, FR)),
       ).rejects.toBeInstanceOf(UnrenderableNotificationError);
     });
 
@@ -367,7 +501,7 @@ describe('rendu à l’envoi — quel modèle part', () => {
       // le modèle d'un autre message.
       await expect(
         runWithTenant(SALON, () =>
-          resetRendererOn(CONTEXTE_CLIENTE).render({ ...RESET_MESSAGE, channel: 'SMS' }),
+          resetRendererOn(CONTEXTE_CLIENTE).render({ ...RESET_MESSAGE, channel: 'SMS' }, FR),
         ),
       ).rejects.toBeInstanceOf(UnrenderableNotificationError);
     });

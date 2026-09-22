@@ -1,3 +1,5 @@
+import type { Locale } from '@spa/shared';
+
 import { runWithTenant } from '../../../common/tenant';
 import { defaultTemplateFor } from '../notification-default-templates';
 import { SMS_MAX_SEGMENTS } from '../notification-template';
@@ -29,6 +31,17 @@ import { FakeNotificationTemplates } from './notifications.doubles';
 const SALON = '11111111-1111-4111-8111-111111111111';
 const VOISIN = '22222222-2222-4222-8222-222222222222';
 
+/**
+ * Les deux langues, nommées — #854.
+ *
+ * Les cas antérieurs à ce ticket travaillent en `fr` : leurs assertions citent
+ * le texte des modèles de plateforme, qui n'existaient que dans cette langue. Ce
+ * que la langue change — écrire l'une sans toucher l'autre, retomber sur le
+ * défaut **de sa langue** — a ses propres cas plus bas.
+ */
+const FR: Locale = 'fr';
+const EN: Locale = 'en';
+
 const PERSONNALISE: NotificationTemplateSource = {
   subject: 'À demain chez {{salon}}',
   html: '<p>Bonjour {{client}}, le {{date}}.</p>',
@@ -44,11 +57,11 @@ describe('modèles — la résolution du modèle effectif', () => {
     const store = new FakeNotificationTemplates();
 
     const template = await runWithTenant(SALON, () =>
-      serviceOn(store).get('BOOKING_CONFIRMATION', 'EMAIL'),
+      serviceOn(store).get('BOOKING_CONFIRMATION', 'EMAIL', FR),
     );
 
     expect(template.origin).toBe('PLATFORM');
-    expect(template.source).toEqual(defaultTemplateFor('BOOKING_CONFIRMATION', 'EMAIL'));
+    expect(template.source).toEqual(defaultTemplateFor('BOOKING_CONFIRMATION', 'EMAIL', FR));
     // Un défaut n'a pas de date d'écriture : personne ne l'a écrit dans ce salon.
     expect(template.updatedAt).toBeNull();
   });
@@ -59,11 +72,12 @@ describe('modèles — la résolution du modèle effectif', () => {
       tenantId: SALON,
       type: 'BOOKING_CONFIRMATION',
       channel: 'EMAIL',
+      locale: FR,
       source: PERSONNALISE,
     });
 
     const template = await runWithTenant(SALON, () =>
-      serviceOn(store).get('BOOKING_CONFIRMATION', 'EMAIL'),
+      serviceOn(store).get('BOOKING_CONFIRMATION', 'EMAIL', FR),
     );
 
     expect(template.origin).toBe('TENANT');
@@ -80,11 +94,12 @@ describe('modèles — la résolution du modèle effectif', () => {
       tenantId: SALON,
       type: 'BOOKING_CONFIRMATION',
       channel: 'EMAIL',
+      locale: FR,
       source: PERSONNALISE,
     });
 
     const template = await runWithTenant(VOISIN, () =>
-      serviceOn(store).get('BOOKING_CONFIRMATION', 'EMAIL'),
+      serviceOn(store).get('BOOKING_CONFIRMATION', 'EMAIL', FR),
     );
 
     expect(template.origin).toBe('PLATFORM');
@@ -101,7 +116,7 @@ describe('modèles — la résolution du modèle effectif', () => {
 
     await expect(
       runWithTenant(SALON, () =>
-        serviceOn(store).get('WELCOME' as NotificationType, 'EMAIL'),
+        serviceOn(store).get('WELCOME' as NotificationType, 'EMAIL', FR),
       ),
     ).rejects.toBeInstanceOf(NotificationTemplateNotFoundError);
   });
@@ -109,59 +124,98 @@ describe('modèles — la résolution du modèle effectif', () => {
   it('échoue hors portée de tenant plutôt que de lire tous les salons', async () => {
     const store = new FakeNotificationTemplates();
 
-    await expect(serviceOn(store).get('BOOKING_CONFIRMATION', 'EMAIL')).rejects.toThrow(
+    await expect(serviceOn(store).get('BOOKING_CONFIRMATION', 'EMAIL', FR)).rejects.toThrow(
       /portée de tenant/,
     );
   });
 });
 
 describe('modèles — la liste du back-office', () => {
-  it('rend les onze modèles servis par défaut, et saute le couple qui n’en a pas', async () => {
+  it('rend les onze couples servis, dans les deux langues — #854', async () => {
     // Quatre jusqu'à #72, qui a livré l'avis d'annulation ; six ensuite ; sept
     // depuis #809 ; neuf depuis #800, qui ajoute « votre rendez-vous est
     // confirmé » sur les deux canaux ; onze avec « votre rendez-vous a été
-    // déplacé », sur les deux canaux aussi. L'ordre est celui des énumérations : une
-    // liste de configuration qui change d'ordre fait bouger les lignes sous la
-    // souris.
+    // déplacé », sur les deux canaux aussi. Vingt-deux lignes depuis #854, chaque
+    // couple ayant son modèle par langue. L'ordre est celui des énumérations —
+    // type, puis canal, puis langue : une liste de configuration qui change
+    // d'ordre fait bouger les lignes sous la souris.
     //
-    // **Onze et non douze** : `PASSWORD_RESET` n'a de modèle de plateforme que
-    // sur le canal e-mail, et c'est le quatrième critère d'acceptation de #809.
-    // Le couple `PASSWORD_RESET/SMS` n'apparaît donc pas — « la liste répond à
+    // **Onze couples et non douze** : `PASSWORD_RESET` n'a de modèle de
+    // plateforme que sur le canal e-mail, et c'est le quatrième critère
+    // d'acceptation de #809 — maintenu dans les deux langues. Le couple
+    // `PASSWORD_RESET/SMS` n'apparaît donc nulle part : « la liste répond à
     // "que reçoit ma cliente ?", et la réponse pour ce message est "rien" ».
-    // C'est cette propriété de la liste, et non seulement le compte, que ce cas
-    // éprouve : un couple sans modèle qui s'y glisserait afficherait au salon un
-    // gabarit vide à personnaliser.
+    // C'est cette propriété, et non seulement le compte, que ce cas éprouve — un
+    // couple sans modèle qui s'y glisserait afficherait au salon un gabarit vide
+    // à personnaliser.
     const store = new FakeNotificationTemplates();
 
     const list = await runWithTenant(SALON, () => serviceOn(store).list());
 
-    expect(list.map((item) => `${item.type}/${item.channel}`)).toEqual([
-      'BOOKING_CONFIRMATION/EMAIL',
-      'BOOKING_CONFIRMATION/SMS',
-      'REMINDER_24H/EMAIL',
-      'REMINDER_24H/SMS',
-      'CANCELLATION/EMAIL',
-      'CANCELLATION/SMS',
-      'PASSWORD_RESET/EMAIL',
-      'APPOINTMENT_CONFIRMED/EMAIL',
-      'APPOINTMENT_CONFIRMED/SMS',
-      'APPOINTMENT_RESCHEDULED/EMAIL',
-      'APPOINTMENT_RESCHEDULED/SMS',
+    expect(list.map((item) => `${item.type}/${item.channel}/${item.locale}`)).toEqual([
+      'BOOKING_CONFIRMATION/EMAIL/fr',
+      'BOOKING_CONFIRMATION/EMAIL/en',
+      'BOOKING_CONFIRMATION/SMS/fr',
+      'BOOKING_CONFIRMATION/SMS/en',
+      'REMINDER_24H/EMAIL/fr',
+      'REMINDER_24H/EMAIL/en',
+      'REMINDER_24H/SMS/fr',
+      'REMINDER_24H/SMS/en',
+      'CANCELLATION/EMAIL/fr',
+      'CANCELLATION/EMAIL/en',
+      'CANCELLATION/SMS/fr',
+      'CANCELLATION/SMS/en',
+      'PASSWORD_RESET/EMAIL/fr',
+      'PASSWORD_RESET/EMAIL/en',
+      'APPOINTMENT_CONFIRMED/EMAIL/fr',
+      'APPOINTMENT_CONFIRMED/EMAIL/en',
+      'APPOINTMENT_CONFIRMED/SMS/fr',
+      'APPOINTMENT_CONFIRMED/SMS/en',
+      'APPOINTMENT_RESCHEDULED/EMAIL/fr',
+      'APPOINTMENT_RESCHEDULED/EMAIL/en',
+      'APPOINTMENT_RESCHEDULED/SMS/fr',
+      'APPOINTMENT_RESCHEDULED/SMS/en',
     ]);
     expect(list.every((item) => item.origin === 'PLATFORM')).toBe(true);
   });
 
-  it('fait passer la personnalisation du salon devant le défaut', async () => {
+  it('restreint à une langue quand on la demande — #854', async () => {
+    // L'écran qui n'édite qu'une langue n'a pas à trier lui-même. La forme nue
+    // reste celle qui répond à « qu'est-ce que mon salon envoie, à qui », et elle
+    // serait incomplète avec une seule langue : c'est pourquoi le filtre est
+    // l'exception, et le défaut les deux.
+    const store = new FakeNotificationTemplates();
+
+    const list = await runWithTenant(SALON, () => serviceOn(store).list(EN));
+
+    expect(list).toHaveLength(11);
+    expect(list.every((item) => item.locale === EN)).toBe(true);
+  });
+
+  it('fait passer la personnalisation du salon devant le défaut, dans sa langue seulement', async () => {
     // Ce que « personnaliser sans déploiement » veut dire : le salon qui réécrit
     // son avis d'annulation voit partir le sien, et non celui de la plateforme.
+    // Et ce que #854 y ajoute : **l'autre langue ne bouge pas**.
     const store = new FakeNotificationTemplates();
-    store.seed({ tenantId: SALON, type: 'CANCELLATION', channel: 'EMAIL', source: PERSONNALISE });
+    store.seed({
+      tenantId: SALON,
+      type: 'CANCELLATION',
+      channel: 'EMAIL',
+      locale: FR,
+      source: PERSONNALISE,
+    });
 
     const list = await runWithTenant(SALON, () => serviceOn(store).list());
-    const avis = list.find((item) => `${item.type}/${item.channel}` === 'CANCELLATION/EMAIL');
+    const enFrancais = list.find(
+      (item) => item.type === 'CANCELLATION' && item.channel === 'EMAIL' && item.locale === FR,
+    );
+    const enAnglais = list.find(
+      (item) => item.type === 'CANCELLATION' && item.channel === 'EMAIL' && item.locale === EN,
+    );
 
-    expect(avis?.origin).toBe('TENANT');
-    expect(avis?.source).toEqual(PERSONNALISE);
+    expect(enFrancais?.origin).toBe('TENANT');
+    expect(enFrancais?.source).toEqual(PERSONNALISE);
+    expect(enAnglais?.origin).toBe('PLATFORM');
   });
 
   it('mesure le coût des modèles de SMS, et d’eux seuls', async () => {
@@ -183,7 +237,7 @@ describe('modèles — la validation à l’enregistrement', () => {
     const store = new FakeNotificationTemplates();
 
     const saved = await runWithTenant(SALON, () =>
-      serviceOn(store).save('REMINDER_24H', 'EMAIL', PERSONNALISE),
+      serviceOn(store).save('REMINDER_24H', 'EMAIL', FR, PERSONNALISE),
     );
 
     expect(saved.origin).toBe('TENANT');
@@ -196,7 +250,7 @@ describe('modèles — la validation à l’enregistrement', () => {
 
     const error = await runWithTenant(SALON, () =>
       serviceOn(store)
-        .save('REMINDER_24H', 'EMAIL', fautif)
+        .save('REMINDER_24H', 'EMAIL', FR, fautif)
         .catch((caught: unknown) => caught),
     );
 
@@ -211,7 +265,7 @@ describe('modèles — la validation à l’enregistrement', () => {
     const fautif = { subject: '', html: '', text: '{{#adresse}}Adresse : {{adresse}}' };
 
     await expect(
-      runWithTenant(SALON, () => serviceOn(store).save('REMINDER_24H', 'EMAIL', fautif)),
+      runWithTenant(SALON, () => serviceOn(store).save('REMINDER_24H', 'EMAIL', FR, fautif)),
     ).rejects.toBeInstanceOf(NotificationTemplateInvalidError);
   });
 
@@ -227,7 +281,7 @@ describe('modèles — la validation à l’enregistrement', () => {
     };
 
     await expect(
-      runWithTenant(SALON, () => serviceOn(store).save('REMINDER_24H', 'EMAIL', fautif)),
+      runWithTenant(SALON, () => serviceOn(store).save('REMINDER_24H', 'EMAIL', FR, fautif)),
     ).rejects.toBeInstanceOf(NotificationTemplateInvalidError);
   });
 
@@ -239,11 +293,11 @@ describe('modèles — la validation à l’enregistrement', () => {
 
     await runWithTenant(SALON, () =>
       serviceOn(store)
-        .save('REMINDER_24H', 'EMAIL', fautif)
+        .save('REMINDER_24H', 'EMAIL', FR, fautif)
         .catch(() => undefined),
     );
 
-    const template = await runWithTenant(SALON, () => serviceOn(store).get('REMINDER_24H', 'EMAIL'));
+    const template = await runWithTenant(SALON, () => serviceOn(store).get('REMINDER_24H', 'EMAIL', FR));
 
     expect(template.origin).toBe('PLATFORM');
   });
@@ -257,7 +311,7 @@ describe('modèles — la validation à l’enregistrement', () => {
 
     const error = await runWithTenant(SALON, () =>
       serviceOn(store)
-        .save('REMINDER_24H', 'SMS', trop)
+        .save('REMINDER_24H', 'SMS', FR, trop)
         .catch((caught: unknown) => caught),
     );
 
@@ -276,7 +330,7 @@ describe('modèles — la validation à l’enregistrement', () => {
     const juste = { subject: '', html: '', text: 'e'.repeat(260) };
 
     const saved = await runWithTenant(SALON, () =>
-      serviceOn(store).save('REMINDER_24H', 'SMS', juste),
+      serviceOn(store).save('REMINDER_24H', 'SMS', FR, juste),
     );
 
     expect(saved.sms).toEqual({ encoding: 'GSM_7', units: 260, segments: 2 });
@@ -291,7 +345,7 @@ describe('modèles — la validation à l’enregistrement', () => {
 
     const error = await runWithTenant(SALON, () =>
       serviceOn(store)
-        .save('REMINDER_24H', 'EMAIL', { subject: '   ', html: '<p>y</p>', text: 'y' })
+        .save('REMINDER_24H', 'EMAIL', FR, { subject: '   ', html: '<p>y</p>', text: 'y' })
         .catch((caught: unknown) => caught),
     );
 
@@ -307,7 +361,7 @@ describe('modèles — la validation à l’enregistrement', () => {
     const store = new FakeNotificationTemplates();
 
     const saved = await runWithTenant(SALON, () =>
-      serviceOn(store).save('REMINDER_24H', 'EMAIL', { subject: 'Rappel', html: '', text: 'y' }),
+      serviceOn(store).save('REMINDER_24H', 'EMAIL', FR, { subject: 'Rappel', html: '', text: 'y' }),
     );
 
     expect(saved.source).toEqual({ subject: 'Rappel', html: '', text: 'y' });
@@ -317,7 +371,7 @@ describe('modèles — la validation à l’enregistrement', () => {
     const store = new FakeNotificationTemplates();
 
     const saved = await runWithTenant(SALON, () =>
-      serviceOn(store).save('REMINDER_24H', 'SMS', { subject: '', html: '', text: 'avis' }),
+      serviceOn(store).save('REMINDER_24H', 'SMS', FR, { subject: '', html: '', text: 'avis' }),
     );
 
     expect(saved.source.text).toBe('avis');
@@ -329,7 +383,7 @@ describe('modèles — la validation à l’enregistrement', () => {
     const store = new FakeNotificationTemplates();
 
     const saved = await runWithTenant(SALON, () =>
-      serviceOn(store).save('REMINDER_24H', 'SMS', {
+      serviceOn(store).save('REMINDER_24H', 'SMS', FR, {
         subject: 'objet',
         html: '<p>corps</p>',
         text: 'avis',
@@ -342,12 +396,12 @@ describe('modèles — la validation à l’enregistrement', () => {
   it('remplace la personnalisation existante au lieu d’en empiler une seconde', async () => {
     const store = new FakeNotificationTemplates();
 
-    await runWithTenant(SALON, () => serviceOn(store).save('REMINDER_24H', 'SMS', {
+    await runWithTenant(SALON, () => serviceOn(store).save('REMINDER_24H', 'SMS', FR, {
       subject: '',
       html: '',
       text: 'premier',
     }));
-    await runWithTenant(SALON, () => serviceOn(store).save('REMINDER_24H', 'SMS', {
+    await runWithTenant(SALON, () => serviceOn(store).save('REMINDER_24H', 'SMS', FR, {
       subject: '',
       html: '',
       text: 'second',
@@ -356,8 +410,16 @@ describe('modèles — la validation à l’enregistrement', () => {
     const list = await runWithTenant(SALON, () => serviceOn(store).list());
     const sms = list.filter((item) => item.type === 'REMINDER_24H' && item.channel === 'SMS');
 
-    expect(sms).toHaveLength(1);
-    expect(sms[0]?.source.text).toBe('second');
+    // Deux lignes, et c'est la bonne réponse depuis #854 : la liste nue rend les
+    // deux langues. Ce que ce cas éprouve est qu'aucune **troisième** n'est
+    // apparue — le second enregistrement a remplacé le premier au lieu de
+    // s'empiler à côté, ce que l'unique `(tenant, type, canal, langue)` garantit
+    // en base et que le double rejoue.
+    expect(sms.map((item) => `${item.locale}/${item.origin}`)).toEqual([
+      'fr/TENANT',
+      'en/PLATFORM',
+    ]);
+    expect(sms.find((item) => item.locale === FR)?.source.text).toBe('second');
   });
 });
 
@@ -368,22 +430,23 @@ describe('modèles — le retour au défaut', () => {
       tenantId: SALON,
       type: 'BOOKING_CONFIRMATION',
       channel: 'EMAIL',
+      locale: FR,
       source: PERSONNALISE,
     });
 
     const template = await runWithTenant(SALON, () =>
-      serviceOn(store).reset('BOOKING_CONFIRMATION', 'EMAIL'),
+      serviceOn(store).reset('BOOKING_CONFIRMATION', 'EMAIL', FR),
     );
 
     expect(template.origin).toBe('PLATFORM');
-    expect(template.source).toEqual(defaultTemplateFor('BOOKING_CONFIRMATION', 'EMAIL'));
+    expect(template.source).toEqual(defaultTemplateFor('BOOKING_CONFIRMATION', 'EMAIL', FR));
   });
 
   it('est idempotent — effacer ce qui n’existe pas laisse l’état demandé', async () => {
     const store = new FakeNotificationTemplates();
 
     const template = await runWithTenant(SALON, () =>
-      serviceOn(store).reset('BOOKING_CONFIRMATION', 'SMS'),
+      serviceOn(store).reset('BOOKING_CONFIRMATION', 'SMS', FR),
     );
 
     expect(template.origin).toBe('PLATFORM');
@@ -395,13 +458,14 @@ describe('modèles — le retour au défaut', () => {
       tenantId: VOISIN,
       type: 'BOOKING_CONFIRMATION',
       channel: 'EMAIL',
+      locale: FR,
       source: PERSONNALISE,
     });
 
-    await runWithTenant(SALON, () => serviceOn(store).reset('BOOKING_CONFIRMATION', 'EMAIL'));
+    await runWithTenant(SALON, () => serviceOn(store).reset('BOOKING_CONFIRMATION', 'EMAIL', FR));
 
     const chezLeVoisin = await runWithTenant(VOISIN, () =>
-      serviceOn(store).get('BOOKING_CONFIRMATION', 'EMAIL'),
+      serviceOn(store).get('BOOKING_CONFIRMATION', 'EMAIL', FR),
     );
 
     expect(chezLeVoisin.origin).toBe('TENANT');
@@ -412,14 +476,20 @@ describe('modèles — le retour au défaut', () => {
     // modèle, et la lecture qui suit rendait 404. Ce n'est plus le cas — les
     // trois messages du CDC §1.4 ont le leur.
     const store = new FakeNotificationTemplates();
-    store.seed({ tenantId: SALON, type: 'CANCELLATION', channel: 'SMS', source: PERSONNALISE });
+    store.seed({
+      tenantId: SALON,
+      type: 'CANCELLATION',
+      channel: 'SMS',
+      locale: FR,
+      source: PERSONNALISE,
+    });
 
     const template = await runWithTenant(SALON, () =>
-      serviceOn(store).reset('CANCELLATION', 'SMS'),
+      serviceOn(store).reset('CANCELLATION', 'SMS', FR),
     );
 
     expect(template.origin).toBe('PLATFORM');
-    expect(template.source).toEqual(defaultTemplateFor('CANCELLATION', 'SMS'));
+    expect(template.source).toEqual(defaultTemplateFor('CANCELLATION', 'SMS', FR));
   });
 
   it('signale en 404 le message qui reste alors sans aucun modèle', async () => {
@@ -430,7 +500,7 @@ describe('modèles — le retour au défaut', () => {
 
     await expect(
       runWithTenant(SALON, () =>
-        serviceOn(store).reset('WELCOME' as NotificationType, 'SMS'),
+        serviceOn(store).reset('WELCOME' as NotificationType, 'SMS', FR),
       ),
     ).rejects.toBeInstanceOf(NotificationTemplateNotFoundError);
   });

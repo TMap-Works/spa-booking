@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
 import { PrismaClient } from '@prisma/client';
+import { DEFAULT_LOCALE } from '@spa/shared';
 
 import { createScopedPrismaClient } from '../src/infrastructure/database/prisma-clients';
 import { generateAppointmentReference } from '../src/modules/appointments/appointment-reference';
@@ -102,6 +103,17 @@ import { inTenant } from './utils/tenant-scope';
  * deux suites qui ne partagent aucun décor n'aurait rien tenu ensemble.
  */
 const CONCURRENT_ATTEMPTS = 8;
+
+/**
+ * La langue que l'expédition passe au dépôt — #854.
+ *
+ * Elle n'est pas l'objet de cette suite, et c'est pourquoi une seule valeur
+ * suffit : ce qui se prouve ici est la **sérialisation** de la prise de droit,
+ * pas la résolution de la langue. Elle est malgré tout obligatoire à l'appel,
+ * `notifications.locale` étant `NOT NULL` sans valeur par défaut — une
+ * insertion qui l'oublierait doit échouer, et c'est délibéré.
+ */
+const LANGUE = DEFAULT_LOCALE;
 
 /** Une heure, en millisecondes — la durée de la prestation semée. */
 const ONE_HOUR = 3_600_000;
@@ -341,7 +353,7 @@ describe('Courses sur l’idempotence des notifications — contre un vrai Postg
 
       const outcomes = await Promise.all(
         Array.from({ length: CONCURRENT_ATTEMPTS }, () =>
-          inTenant(salon.tenantId, () => repository.claim(message)),
+          inTenant(salon.tenantId, () => repository.claim(message, LANGUE)),
         ),
       );
 
@@ -393,7 +405,7 @@ describe('Courses sur l’idempotence des notifications — contre un vrai Postg
       const outcomes = await Promise.all(
         keys.map((dedupeKey) =>
           inTenant(salon.tenantId, () =>
-            repository.claim(delivery(salon, appointmentId, { dedupeKey })),
+            repository.claim(delivery(salon, appointmentId, { dedupeKey }), LANGUE),
           ),
         ),
       );
@@ -435,7 +447,7 @@ describe('Courses sur l’idempotence des notifications — contre un vrai Postg
       const appointmentId = await seedAppointment(prismaUnscoped, salon);
 
       const failedId = claimedRecord(
-        await inTenant(salon.tenantId, () => repository.claim(delivery(salon, appointmentId))),
+        await inTenant(salon.tenantId, () => repository.claim(delivery(salon, appointmentId), LANGUE)),
       ).id;
 
       expect(
@@ -456,6 +468,7 @@ describe('Courses sur l’idempotence des notifications — contre un vrai Postg
               delivery(salon, appointmentId, {
                 dedupeKey: `reprise-${index}:${appointmentId}:REMINDER_24H:EMAIL`,
               }),
+              LANGUE,
             ),
           ),
         ),
@@ -500,7 +513,7 @@ describe('Courses sur l’idempotence des notifications — contre un vrai Postg
       const message = delivery(salon, appointmentId);
 
       const failedId = claimedRecord(
-        await inTenant(salon.tenantId, () => repository.claim(message)),
+        await inTenant(salon.tenantId, () => repository.claim(message, LANGUE)),
       ).id;
 
       expect(
@@ -509,7 +522,7 @@ describe('Courses sur l’idempotence des notifications — contre un vrai Postg
 
       const outcomes = await Promise.all(
         Array.from({ length: CONCURRENT_ATTEMPTS }, () =>
-          inTenant(salon.tenantId, () => repository.claim(message)),
+          inTenant(salon.tenantId, () => repository.claim(message, LANGUE)),
         ),
       );
 
@@ -545,7 +558,7 @@ describe('Courses sur l’idempotence des notifications — contre un vrai Postg
       const appointmentId = await seedAppointment(prismaUnscoped, salon);
 
       const sentId = claimedRecord(
-        await inTenant(salon.tenantId, () => repository.claim(delivery(salon, appointmentId))),
+        await inTenant(salon.tenantId, () => repository.claim(delivery(salon, appointmentId), LANGUE)),
       ).id;
 
       expect(
@@ -559,6 +572,7 @@ describe('Courses sur l’idempotence des notifications — contre un vrai Postg
               delivery(salon, appointmentId, {
                 dedupeKey: `tardif-${index}:${appointmentId}:REMINDER_24H:EMAIL`,
               }),
+              LANGUE,
             ),
           ),
         ),
@@ -606,12 +620,12 @@ describe('Courses sur l’idempotence des notifications — contre un vrai Postg
     const outcomes = await Promise.all([
       ...Array.from({ length: CONCURRENT_ATTEMPTS }, () =>
         inTenant(salon.tenantId, () =>
-          repository.claim(delivery(salon, chezSalon, { dedupeKey: partagee })),
+          repository.claim(delivery(salon, chezSalon, { dedupeKey: partagee }), LANGUE),
         ),
       ),
       ...Array.from({ length: CONCURRENT_ATTEMPTS }, () =>
         inTenant(voisin.tenantId, () =>
-          repository.claim(delivery(voisin, chezVoisin, { dedupeKey: partagee })),
+          repository.claim(delivery(voisin, chezVoisin, { dedupeKey: partagee }), LANGUE),
         ),
       ),
     ]);

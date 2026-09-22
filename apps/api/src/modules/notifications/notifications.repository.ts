@@ -1,5 +1,6 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
+import { DEFAULT_LOCALE, isLocale, type Locale } from '@spa/shared';
 
 import { PRISMA, type ScopedPrismaClient } from '../../infrastructure/database/prisma-clients';
 import type { AppointmentCancelledBy } from '../appointments/appointment-status';
@@ -166,6 +167,7 @@ const NOTIFICATION_SELECT = {
   type: true,
   channel: true,
   status: true,
+  locale: true,
   dedupeKey: true,
   providerMessageId: true,
   attemptCount: true,
@@ -178,6 +180,7 @@ interface NotificationRow {
   type: string;
   channel: string;
   status: string;
+  locale: string;
   dedupeKey: string;
   providerMessageId: string | null;
   attemptCount: number;
@@ -202,6 +205,7 @@ const NOTIFICATION_TRACE_SELECT = {
   type: true,
   channel: true,
   status: true,
+  locale: true,
   scheduledFor: true,
   sentAt: true,
   attemptCount: true,
@@ -216,6 +220,7 @@ interface NotificationTraceRow {
   type: string;
   channel: string;
   status: string;
+  locale: string;
   scheduledFor: Date | null;
   sentAt: Date | null;
   attemptCount: number;
@@ -231,6 +236,7 @@ function toNotificationTrace(row: NotificationTraceRow): NotificationTrace {
     type: row.type as NotificationTrace['type'],
     channel: row.channel as NotificationTrace['channel'],
     status: row.status as NotificationTrace['status'],
+    locale: toLocale(row.locale),
     scheduledFor: row.scheduledFor,
     sentAt: row.sentAt,
     attemptCount: row.attemptCount,
@@ -249,10 +255,35 @@ function toNotificationRecord(row: NotificationRow): NotificationRecord {
     type: row.type as NotificationRecord['type'],
     channel: row.channel as NotificationRecord['channel'],
     status: row.status as NotificationRecord['status'],
+    locale: toLocale(row.locale),
     dedupeKey: row.dedupeKey,
     providerMessageId: row.providerMessageId,
     attemptCount: row.attemptCount,
   };
+}
+
+/**
+ * La langue d'une colonne, ramenée au vocabulaire du contrat — #854.
+ *
+ * ## Pourquoi un prédicat et non une assertion
+ *
+ * Les énumérations du schéma sont reprises par assertion (`as`) dans tout ce
+ * fichier, et c'est légitime : PostgreSQL ne peut rien y mettre d'autre, un
+ * `CREATE TYPE` est une garantie de la base. La langue n'en est pas une — c'est
+ * une `VARCHAR(5)` bornée par une contrainte `CHECK`, ce que #844 a délibérément
+ * préféré à un type énuméré pour ne pas rouvrir la conversion de casse des rôles
+ * (#510).
+ *
+ * Une contrainte `CHECK` protège tout aussi bien, mais elle ne se lit pas dans le
+ * type généré par Prisma : le champ est un `string` nu. Affirmer `as Locale` y
+ * serait donc un pari sur une contrainte qu'un `ALTER TABLE` d'exploitation peut
+ * lever, et le pari se paierait par un `Intl.DateTimeFormat` levant
+ * `RangeError` au milieu d'une expédition. Le repli sur `DEFAULT_LOCALE` fait
+ * partir le message dans la langue par défaut du système plutôt que de ne rien
+ * envoyer.
+ */
+function toLocale(value: string): Locale {
+  return isLocale(value) ? value : DEFAULT_LOCALE;
 }
 
 /**
@@ -282,6 +313,56 @@ export class NotificationsRepository {
   public constructor(@Inject(PRISMA) private readonly prisma: ScopedPrismaClient) {}
 
   /**
+   * La langue dans laquelle écrire à ce compte — **résolue à l'instant de
+   * l'envoi** (#854, deuxième et sixième critères).
+   *
+   * ## La règle, dans l'ordre
+   *
+   * La préférence du destinataire (`users.locale`) si son compte en porte une ;
+   * la langue de l'établissement (`tenants.default_locale`) sinon. `NULL` sur un
+   * compte se lit « aucune préférence enregistrée », jamais « français » — c'est
+   * l'invariant que #844 a posé, et c'est lui qui rend la seconde branche
+   * atteignable.
+   *
+   * ## Une seule lecture dans le cas nominal
+   *
+   * Le défaut de l'établissement est lu **par la jointure**, sur le compte
+   * lui-même : la question « quelle langue pour cette personne » n'a pas à coûter
+   * deux allers-retours. La seconde lecture ne sert qu'au compte introuvable —
+   * anonymisé, ou d'un autre établissement, ce que le client scopé traite de la
+   * même façon —, et elle rend alors la langue du salon, qui est la seule chose
+   * qu'on sache encore.
+   *
+   * ## Pourquoi ici, et pourquoi pas dans l'enveloppe
+   *
+   * Parce qu'« une décision d'envoi se prend à l'envoi », exactement comme
+   * l'éligibilité du rappel J-1 et la suppression d'adresse. Entre la
+   * planification d'un rappel et sa livraison il y a jusqu'à une heure, une file
+   * et cinq réceptions possibles : une cliente qui bascule son compte en anglais
+   * dans cet intervalle doit recevoir l'anglais. Figer la langue dans le message
+   * SQS aurait rendu ce critère intenable, et c'est pourquoi
+   * `NotificationMessage` n'en porte aucune.
+   *
+   * Rend toujours une langue : sans établissement lisible — cas qui ne se produit
+   * pas, la portée de tenant étant ouverte —, c'est `DEFAULT_LOCALE`. Un message
+   * part toujours ; il ne reste pas en attente d'une préférence.
+   */
+  public async resolveRecipientLocale(userId: string): Promise<Locale> {
+    const user = await this.prisma.user.findFirst({
+      where: { id: userId },
+      select: { locale: true, tenant: { select: { defaultLocale: true } } },
+    });
+
+    if (user !== null) {
+      return user.locale === null ? toLocale(user.tenant.defaultLocale) : toLocale(user.locale);
+    }
+
+    const tenant = await this.prisma.tenant.findFirst({ select: { defaultLocale: true } });
+
+    return tenant === null ? DEFAULT_LOCALE : toLocale(tenant.defaultLocale);
+  }
+
+  /**
    * Réserve le droit d'envoyer ce message, une fois et une seule.
    *
    * À appeler **dans une portée de tenant déjà résolue** : tout passe par le
@@ -289,8 +370,12 @@ export class NotificationsRepository {
    *
    * Rend `claimed` — l'appelant détient la ligne en `PENDING` et doit la clore —
    * ou `already-live`, auquel cas il n'y a **rien** à envoyer.
+   *
+   * `locale` est **passée** et non relue : c'est la même valeur qui choisira le
+   * modèle, et deux résolutions séparées auraient pu se contredire si la cliente
+   * changeait sa préférence entre les deux (#854).
    */
-  public async claim(message: NotificationMessage): Promise<NotificationClaim> {
+  public async claim(message: NotificationMessage, locale: Locale): Promise<NotificationClaim> {
     try {
       const created = await this.prisma.notification.create({
         data: withScopedTenant<Prisma.NotificationUncheckedCreateInput>({
@@ -299,6 +384,7 @@ export class NotificationsRepository {
           type: message.type,
           channel: message.channel,
           status: 'PENDING',
+          locale,
           dedupeKey: message.dedupeKey,
           scheduledFor: message.scheduledFor,
           // La ligne naît à sa première tentative, pas à zéro : elle *est* la
@@ -317,7 +403,7 @@ export class NotificationsRepository {
 
     // Hors du `try` : ce qui suit ne doit pas voir ses propres erreurs avalées
     // par le filtre d'unicité posé pour l'insertion.
-    return this.resolveRefusal(message);
+    return this.resolveRefusal(message, locale);
   }
 
   /**
@@ -766,7 +852,10 @@ export class NotificationsRepository {
    * `findReclaimable`, qui doit regarder par les deux uniques et non par le seul
    * qui a nommé le message.
    */
-  private async resolveRefusal(message: NotificationMessage): Promise<NotificationClaim> {
+  private async resolveRefusal(
+    message: NotificationMessage,
+    locale: Locale,
+  ): Promise<NotificationClaim> {
     const live = await this.prisma.notification.findFirst({
       where: { ...liveIdentity(message), status: { in: [...LIVE_NOTIFICATION_STATUSES] } },
       select: { id: true },
@@ -785,7 +874,7 @@ export class NotificationsRepository {
       return { outcome: 'already-live', notificationId: null };
     }
 
-    return this.reclaim(failed);
+    return this.reclaim(failed, locale);
   }
 
   /**
@@ -832,14 +921,24 @@ export class NotificationsRepository {
    * - le rattrapage de la violation d'unicité — un envoi **neuf** a pu prendre la
    *   place entre notre relecture et cette écriture ; c'est
    *   `notifications_live_once` qui l'arrête, et lui seul le pouvait.
+   *
+   * ## La langue est réécrite, et elle doit l'être — #854
+   *
+   * Une reprise est un **second envoi**, séparé du premier par une file, un
+   * backoff, et jusqu'à plusieurs heures. `NotificationDispatchService` vient de
+   * résoudre la langue à neuf et c'est elle qui choisira le modèle : laisser la
+   * colonne porter celle de la tentative ratée ferait dire au journal du
+   * back-office une langue qui n'est pas celle du message effectivement parti —
+   * précisément ce que le deuxième critère d'acceptation interdit.
    */
-  private async reclaim(failed: NotificationRecord): Promise<NotificationClaim> {
+  private async reclaim(failed: NotificationRecord, locale: Locale): Promise<NotificationClaim> {
     try {
       const { count } = await this.prisma.notification.updateMany({
         where: { id: failed.id, status: 'FAILED' },
         data: {
           status: 'PENDING',
           attemptCount: { increment: 1 },
+          locale,
           // Le motif de l'échec précédent n'a plus cours : le laisser ferait
           // lire « échoué parce que … » sur une ligne en cours d'envoi.
           failureReason: null,
@@ -858,7 +957,12 @@ export class NotificationsRepository {
 
     return {
       outcome: 'claimed',
-      notification: { ...failed, status: 'PENDING', attemptCount: failed.attemptCount + 1 },
+      notification: {
+        ...failed,
+        status: 'PENDING',
+        locale,
+        attemptCount: failed.attemptCount + 1,
+      },
     };
   }
 }

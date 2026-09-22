@@ -170,7 +170,16 @@ export class NotificationDispatchService {
       }
     }
 
-    const claim = await this.repository.claim(message);
+    // La langue se résout **ici**, entre la dernière relecture d'éligibilité et
+    // la prise de droit — c'est-à-dire au plus près de l'appel au fournisseur, et
+    // c'est le sixième critère d'acceptation de #854. Une seule résolution sert
+    // les deux usages : ce qui s'inscrit sur la ligne et ce qui choisit le
+    // modèle. Deux résolutions auraient pu se contredire — une cliente qui
+    // bascule sa langue entre les deux lectures aurait laissé au journal une
+    // langue qui n'est pas celle du message parti.
+    const locale = await this.repository.resolveRecipientLocale(message.recipientUserId);
+
+    const claim = await this.repository.claim(message, locale);
 
     if (claim.outcome === 'already-live') {
       // Ni erreur ni anomalie : c'est la file faisant ce qu'elle promet, et
@@ -184,7 +193,7 @@ export class NotificationDispatchService {
     }
 
     const { notification } = claim;
-    const content = await this.attempt(notification, () => this.renderer.render(message));
+    const content = await this.attempt(notification, () => this.renderer.render(message, locale));
     const receipt = await this.attempt(notification, () => this.send(notification, content));
 
     const closed = await this.repository.markSent(notification.id, receipt.providerMessageId);
@@ -205,6 +214,9 @@ export class NotificationDispatchService {
       notificationId: notification.id,
       type: notification.type,
       channel: notification.channel,
+      // La langue est journalisable : c'est un choix de présentation, pas une
+      // donnée personnelle — elle ne dit ni qui ni quoi (notifications §7).
+      locale,
       // L'accusé du fournisseur est opaque et non personnel : c'est le seul
       // identifiant que notifications §7 autorise au journal. Ni destinataire,
       // ni contenu.

@@ -75,8 +75,16 @@ export class UnrenderableNotificationError extends DomainError {
   public override readonly code = NOTIFICATION_ERROR_CODES.NOTIFICATION_NOT_RENDERABLE;
   public override readonly status = SERVICE_UNAVAILABLE;
 
-  public constructor(type: string) {
-    super("Aucun modèle de message n'est défini pour ce type de notification.", { type });
+  /**
+   * `locale` est nommée dans les détails depuis #854 : un modèle peut exister en
+   * français et manquer en anglais, et « aucun modèle pour ce type » n'aurait
+   * alors pas dit **lequel** manque — donc pas dit quoi écrire pour réparer.
+   */
+  public constructor(type: string, locale: string) {
+    super("Aucun modèle de message n'est défini pour ce type de notification.", {
+      type,
+      locale,
+    });
   }
 }
 
@@ -284,7 +292,11 @@ export class NotificationTemplateNotFoundError extends DomainError {
   public override readonly code = NOTIFICATION_ERROR_CODES.NOTIFICATION_TEMPLATE_NOT_FOUND;
   public override readonly status = NOT_FOUND;
 
-  public constructor(type: string, channel: string) {
-    super("Aucun modèle de message n'existe pour ce type et ce canal.", { type, channel });
+  public constructor(type: string, channel: string, locale: string) {
+    super("Aucun modèle de message n'existe pour ce type, ce canal et cette langue.", {
+      type,
+      channel,
+      locale,
+    });
   }
 }

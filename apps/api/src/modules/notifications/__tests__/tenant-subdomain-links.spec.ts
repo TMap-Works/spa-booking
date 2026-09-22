@@ -18,8 +18,9 @@
  * Fonctions pures : ni Nest, ni base, ni horloge.
  */
 
-import { cancellationUrl } from '../notification-content';
-import { SMS_REFERENCE_VARIABLES } from '../notification-template';
+import { LOCALES } from '@spa/shared';
+
+import { cancellationUrl, smsReferenceVariables } from '../notification-content';
 
 const SLUG = 'maison-lotus';
 
@@ -96,21 +97,26 @@ describe('aucun lien d’e-mail n’est une adresse impossible', () => {
 });
 
 describe('l’exemple de modèle suit la même forme', () => {
-  it('`SMS_REFERENCE_VARIABLES.lien_annulation` est sur sous-domaine', () => {
+  // La référence est une fonction de la langue depuis #854, mais le lien n'en
+  // dépend pas : c'est une URL, pas une phrase. Les deux langues sont donc
+  // exercées, et c'est le fait qu'elles donnent le **même** lien qui est le
+  // verdict — une référence qui traduirait un chemin d'URL produirait un lien
+  // mort dans une langue sur deux.
+  it.each(LOCALES)('`lien_annulation` est sur sous-domaine — %s', (locale) => {
     // Il sert à mesurer la longueur d'un SMS, mais il est aussi ce qu'un
     // intégrateur recopie dans un modèle de salon : le laisser sur l'ancienne
     // forme aurait diffusé l'adresse d'avant #837.
-    expect(SMS_REFERENCE_VARIABLES['lien_annulation']).toBe(
+    expect(smsReferenceVariables(locale)['lien_annulation']).toBe(
       cancellationUrl('https://reservation.spa-booking.app', SLUG, 'subdomain'),
     );
   });
 
-  it('la mesure du SMS ne change pas d’un caractère', () => {
+  it.each(LOCALES)('la mesure du SMS ne change pas d’un caractère — %s', (locale) => {
     // Le slug change de place, pas de longueur : le point qui le rattache au
     // domaine remplace exactement la barre oblique qui l'en séparait. C'est ce
     // qui garantit qu'aucun modèle de salon ne bascule d'un segment à deux à
     // cause de ce ticket.
     const avant = 'https://reservation.spa-booking.app/maison-lotus/compte';
-    expect(SMS_REFERENCE_VARIABLES['lien_annulation']).toHaveLength(avant.length);
+    expect(smsReferenceVariables(locale)['lien_annulation']).toHaveLength(avant.length);
   });
 });

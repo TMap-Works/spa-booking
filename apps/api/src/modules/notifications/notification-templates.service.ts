@@ -1,9 +1,14 @@
 import { Injectable } from '@nestjs/common';
+import { LOCALES, type Locale } from '@spa/shared';
 
+import {
+  measureSmsTemplate,
+  renderNotification,
+  smsReferenceVariables,
+} from './notification-content';
 import { defaultTemplateFor } from './notification-default-templates';
 import {
   SMS_MAX_SEGMENTS,
-  measureSmsTemplate,
   unbalancedSections,
   unknownPlaceholders,
   type SmsCost,
@@ -18,6 +23,7 @@ import {
   NOTIFICATION_CHANNELS,
   NOTIFICATION_TYPES,
   type NotificationChannel,
+  type NotificationTemplatePreview,
   type NotificationTemplateSource,
   type NotificationTemplateView,
   type NotificationType,
@@ -53,35 +59,46 @@ export class NotificationTemplatesService {
   public constructor(private readonly repository: NotificationTemplatesRepository) {}
 
   /**
-   * Tous les modèles **effectifs** de l'établissement.
+   * Tous les modèles **effectifs** de l'établissement, filtrables par langue.
    *
-   * Un par couple `(type, canal)` qui en a un : six par défaut depuis #72 — les
-   * trois messages du CDC §1.4 sur les deux canaux. Un couple sans modèle du
-   * tout — un type ajouté à l'énumération sans son défaut, et que le salon n'a
-   * pas écrit lui-même — n'apparaît pas : la liste répond à « que reçoit ma
-   * cliente ? », et la réponse pour ce message est « rien ».
+   * Un par triplet `(type, canal, langue)` qui en a un : vingt-deux par défaut
+   * depuis #854 — cinq messages de rendez-vous sur deux canaux, plus la
+   * réinitialisation en e-mail seulement, le tout dans deux langues. Un triplet
+   * sans modèle du tout — un type ajouté à l'énumération sans son défaut, et que
+   * le salon n'a pas écrit lui-même — n'apparaît pas : la liste répond à « que
+   * reçoit ma cliente ? », et la réponse pour ce message est « rien ».
+   *
+   * `locale` absente rend **les deux langues**, et c'est le défaut délibéré : la
+   * question que pose un écran de réglages est « qu'est-ce que mon salon envoie,
+   * à qui », et la réponse est incomplète tant qu'une des deux langues manque.
+   * Filtrer reste possible pour l'écran qui n'en édite qu'une.
    *
    * L'ordre est celui des énumérations — le même que celui du schéma, donc le
    * même d'un appel à l'autre. Une liste de configuration qui change d'ordre
    * fait bouger les lignes sous la souris.
    */
-  public async list(): Promise<readonly NotificationTemplateView[]> {
+  public async list(locale?: Locale): Promise<readonly NotificationTemplateView[]> {
     const stored = await this.repository.findAll();
     const views: NotificationTemplateView[] = [];
+    const locales = locale === undefined ? LOCALES : [locale];
 
     for (const type of NOTIFICATION_TYPES) {
       for (const channel of NOTIFICATION_CHANNELS) {
-        const custom = stored.find((row) => row.type === type && row.channel === channel);
+        for (const wanted of locales) {
+          const custom = stored.find(
+            (row) => row.type === type && row.channel === channel && row.locale === wanted,
+          );
 
-        if (custom !== undefined) {
-          views.push(view(type, channel, 'TENANT', custom.source, custom.updatedAt));
-          continue;
-        }
+          if (custom !== undefined) {
+            views.push(view(type, channel, wanted, 'TENANT', custom.source, custom.updatedAt));
+            continue;
+          }
 
-        const fallback = defaultTemplateFor(type, channel);
+          const fallback = defaultTemplateFor(type, channel, wanted);
 
-        if (fallback !== null) {
-          views.push(view(type, channel, 'PLATFORM', fallback, null));
+          if (fallback !== null) {
+            views.push(view(type, channel, wanted, 'PLATFORM', fallback, null));
+          }
         }
       }
     }
@@ -90,55 +107,74 @@ export class NotificationTemplatesService {
   }
 
   /**
-   * Le modèle effectif d'un message.
+   * Le modèle effectif d'un message, dans une langue.
    *
-   * @throws {NotificationTemplateNotFoundError} ni personnalisation, ni défaut.
+   * @throws {NotificationTemplateNotFoundError} ni personnalisation, ni défaut —
+   * dans **cette** langue. Le modèle de l'autre langue n'est jamais servi à sa
+   * place (#854, quatrième critère).
    */
   public async get(
     type: NotificationType,
     channel: NotificationChannel,
+    locale: Locale,
   ): Promise<NotificationTemplateView> {
-    const custom = await this.repository.find(type, channel);
+    const custom = await this.repository.find(type, channel, locale);
 
     if (custom !== null) {
-      return view(type, channel, 'TENANT', custom.source, custom.updatedAt);
+      return view(type, channel, locale, 'TENANT', custom.source, custom.updatedAt);
     }
 
-    const fallback = defaultTemplateFor(type, channel);
+    const fallback = defaultTemplateFor(type, channel, locale);
 
     if (fallback === null) {
-      throw new NotificationTemplateNotFoundError(type, channel);
+      throw new NotificationTemplateNotFoundError(type, channel, locale);
     }
 
-    return view(type, channel, 'PLATFORM', fallback, null);
+    return view(type, channel, locale, 'PLATFORM', fallback, null);
   }
 
   /**
-   * Enregistre la personnalisation d'un message, après l'avoir validée.
+   * Enregistre la personnalisation d'un message dans une langue, après l'avoir
+   * validée.
    *
    * La validation précède l'écriture, jamais l'inverse : un modèle refusé ne doit
    * pas avoir touché la base, sans quoi un salon pourrait enregistrer un modèle
    * que le rendu refusera ensuite d'envoyer — et ses clientes n'auraient plus de
    * confirmation.
+   *
+   * ## La mesure du SMS se fait **dans la langue du modèle**
+   *
+   * C'est le septième critère d'acceptation de #854 : un modèle anglais est
+   * mesuré contre le rendu de référence anglais, dont la date fait six caractères
+   * de plus que la française. Le mesurer contre la référence française aurait
+   * sous-estimé sa facture, ce qui est exactement ce que cette validation existe
+   * pour éviter.
    */
   public async save(
     type: NotificationType,
     channel: NotificationChannel,
+    locale: Locale,
     source: NotificationTemplateSource,
   ): Promise<NotificationTemplateView> {
     const normalized = normalize(channel, source);
 
     assertPlaceholdersAreKnown(normalized);
     assertChannelFieldsArePresent(channel, normalized);
-    assertSmsFitsBudget(channel, normalized);
+    assertSmsFitsBudget(channel, locale, normalized);
 
-    const saved = await this.repository.save(type, channel, normalized);
+    const saved = await this.repository.save(type, channel, locale, normalized);
 
-    return view(type, channel, 'TENANT', saved.source, saved.updatedAt);
+    return view(type, channel, locale, 'TENANT', saved.source, saved.updatedAt);
   }
 
   /**
-   * Rend l'établissement au modèle par défaut de la plateforme.
+   * Rend l'établissement au modèle par défaut de la plateforme, pour cette
+   * langue.
+   *
+   * L'autre langue n'est pas touchée : un salon qui efface son anglais garde son
+   * français. C'est ce que rend possible la quatrième dimension de l'unique, et
+   * ce serait d'ailleurs la seule conduite défendable — effacer les deux sur un
+   * geste qui en nomme une serait une perte de contenu non demandée.
    *
    * Idempotent : effacer une personnalisation qui n'existe pas laisse le salon
    * dans l'état demandé. La réponse est le modèle **désormais** effectif, et non
@@ -146,39 +182,126 @@ export class NotificationTemplatesService {
    * clic.
    *
    * @throws {NotificationTemplateNotFoundError} le message n'a pas de défaut de
-   * plateforme : effacer la personnalisation le laisserait sans aucun modèle.
-   * L'effacement a **quand même** eu lieu — c'est ce que le salon a demandé —, et
-   * le refus porte sur la lecture qui suit, pas sur le geste.
+   * plateforme dans cette langue : effacer la personnalisation le laisserait sans
+   * aucun modèle. L'effacement a **quand même** eu lieu — c'est ce que le salon a
+   * demandé —, et le refus porte sur la lecture qui suit, pas sur le geste.
    */
   public async reset(
     type: NotificationType,
     channel: NotificationChannel,
+    locale: Locale,
   ): Promise<NotificationTemplateView> {
-    await this.repository.remove(type, channel);
+    await this.repository.remove(type, channel, locale);
 
-    return this.get(type, channel);
+    return this.get(type, channel, locale);
   }
+
+  /**
+   * L'**aperçu** d'un modèle — #854, cinquième critère.
+   *
+   * ## Ce qu'il montre, et pourquoi la lecture ne suffisait pas
+   *
+   * Le message tel qu'il partirait : balises substituées, dates et montants
+   * formatés dans la langue demandée, corps du SMS écourté comme il le sera.
+   * Lire un modèle rend `{{date}}` ; l'aperçu rend « Wednesday, September 16,
+   * 2026 at 2:30 PM ». C'est la seule façon de vérifier le troisième critère —
+   * que le formatage suit la langue — sans envoyer un vrai message à une vraie
+   * cliente.
+   *
+   * ## Avec brouillon, ou sans
+   *
+   * Sans corps, il rend le modèle **effectif** — celui qui partirait maintenant.
+   * Avec un corps, il rend ce brouillon-là, **sans rien écrire** : c'est
+   * l'aperçu d'avant l'enregistrement, celui qui évite d'apprendre par une
+   * cliente qu'une section n'était pas refermée. Le brouillon traverse la même
+   * validation que `save`, pour la raison qui rend l'aperçu utile : un aperçu
+   * plus permissif que l'écriture montrerait un message que l'écriture refuse.
+   *
+   * ## Les valeurs sont celles de référence, jamais celles d'un rendez-vous
+   *
+   * `smsReferenceVariables` sert les deux canaux — le nom est hérité de son
+   * premier usage, la mesure du coût d'un SMS, mais les valeurs se lisent comme
+   * un rendez-vous plausible, enseigne comprise : c'est ce que cet usage-ci
+   * exige. Employer un rendez-vous réel aurait exposé une cliente dans un
+   * écran de configuration, pour un gain nul : ce qu'on vérifie est la forme du
+   * message, pas le contenu d'une ligne d'agenda.
+   */
+  public async preview(
+    type: NotificationType,
+    channel: NotificationChannel,
+    locale: Locale,
+    draft?: NotificationTemplateSource,
+  ): Promise<NotificationTemplatePreview> {
+    const effective =
+      draft === undefined
+        ? await this.get(type, channel, locale)
+        : validatedDraft(type, channel, locale, draft);
+
+    return {
+      type,
+      channel,
+      locale,
+      origin: effective.origin,
+      rendered: renderNotification(effective.source, smsReferenceVariables(locale), channel),
+      sms: effective.sms,
+    };
+  }
+}
+
+/**
+ * Un brouillon soumis à l'aperçu, passé au même crible que `save`.
+ *
+ * Il est marqué `TENANT` : c'est bien le salon qui l'écrit, même s'il ne
+ * l'enregistre pas encore. Annoncer `PLATFORM` aurait laissé croire à l'écran
+ * qu'il regarde le défaut.
+ */
+function validatedDraft(
+  type: NotificationType,
+  channel: NotificationChannel,
+  locale: Locale,
+  draft: NotificationTemplateSource,
+): NotificationTemplateView {
+  const normalized = normalize(channel, draft);
+
+  assertPlaceholdersAreKnown(normalized);
+  assertChannelFieldsArePresent(channel, normalized);
+  assertSmsFitsBudget(channel, locale, normalized);
+
+  return view(type, channel, locale, 'TENANT', normalized, null);
 }
 
 /** Un modèle effectif, sa provenance, et ce qu'il coûtera s'il part en SMS. */
 function view(
   type: NotificationType,
   channel: NotificationChannel,
+  locale: Locale,
   origin: NotificationTemplateView['origin'],
   source: NotificationTemplateSource,
   updatedAt: Date | null,
 ): NotificationTemplateView {
-  return { type, channel, origin, source, updatedAt, sms: smsCost(channel, source) };
+  return {
+    type,
+    channel,
+    locale,
+    origin,
+    source,
+    updatedAt,
+    sms: smsCost(channel, locale, source),
+  };
 }
 
 /**
- * Le coût mesuré du modèle, sur le canal où il en a un.
+ * Le coût mesuré du modèle, sur le canal où il en a un, dans sa langue.
  *
  * `null` sur l'e-mail : un e-mail long ne coûte rien de plus, et rendre un
  * chiffre là où il n'y a pas de facture inviterait à l'optimiser.
  */
-function smsCost(channel: NotificationChannel, source: NotificationTemplateSource): SmsCost | null {
-  return channel === 'SMS' ? measureSmsTemplate(source.text) : null;
+function smsCost(
+  channel: NotificationChannel,
+  locale: Locale,
+  source: NotificationTemplateSource,
+): SmsCost | null {
+  return channel === 'SMS' ? measureSmsTemplate(source.text, locale) : null;
 }
 
 /**
@@ -270,13 +393,14 @@ function assertChannelFieldsArePresent(
  */
 function assertSmsFitsBudget(
   channel: NotificationChannel,
+  locale: Locale,
   source: NotificationTemplateSource,
 ): void {
   if (channel !== 'SMS') {
     return;
   }
 
-  const cost = measureSmsTemplate(source.text);
+  const cost = measureSmsTemplate(source.text, locale);
 
   if (cost.segments > SMS_MAX_SEGMENTS) {
     throw new NotificationTemplateTooLongError({

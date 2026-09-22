@@ -552,87 +552,16 @@ function segmentsFor(units: number, single: number, concatenated: number): numbe
 }
 
 /**
- * Un jeu de valeurs **de référence**, pour mesurer un modèle avant tout envoi.
+ * Le **rendu de référence** a déménagé — `notification-content.ts`, depuis #854.
  *
- * ## Pourquoi une référence, et non les valeurs réelles
+ * `SMS_REFERENCE_VARIABLES` et `measureSmsTemplate` vivaient ici tant que la
+ * référence était un littéral : une date écrite à la main, un montant écrit à la
+ * main. Avec deux langues, ces valeurs doivent être **formatées** — « mercredi 16
+ * septembre 2026 à 14:30 » fait 34 caractères, « Wednesday, September 16, 2026 at
+ * 2:30 PM » en fait 40 —, et les formateurs vivent dans `notification-content.ts`,
+ * qui importe déjà ce fichier. Les laisser ici aurait formé un cycle.
  *
- * Parce qu'un modèle se valide au moment où le salon l'enregistre, c'est-à-dire
- * quand aucun rendez-vous n'est en jeu. Mesurer la chaîne brute — balises
- * comprises — aurait dit n'importe quoi : `{{date}}` fait huit caractères et en
- * rendra trente.
- *
- * ## Pourquoi ces valeurs-là
- *
- * Longues sans être absurdes. Prendre la largeur maximale de chaque colonne
- * (`services.name` en accepte 120, `tenants.name` 160) aurait fait refuser tous
- * les modèles, y compris ceux de la plateforme ; prendre des valeurs courtes
- * aurait laissé passer un modèle qui déborde au premier vrai rendez-vous. Ce
- * sont donc des valeurs plausiblement hautes : un nom composé, une prestation
- * nommée avec sa durée, un fuseau parmi les plus longs.
- *
- * `salon` est écrit à la largeur exacte à laquelle le rendu l'écourte
- * (`SMS_TENANT_NAME_MAX`), ce qui rend la mesure fidèle sans dépendre de
- * l'enseigne : c'est le pire cas réellement atteignable.
- *
- * ## Les espaces de `prix` ne sont pas des espaces
- *
- * `formatMoney` passe par `Intl.NumberFormat`, qui sépare les milliers par une
- * espace fine insécable (U+202F) et le symbole monétaire par une insécable
- * (U+00A0). **Aucune des deux n'est dans GSM-7.** Écrire ici des espaces
- * ordinaires aurait annoncé « GSM-7, un segment » à un salon dont le SMS part en
- * UCS-2 à deux segments — c'est-à-dire l'exact contraire de ce que la mesure
- * existe pour montrer.
+ * La frontière n'a pas bougé pour autant, et c'est elle qui compte : ce fichier
+ * compte les septets et ne sait pas ce qu'est un rendez-vous. Voir
+ * `smsReferenceVariables` et `measureSmsTemplate`.
  */
-export const SMS_REFERENCE_VARIABLES: TemplateVariables = {
-  client: 'Marie-Christine Rakotoarison',
-  // Onze caractères, et c'est le pire cas : la référence est de largeur fixe
-  // (`RDV-XXXX-NN`), donc la valeur mesurée est exactement celle que tout
-  // rendez-vous produira. Tous ses caractères sont dans GSM-7.
-  reference: 'RDV-8F3K-27',
-  service: 'Massage suédois 60 minutes',
-  praticien: 'Claire Delaunay',
-  salon: 'S'.repeat(SMS_TENANT_NAME_MAX),
-  adresse: '12 rue des Lilas, 75011 Paris',
-  telephone: '+33 1 23 45 67 89',
-  date: 'mercredi 16 septembre 2026 à 14:30',
-  heure: '14:30',
-  fin: '15:30',
-  fuseau: 'Indian/Antananarivo',
-  // Les deux espaces sont écrites en échappement : invisibles à l'œil dans le
-  // fichier, ce sont pourtant elles qui décident de l'encodage.
-  prix: '1\u202f250,00\u00a0MGA',
-  // Sur sous-domaine depuis #837, comme le lien que compose `cancellationUrl`.
-  // La mesure ne bouge pas d'un caractère — le slug change de place, pas de
-  // longueur, et le point qui le rattache au domaine remplace exactement la
-  // barre oblique qui l'en séparait —, mais un exemple resté sur l'ancienne
-  // forme aurait fini recopié dans un modèle de salon.
-  lien_annulation: 'https://maison-lotus.reservation.spa-booking.app/compte',
-  // La plus longue des trois formulations que `cancellationOrigin` sait rendre :
-  // mesurer la plus courte aurait annoncé un segment à un salon dont l'avis
-  // d'annulation en coûte deux dès qu'une annulation vient du système.
-  origine: 'automatiquement par le système',
-  // Le pire cas, ici encore : une section ouverte coûte ce qu'elle contient, et
-  // mesurer avec la variable vide aurait annoncé un segment à un salon dont le
-  // SMS en coûte deux dès qu'il part vers une cliente.
-  destinataire_client: 'oui',
-  // Le plus long des deux chemins que `passwordResetUrl` sait composer — celui
-  // du personnel, `/admin/mot-de-passe`, cinq caractères de plus que celui de la
-  // clientèle. La plateforme n'envoie ce message que par e-mail, mais un salon a
-  // le droit d'écrire son propre modèle de SMS, et c'est cette mesure-là qui le
-  // refusera s'il dépasse — un lien de 66 caractères ne laisse pas grand-chose
-  // des 160 d'un segment. Mesurer le chemin court aurait annoncé un segment à
-  // un salon dont le SMS en coûte deux dès qu'il part vers une praticienne.
-  lien_mot_de_passe: 'https://maison-lotus.reservation.spa-booking.app/admin/mot-de-passe',
-};
-
-/**
- * Ce qu'un modèle de SMS coûtera, une fois ses variables remplies.
- *
- * C'est cette mesure que la validation compare à `SMS_MAX_SEGMENTS`, et c'est
- * elle que l'API rend au back-office : un salon qui écrit « à très bientôt ! »
- * avec une apostrophe typographique doit **voir** que son message vient de passer
- * de un segment à deux.
- */
-export function measureSmsTemplate(source: string): SmsCost {
-  return measureSms(renderTemplateSource(source, SMS_REFERENCE_VARIABLES, keepAsIs));
-}
