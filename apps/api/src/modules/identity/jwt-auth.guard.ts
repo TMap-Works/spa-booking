@@ -12,6 +12,36 @@ import type { AuthenticatedUser } from './identity.types';
 import { TokenService } from './token.service';
 
 /**
+ * Extrait le jeton de l'en-tête `Authorization`.
+ *
+ * Le schéma est comparé sans tenir compte de la casse (`Bearer`, `bearer`), et
+ * la valeur doit être non vide — `Authorization: Bearer ` sans jeton ne doit pas
+ * produire une chaîne vide qui irait jusqu'au vérificateur.
+ *
+ * Exporté plutôt que privé à la garde depuis #1128 : `IdentityThrottlerGuard` lit
+ * le même en-tête pour compter `GET /auth/me` par compte authentifié, et
+ * `PlatformAuthGuard` le lit pour la console. Plusieurs copies de cette lecture
+ * auraient fini par diverger d'une tolérance de casse ou d'un élagage, et c'est
+ * la garde du limiteur — qui s'exécute **avant** celle-ci — qui aurait alors
+ * compté un jeton que celle-ci refuse, ou l'inverse.
+ */
+export function bearerToken(request: Request): string | null {
+  const header = request.headers.authorization;
+  if (typeof header !== 'string') {
+    return null;
+  }
+  const separator = header.indexOf(' ');
+  if (separator === -1) {
+    return null;
+  }
+  if (header.slice(0, separator).toLowerCase() !== 'bearer') {
+    return null;
+  }
+  const token = header.slice(separator + 1).trim();
+  return token === '' ? null : token;
+}
+
+/**
  * Garde d'authentification par jeton d'accès.
  *
  * C'est **le** point où l'identité entre dans l'application, et il ne lit qu'une
@@ -39,7 +69,7 @@ export class JwtAuthGuard implements CanActivate {
   public async canActivate(context: ExecutionContext): Promise<boolean> {
     const request = context.switchToHttp().getRequest<Request>();
 
-    const token = JwtAuthGuard.bearerToken(request);
+    const token = bearerToken(request);
     if (token === null) {
       throw new UnauthorizedException('Jeton d’accès absent ou mal formé.');
     }
@@ -68,29 +98,6 @@ export class JwtAuthGuard implements CanActivate {
 
     setAuthenticatedUser(request, user);
     return true;
-  }
-
-  /**
-   * Extrait le jeton de l'en-tête `Authorization`.
-   *
-   * Le schéma est comparé sans tenir compte de la casse (`Bearer`, `bearer`), et
-   * la valeur doit être non vide — `Authorization: Bearer ` sans jeton ne doit pas
-   * produire une chaîne vide qui irait jusqu'au vérificateur.
-   */
-  private static bearerToken(request: Request): string | null {
-    const header = request.headers.authorization;
-    if (typeof header !== 'string') {
-      return null;
-    }
-    const separator = header.indexOf(' ');
-    if (separator === -1) {
-      return null;
-    }
-    if (header.slice(0, separator).toLowerCase() !== 'bearer') {
-      return null;
-    }
-    const token = header.slice(separator + 1).trim();
-    return token === '' ? null : token;
   }
 }
 

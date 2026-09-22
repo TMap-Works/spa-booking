@@ -466,6 +466,50 @@ describe('Authentification — parcours HTTP', () => {
       expect(statuses.filter((status) => status === 429).length).toBeGreaterThanOrEqual(2);
     });
 
+    it('compte `me` par compte et non pour la plateforme entière', async () => {
+      // `loadAdminShell` appelle cette route à **chaque rendu d'écran**. Comptée
+      // par adresse — celle de la tâche ECS du front, la même pour tous —, ses
+      // soixante appels par minute valaient pour le produit entier : une
+      // poignée de salons ouverts en même temps fermait le back-office de tout
+      // le monde (#1128).
+      const hasher = harness.app.get(PasswordHasher);
+      const voisine = 'bruno@example.test';
+      harness.repository.addUser({
+        tenantId: harness.tenantId,
+        email: voisine,
+        passwordHash: await hasher.hash(PASSWORD),
+      });
+
+      const jetonDe = async (email: string): Promise<string> => {
+        const response = await request(server())
+          .post('/api/v1/auth/login')
+          .send({ tenantSlug: SLUG, email, password: PASSWORD })
+          .expect(200);
+        return response.body.accessToken;
+      };
+
+      const premiere = await jetonDe(EMAIL);
+      const seconde = await jetonDe(voisine);
+
+      const statuses: number[] = [];
+      for (let rendu = 0; rendu < 61; rendu += 1) {
+        const response = await request(server())
+          .get('/api/v1/auth/me')
+          .set('Authorization', `Bearer ${premiere}`);
+        statuses.push(response.status);
+      }
+
+      // Soixante rendus passent, le soixante-et-unième franchit le quota.
+      expect(statuses.filter((status) => status === 200)).toHaveLength(60);
+      expect(statuses[60]).toBe(429);
+
+      // Et le compte voisin, qui n'a rien demandé, garde le sien entier.
+      await request(server())
+        .get('/api/v1/auth/me')
+        .set('Authorization', `Bearer ${seconde}`)
+        .expect(200);
+    });
+
     it('borne aussi la création de comptes en masse', async () => {
       const statuses: number[] = [];
       for (let attempt = 0; attempt < 7; attempt += 1) {

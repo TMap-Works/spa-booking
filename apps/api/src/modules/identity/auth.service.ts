@@ -645,8 +645,9 @@ export class AuthService {
       // Ce qu'elle épargne est le bcrypt ci-dessous — cent millisecondes de CPU
       // par tentative — sur un jeton dont on sait déjà qu'il n'ouvrira rien :
       // rejoué, remplacé, ou ramassé dans une boîte mail. La route n'est pas
-      // authentifiée, et son quota par IP compte l'adresse du serveur Next pour
-      // tous les visiteurs (`auth.controller.ts`).
+      // authentifiée, et son quota se compte par compte visé lorsque le jeton
+      // vérifie, sinon par adresse — celle du serveur Next pour tous les
+      // visiteurs (`auth.controller.ts`, `@ThrottleByToken`).
       state.passwordResetTokenHash !== expectedTokenHash
     ) {
       // Un seul refus pour quatre causes — voir `InvalidPasswordResetTokenError`.

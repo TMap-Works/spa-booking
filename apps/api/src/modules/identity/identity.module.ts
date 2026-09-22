@@ -10,6 +10,7 @@ import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { IdentityEvents } from './events/identity-events';
 import { IdentityThrottlerGuard } from './identity-throttler.guard';
+import { IdentityThrottlerStorage } from './identity-throttler.storage';
 import { IdentityRepository } from './identity.repository';
 import { JwtAuthGuard } from './jwt-auth.guard';
 import { PasswordHasher } from './password.hasher';
@@ -96,11 +97,25 @@ const publicTenantResolver: PublicTenantResolverProvider = {
  *
  * ## La limitation de débit est déclarée ici
  *
- * `ThrottlerModule.forRoot` pose les quotas par défaut, et `AuthController`
+ * `ThrottlerModule.forRootAsync` pose les quotas par défaut, et `AuthController`
  * resserre route par route. Le module est déclaré dans `identity` plutôt qu'à la
- * racine parce que c'est ici que se trouvent les endpoints à protéger : le rendre
- * global imposerait un quota à `/health`, que les sondes de l'ALB interrogent
- * bien plus souvent qu'un humain ne se connecte.
+ * racine parce que c'est ici que se trouvent les endpoints à protéger : aucune
+ * garde de limiteur n'est posée en `APP_GUARD`, sans quoi `/health` porterait un
+ * quota que les sondes de l'ALB franchiraient bien plus vite qu'un humain ne se
+ * connecte.
+ *
+ * Le **stockage** des compteurs est celui du dépôt, `IdentityThrottlerStorage`,
+ * et non celui de la bibliothèque : ce dernier ne purge jamais sa `Map` et
+ * laisse une entrée bloquée figer la décroissance de toutes les autres (#1128).
+ * Il est posé par `forRootAsync` plutôt que `forRoot` pour une raison précise —
+ * `forRoot` prend une **valeur**, donc une instance unique partagée par tous les
+ * modules chargés dans le processus, quand la fabrique en rend une par
+ * instanciation. C'est ce que fait déjà la bibliothèque pour son propre stockage,
+ * et c'est ce qui garantit qu'une suite de tests qui monte deux applications ne
+ * voit pas les compteurs de la première décider dans la seconde.
+ *
+ * `ThrottlerModule` est `@Global()` : ce stockage sert donc aussi les quotas
+ * publics de `appointments` et `availability`, qui emploient la garde d'origine.
  *
  * `IdentityThrottlerGuard` y figure comme les deux autres gardes de ce module,
  * par convention et non par nécessité : Nest sait instancier une garde
@@ -142,13 +157,16 @@ const publicTenantResolver: PublicTenantResolverProvider = {
 @Module({
   imports: [
     JwtModule.register({}),
-    ThrottlerModule.forRoot({
-      throttlers: [
-        // Défaut prudent ; chaque route d'authentification l'affine par
-        // `@Throttle`. La valeur ne sert que si quelqu'un ajoute une route sans y
-        // penser — et c'est exactement pour ce cas qu'elle existe.
-        { name: 'default', limit: 60, ttl: 60_000 },
-      ],
+    ThrottlerModule.forRootAsync({
+      useFactory: () => ({
+        storage: new IdentityThrottlerStorage(),
+        throttlers: [
+          // Défaut prudent ; chaque route d'authentification l'affine par
+          // `@Throttle`. La valeur ne sert que si quelqu'un ajoute une route sans y
+          // penser — et c'est exactement pour ce cas qu'elle existe.
+          { name: 'default', limit: 60, ttl: 60_000 },
+        ],
+      }),
     }),
   ],
   controllers: [

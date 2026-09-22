@@ -12,6 +12,7 @@ import {
 import type { Request } from 'express';
 
 import { normalizeEmail } from './email';
+import { bearerToken } from './jwt-auth.guard';
 import { readRefreshCookie } from './refresh-cookie';
 import { TokenService } from './token.service';
 
@@ -37,10 +38,12 @@ import { TokenService } from './token.service';
  * rendu `develop` rouge : la suite E2E tourne sur un worker unique et franchit
  * le seuil avant son dernier scénario.
  *
- * ## Deux compteurs de remplacement, un par nature de route
+ * ## Quatre compteurs de remplacement, un par nature de route
  *
- * Aucun des deux n'est l'adresse, et aucun des deux n'est le même : ce que
- * chaque route protège n'est pas la même chose.
+ * Aucun n'est l'adresse, et aucun n'est le même : ce que chaque route protège
+ * n'est pas la même chose. Trois d'entre eux comptent ce que l'appelant
+ * **prouve** — une session, un compte, un jeton signé —, le quatrième ce qu'il
+ * **désigne**, faute de pouvoir prouver quoi que ce soit.
  *
  * ### `@ThrottleBySession()` — le `sid` du jeton (#860)
  *
@@ -59,14 +62,53 @@ import { TokenService } from './token.service';
  * d'une consommation mémoire sans borne. La vérification est un HMAC-SHA256 sur
  * quelques centaines d'octets, que le service refait de toute façon juste après.
  *
- * ### `@ThrottleByTarget()` — la cible des identifiants (#1127)
+ * ### `@ThrottleByPrincipal()` — le `sub` du jeton d'accès (#1128)
  *
- * Pour les routes qui **jugent un mot de passe** : `POST /auth/login`,
- * `POST /auth/register`, `POST /platform/auth/login`. L'appelant n'y prouve
- * rien — c'est tout l'objet de l'appel —, mais il **désigne** quelque chose : le
- * compte qu'il prétend ouvrir, ou l'établissement où il prétend en créer un.
- * C'est cette désignation que l'on compte, et non l'origine de l'appel, qui est
- * constante.
+ * Pour `GET /auth/me`, la seule route **authentifiée** de ce contrôleur. Son
+ * compteur naturel est le compte qui l'appelle, et le jeton d'accès le porte
+ * déjà : `sub`, vérifié ici comme le jeton de rafraîchissement l'est pour la
+ * session, et pour la même raison — une revendication lue sans vérifier la
+ * signature est une valeur que l'appelant choisit.
+ *
+ * Le nombre, lui, n'avait pas à changer : soixante par minute est large pour un
+ * compte, et c'était le plafond du **produit entier** pour une route que le
+ * back-office appelle à chaque rendu d'écran (`loadAdminShell`). Une poignée de
+ * salons ouverts en même temps suffisait à le franchir, et le back-office se
+ * fermait alors pour tout le monde.
+ *
+ * La garde du limiteur s'exécute **avant** `JwtAuthGuard` — c'est l'ordre des
+ * gardes de Nest, celles du contrôleur d'abord — si bien qu'une requête sans
+ * jeton valide arrive ici avant d'être refusée. Elle retombe sur l'adresse, ce
+ * qui est exactement ce qu'il faut : le bruit des appels non authentifiés reste
+ * borné sur un compteur commun, sans toucher à celui des comptes qui travaillent.
+ *
+ * ### `@ThrottleByToken()` — le jeton présenté (#1128)
+ *
+ * Pour `POST /auth/invitations/accept` et `POST /auth/password-reset/confirm`.
+ * Ces deux-là ne nomment aucune cible : leur corps porte un jeton signé, et
+ * c'est lui qui les autorise. Le compteur est donc le compte que ce jeton
+ * désigne — son `sub` —, à condition que le jeton **vérifie**.
+ *
+ * Un jeton contrefait, expiré ou d'un autre usage ne désigne rien, et retombe
+ * sur l'adresse. Ce n'est pas un pis-aller : le service refuse ces corps-là
+ * avant le moindre bcrypt (`verifyInvitationToken` puis `hash`, jamais
+ * l'inverse), ils ne coûtent donc presque rien, et les ranger tous ensemble sur
+ * un compteur commun est précisément ce qu'on veut d'eux. Ce que le plafond
+ * protège est le **coût du bcrypt** qu'un corps valide fait payer, et ce coût-là
+ * se compte désormais par compte visé au lieu de se partager entre tous les
+ * salons.
+ *
+ * Contrefaire ne rend donc aucun compteur neuf, et ne fait pas non plus naître
+ * d'entrée dans le stockage : c'est ce qui distingue ce compteur de celui des
+ * cibles, où la clé est ce que l'appelant écrit.
+ *
+ * ### `@ThrottleByTarget()` — la cible des identifiants (#1127, étendu en #1128)
+ *
+ * Pour les routes où l'appelant ne prouve rien — c'est tout l'objet de l'appel —
+ * mais **désigne** quelque chose : le compte qu'il prétend ouvrir, celui dont il
+ * prétend avoir oublié le mot de passe, ou l'établissement où il prétend créer
+ * un compte. C'est cette désignation que l'on compte, et non l'origine de
+ * l'appel, qui est constante.
  *
  * Ce que chaque route désigne lui est propre, et c'est l'argument du décorateur
  * qui le dit — `@ThrottleByTarget({ tenant, account })`, champ par champ :
@@ -75,6 +117,7 @@ import { TokenService } from './token.service';
  * |---|---|---|
  * | `/auth/login` | établissement **+** adresse e-mail | le forçage du mot de passe **d'un compte** |
  * | `/auth/register` | établissement seul | la création de comptes en masse **dans un salon** |
+ * | `/auth/password-reset` | établissement **+** adresse e-mail | le bombardement de la boîte mail **d'un compte** |
  * | `/platform/auth/login` | adresse e-mail seule | le forçage du mot de passe d'un opérateur |
  *
  * L'inscription ne se compte délibérément **pas** par adresse e-mail : un
@@ -82,6 +125,26 @@ import { TokenService } from './token.service';
  * adresse n'aurait borné que ce qui échouait déjà — deux inscriptions de la même
  * adresse dans le même salon, que l'unique `(tenant_id, email)` refuse. Le salon
  * est l'unité qui a un sens : c'est lui qu'on inonde, et c'est lui qui paie.
+ *
+ * ### Le 429 par cible n'est pas un oracle d'existence
+ *
+ * Le point mérite d'être écrit, parce que c'est l'objection qu'on oppose
+ * naturellement à un compteur par compte sur une route qui, elle, refuse de dire
+ * si le compte existe — `/auth/login` rend un `INVALID_CREDENTIALS` indistinct,
+ * `/auth/password-reset` rend 202 quoi qu'il arrive.
+ *
+ * Le compteur **naît de la cible nommée, jamais du compte trouvé**. Rien de ce
+ * que fait cette garde ne consulte la base : elle lit le corps brut, le
+ * normalise, le hache, et incrémente. Une adresse inconnue produit donc
+ * exactement le même compteur, au même rythme, avec le même 429 au même rang
+ * qu'une adresse connue. Ce que le 429 apprend est « quelqu'un a déjà nommé
+ * cette cible six fois cette minute » — c'est-à-dire ce que l'appelant vient
+ * lui-même de faire.
+ *
+ * C'est aussi pourquoi le refus de la **base** reste invisible, lui, et doit le
+ * rester : `PASSWORD_RESET_COOLDOWN_MS` ne s'applique qu'à un compte qui existe,
+ * et un 429 tiré de celui-là aurait dit que l'adresse est connue. Il continue de
+ * rendre 202 sans rien envoyer (`token.service.ts`, `auth.service.ts`).
  *
  * ## Pourquoi la connexion ne se compte pas par session, elle
  *
@@ -131,26 +194,16 @@ import { TokenService } from './token.service';
  * `infra/terraform/` — et la propagation de l'adresse réelle est un chantier à
  * elle seule.
  *
- * ### Et ce que cela coûte en mémoire — le point à surveiller (#1128)
+ * ### Et ce que cela coûte en mémoire (#1128)
  *
- * Le stockage par défaut de `@nestjs/throttler`, `ThrottlerStorageService`, est
- * une `Map` de processus **qui ne supprime jamais rien** : une clé y naît au
- * premier appel et y reste jusqu'au redémarrage de la tâche, seul son compteur
- * décroît. Tant que `/auth/login` n'avait qu'une clé — l'adresse du front —,
- * cela ne se voyait pas. Une clé par cible, elle, est une clé que l'appelant
- * fait naître : un slug inventé suffit, et il coûte moins qu'une connexion
- * puisque la validation le refuse **après** cette garde.
- *
- * L'ordre de grandeur reste celui d'une attaque soutenue — quelques centaines
- * d'octets par entrée, donc des heures de trafic maximal pour peser —, et la
- * borne réelle est là encore celle de l'entrée. Mais c'est une croissance que
- * seul un stockage **borné ou partagé** fermera : celui de Redis, que le MVP n'a
- * pas encore câblé pour ce module, ou un stockage maison qui expulse ses entrées
- * expirées. Le même stockage porte un second défaut de la bibliothèque, et de la
- * même famille : `resetBlockdRequest` annule les minuteries de **toutes** les
- * clés du limiteur, si bien qu'un compteur bloqué quelque part fige la
- * décroissance des autres jusqu'à leur propre remise à zéro. Les deux sont suivis
- * hors de ce ticket — les corriger, c'est remplacer le stockage.
+ * Une clé par cible est une clé que l'appelant **fait naître** : un slug inventé
+ * suffit, et il coûte moins qu'une connexion puisque la validation le refuse
+ * **après** cette garde. Le stockage par défaut de `@nestjs/throttler` ne
+ * supprimant jamais rien, cette croissance-là allait jusqu'au redémarrage de la
+ * tâche. Elle est bornée depuis à une **fenêtre de trafic** par
+ * `IdentityThrottlerStorage`, qui expulse ses entrées expirées et n'arme aucune
+ * minuterie — voir son en-tête pour ce qu'il remplace, ce qu'il concède, et
+ * pourquoi un plafond dur serait pire que le mal.
  *
  * ## Le repli, et pourquoi il reste l'adresse IP
  *
@@ -179,6 +232,43 @@ export const THROTTLE_BY_SESSION = 'identity/throttle-by-session';
 /** @see THROTTLE_BY_SESSION */
 export const ThrottleBySession = (): CustomDecorator<string> =>
   SetMetadata(THROTTLE_BY_SESSION, true);
+
+/**
+ * Marque une route **authentifiée** dont le quota se compte par compte (#1128).
+ *
+ * @see THROTTLE_BY_PRINCIPAL
+ */
+export const THROTTLE_BY_PRINCIPAL = 'identity/throttle-by-principal';
+
+/** @see THROTTLE_BY_PRINCIPAL */
+export const ThrottleByPrincipal = (): CustomDecorator<string> =>
+  SetMetadata(THROTTLE_BY_PRINCIPAL, true);
+
+/** Les deux usages de jeton signé qu'une route peut compter. */
+export type ThrottleTokenKind = 'invitation' | 'password-reset';
+
+/** Le jeton que le corps d'une route porte, et ce qu'il est. */
+export interface ThrottleTokenFields {
+  /**
+   * L'usage du jeton — il décide de la clé de vérification, et deux usages ont
+   * deux clés indépendantes (`token.service.ts`). Une invitation présentée à la
+   * réinitialisation ne vérifie donc pas, et retombe sur l'adresse.
+   */
+  readonly kind: ThrottleTokenKind;
+  /** Le champ du corps qui porte le jeton. */
+  readonly field: string;
+}
+
+/** Métadonnée portée par `@ThrottleByToken()`. */
+export const THROTTLE_BY_TOKEN = 'identity/throttle-by-token';
+
+/**
+ * Marque une route dont le quota se compte par **jeton signé présenté** (#1128).
+ *
+ * @see THROTTLE_BY_TOKEN
+ */
+export const ThrottleByToken = (fields: ThrottleTokenFields): CustomDecorator<string> =>
+  SetMetadata(THROTTLE_BY_TOKEN, fields);
 
 /**
  * Les champs du corps qui désignent la cible d'une route d'identifiants.
@@ -284,38 +374,43 @@ export class IdentityThrottlerGuard extends ThrottlerGuard {
    * Le compteur que la route réclame, ou `null` si la requête ne le prouve ni ne
    * le nomme — auquel cas l'appelant retombe sur l'adresse.
    *
-   * Les deux marquages s'excluent : une route se compte par session **ou** par
-   * cible, jamais par les deux. Le premier gagne, et c'est sans conséquence —
-   * aucune route ne porte les deux décorateurs, et l'en-tête dit pourquoi
-   * `/auth/login` ne peut pas porter le premier.
+   * Les quatre marquages s'excluent : une route se compte par session, par
+   * compte authentifié, par jeton **ou** par cible, jamais par deux à la fois.
+   * L'ordre ci-dessous départage si quelqu'un en posait deux, et c'est sans
+   * conséquence aujourd'hui — aucune route n'en porte deux, et l'en-tête dit
+   * pourquoi `/auth/login` ne peut pas porter le premier.
    */
   private async trackerFor(request: Request, context: ExecutionContext): Promise<string | null> {
-    if (this.tracksBySession(context)) {
+    if (this.metadataOf<boolean>(context, THROTTLE_BY_SESSION) === true) {
       return this.sessionTracker(request);
     }
 
-    const fields = this.targetFields(context);
-    return fields === null ? null : this.targetTracker(request, fields);
+    if (this.metadataOf<boolean>(context, THROTTLE_BY_PRINCIPAL) === true) {
+      return this.principalTracker(request);
+    }
+
+    const token = this.metadataOf<ThrottleTokenFields>(context, THROTTLE_BY_TOKEN);
+    if (token !== undefined) {
+      return this.tokenTracker(request, token);
+    }
+
+    const fields = this.metadataOf<ThrottleTargetFields>(context, THROTTLE_BY_TARGET);
+    return fields === undefined ? null : this.targetTracker(request, fields);
   }
 
-  /** La route demande-t-elle un compteur par session ? */
-  private tracksBySession(context: ExecutionContext): boolean {
-    return (
-      this.reflector.getAllAndOverride<boolean | undefined>(THROTTLE_BY_SESSION, [
-        context.getHandler(),
-        context.getClass(),
-      ]) === true
-    );
-  }
-
-  /** Les champs de cible de la route, ou `null` si elle n'en compte aucune. */
-  private targetFields(context: ExecutionContext): ThrottleTargetFields | null {
-    return (
-      this.reflector.getAllAndOverride<ThrottleTargetFields | undefined>(THROTTLE_BY_TARGET, [
-        context.getHandler(),
-        context.getClass(),
-      ]) ?? null
-    );
+  /**
+   * La métadonnée que la route — ou son contrôleur — porte sous cette clé.
+   *
+   * Un seul point de lecture pour les quatre marquages : quatre copies de
+   * `getAllAndOverride` auraient fini par différer d'un `getClass()` oublié, et
+   * un marquage qui ne se lit qu'au niveau du gestionnaire cesse silencieusement
+   * de valoir dès qu'on le pose sur le contrôleur.
+   */
+  private metadataOf<T>(context: ExecutionContext, key: string): T | undefined {
+    return this.reflector.getAllAndOverride<T | undefined>(key, [
+      context.getHandler(),
+      context.getClass(),
+    ]);
   }
 
   /**
@@ -337,6 +432,72 @@ export class IdentityThrottlerGuard extends ThrottlerGuard {
     } catch {
       // Jeton contrefait, expiré ou illisible : il ne désigne aucune session, et
       // le laisser en désigner une serait rendre le quota contournable.
+      return null;
+    }
+  }
+
+  /**
+   * Le compte que cette requête **prouve**, ou `null` si elle n'en prouve aucun
+   * (#1128).
+   *
+   * Le jeton est vérifié avant qu'on en tire le `sub`, pour la raison qui vaut
+   * déjà pour la session : une revendication lue sans vérifier la signature est
+   * une valeur que l'appelant choisit, et il lui suffirait d'en inventer une par
+   * requête pour n'être jamais compté.
+   *
+   * `verifyAccessToken` rend `null` plutôt que de lever — c'est son contrat, une
+   * route publique voyant passer des requêtes sans jeton en permanence.
+   */
+  private async principalTracker(request: Request): Promise<string | null> {
+    const token = bearerToken(request);
+
+    if (token === null) {
+      return null;
+    }
+
+    const claims = await this.tokens.verifyAccessToken(token);
+    return claims === null ? null : `principal:${claims.sub}`;
+  }
+
+  /**
+   * Le compte que le jeton signé de ce corps désigne, ou `null` si le corps n'en
+   * porte pas un qui vérifie (#1128).
+   *
+   * Le corps est lu **brut** — la garde précède le `ValidationPipe` —, donc
+   * retypé avant tout. Un jeton qui ne vérifie pas ne désigne rien : ni un
+   * compte, ni une entrée dans le stockage du limiteur.
+   *
+   * Le compteur est le `sub` et non le `jti` : c'est le **compte visé** qu'il
+   * faut borner, et un compteur par émission repartirait de zéro à chaque
+   * nouvelle demande de réinitialisation — c'est-à-dire à chaque fois que
+   * quelqu'un en redemande une.
+   */
+  private async tokenTracker(
+    request: Request,
+    fields: ThrottleTokenFields,
+  ): Promise<string | null> {
+    const body: unknown = request.body;
+
+    if (body === null || typeof body !== 'object' || Array.isArray(body)) {
+      return null;
+    }
+
+    const presented = (body as Record<string, unknown>)[fields.field];
+
+    if (typeof presented !== 'string' || presented === '') {
+      return null;
+    }
+
+    try {
+      const claims =
+        fields.kind === 'invitation'
+          ? await this.tokens.verifyInvitationToken(presented)
+          : await this.tokens.verifyPasswordResetToken(presented);
+
+      return `${fields.kind}:${claims.sub}`;
+    } catch {
+      // Jeton contrefait, expiré, ou émis pour l'autre usage : les deux clés
+      // sont indépendantes, et aucun des trois ne désigne de compte.
       return null;
     }
   }
