@@ -1,6 +1,8 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import createNextIntlPlugin from 'next-intl/plugin';
+
 const here = path.dirname(fileURLToPath(import.meta.url));
 const monorepoRoot = path.join(here, '..', '..');
 
@@ -26,6 +28,15 @@ const monorepoRoot = path.join(here, '..', '..');
  *    lieu de la contourner, et `tsconfig.json` la déclare à l'identique pour que
  *    le compilateur et le bundler résolvent le même fichier.
  *
+ * 3. `outputFileTracingIncludes` embarque les **catalogues de messages** (#845).
+ *    `i18n/messages.ts` les découvre par `readdirSync` plutôt que par un
+ *    `import` — c'est ce qui permet d'ajouter un namespace sans toucher à aucun
+ *    fichier central — et l'analyse statique de Next ne voit donc passer aucun
+ *    de ces JSON : sans cette ligne, la sortie autonome démarre et rend des
+ *    clés brutes à la place des libellés. Le motif est un **glob** : il ne
+ *    change pas quand un namespace s'ajoute, ce qui est tout l'objet du second
+ *    critère d'acceptation de #845.
+ *
  * Rien ici pour Turbopack : `next dev` et `next build` emploient webpack tant
  * qu'on ne passe pas `--turbopack`, et aucun script ne le passe. Le jour où l'un
  * d'eux le fera, l'alias devra être redéclaré sous la clé `turbopack`.
@@ -35,6 +46,9 @@ const monorepoRoot = path.join(here, '..', '..');
 const nextConfig = {
   output: 'standalone',
   outputFileTracingRoot: monorepoRoot,
+  outputFileTracingIncludes: {
+    '/**/*': ['./messages/**/*.json'],
+  },
   reactStrictMode: true,
   webpack(config) {
     config.resolve.alias = {
@@ -46,4 +60,13 @@ const nextConfig = {
   },
 };
 
-export default nextConfig;
+/**
+ * `next-intl` (#845, ADR 0017).
+ *
+ * Le greffon fait une seule chose : brancher `i18n/request.ts` comme
+ * configuration de requête, pour que `getLocale`, `useTranslations` et
+ * `getTranslations` sachent où lire. **Aucun routage de langue** n'est mis en
+ * place — pas de segment `[locale]`, pas de réécriture d'URL : l'adresse d'un
+ * salon est ce qu'il imprime sur sa vitrine, et la langue n'a pas à la doubler.
+ */
+export default createNextIntlPlugin('./i18n/request.ts')(nextConfig);

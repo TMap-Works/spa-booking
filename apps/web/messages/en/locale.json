@@ -1,0 +1,9 @@
+{
+  "label": "Language",
+  "current": "Displayed language: {language}",
+  "switchTo": "Show this site in {language}",
+  "names": {
+    "fr": "Français",
+    "en": "English"
+  }
+}

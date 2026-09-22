@@ -1,0 +1,25 @@
+{
+  "button": {
+    "loading": "Working…"
+  },
+  "sheet": {
+    "close": "Close"
+  },
+  "password": {
+    "show": "Show",
+    "hide": "Hide",
+    "showFull": "Show password",
+    "hideFull": "Hide password",
+    "shown": "Your password is visible."
+  },
+  "routeError": {
+    "retry": "Try again",
+    "retrying": "Trying again…"
+  },
+  "theme": {
+    "legend": "Display theme",
+    "system": "System theme",
+    "light": "Light theme",
+    "dark": "Dark theme"
+  }
+}

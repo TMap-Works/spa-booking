@@ -1,0 +1,25 @@
+{
+  "button": {
+    "loading": "Traitement en cours…"
+  },
+  "sheet": {
+    "close": "Fermer"
+  },
+  "password": {
+    "show": "Afficher",
+    "hide": "Masquer",
+    "showFull": "Afficher le mot de passe",
+    "hideFull": "Masquer le mot de passe",
+    "shown": "Votre mot de passe est affiché."
+  },
+  "routeError": {
+    "retry": "Réessayer",
+    "retrying": "Nouvelle tentative en cours…"
+  },
+  "theme": {
+    "legend": "Thème d’affichage",
+    "system": "Thème du système",
+    "light": "Thème clair",
+    "dark": "Thème sombre"
+  }
+}

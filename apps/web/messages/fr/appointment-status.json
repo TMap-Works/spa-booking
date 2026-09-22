@@ -1,0 +1,24 @@
+{
+  "singular": {
+    "pending": "À confirmer",
+    "confirmed": "Confirmé",
+    "completed": "Honoré",
+    "cancelled": "Annulé",
+    "no_show": "Non honoré"
+  },
+  "plural": {
+    "pending": "À confirmer",
+    "confirmed": "Confirmés",
+    "completed": "Honorés",
+    "cancelled": "Annulés",
+    "no_show": "Non honorés"
+  },
+  "rescheduled": "Déplacé",
+  "pendingConfirmation": "À confirmer par le salon",
+  "unconfirmedPast": "Non confirmé",
+  "cancelledBy": {
+    "you": "Annulé par vous",
+    "client": "Annulé par la cliente",
+    "salon": "Annulé par le salon"
+  }
+}

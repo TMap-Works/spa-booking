@@ -1,0 +1,8 @@
+{
+  "exits": {
+    "vitrine": "See all services",
+    "reservation": "Book an appointment",
+    "compte": "My account"
+  },
+  "navLabel": "Client area"
+}
