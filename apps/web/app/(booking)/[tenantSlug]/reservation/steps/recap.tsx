@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 
 import type { ContactDraft } from '@/lib/booking/draft';
+import { formatPhoneForDisplay } from '@/lib/phone';
 
 import { EditAction } from './appointment-card';
 
@@ -90,7 +91,9 @@ export function ContactRecap({ contact, onEdit = null }: ContactRecapProps) {
 
         <RecapRow term="Adresse e-mail">{contact.email}</RecapRow>
 
-        {contact.phone === '' ? null : <RecapRow term="Téléphone">{contact.phone}</RecapRow>}
+        {contact.phone === '' ? null : (
+          <RecapRow term="Téléphone">{formatPhoneForDisplay(contact.phone)}</RecapRow>
+        )}
 
         {contact.clientNote === '' ? null : (
           <RecapRow term="Votre mot au salon">{contact.clientNote}</RecapRow>

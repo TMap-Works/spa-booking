@@ -25,6 +25,7 @@ import {
   PENDING_CONFIRMATION_LABEL,
 } from '@/lib/appointment-status';
 import { formatDuration, formatMoney, timeZoneMention } from '@/lib/format';
+import { formatPhoneForDisplay } from '@/lib/phone';
 
 import { accountPath } from '../paths';
 import { CancelAppointmentControl } from './cancel-appointment-control';
@@ -156,7 +157,7 @@ export function AppointmentHero({ tenantSlug, brief, tenant, timeZone }: Appoint
           <li className="spa-rdv-hero__fact">
             <Icon name="phone" className="spa-rdv-hero__fact-icon" />
             <a className="spa-rdv-hero__link" href={telUri(phone)}>
-              {phone}
+              {formatPhoneForDisplay(phone)}
             </a>
           </li>
         )}

@@ -1,17 +1,18 @@
 'use client';
 
 import { zodResolver } from '@hookform/resolvers/zod';
-import { ERROR_CODES, PASSWORD_MIN_LENGTH, phoneSchema, registerRequestSchema } from '@spa/shared';
+import { e164PhoneSchema, ERROR_CODES, PASSWORD_MIN_LENGTH, registerRequestSchema } from '@spa/shared';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useState } from 'react';
-import { useForm } from 'react-hook-form';
+import { Controller, useForm } from 'react-hook-form';
 import { z } from 'zod';
 
 import { Button } from '@/components/ui/button';
 import { Field } from '@/components/ui/field';
 import { Notification } from '@/components/ui/notification';
 import { PasswordField } from '@/components/ui/password-field';
+import { PhoneField } from '@/components/ui/phone-field';
 import { ACCOUNT_CONSENT, ConsentField, consentSchema } from '@/lib/booking/consent';
 
 import { registerAction } from '../actions';
@@ -43,9 +44,14 @@ import { accountPath } from '../paths';
  * Le champ garde donc le nom du contrat, `dataConsent`, et non plus `consent` :
  * c'est lui qui part dans le corps de l'inscription, et le renommer à la
  * soumission aurait rendu la correspondance invisible.
+ *
+ * Le téléphone est validé par `e164PhoneSchema` depuis #825 : `PhoneField` émet
+ * toujours un numéro international, que le pays de l'établissement n'a donc
+ * plus à compléter — c'est la même règle que l'API applique
+ * (`e164PhoneSchemaFor`), à ceci près qu'elle n'a plus rien à deviner.
  */
 const registerFormSchema = registerRequestSchema.extend({
-  phone: z.union([z.literal(''), phoneSchema]),
+  phone: z.union([z.literal(''), e164PhoneSchema]),
   dataConsent: consentSchema,
 });
 
@@ -83,6 +89,7 @@ export function RegisterForm({ tenantSlug }: RegisterFormProps) {
 
   const {
     register,
+    control,
     handleSubmit,
     watch,
     formState: { errors, isSubmitting },
@@ -205,14 +212,21 @@ export function RegisterForm({ tenantSlug }: RegisterFormProps) {
           error={errors.email?.message}
           {...register('email')}
         />
-        <Field
-          id="register-phone"
-          label="Téléphone"
-          type="tel"
-          autoComplete="tel"
-          hint="Facultatif — pour recevoir le rappel de votre rendez-vous par SMS."
-          error={errors.phone?.message}
-          {...register('phone')}
+        <Controller
+          control={control}
+          name="phone"
+          render={({ field, fieldState }) => (
+            <PhoneField
+              id="register-phone"
+              label="Téléphone"
+              hint="Facultatif — pour recevoir le rappel de votre rendez-vous par SMS."
+              invalid={fieldState.invalid}
+              value={field.value ?? ''}
+              onChange={field.onChange}
+              onBlur={field.onBlur}
+              ref={field.ref}
+            />
+          )}
         />
         {/*
           Le critère se coche à la frappe : `data-met` porte l'état, la feuille

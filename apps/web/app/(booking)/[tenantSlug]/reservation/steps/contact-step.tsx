@@ -4,16 +4,18 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { e164PhoneSchemaFor, guestContactSchemaFor, longTextSchema } from '@spa/shared';
 import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useForm } from 'react-hook-form';
+import { Controller, useForm } from 'react-hook-form';
 import { z } from 'zod';
 
 import { BookingActionBar, type BookingSummary } from '@/components/booking/summary-bar';
 import { Button } from '@/components/ui/button';
 import { Field } from '@/components/ui/field';
+import { PhoneField } from '@/components/ui/phone-field';
 import { TextArea } from '@/components/ui/textarea';
 import type { AccountPresence } from '@/lib/account-presence';
 import { BOOKING_CONSENT, ConsentField, consentSchema } from '@/lib/booking/consent';
 import type { ContactDraft } from '@/lib/booking/draft';
+import { formatPhoneForDisplay } from '@/lib/phone';
 
 import { useDraftAutosave } from '../use-draft-autosave';
 
@@ -67,67 +69,22 @@ function contactFormSchemaFor(countryCode: string | null) {
 type ContactFormValues = z.output<ReturnType<typeof contactFormSchemaFor>>;
 
 /**
- * L'aide et l'erreur du champ « Téléphone » — **sans exemple de pays** (#626),
- * mais pas sans pays (#1028).
+ * L'aide du champ « Téléphone » — à quoi sert le numéro, et rien de plus.
  *
- * Les deux disaient d'abord « +261… » et « par exemple +261 34 12 345 67 » : un
- * indicatif de Madagascar écrit en dur, donc proposé à l'identique à la cliente
- * d'un salon lyonnais dont la vitrine affiche pourtant un numéro en +33. #626 a
- * retiré l'exemple, et cette décision-là tient toujours : **aucun des deux
- * libellés ci-dessous n'écrit de numéro national**. Le seul qu'on saurait former
- * serait celui d'un plan de numérotation particulier, et « 06 12 34 56 78 »
- * montré à un salon américain décrirait une forme que rien n'y acceptera jamais
- * — c'est mot pour mot ce que motive `e164PhoneSchemaFor` côté contrat.
+ * Elle disait jusqu'ici **quelle forme** était acceptée (« au format du pays de
+ * l'établissement », « au format international »), parce que rien d'autre à
+ * l'écran ne le disait. Depuis #825, le champ le montre lui-même : un drapeau,
+ * l'indicatif, et un exemple du pays choisi en guise d'indication — celui que
+ * #626 avait dû retirer tant qu'il était écrit en dur pour Madagascar. Le redire
+ * sous le champ ajouterait une ligne à 360 px pour une information déjà
+ * visible (audit `d20260918-1`, « aides de champ en une ligne »).
  *
- * Ce que #1028 change n'est pas l'exemple, c'est **ce que le champ accepte**.
- * Tant que la validation refusait tout numéro national, exiger l'indicatif était
- * la vérité à dire à la cliente. Depuis que l'établissement fournit son pays,
- * l'exiger serait devenu faux : le formulaire annoncerait une contrainte que
- * l'API n'applique plus, et une cliente française retaperait en +33 un numéro
- * que le salon aurait accepté tel quel.
- *
- * Les deux libellés suivent donc le pays, sans rien inventer de plus : avec un
- * pays, ils disent que le format du salon convient ; sans, ils disent
- * l'indicatif, qui est alors la seule forme complétable. `publicTenantSchema`
- * porte l'adresse en `.optional()`, et un salon qui n'a pas publié la sienne
- * retombe exactement sur le libellé d'avant.
- *
- * ## Ce que #1050 y change : la longueur, jamais la règle
- *
- * L'audit `d20260918-1` demande des *« aides de champ en une ligne »*. Les deux
- * libellés faisaient deux phrases, donc deux à trois lignes à 360 px sous un
- * champ facultatif — plus de hauteur que le champ lui-même. Ils disent
- * désormais la même chose d'un trait : à quoi sert le numéro, et quelle forme
- * est acceptée. Ni l'exemple retiré par #626 ni le pays introduit par #1028 ne
- * reviennent : aucun des deux n'écrit de numéro national, et c'est toujours
- * `e164PhoneSchemaFor` qui accepte ou refuse.
+ * Le message d'erreur n'est plus composé ici non plus : c'est `PhoneField` qui
+ * le rend, parce qu'il nomme le pays du drapeau, que seul le champ connaît. La
+ * règle reste celle du contrat — `e164PhoneSchemaFor`, dans le schéma
+ * ci-dessus.
  */
-function phoneHint(countryCode: string | null): string {
-  return countryCode === null
-    ? 'Facultatif, pour le rappel par SMS — au format international.'
-    : 'Facultatif, pour le rappel par SMS — au format du pays de l’établissement.';
-}
-
-/**
- * Écrit ici et non repris d'`e164PhoneSchemaFor`, alors que c'est bien ce
- * schéma-là qui refuse la saisie.
- *
- * Le message du contrat cite « +261 34 12 345 67 », et il ne peut pas mieux
- * faire : il sert aussi la frontière serveur, où le libellé n'est pas fait pour
- * être lu par une cliente. **La règle reste unique** — c'est toujours le schéma
- * du contrat qui accepte ou refuse, ce formulaire n'en redit rien ; seule la
- * formulation montrée à la cliente appartient à l'écran qui la montre.
- *
- * Le message couvre toute valeur refusée sans distinguer laquelle : hors la
- * chaîne vide, qui est valable, ce champ n'a que deux façons d'échouer — une
- * saisie plus longue que `PHONE_MAX_LENGTH`, ou un numéro que le pays connu ne
- * permet pas de compléter — et les deux appellent la même correction.
- */
-function phoneFormatError(countryCode: string | null): string {
-  return countryCode === null
-    ? 'numéro attendu au format international, indicatif du pays compris'
-    : 'numéro attendu au format du pays de l’établissement, ou au format international';
-}
+const PHONE_HINT = 'Facultatif, pour le rappel par SMS.';
 
 /**
  * L'adresse coupée juste après l'arobase, pour y poser un `<wbr />` (#1086).
@@ -324,6 +281,7 @@ export function ContactStep({
 
   const {
     register,
+    control,
     handleSubmit,
     getValues,
     formState: { errors, isSubmitted, isSubmitting },
@@ -542,7 +500,7 @@ export function ContactStep({
               {emailLocalPart}
               <wbr />
               {emailDomainPart}
-              {phoneSummarised ? ` · ${defaultValues.phone}` : null}
+              {phoneSummarised ? ` · ${formatPhoneForDisplay(defaultValues.phone)}` : null}
             </p>
           </div>
           <Button
@@ -605,14 +563,26 @@ export function ContactStep({
         />
       </div>
       <div hidden={phoneSummarised}>
-        <Field
-          id="phone"
-          label="Téléphone"
-          type="tel"
-          autoComplete="tel"
-          hint={phoneHint(countryCode)}
-          error={errors.phone === undefined ? undefined : phoneFormatError(countryCode)}
-          {...register('phone')}
+        {/* Contrôlé et non enregistré : le champ émet un E.164 (#825), là où
+            `register` lirait ce qu'affiche l'`<input>` — « 06 12 34 56 78 ».
+            Le brouillon garde donc la forme normalisée, et la relit derrière
+            le bon drapeau au retour. */}
+        <Controller
+          control={control}
+          name="phone"
+          render={({ field, fieldState }) => (
+            <PhoneField
+              id="phone"
+              label="Téléphone"
+              defaultCountry={countryCode}
+              hint={PHONE_HINT}
+              invalid={fieldState.invalid}
+              value={field.value}
+              onChange={field.onChange}
+              onBlur={field.onBlur}
+              ref={field.ref}
+            />
+          )}
         />
       </div>
       {/* Le seul champ long du formulaire, donc le seul en `TextArea` (#748).

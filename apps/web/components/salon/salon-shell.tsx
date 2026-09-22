@@ -6,6 +6,7 @@ import { AccountEntry } from '@/components/account/account-entry';
 import { Avatar } from '@/components/ui/avatar';
 import { Icon } from '@/components/ui/icon';
 import type { AccountName, AccountPresence } from '@/lib/account-presence';
+import { formatPhoneForDisplay } from '@/lib/phone';
 import { PLATFORM_HOME_PATH, PLATFORM_NAME } from '@/lib/platform';
 
 import { PUBLIC_EXIT_LABELS } from './public-exits';
@@ -177,7 +178,7 @@ function SalonFooter({ tenantSlug, tenant, bookingHref }: SalonFooterProps) {
                 <li>
                   <a className="spa-shell__footer-link" href={telUri(phone)}>
                     <Icon name="phone" />
-                    {phone}
+                    {formatPhoneForDisplay(phone)}
                   </a>
                 </li>
               )}

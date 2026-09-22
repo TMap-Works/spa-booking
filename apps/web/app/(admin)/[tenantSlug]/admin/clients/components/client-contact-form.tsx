@@ -1,15 +1,16 @@
 'use client';
 
 import { zodResolver } from '@hookform/resolvers/zod';
-import { nameSchema, phoneSchema, type Customer } from '@spa/shared';
+import { e164PhoneSchema, nameSchema, type Customer } from '@spa/shared';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
-import { useForm } from 'react-hook-form';
+import { Controller, useForm } from 'react-hook-form';
 import { z } from 'zod';
 
 import { Button } from '@/components/ui/button';
 import { Field } from '@/components/ui/field';
 import { Notification } from '@/components/ui/notification';
+import { PhoneField } from '@/components/ui/phone-field';
 
 import { updateCustomerAction } from '../actions';
 import { useAdminSessionRenewal } from '../../components/use-admin-session-renewal';
@@ -37,12 +38,20 @@ import { useAdminSessionRenewal } from '../../components/use-admin-session-renew
  * De même pour l'activation : désactiver une fiche est une décision **sur** le
  * fichier et non une correction **dedans**, elle a sa propre route au rang
  * `manager`, et aucun critère de ce ticket ne la demande.
+ *
+ * ## Le téléphone, depuis #825
+ *
+ * Saisi derrière un drapeau — celui du salon par défaut, un autre si la
+ * cliente dicte un numéro étranger — et émis en E.164, que `e164PhoneSchema`
+ * valide sur place. La fiche est ce que la recherche par numéro et le rappel
+ * par SMS relisent : un numéro qui n'est pas attribuable est refusé ici, sur
+ * son champ, plutôt qu'au moment de l'envoi.
  */
 
 const contactFormSchema = z.object({
   firstName: nameSchema,
   lastName: nameSchema,
-  phone: z.union([z.literal(''), phoneSchema]),
+  phone: z.union([z.literal(''), e164PhoneSchema]),
 });
 
 type ContactFormValues = z.input<typeof contactFormSchema>;
@@ -61,6 +70,7 @@ export function ClientContactForm({ tenantSlug, customer }: ClientContactFormPro
 
   const {
     register,
+    control,
     handleSubmit,
     formState: { errors, isSubmitting },
   } = useForm<ContactFormValues, unknown, z.output<typeof contactFormSchema>>({
@@ -145,14 +155,22 @@ export function ClientContactForm({ tenantSlug, customer }: ClientContactFormPro
         error={errors.lastName?.message}
         {...register('lastName')}
       />
-      <Field
-        id={`client-phone-${customer.id}`}
-        label="Téléphone"
-        type="tel"
-        autoComplete="off"
-        hint="Laissez vide pour retirer le numéro — le rappel J-1 partira alors par e-mail seulement."
-        error={errors.phone?.message}
-        {...register('phone')}
+      <Controller
+        control={control}
+        name="phone"
+        render={({ field, fieldState }) => (
+          <PhoneField
+            id={`client-phone-${customer.id}`}
+            label="Téléphone"
+            autoComplete="off"
+            hint="Laissez vide pour retirer le numéro — le rappel J-1 partira alors par e-mail seulement."
+            invalid={fieldState.invalid}
+            value={field.value}
+            onChange={field.onChange}
+            onBlur={field.onBlur}
+            ref={field.ref}
+          />
+        )}
       />
       <Field
         id={`client-email-${customer.id}`}

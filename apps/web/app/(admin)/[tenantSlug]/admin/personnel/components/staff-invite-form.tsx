@@ -1,6 +1,6 @@
 'use client';
 
-import { STAFF_ROLES, type StaffRole } from '@spa/shared';
+import { e164PhoneSchema, STAFF_ROLES, type StaffRole } from '@spa/shared';
 import { useRouter } from 'next/navigation';
 import { useState, useTransition } from 'react';
 import type { ZodIssue } from 'zod';
@@ -8,6 +8,7 @@ import type { ZodIssue } from 'zod';
 import { Button } from '@/components/ui/button';
 import { Field } from '@/components/ui/field';
 import { Notification } from '@/components/ui/notification';
+import { PhoneField } from '@/components/ui/phone-field';
 import { Select } from '@/components/ui/select';
 import { inviteStaffAccountRequestSchema } from '@/lib/admin/staff-contract';
 
@@ -160,11 +161,22 @@ export function StaffInviteForm({ tenantSlug }: { readonly tenantSlug: string })
       role: draft.role,
       // « Absent » et « vide » disent la même chose à la création : pas de
       // numéro. Envoyer une chaîne vide se ferait refuser par le motif.
-      ...(draft.phone.trim() === '' ? {} : { phone: draft.phone.trim() }),
+      ...(draft.phone === '' ? {} : { phone: draft.phone }),
     });
+    // Le contrat de la requête décrit la **forme** d'un numéro, et laisse au
+    // serveur le soin de le compléter avec le pays du salon (#824). Le champ
+    // émet déjà un E.164 (#825) : il se juge donc ici, avec la règle de l'API,
+    // plutôt que de revenir refusé en bandeau après l'envoi.
+    const phoneRejected = draft.phone !== '' && !e164PhoneSchema.safeParse(draft.phone).success;
 
-    if (!parsed.success) {
-      const { fields, form } = collectInviteErrors(parsed.error.issues);
+    if (!parsed.success || phoneRejected) {
+      const collected = parsed.success
+        ? { fields: {}, form: null }
+        : collectInviteErrors(parsed.error.issues);
+      const fields: InviteFieldErrors = phoneRejected
+        ? { ...collected.fields, phone: collected.fields.phone ?? 'numéro de téléphone invalide' }
+        : collected.fields;
+      const form = collected.form;
 
       setFieldErrors(fields);
       // Le bandeau ne double pas les marques de champ : il ne parle que lorsque
@@ -263,13 +275,15 @@ export function StaffInviteForm({ tenantSlug }: { readonly tenantSlug: string })
         type="email"
         value={draft.email}
       />
-      <Field
-        error={fieldErrors.phone}
+      {/* Le message est celui du champ, qui nomme le pays choisi : le
+          contrat ne dit que « invalide », sans pouvoir dire pour où. */}
+      <PhoneField
+        autoComplete="off"
         hint="Facultatif."
         id="invitation-telephone"
+        invalid={fieldErrors.phone !== undefined}
         label="Téléphone"
-        onChange={(event) => change({ phone: event.target.value })}
-        type="tel"
+        onChange={(phone) => change({ phone })}
         value={draft.phone}
       />
       <Select

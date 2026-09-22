@@ -7,8 +7,8 @@ import {
   POSTAL_CODE_MAX_LENGTH,
   displayNameSchema,
   emailSchema,
+  e164PhoneSchema,
   openingHoursSchema,
-  phoneSchema,
   postalAddressSchema,
   type OpeningHoursEntry,
   type Tenant,
@@ -16,12 +16,13 @@ import {
 } from '@spa/shared';
 import { useRouter } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
-import { useForm, useWatch } from 'react-hook-form';
+import { Controller, useForm, useWatch } from 'react-hook-form';
 import { z } from 'zod';
 
 import { Button } from '@/components/ui/button';
 import { Field } from '@/components/ui/field';
 import { Notification } from '@/components/ui/notification';
+import { PhoneField } from '@/components/ui/phone-field';
 import { weekdayLabel } from '@/components/salon/opening-hours';
 
 import { updateTenantSettingsAction } from '../actions';
@@ -229,7 +230,9 @@ const settingsFormSchema = z
   .object({
     name: displayNameSchema,
     contactEmail: z.union([z.literal(''), emailSchema]),
-    contactPhone: z.union([z.literal(''), phoneSchema]),
+    // E.164 depuis #825 : `PhoneField` émet la forme internationale, et la
+    // vitrine la réécrit lisiblement (`formatPhoneForDisplay`).
+    contactPhone: z.union([z.literal(''), e164PhoneSchema]),
     // Les bornes sont celles du contrat (`postalAddressSchema`) et donc celles
     // des colonnes. Sans elles, une ligne trop longue passerait la validation du
     // formulaire pour être refusée à l'envoi, sur un champ que rien ne
@@ -393,6 +396,8 @@ export function TenantSettingsForm({ tenantSlug, tenant }: TenantSettingsFormPro
    * avec le formulaire.
    */
   const days = useWatch({ control, name: 'days' });
+  /** Le pays de l'adresse en cours d'édition — l'indicatif par défaut du téléphone (#825). */
+  const addressCountry = useWatch({ control, name: 'country' });
 
   /**
    * Ouvrir ou fermer une journée — voir l'en-tête.
@@ -723,14 +728,26 @@ export function TenantSettingsForm({ tenantSlug, tenant }: TenantSettingsFormPro
             error={errors.contactEmail?.message}
             {...register('contactEmail')}
           />
-          <Field
-            id="tenant-contact-phone"
-            label="Téléphone"
-            type="tel"
-            autoComplete="tel"
-            hint="Laissez vide pour ne pas publier de numéro."
-            error={errors.contactPhone?.message}
-            {...register('contactPhone')}
+          <Controller
+            control={control}
+            name="contactPhone"
+            render={({ field, fieldState }) => (
+              <PhoneField
+                id="tenant-contact-phone"
+                label="Téléphone"
+                autoComplete="off"
+                // Le pays en cours de saisie plus haut, et non celui qui est
+                // enregistré : un salon qui corrige son adresse s'attend à
+                // voir le drapeau suivre.
+                defaultCountry={addressCountry.trim() === '' ? undefined : addressCountry}
+                hint="Laissez vide pour ne pas publier de numéro."
+                invalid={fieldState.invalid}
+                value={field.value}
+                onChange={field.onChange}
+                onBlur={field.onBlur}
+                ref={field.ref}
+              />
+            )}
           />
         </fieldset>
 

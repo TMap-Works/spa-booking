@@ -18,6 +18,8 @@ import {
   type EmailSuppressionReason,
 } from '@spa/shared';
 
+import { formatPhoneForDisplay } from '@/lib/phone';
+
 /**
  * Le terme de recherche tel que l'API accepte de le recevoir, ou `null`.
  *
@@ -154,9 +156,14 @@ export function visitClientNote(clientNote: string | null): string | null {
  * seule quand le numéro manque — une fiche saisie au comptoir n'en a pas
  * toujours, et une ligne vide obligerait à ouvrir la fiche pour savoir si la
  * personne est joignable.
+ *
+ * Le numéro au format international lisible (#825) : `+33 6 12 34 56 78` se
+ * lit d'un regard et se dicte, `+33612345678` se déchiffre.
  */
 export function customerContactLine(customer: CustomerSummary): string {
-  return customer.phone === null ? customer.email : `${customer.phone} · ${customer.email}`;
+  return customer.phone === null
+    ? customer.email
+    : `${formatPhoneForDisplay(customer.phone)} · ${customer.email}`;
 }
 
 /**

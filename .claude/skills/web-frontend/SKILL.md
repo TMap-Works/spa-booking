@@ -66,7 +66,11 @@ Points à ne pas rater :
   le back valide pour la sécurité — jamais l'un sans l'autre.
 - Les erreurs de champ retournées par l'API sont réinjectées sur les champs
   correspondants, pas affichées en bloc en haut de page.
-- Téléphone en E.164 (`+261...`), normalisé à la saisie.
+- Téléphone en E.164 (`+261...`), normalisé à la saisie : **toujours** par
+  `PhoneField` (`components/ui/phone-field.tsx`, #825), jamais un
+  `<input type="tel">` nu. Il émet l'E.164, se valide avec `e164PhoneSchema`
+  sous un `Controller`, et un numéro affiché passe par `formatPhoneForDisplay`
+  (`lib/phone.ts`).
 
 ## 5. Le calendrier admin
 

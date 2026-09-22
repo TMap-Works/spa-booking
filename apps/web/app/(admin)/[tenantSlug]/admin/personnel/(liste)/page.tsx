@@ -9,6 +9,7 @@ import Link from 'next/link';
 import { fetchOwnProfile, fetchStaffAccounts, fetchStaffMembers } from '@/lib/api-client';
 import { sortStaffMembers, staffInitials } from '@/lib/admin/staff-directory';
 import { isStaffRole } from '@/lib/admin/staff-contract';
+import { formatPhoneForDisplay } from '@/lib/phone';
 
 import { roleLabel } from '../../components/navigation';
 import { adminLoadFailure, requireAdminAccessToken } from '../../guard';
@@ -297,7 +298,7 @@ export default async function StaffPage({ params }: StaffPageProps) {
                     {account.firstName} {account.lastName}
                   </td>
                   <td className="spa-admin-table__cell">{account.email}</td>
-                  <td className="spa-admin-table__cell">{account.phone ?? '—'}</td>
+                  <td className="spa-admin-table__cell">{account.phone === null ? '—' : formatPhoneForDisplay(account.phone)}</td>
                   <td className="spa-admin-table__cell">{roleLabel(account.role)}</td>
                   <td className="spa-admin-table__cell">
                     <span

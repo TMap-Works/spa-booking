@@ -112,7 +112,9 @@ describe('la cliente connectée ne retape pas ses coordonnées (#1050, #1086)', 
     // L'adresse et le numéro sur la ligne que l'audit `d20260918-1` dessine sous
     // le nom : c'est là que part la confirmation, et une cliente qui ne la voit
     // pas ne peut pas corriger l'adresse d'un compte ouvert il y a deux ans.
-    expect(screen.getByText('alice@example.test · +261341234567')).toBeDefined();
+    // Le numéro au format international lisible, comme partout où il est
+    // affiché (#825) — l'E.164 brut est fait pour une machine.
+    expect(screen.getByText('alice@example.test · +261 34 12 345 67')).toBeDefined();
     // Les champs existent toujours — ils portent la valeur qui sera soumise —
     // mais `hidden` les retire de l'arbre d'accessibilité comme de l'ordre de
     // tabulation : un champ requis invisible et focalisable serait un piège.
@@ -124,7 +126,8 @@ describe('la cliente connectée ne retape pas ses coordonnées (#1050, #1086)', 
     expect(document.querySelector<HTMLInputElement>('#firstName')?.value).toBe('Alice');
     expect(document.querySelector<HTMLInputElement>('#lastName')?.value).toBe('Marchand');
     expect(document.querySelector<HTMLInputElement>('#email')?.value).toBe('alice@example.test');
-    expect(document.querySelector<HTMLInputElement>('#phone')?.value).toBe('+261341234567');
+    // Relu au format national du pays qui le porte, derrière son drapeau.
+    expect(document.querySelector<HTMLInputElement>('#phone')?.value).toBe('034 12 345 67');
   });
 
   /**
@@ -163,7 +166,7 @@ describe('la cliente connectée ne retape pas ses coordonnées (#1050, #1086)', 
     expect(screen.getByLabelText<HTMLInputElement>(/Adresse e-mail/).value).toBe(
       'alice@example.test',
     );
-    expect(screen.getByLabelText<HTMLInputElement>(/Téléphone/).value).toBe('+261341234567');
+    expect(screen.getByLabelText<HTMLInputElement>(/Téléphone/).value).toBe('034 12 345 67');
     // Le bouton cliqué disparaît avec l'encart : sans ce rattrapage, le focus
     // retomberait sur `<body>` et la tabulation repartirait du haut du document
     // (skill web-frontend §7).
@@ -349,7 +352,16 @@ describe('formulaire de coordonnées', () => {
     });
   });
 
-  it('refuse un numéro national sans pays d’établissement, sur le champ', async () => {
+  /**
+   * Sans pays d'établissement, le champ part des États-Unis (#825) — et le
+   * refus le dit : il nomme le pays du drapeau, que la cliente voit à côté du
+   * numéro, et propose d'en changer.
+   *
+   * C'est ce que #626 n'autorisait pas, et pour une raison qui ne tient plus :
+   * l'indicatif écrit en dur était celui de Madagascar, proposé à n'importe
+   * quel salon. Celui du message est désormais celui qu'affiche le drapeau.
+   */
+  it('refuse sur le champ un numéro que le pays du drapeau ne connaît pas, en le nommant', async () => {
     const { onSubmit, user } = renderContactStep();
 
     await fillRequiredFields(user);
@@ -360,11 +372,8 @@ describe('formulaire de coordonnées', () => {
 
     const message = screen.getByRole('alert');
 
-    expect(message.textContent).toContain('format international');
-    // #626 — et sans l'indicatif d'aucun pays : un indicatif s'écrit toujours
-    // `+` suivi d'un chiffre, et ce motif-là ne doit pas reparaître ici, pas
-    // plus le « +261 » d'origine qu'un « +33 » écrit en dur à sa place.
-    expect(message.textContent).not.toMatch(/\+\s?\d/);
+    expect(message.textContent).toContain('(États-Unis, +1)');
+    expect(message.textContent).toContain('changez de pays');
     // Le message est rattaché au champ, pas posé en bloc en haut de page.
     expect(screen.getByLabelText(/Téléphone/).getAttribute('aria-describedby')).toContain(
       message.id,
@@ -378,30 +387,24 @@ describe('formulaire de coordonnées', () => {
    *
    * Le test porte sur l'**absence d'indicatif**, pas sur la formule retenue :
    * un indicatif de pays s'écrit toujours `+` suivi d'un chiffre, et c'est ce
-   * motif-là qui ne doit pas reparaître. Formulé ainsi, il refuserait tout
-   * autant un « +33 » écrit en dur — l'autre façon de mal corriger ce ticket.
-   *
-   * L'autre surface du ticket, le message d'erreur, est gardée par le test
-   * ci-dessus, qui la fait déjà apparaître : la redemander ici rejouerait le
-   * même formulaire pour la même assertion.
+   * motif-là qui ne doit pas reparaître dans l'aide. Depuis #825, l'aide ne dit
+   * plus du tout la forme attendue : le drapeau et l'exemple du pays choisi la
+   * montrent.
    */
   it('ne donne l’indicatif d’aucun pays dans l’aide du champ', () => {
-    renderContactStep();
+    renderContactStep({ countryCode: 'FR' });
 
     const hint = document.getElementById('phone-hint');
 
-    expect(hint?.textContent).toMatch(/format international/);
+    expect(hint?.textContent).toMatch(/rappel par SMS/);
     expect(hint?.textContent).not.toMatch(/\+\s?\d/);
   });
 
   /**
-   * Le défaut de #1028, vu du formulaire : le tunnel refusait dans le navigateur
-   * un numéro que `POST /public/{slug}/appointments` accepte sur le même salon,
-   * depuis que la frontière serveur le complète avec `tenants.country_code`.
-   *
-   * Le test porte sur les deux moitiés de la correction — la soumission passe
-   * **et** aucun message n'apparaît —, parce qu'un formulaire qui laisserait
-   * soumettre en affichant tout de même son refus serait aussi faux.
+   * Le défaut de #1028, vu du formulaire : un numéro national est accepté sur
+   * un salon qui a un pays. Depuis #825, le brouillon en garde l'E.164 — c'est
+   * ce que le champ émet, et c'est ce qu'il relit derrière le bon drapeau au
+   * retour vers cette étape.
    */
   it('accepte un numéro national quand l’établissement a un pays', async () => {
     const { onSubmit, user } = renderContactStep({ countryCode: 'FR' });
@@ -412,25 +415,14 @@ describe('formulaire de coordonnées', () => {
 
     expect(onSubmit).toHaveBeenCalledTimes(1);
     expect(screen.queryByRole('alert')).toBeNull();
-    // Le brouillon conserve la saisie telle qu'elle a été tapée, ici comme
-    // ailleurs : la forme E.164 est produite au moment de composer la requête.
-    expect(onSubmit.mock.calls[0]?.[0]).toMatchObject({ phone: '06 12 34 56 78' });
+    expect(onSubmit.mock.calls[0]?.[0]).toMatchObject({ phone: '+33612345678' });
   });
 
-  /**
-   * Le pendant du test de #626 juste au-dessus, sous un pays connu : l'aide
-   * cesse d'**exiger** l'indicatif — l'exiger serait devenu faux — sans pour
-   * autant donner d'exemple de numéro national, que le contrat refuse d'inventer
-   * (en-tête d'`e164PhoneSchemaFor`).
-   */
-  it('cesse d’exiger l’indicatif dans l’aide quand l’établissement a un pays', () => {
+  it('part du pays de l’établissement, avec un exemple de ce pays', () => {
     renderContactStep({ countryCode: 'FR' });
 
-    const hint = document.getElementById('phone-hint');
-
-    expect(hint?.textContent).not.toMatch(/format international, indicatif/);
-    expect(hint?.textContent).toMatch(/pays de l’établissement/);
-    expect(hint?.textContent).not.toMatch(/\+\s?\d/);
+    expect(screen.getByRole('button', { name: /France \(\+33\)/ })).toBeDefined();
+    expect(screen.getByLabelText(/Téléphone/).getAttribute('placeholder')).toMatch(/^06/);
   });
 
   it('accepte un numéro international écrit avec des espaces', async () => {
@@ -441,10 +433,8 @@ describe('formulaire de coordonnées', () => {
     await user.click(screen.getByRole('button', { name: /Vérifier ma réservation/ }));
 
     expect(onSubmit).toHaveBeenCalledTimes(1);
-    // Le brouillon conserve la saisie telle qu'elle a été tapée : c'est ce que
-    // la cliente doit retrouver en revenant en arrière. La normalisation E.164
-    // a lieu à la frontière, au moment de composer la requête.
-    expect(onSubmit.mock.calls[0]?.[0]).toMatchObject({ phone: '+261 34 12 345 67' });
+    // Le « + » a basculé le drapeau sur Madagascar, et la valeur est l'E.164.
+    expect(onSubmit.mock.calls[0]?.[0]).toMatchObject({ phone: '+261341234567' });
   });
 
   it('refuse une adresse e-mail mal formée', async () => {

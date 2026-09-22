@@ -4,6 +4,7 @@ import { notFound } from 'next/navigation';
 import type { ReactNode } from 'react';
 
 import { SalonShell } from '@/components/salon/salon-shell';
+import { PhoneCountryProvider } from '@/components/ui/phone-country';
 import { readAccountPresence } from '@/lib/account-presence';
 import { ApiClientError } from '@/lib/api-client';
 
@@ -145,7 +146,10 @@ export default async function AccountLayout({ children, params }: AccountLayoutP
         >
           <main className="spa-account__main" id="contenu">
             <AccountAnnouncementRegion />
-            {children}
+            {/* L'indicatif par défaut de l'inscription et du profil (#825). */}
+            <PhoneCountryProvider country={tenant.address?.country ?? null}>
+              {children}
+            </PhoneCountryProvider>
           </main>
         </SalonShell>
       </AccountAnnouncementProvider>
@@ -175,7 +179,10 @@ export default async function AccountLayout({ children, params }: AccountLayoutP
               avant ce qu'il reste à faire, et le lien d'évitement mène ici.
             */}
             <AccountAnnouncementRegion />
-            {children}
+            {/* L'indicatif par défaut de l'inscription et du profil (#825). */}
+            <PhoneCountryProvider country={tenant.address?.country ?? null}>
+              {children}
+            </PhoneCountryProvider>
           </main>
         </div>
       </SalonShell>

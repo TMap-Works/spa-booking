@@ -1,10 +1,17 @@
 'use client';
 
-import { CUSTOMER_SEARCH_MIN_LENGTH, ERROR_CODES, type CustomerSummary } from '@spa/shared';
+import {
+  CUSTOMER_SEARCH_MIN_LENGTH,
+  e164PhoneSchema,
+  ERROR_CODES,
+  type CustomerSummary,
+} from '@spa/shared';
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { Field } from '@/components/ui/field';
+import { PhoneField } from '@/components/ui/phone-field';
+import { formatPhoneForDisplay } from '@/lib/phone';
 
 import { createDeskClientAction, searchDeskClientsAction } from '../calendrier/actions';
 
@@ -30,6 +37,14 @@ import { createDeskClientAction, searchDeskClientsAction } from '../calendrier/a
  * Elle est différée, et elle ne part pas du tout sous la borne du contrat — deux
  * caractères. Sans cela, taper « Andriamanjato » lancerait treize requêtes dont
  * douze seraient jetées, sur un écran qu'un salon garde ouvert toute la journée.
+ *
+ * ## Le numéro est vérifié avant l'envoi (#825)
+ *
+ * Il ne l'était pas du tout côté navigateur : un numéro mal dicté partait à
+ * l'API, et le refus revenait en bandeau au-dessus du formulaire. Il est
+ * désormais saisi derrière un drapeau, émis en E.164, et confronté au schéma du
+ * contrat quand on quitte le champ ou qu'on enregistre — le refus s'affiche sur
+ * le champ, en nommant le pays choisi.
  */
 
 /** Délai d'inactivité avant qu'une frappe devienne une requête. */
@@ -52,6 +67,11 @@ export function ClientPicker({ tenantSlug, selected, onSelect, onExpired }: Clie
   const [creating, setCreating] = useState(false);
   const [draft, setDraft] = useState({ firstName: '', lastName: '', email: '', phone: '' });
   const [saving, setSaving] = useState(false);
+  // Le verdict n'est rendu qu'une fois le champ quitté ou la fiche soumise :
+  // « numéro incomplet » à la deuxième frappe serait du bruit.
+  const [phoneChecked, setPhoneChecked] = useState(false);
+  const phoneInvalid =
+    phoneChecked && draft.phone !== '' && !e164PhoneSchema.safeParse(draft.phone).success;
 
   // Le numéro de la dernière recherche lancée : une réponse plus lente que la
   // suivante ne doit pas écraser des résultats plus récents. Sans ce garde-fou,
@@ -105,12 +125,18 @@ export function ClientPicker({ tenantSlug, selected, onSelect, onExpired }: Clie
   }, [term, selected, search]);
 
   const submitDraft = useCallback(async (): Promise<void> => {
+    if (draft.phone !== '' && !e164PhoneSchema.safeParse(draft.phone).success) {
+      setPhoneChecked(true);
+      document.getElementById(`${fieldId}-telephone`)?.focus();
+      return;
+    }
+
     setSaving(true);
     const result = await createDeskClientAction(tenantSlug, {
       firstName: draft.firstName.trim(),
       lastName: draft.lastName.trim(),
       email: draft.email.trim(),
-      ...(draft.phone.trim() === '' ? {} : { phone: draft.phone.trim() }),
+      ...(draft.phone === '' ? {} : { phone: draft.phone }),
     });
     setSaving(false);
 
@@ -127,7 +153,7 @@ export function ClientPicker({ tenantSlug, selected, onSelect, onExpired }: Clie
     }
 
     setFailure(result.message);
-  }, [tenantSlug, draft, onSelect, onExpired]);
+  }, [tenantSlug, draft, fieldId, onSelect, onExpired]);
 
   if (selected !== null) {
     return (
@@ -188,7 +214,8 @@ export function ClientPicker({ tenantSlug, selected, onSelect, onExpired }: Clie
                   onSelect(client);
                 }}
               >
-                {client.firstName} {client.lastName} — {client.phone ?? client.email}
+                {client.firstName} {client.lastName} —{' '}
+                {client.phone === null ? client.email : formatPhoneForDisplay(client.phone)}
               </Button>
             </li>
           ))}
@@ -243,14 +270,18 @@ export function ClientPicker({ tenantSlug, selected, onSelect, onExpired }: Clie
               setDraft((current) => ({ ...current, email: event.target.value }));
             }}
           />
-          <Field
+          <PhoneField
             id={`${fieldId}-telephone`}
             label="Téléphone"
-            type="tel"
+            autoComplete="off"
             value={draft.phone}
-            hint="Facultatif — avec l’indicatif, pour le rappel J-1."
-            onChange={(event) => {
-              setDraft((current) => ({ ...current, phone: event.target.value }));
+            hint="Facultatif — pour le rappel J-1 par SMS."
+            invalid={phoneInvalid}
+            onChange={(phone) => {
+              setDraft((current) => ({ ...current, phone }));
+            }}
+            onBlur={() => {
+              setPhoneChecked(true);
             }}
           />
           <div className="spa-admin-appointment__span">
