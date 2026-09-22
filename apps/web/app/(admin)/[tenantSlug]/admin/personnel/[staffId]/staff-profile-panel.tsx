@@ -1,6 +1,7 @@
 'use client';
 
 import { updateStaffMemberRequestSchema, type StaffMember } from '@spa/shared';
+import { useTranslations } from 'next-intl';
 import { useRouter } from 'next/navigation';
 import { useState, useTransition } from 'react';
 
@@ -102,6 +103,7 @@ export function StaffProfilePanel({
    */
   readonly canManage?: boolean;
 }) {
+  const t = useTranslations('admin-staff');
   const router = useRouter();
   const { renewIfExpired } = useAdminSessionRenewal(tenantSlug);
   // La présentation publiée, telle que la fiche la rend. Absente vaut « aucune
@@ -217,7 +219,9 @@ export function StaffProfilePanel({
       setNotice(
         form === null && Object.keys(errors).length > 0
           ? null
-          : { tone: 'danger', message: form ?? 'Les informations saisies sont invalides.' },
+          // Le message du contrat partagé est un littéral français : il ne
+          // remonte plus à l'écran depuis #848, seul le champ fautif en vient.
+          : { tone: 'danger', message: t('profile.invalid') },
       );
       return;
     }
@@ -240,7 +244,7 @@ export function StaffProfilePanel({
 
     setDisplayName(result.data.displayName);
     setBio(result.data.bio ?? '');
-    setNotice({ tone: 'success', message: 'Fiche enregistrée.' });
+    setNotice({ tone: 'success', message: t('profile.saved') });
     startRefresh(() => {
       router.refresh();
     });
@@ -267,9 +271,7 @@ export function StaffProfilePanel({
     setActive(result.data.isActive);
     setNotice({
       tone: 'success',
-      message: result.data.isActive
-        ? 'Fiche réactivée : le moteur propose de nouveau ses créneaux.'
-        : 'Fiche suspendue : aucun créneau ne sera plus proposé. Ses horaires, ses affectations et ses rendez-vous passés sont intacts.',
+      message: result.data.isActive ? t('profile.reactivated') : t('profile.suspended'),
     });
     startRefresh(() => {
       router.refresh();
@@ -281,17 +283,15 @@ export function StaffProfilePanel({
   return (
     <section className="spa-admin__section spa-admin-form" aria-labelledby="fiche-titre">
       <h2 className="spa-admin__section-title" id="fiche-titre">
-        Fiche praticien
+        {t('profile.title')}
       </h2>
-      <p className="spa-admin-toolbar__hint">
-        Le nom que la cliente lit au moment de choisir son praticien, la présentation enregistrée
-        pour lui, et l’état de la fiche. Une fiche suspendue reste listée&nbsp;: elle cesse
-        seulement d’être proposée à la réservation.
-      </p>
+      <p className="spa-admin-toolbar__hint">{t('profile.hint')}</p>
 
       {notice === null ? null : (
         <Notification
-          title={notice.tone === 'success' ? 'Fiche mise à jour' : 'Modification impossible'}
+          title={
+            notice.tone === 'success' ? t('profile.updatedTitle') : t('profile.failedTitle')
+          }
           tone={notice.tone}
         >
           <p>{notice.message}</p>
@@ -301,9 +301,9 @@ export function StaffProfilePanel({
       <Field
         disabled={!canManage || locked}
         error={fieldErrors.displayName}
-        hint="C’est ce nom que la cliente lit au moment de choisir son praticien."
+        hint={t('profile.displayNameHint')}
         id="fiche-nom"
-        label="Nom d’affichage"
+        label={t('profile.displayName')}
         onChange={(event) => {
           setDisplayName(event.target.value);
           clearMark('displayName');
@@ -328,12 +328,10 @@ export function StaffProfilePanel({
          * ticket en le fermant.
          */
         hint={
-          publishedBio === ''
-            ? 'Facultatif — quelques lignes qui présentent cette praticienne. Aucune présentation n’est enregistrée pour le moment.'
-            : 'Facultatif — quelques lignes qui présentent cette praticienne. Le champ montre la présentation enregistrée aujourd’hui : corrigez-la, ou videz-le pour l’effacer.'
+          publishedBio === '' ? t('profile.bioHintEmpty') : t('profile.bioHintFilled')
         }
         id="fiche-presentation"
-        label="Présentation"
+        label={t('profile.bio')}
         onChange={(event) => {
           setBio(event.target.value);
           clearMark('bio');
@@ -346,28 +344,28 @@ export function StaffProfilePanel({
           <Button
             disabled={!somethingToSave || locked}
             loading={pending === 'profil'}
-            loadingLabel="Enregistrement…"
+            loadingLabel={t('profile.saving')}
             onClick={() => void save()}
             variant="accent"
           >
-            Enregistrer la fiche
+            {t('profile.save')}
           </Button>
 
           <Button
             disabled={locked}
             loading={pending === 'statut'}
-            loadingLabel="Enregistrement…"
+            loadingLabel={t('profile.saving')}
             onClick={() => void toggleStatus()}
             variant={active ? 'quiet' : 'neutral'}
           >
-            {active ? 'Suspendre' : 'Réactiver'}
-            <span className="spa-visually-hidden"> la fiche de {member.displayName}</span>
+            {active ? t('profile.suspend') : t('profile.reactivate')}
+            <span className="spa-visually-hidden">
+              {t('profile.statusFor', { name: member.displayName })}
+            </span>
           </Button>
         </div>
       ) : (
-        <p className="spa-admin-toolbar__hint">
-          La correction d’une fiche et sa suspension sont réservées aux gérants du salon.
-        </p>
+        <p className="spa-admin-toolbar__hint">{t('profile.restricted')}</p>
       )}
     </section>
   );

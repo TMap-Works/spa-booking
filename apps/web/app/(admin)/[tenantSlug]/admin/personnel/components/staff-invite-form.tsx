@@ -1,6 +1,7 @@
 'use client';
 
 import { e164PhoneSchema, STAFF_ROLES, type StaffRole } from '@spa/shared';
+import { useLocale, useTranslations } from 'next-intl';
 import { useRouter } from 'next/navigation';
 import { useState, useTransition } from 'react';
 import type { ZodIssue } from 'zod';
@@ -120,6 +121,8 @@ function collectInviteErrors(issues: readonly ZodIssue[]): {
 }
 
 export function StaffInviteForm({ tenantSlug }: { readonly tenantSlug: string }) {
+  const t = useTranslations('admin-staff');
+  const locale = useLocale();
   const router = useRouter();
   const { renewIfExpired } = useAdminSessionRenewal(tenantSlug);
   const [draft, setDraft] = useState<InviteDraft>({ ...EMPTY });
@@ -174,18 +177,16 @@ export function StaffInviteForm({ tenantSlug }: { readonly tenantSlug: string })
         ? { fields: {}, form: null }
         : collectInviteErrors(parsed.error.issues);
       const fields: InviteFieldErrors = phoneRejected
-        ? { ...collected.fields, phone: collected.fields.phone ?? 'numéro de téléphone invalide' }
+        ? { ...collected.fields, phone: collected.fields.phone ?? t('invite.phoneInvalid') }
         : collected.fields;
-      const form = collected.form;
 
       setFieldErrors(fields);
       // Le bandeau ne double pas les marques de champ : il ne parle que lorsque
       // rien n'a pu être rattaché à un contrôle, sans quoi le refus resterait
-      // muet.
-      setFormError(
-        form ??
-          (Object.keys(fields).length === 0 ? 'Les informations saisies sont invalides.' : null),
-      );
+      // muet. Le message du contrat partagé, lui, ne remonte plus — c'est un
+      // littéral français, et il aurait parlé français sous un champ anglais
+      // (#848).
+      setFormError(Object.keys(fields).length === 0 ? t('invite.invalid') : null);
       return;
     }
 
@@ -223,18 +224,14 @@ export function StaffInviteForm({ tenantSlug }: { readonly tenantSlug: string })
   return (
     <section className="spa-admin__section spa-admin-form">
       {formError === null ? null : (
-        <Notification tone="danger" title="Invitation impossible">
+        <Notification tone="danger" title={t('invite.failureTitle')}>
           <p>{formError}</p>
         </Notification>
       )}
 
       {invitation === null ? null : (
-        <Notification tone="success" title="Invitation émise">
-          <p>
-            Transmettez ce jeton à {invitation.email}&nbsp;: il lui sert à poser son mot de passe,
-            une seule fois. Il n’est affiché qu’ici, et une nouvelle invitation peut être réémise à
-            tout moment depuis la liste.
-          </p>
+        <Notification tone="success" title={t('invite.issuedTitle')}>
+          <p>{t('invite.issuedBody', { email: invitation.email })}</p>
           {/* Un champ en lecture seule plutôt qu'un `<code>` : le jeton fait
               trois cents caractères d'un seul tenant, et sans coupure possible
               il pousse la page entière en défilement horizontal. Le champ le
@@ -242,7 +239,7 @@ export function StaffInviteForm({ tenantSlug }: { readonly tenantSlug: string })
               qu'on vient précisément faire ici. */}
           <Field
             id="invitation-jeton"
-            label="Jeton d’invitation"
+            label={t('invite.tokenLabel')}
             readOnly
             value={invitation.token}
           />
@@ -252,7 +249,7 @@ export function StaffInviteForm({ tenantSlug }: { readonly tenantSlug: string })
       <Field
         error={fieldErrors.firstName}
         id="invitation-prenom"
-        label="Prénom"
+        label={t('invite.firstName')}
         onChange={(event) => change({ firstName: event.target.value })}
         required
         value={draft.firstName}
@@ -260,16 +257,16 @@ export function StaffInviteForm({ tenantSlug }: { readonly tenantSlug: string })
       <Field
         error={fieldErrors.lastName}
         id="invitation-nom"
-        label="Nom"
+        label={t('invite.lastName')}
         onChange={(event) => change({ lastName: event.target.value })}
         required
         value={draft.lastName}
       />
       <Field
         error={fieldErrors.email}
-        hint="C’est l’identifiant de connexion, et il ne se modifie pas ensuite."
+        hint={t('invite.emailHint')}
         id="invitation-email"
-        label="Adresse électronique"
+        label={t('invite.email')}
         onChange={(event) => change({ email: event.target.value })}
         required
         type="email"
@@ -279,35 +276,35 @@ export function StaffInviteForm({ tenantSlug }: { readonly tenantSlug: string })
           contrat ne dit que « invalide », sans pouvoir dire pour où. */}
       <PhoneField
         autoComplete="off"
-        hint="Facultatif."
+        hint={t('invite.phoneHint')}
         id="invitation-telephone"
         invalid={fieldErrors.phone !== undefined}
-        label="Téléphone"
+        label={t('invite.phone')}
         onChange={(phone) => change({ phone })}
         value={draft.phone}
       />
       <Select
         error={fieldErrors.role}
-        hint="Le rôle décide de ce que la personne pourra faire ; il se change ensuite depuis la liste."
+        hint={t('invite.roleHint')}
         id="invitation-role"
-        label="Rôle"
+        label={t('invite.role')}
         onChange={(event) => change({ role: event.target.value as StaffRole })}
         value={draft.role}
       >
         {STAFF_ROLES.map((role) => (
           <option key={role} value={role}>
-            {roleLabel(role)}
+            {roleLabel(role, locale)}
           </option>
         ))}
       </Select>
 
       <Button
         loading={sending}
-        loadingLabel="Envoi…"
+        loadingLabel={t('invite.sending')}
         onClick={() => void invite()}
         variant="accent"
       >
-        Inviter
+        {t('invite.submit')}
       </Button>
     </section>
   );

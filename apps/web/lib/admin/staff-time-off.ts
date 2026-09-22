@@ -26,14 +26,24 @@ import {
   createStaffTimeOffRequestSchema,
   type CalendarDate,
   type CreateStaffTimeOffRequest,
+  type Locale,
   type StaffTimeOff,
   type TimeZone,
   type UtcInstant,
 } from '@spa/shared';
 
 import { addCalendarDays } from '../booking/calendar';
+import { formattingLocale, type DisplayLocale } from '../format';
+import { fillMessage, staffWords, STAFF_FALLBACK_LOCALE } from './staff-messages';
 
-const LOCALE = 'fr-FR';
+/**
+ * Le repli d'affichage de ce module — voir `lib/format.ts`, même arbitrage.
+ *
+ * Il ne décide que de l'**écriture** d'une absence. Le fuseau, lui, est toujours
+ * passé explicitement : c'est celui de l'établissement, et il ne dépend d'aucune
+ * langue.
+ */
+const FALLBACK_DISPLAY: DisplayLocale = { locale: STAFF_FALLBACK_LOCALE };
 
 /** Les composantes d'un instant, lues dans le fuseau de l'établissement. */
 export interface LocalParts {
@@ -165,9 +175,9 @@ export function isFullDayTimeOff(timeOff: StaffTimeOff, timeZone: TimeZone): boo
   );
 }
 
-/** « 2 septembre 2026 » — une date civile du salon, mise en forme telle quelle. */
-function formatDay(date: CalendarDate): string {
-  return new Intl.DateTimeFormat(LOCALE, {
+/** « 2 sept. 2026 » — une date civile du salon, mise en forme telle quelle. */
+function formatDay(date: CalendarDate, display: DisplayLocale): string {
+  return new Intl.DateTimeFormat(formattingLocale(display.locale, display.countryCode), {
     timeZone: 'UTC',
     day: 'numeric',
     month: 'short',
@@ -183,7 +193,12 @@ function formatDay(date: CalendarDate): string {
  * exactement le genre d'écart qu'une gérante découvre le jour où une cliente
  * n'a pas pu réserver.
  */
-export function formatTimeOff(timeOff: StaffTimeOff, timeZone: TimeZone): string {
+export function formatTimeOff(
+  timeOff: StaffTimeOff,
+  timeZone: TimeZone,
+  display: DisplayLocale = FALLBACK_DISPLAY,
+): string {
+  const words = staffWords(display.locale).timeOff;
   const start = localPartsOf(timeOff.startsAt, timeZone);
   const end = localPartsOf(timeOff.endsAt, timeZone);
 
@@ -191,13 +206,25 @@ export function formatTimeOff(timeOff: StaffTimeOff, timeZone: TimeZone): string
     const lastDay = addCalendarDays(end.date, -1);
 
     return start.date === lastDay
-      ? formatDay(start.date)
-      : `${formatDay(start.date)} – ${formatDay(lastDay)}`;
+      ? formatDay(start.date, display)
+      : fillMessage(words.spanDays, {
+          from: formatDay(start.date, display),
+          to: formatDay(lastDay, display),
+        });
   }
 
   return start.date === end.date
-    ? `${formatDay(start.date)}, ${start.time} – ${end.time}`
-    : `${formatDay(start.date)} ${start.time} – ${formatDay(end.date)} ${end.time}`;
+    ? fillMessage(words.spanSameDay, {
+        day: formatDay(start.date, display),
+        from: start.time,
+        to: end.time,
+      })
+    : fillMessage(words.spanDateTimes, {
+        fromDay: formatDay(start.date, display),
+        fromTime: start.time,
+        toDay: formatDay(end.date, display),
+        toTime: end.time,
+      });
 }
 
 /** La saisie du formulaire d'absence, avant toute conversion. */
@@ -221,18 +248,34 @@ export type TimeOffValidation =
  * Le champ fautif est rendu avec le message pour que l'écran le pose sous le
  * contrôle concerné, jamais en bloc en haut de page.
  */
-export function validateTimeOffDraft(draft: TimeOffDraft, timeZone: TimeZone): TimeOffValidation {
+export function validateTimeOffDraft(
+  draft: TimeOffDraft,
+  timeZone: TimeZone,
+  locale: Locale = STAFF_FALLBACK_LOCALE,
+): TimeOffValidation {
+  const words = staffWords(locale).timeOff;
+
   if (draft.fromDate === '') {
-    return { ok: false, field: 'fromDate', message: 'Indiquez le premier jour de l’absence.' };
+    return { ok: false, field: 'fromDate', message: words.missingFrom };
   }
   if (draft.toDate === '') {
-    return { ok: false, field: 'toDate', message: 'Indiquez le jour de reprise.' };
+    return { ok: false, field: 'toDate', message: words.missingTo };
   }
 
+  const startsAt = offsetDateTimeAt(
+    draft.fromDate,
+    draft.fromTime === '' ? '00:00' : draft.fromTime,
+    timeZone,
+  );
+  const endsAt = offsetDateTimeAt(
+    draft.toDate,
+    draft.toTime === '' ? '00:00' : draft.toTime,
+    timeZone,
+  );
   const parsed = createStaffTimeOffRequestSchema.safeParse({
     staffId: draft.staffId,
-    startsAt: offsetDateTimeAt(draft.fromDate, draft.fromTime === '' ? '00:00' : draft.fromTime, timeZone),
-    endsAt: offsetDateTimeAt(draft.toDate, draft.toTime === '' ? '00:00' : draft.toTime, timeZone),
+    startsAt,
+    endsAt,
     ...(draft.reason.trim() === '' ? {} : { reason: draft.reason.trim() }),
   });
 
@@ -246,8 +289,37 @@ export function validateTimeOffDraft(draft: TimeOffDraft, timeZone: TimeZone): T
   return {
     ok: false,
     field: path === 'endsAt' ? 'toDate' : path === 'startsAt' ? 'fromDate' : path === 'reason' ? 'reason' : null,
-    message: issue?.message ?? 'L’absence saisie est invalide.',
+    /*
+     * Le message du contrat partagé est un littéral français : le laisser
+     * remonter poserait une phrase française sous un champ anglais. Le champ
+     * fautif, lui, vient bien du schéma — c'est ce qui compte pour poser
+     * l'erreur au bon endroit (web-frontend §4).
+     *
+     * La règle métier du contrat est un `refine`, donc une issue `custom` :
+     * c'est la fenêtre elle-même qui est refusée — reprise avant le départ, ou
+     * absence trop longue. Elle porte sa propre phrase, parce que « l'absence
+     * saisie est invalide » sous un jour de reprise ne dit pas quoi corriger,
+     * et que c'est la faute que le formulaire laisse le plus facilement
+     * passer : ses deux champs sont des `<input type="date">` que rien ne
+     * contraint l'un par rapport à l'autre.
+     *
+     * `custom` ne suffit pourtant pas à la désigner : `offsetDateTimeSchema`
+     * est lui aussi un `refine`, et une borne illisible rendrait la même issue
+     * — au même chemin `endsAt`, qui plus est. Ce qui les sépare est que la
+     * règle de fenêtre ne s'exécute **que** si les deux bornes se sont lues :
+     * les voir toutes deux lisibles est donc la preuve que l'issue `custom`
+     * vient bien d'elle.
+     */
+    message:
+      issue?.code === 'custom' && readableInstants(startsAt, endsAt)
+        ? fillMessage(words.rangeInvalid, { max: String(MAX_TIME_OFF_RANGE_DAYS) })
+        : words.invalid,
   };
+}
+
+/** `true` si les deux bornes composées se lisent comme des instants. */
+function readableInstants(startsAt: string, endsAt: string): boolean {
+  return !Number.isNaN(Date.parse(startsAt)) && !Number.isNaN(Date.parse(endsAt));
 }
 
 /**

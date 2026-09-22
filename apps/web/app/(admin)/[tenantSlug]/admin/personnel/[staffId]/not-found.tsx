@@ -1,5 +1,6 @@
 'use client';
 
+import { useTranslations } from 'next-intl';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 
@@ -52,6 +53,7 @@ import { adminStaffPath } from '../paths';
  * trop coûteuses à perdre pour être écrites deux fois.
  */
 export default function StaffMemberNotFound() {
+  const t = useTranslations('admin-staff');
   const tenantSlug = tenantSlugFromPathname(usePathname());
 
   /*
@@ -64,14 +66,13 @@ export default function StaffMemberNotFound() {
    * back-office, lui, tient son slug des `params` du layout et reste une issue.
    */
   return (
-    <Notification tone="warning" title="Praticien introuvable">
+    <Notification tone="warning" title={t('notFound.title')}>
       <p>
-        Aucune fiche de ce salon ne porte cet identifiant. Elle a pu être créée dans un autre
-        établissement, ou avoir été supprimée depuis.
+        {t('notFound.body')}
         {tenantSlug === null ? null : (
           <>
             {' '}
-            <Link href={adminStaffPath(tenantSlug)}>Revenir au personnel</Link>.
+            <Link href={adminStaffPath(tenantSlug)}>{t('backToStaff')}</Link>.
           </>
         )}
       </p>

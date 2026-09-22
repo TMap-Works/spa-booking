@@ -1,6 +1,7 @@
 'use client';
 
 import { STAFF_ROLES, type StaffAccountState, type StaffRole } from '@spa/shared';
+import { useLocale, useTranslations } from 'next-intl';
 import { useRouter } from 'next/navigation';
 import { useState, useTransition } from 'react';
 
@@ -56,6 +57,8 @@ export function StaffAccountActions({
   readonly account: StaffAccountState;
   readonly isSelf: boolean;
 }) {
+  const t = useTranslations('admin-staff');
+  const locale = useLocale();
   const router = useRouter();
   const { renewIfExpired } = useAdminSessionRenewal(tenantSlug);
   const [role, setRole] = useState<StaffRole>(
@@ -106,7 +109,10 @@ export function StaffAccountActions({
       return;
     }
 
-    setNotice({ tone: 'success', message: `Rôle enregistré : ${roleLabel(result.data.role)}.` });
+    setNotice({
+      tone: 'success',
+      message: t('accountActions.roleSaved', { role: roleLabel(result.data.role, locale) }),
+    });
     startRefresh(() => {
       router.refresh();
     });
@@ -134,8 +140,8 @@ export function StaffAccountActions({
     setNotice({
       tone: 'success',
       message: result.data.isActive
-        ? 'Compte réactivé : la connexion est de nouveau possible.'
-        : 'Compte désactivé. Ses affectations et ses rendez-vous passés sont intacts.',
+        ? t('accountActions.reactivated')
+        : t('accountActions.deactivated'),
     });
     startRefresh(() => {
       router.refresh();
@@ -162,7 +168,7 @@ export function StaffAccountActions({
     setInvitationToken(result.data.invitationToken);
     setNotice({
       tone: 'success',
-      message: `Nouveau jeton d’invitation à transmettre à ${account.email}.`,
+      message: t('accountActions.newToken', { email: account.email }),
     });
   }
 
@@ -170,13 +176,13 @@ export function StaffAccountActions({
     <div className="spa-admin-toolbar">
       <Select
         id={`role-${account.id}`}
-        label="Rôle"
+        label={t('accountActions.roleLabel')}
         onChange={(event) => setRole(event.target.value as StaffRole)}
         value={role}
       >
         {STAFF_ROLES.map((value) => (
           <option key={value} value={value}>
-            {roleLabel(value)}
+            {roleLabel(value, locale)}
           </option>
         ))}
       </Select>
@@ -184,31 +190,33 @@ export function StaffAccountActions({
       <Button
         disabled={!roleChanged || refreshing}
         loading={pending === 'role'}
-        loadingLabel="Enregistrement…"
+        loadingLabel={t('accountActions.saving')}
         onClick={() => void applyRole()}
         variant="neutral"
       >
-        Appliquer
+        {t('accountActions.apply')}
         <span className="spa-visually-hidden">
-          {' '}
-          le rôle de {account.firstName} {account.lastName}
+          {t('accountActions.applyFor', {
+            name: `${account.firstName} ${account.lastName}`,
+          })}
         </span>
       </Button>
 
       {isSelf ? (
-        <span className="spa-admin-toolbar__hint">Votre propre compte</span>
+        <span className="spa-admin-toolbar__hint">{t('accountActions.ownAccount')}</span>
       ) : (
         <Button
           disabled={refreshing}
           loading={pending === 'status'}
-          loadingLabel="Enregistrement…"
+          loadingLabel={t('accountActions.saving')}
           onClick={() => void toggleStatus()}
           variant={active ? 'quiet' : 'neutral'}
         >
-          {active ? 'Désactiver' : 'Réactiver'}
+          {active ? t('accountActions.deactivate') : t('accountActions.reactivate')}
           <span className="spa-visually-hidden">
-            {' '}
-            le compte de {account.firstName} {account.lastName}
+            {t('accountActions.statusFor', {
+              name: `${account.firstName} ${account.lastName}`,
+            })}
           </span>
         </Button>
       )}
@@ -216,27 +224,32 @@ export function StaffAccountActions({
       <Button
         disabled={refreshing}
         loading={pending === 'invitation'}
-        loadingLabel="Émission…"
+        loadingLabel={t('accountActions.issuing')}
         onClick={() => void reissue()}
         variant="quiet"
       >
-        Réémettre l’invitation
+        {t('accountActions.reissue')}
         <span className="spa-visually-hidden">
-          {' '}
-          de {account.firstName} {account.lastName}
+          {t('accountActions.reissueFor', {
+            name: `${account.firstName} ${account.lastName}`,
+          })}
         </span>
       </Button>
 
       {notice === null ? null : (
         <Notification
-          title={notice.tone === 'success' ? 'Compte mis à jour' : 'Modification impossible'}
+          title={
+            notice.tone === 'success'
+              ? t('accountActions.updatedTitle')
+              : t('accountActions.failedTitle')
+          }
           tone={notice.tone}
         >
           <p>{notice.message}</p>
           {invitationToken === null ? null : (
             <Field
               id={`invitation-${account.id}`}
-              label="Jeton d’invitation"
+              label={t('accountActions.tokenLabel')}
               readOnly
               value={invitationToken}
             />

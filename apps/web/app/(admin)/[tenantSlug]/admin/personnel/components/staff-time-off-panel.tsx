@@ -1,8 +1,9 @@
 'use client';
 
 import { REASON_MAX_LENGTH, type CalendarDate, type StaffTimeOff, type TimeZone } from '@spa/shared';
+import { useLocale, useTranslations } from 'next-intl';
 import { useRouter } from 'next/navigation';
-import { useEffect, useId, useRef, useState, useTransition } from 'react';
+import { useEffect, useId, useMemo, useRef, useState, useTransition } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { Field } from '@/components/ui/field';
@@ -13,6 +14,7 @@ import {
   validateTimeOffDraft,
   type TimeOffDraft,
 } from '@/lib/admin/staff-time-off';
+import type { DisplayLocale } from '@/lib/format';
 
 import { createStaffTimeOffAction, deleteStaffTimeOffAction } from '../actions';
 import { useAdminSessionRenewal } from '../../components/use-admin-session-renewal';
@@ -64,14 +66,6 @@ import { useAdminSessionRenewal } from '../../components/use-admin-session-renew
 
 const EMPTY_DRAFT = { fromDate: '', fromTime: '', toDate: '', toTime: '', reason: '' } as const;
 
-/**
- * Ce qu'on dit quand l'action serveur elle-même n'a pas abouti — réseau coupé,
- * déploiement en cours. Les actions renvoient déjà un `AdminActionResult` pour
- * tout ce que l'API refuse ; il reste le transport, et sans ce rattrapage
- * l'attente resterait affichée pour toujours, boutons désactivés compris.
- */
-const UNREACHABLE = 'Le serveur n’a pas répondu. Vérifiez la connexion et réessayez.';
-
 /** L'identifiant du déclencheur, seul moyen de lui rendre le focus : `Button` n'expose pas de `ref`. */
 function removeButtonId(timeOffId: string): string {
   return `absence-retirer-${timeOffId}`;
@@ -84,6 +78,7 @@ export function StaffTimeOffPanel({
   timeOff,
   windowLabel,
   canManage = true,
+  countryCode = null,
 }: {
   readonly tenantSlug: string;
   readonly staffId: string;
@@ -97,7 +92,15 @@ export function StaffTimeOffPanel({
    * offrir des boutons qui répondraient 403 n'aide personne.
    */
   readonly canManage?: boolean;
+  /**
+   * Le pays de l'établissement — la **région** des dates d'absence (#848). Le
+   * fuseau reste `timeZone`, et c'est lui seul qui découpe les journées.
+   */
+  readonly countryCode?: string | null;
 }) {
+  const t = useTranslations('admin-staff');
+  const locale = useLocale();
+  const display: DisplayLocale = useMemo(() => ({ locale, countryCode }), [locale, countryCode]);
   const router = useRouter();
   const { renewIfExpired } = useAdminSessionRenewal(tenantSlug);
   const confirmTitleId = useId();
@@ -184,13 +187,13 @@ export function StaffTimeOffPanel({
   }
 
   async function create(): Promise<void> {
-    const validation = validateTimeOffDraft({ ...draft, staffId }, timeZone);
+    const validation = validateTimeOffDraft({ ...draft, staffId }, timeZone, locale);
 
     if (!validation.ok) {
       setError({
         field: validation.field,
         message: validation.message,
-        title: 'Absence non enregistrée',
+        title: t('timeOff.notSavedTitle'),
       });
       return;
     }
@@ -205,7 +208,7 @@ export function StaffTimeOffPanel({
         if (renewIfExpired(result)) {
           return;
         }
-        setError({ field: null, message: result.message, title: 'Absence non enregistrée' });
+        setError({ field: null, message: result.message, title: t('timeOff.notSavedTitle') });
         return;
       }
 
@@ -214,7 +217,11 @@ export function StaffTimeOffPanel({
         router.refresh();
       });
     } catch {
-      setError({ field: null, message: UNREACHABLE, title: 'Absence non enregistrée' });
+      setError({
+        field: null,
+        message: t('timeOff.unreachable'),
+        title: t('timeOff.notSavedTitle'),
+      });
     } finally {
       setPending(null);
     }
@@ -236,7 +243,7 @@ export function StaffTimeOffPanel({
         if (renewIfExpired(result)) {
           return;
         }
-        setError({ field: null, message: result.message, title: 'Absence non retirée' });
+        setError({ field: null, message: result.message, title: t('timeOff.notRemovedTitle') });
         return;
       }
 
@@ -249,7 +256,11 @@ export function StaffTimeOffPanel({
         router.refresh();
       });
     } catch {
-      setError({ field: null, message: UNREACHABLE, title: 'Absence non retirée' });
+      setError({
+        field: null,
+        message: t('timeOff.unreachable'),
+        title: t('timeOff.notRemovedTitle'),
+      });
     } finally {
       setPending(null);
     }
@@ -261,7 +272,7 @@ export function StaffTimeOffPanel({
           rend seulement joignable au programme, pour lui rendre le focus quand
           la ligne qui le portait vient d'être retirée. */}
       <h2 className="spa-admin__section-title" id="absences-titre" ref={headingRef} tabIndex={-1}>
-        Plages bloquées et congés
+        {t('timeOff.title')}
       </h2>
       <p className="spa-admin-toolbar__hint">{windowLabel}</p>
 
@@ -273,21 +284,18 @@ export function StaffTimeOffPanel({
 
       {timeOff.length === 0 ? (
         <div className="spa-empty-state">
-          <p className="spa-empty-state__title">Aucune absence sur la période</p>
-          <p className="spa-empty-state__description">
-            Les créneaux de ce praticien suivent sa semaine de travail sans exception. Une plage
-            bloquée les retire ponctuellement, sans toucher aux horaires récurrents.
-          </p>
+          <p className="spa-empty-state__title">{t('timeOff.emptyTitle')}</p>
+          <p className="spa-empty-state__description">{t('timeOff.emptyDescription')}</p>
         </div>
       ) : (
         <ul className="spa-admin-schedule__exceptions">
           {timeOff.map((absence) => (
             <li className="spa-admin-schedule__exception" key={absence.id}>
               <span className="spa-admin-schedule__exception-date">
-                {formatTimeOff(absence, timeZone)}
+                {formatTimeOff(absence, timeZone, display)}
               </span>
               <span className="spa-admin-schedule__exception-label">
-                {absence.reason ?? 'Sans motif'}
+                {absence.reason ?? t('timeOff.noReason')}
               </span>
               {canManage ? (
                 <Button
@@ -296,10 +304,9 @@ export function StaffTimeOffPanel({
                   onClick={() => setConfirming(absence.id)}
                   variant="quiet"
                 >
-                  Retirer
+                  {t('timeOff.remove')}
                   <span className="spa-visually-hidden">
-                    {' '}
-                    l’absence du {formatTimeOff(absence, timeZone)}
+                    {t('timeOff.removeFor', { period: formatTimeOff(absence, timeZone, display) })}
                   </span>
                 </Button>
               ) : null}
@@ -313,9 +320,10 @@ export function StaffTimeOffPanel({
                     className="spa-admin-schedule__exception-confirm-text"
                     id={`${confirmTitleId}-${absence.id}`}
                   >
-                    Retirer l’absence du {formatTimeOff(absence, timeZone)} (
-                    {absence.reason ?? 'sans motif'})&nbsp;? Elle ne pourra pas être
-                    rétablie, et le praticien redeviendra réservable sur cette période.
+                    {t('timeOff.confirm', {
+                      period: formatTimeOff(absence, timeZone, display),
+                      reason: absence.reason ?? t('timeOff.noReasonInSentence'),
+                    })}
                   </p>
                   <div className="spa-admin-schedule__exception-confirm-actions">
                     {/* Désactivé une fois le retrait parti : le `DELETE` ne se
@@ -330,7 +338,7 @@ export function StaffTimeOffPanel({
                       }}
                       variant="neutral"
                     >
-                      Annuler
+                      {t('timeOff.cancel')}
                     </Button>
                     {/* Le focus part sur la réponse attendue, comme pour le
                         changement de praticien du planning : sans lui,
@@ -341,11 +349,11 @@ export function StaffTimeOffPanel({
                       autoFocus
                       disabled={refreshing}
                       loading={pending === absence.id}
-                      loadingLabel="Retrait…"
+                      loadingLabel={t('timeOff.removing')}
                       onClick={() => void remove(absence.id)}
                       variant="danger"
                     >
-                      Retirer définitivement
+                      {t('timeOff.confirmRemove')}
                     </Button>
                   </div>
                 </div>
@@ -356,9 +364,7 @@ export function StaffTimeOffPanel({
       )}
 
       {canManage ? null : (
-        <p className="spa-admin-toolbar__hint">
-          La pose et le retrait d’une absence sont réservés au rang gérant.
-        </p>
+        <p className="spa-admin-toolbar__hint">{t('timeOff.restricted')}</p>
       )}
 
       {canManage ? (
@@ -366,41 +372,41 @@ export function StaffTimeOffPanel({
           <Field
             error={fieldError('fromDate')}
             id="absence-debut"
-            label="Premier jour d’absence"
+            label={t('timeOff.fromDate')}
             onChange={(event) => changeFromDate(event.target.value)}
             type="date"
             value={draft.fromDate}
           />
           <Field
-            hint="Laissez vide pour une journée entière."
+            hint={t('timeOff.wholeDayHint')}
             id="absence-debut-heure"
-            label="À partir de"
+            label={t('timeOff.fromTime')}
             onChange={(event) => change({ fromTime: event.target.value })}
             type="time"
             value={draft.fromTime}
           />
           <Field
             error={fieldError('toDate')}
-            hint="Borne exclue : c’est le jour où le praticien reprend."
+            hint={t('timeOff.toDateHint')}
             id="absence-reprise"
-            label="Jour de reprise"
+            label={t('timeOff.toDate')}
             onChange={(event) => change({ toDate: event.target.value })}
             type="date"
             value={draft.toDate}
           />
           <Field
-            hint="Laissez vide pour une journée entière."
+            hint={t('timeOff.wholeDayHint')}
             id="absence-reprise-heure"
-            label="Jusqu’à"
+            label={t('timeOff.toTime')}
             onChange={(event) => change({ toTime: event.target.value })}
             type="time"
             value={draft.toTime}
           />
           <Field
             error={fieldError('reason')}
-            hint="Interne au salon — jamais montré à la clientèle."
+            hint={t('timeOff.reasonHint')}
             id="absence-motif"
-            label="Motif"
+            label={t('timeOff.reason')}
             maxLength={REASON_MAX_LENGTH}
             onChange={(event) => change({ reason: event.target.value })}
             type="text"
@@ -410,11 +416,11 @@ export function StaffTimeOffPanel({
           <Button
             disabled={refreshing}
             loading={pending === 'create'}
-            loadingLabel="Enregistrement…"
+            loadingLabel={t('timeOff.saving')}
             onClick={() => void create()}
             variant="accent"
           >
-            Bloquer cette période
+            {t('timeOff.submit')}
           </Button>
         </>
       ) : null}

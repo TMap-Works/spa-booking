@@ -31,9 +31,13 @@ import {
   END_OF_DAY_LOCAL_TIME,
   setStaffScheduleRequestSchema,
   type IsoWeekday,
+  type Locale,
   type SetStaffScheduleRequest,
   type StaffScheduleEntry,
 } from '@spa/shared';
+
+import { weekStartOf, type WeekStart } from './calendar-range';
+import { fillMessage, staffWords, STAFF_FALLBACK_LOCALE } from './staff-messages';
 
 /**
  * Les sept jours, dans l'ordre ISO 8601 — lundi ouvre la semaine.
@@ -48,36 +52,77 @@ import {
 export { ISO_WEEKDAYS };
 
 /**
- * Les libellés, rangés à leur numéro ISO — d'où la case 0 inutilisée.
+ * Les sept jours **dans l'ordre où le salon les lit** — #848, deuxième critère.
  *
- * Le tableau est déclaré `readonly string[]` et non indexé par `IsoWeekday` :
- * toute lecture est donc `string | undefined` sous `noUncheckedIndexedAccess`, et
- * c'est heureux — un `undefined` laissé filer écrirait « undefined » en toutes
- * lettres dans la grille, et c'est exactement ce qui arriverait à un `0` venu
- * d'un `Date.getDay` mal converti et forcé au type.
+ * `ISO_WEEKDAYS` reste la liste canonique du contrat, lundi en tête : c'est elle
+ * qui numérote les plages, et elle ne bouge pas. Ce qui bouge est l'ordre dans
+ * lequel la grille de saisie les **présente**, et il suit la région de
+ * l'établissement — un salon de Boston ouvre sa semaine le dimanche, y compris
+ * quand une gérante francophone la saisit.
+ *
+ * Aucun numéro n'est réécrit au passage : la rotation ne change que l'ordre du
+ * rendu, si bien qu'une plage enregistrée le dimanche reste `weekday: 7` des
+ * deux côtés du comptoir.
  */
-const WEEKDAY_LABELS: readonly string[] = [
-  '',
-  'Lundi',
-  'Mardi',
-  'Mercredi',
-  'Jeudi',
-  'Vendredi',
-  'Samedi',
-  'Dimanche',
-];
+export function weekdaysFrom(weekStart: WeekStart): readonly IsoWeekday[] {
+  // `weekStart` est en numérotation `Date.getUTCDay` — `0` dimanche —, quand les
+  // jours du contrat sont en ISO 8601 — `7` dimanche. Le dimanche est le seul
+  // écart entre les deux, et c'est celui-là qu'on ramène.
+  const first: IsoWeekday = weekStart === 0 ? 7 : 1;
+  const index = ISO_WEEKDAYS.indexOf(first);
+
+  return [...ISO_WEEKDAYS.slice(index), ...ISO_WEEKDAYS.slice(0, index)];
+}
+
+/** Les sept jours dans l'ordre de la région de l'établissement. */
+export function weekdaysForRegion(
+  countryCode?: string | null | undefined,
+): readonly IsoWeekday[] {
+  return weekdaysFrom(weekStartOf(countryCode));
+}
 
 /**
  * Le jour, tel qu'on l'écrit dans la grille.
  *
- * Le repli couvre la chaîne vide autant que l'`undefined` : la case 0 du tableau
- * en porte une, et un `?? défaut` seul la laisserait passer — un `0` venu d'un
- * `Date.getDay` mal converti se serait alors affiché comme un jour sans nom.
+ * Les libellés viennent du catalogue `admin-staff`, clés `weekdays.1` à
+ * `weekdays.7` — les numéros ISO, `7` pour dimanche. Le repli nomme le jour par
+ * son numéro : un `0` venu d'un `Date.getDay` mal converti et forcé au type s'y
+ * voit, là où un `undefined` laissé filer écrirait « undefined » en toutes
+ * lettres dans la grille.
  */
-export function weekdayLabel(weekday: IsoWeekday): string {
-  const label = WEEKDAY_LABELS[weekday];
+export function weekdayLabel(
+  weekday: IsoWeekday,
+  locale: Locale = STAFF_FALLBACK_LOCALE,
+): string {
+  const words = staffWords(locale);
+  const label = (words.weekdays as Readonly<Record<string, string>>)[String(weekday)];
 
-  return label === undefined || label === '' ? `Jour ${String(weekday)}` : label;
+  return label === undefined || label === ''
+    ? fillMessage(words.weekdayFallback, { weekday: String(weekday) })
+    : label;
+}
+
+/**
+ * Le même jour, **tel qu'on l'insère au fil d'une phrase** — « la plage du
+ * lundi », « the Monday range ».
+ *
+ * Une seconde table plutôt qu'une mise en bas de casse : le français écrit les
+ * jours en minuscules au fil du texte, l'anglais garde la capitale. Un
+ * `toLocaleLowerCase` aurait rendu « the monday range », et c'est exactement le
+ * genre d'écart qu'une règle unique produit sur deux langues qui n'ont pas la
+ * même typographie. Même arbitrage que les deux tables de
+ * `lib/appointment-status.ts`.
+ */
+export function weekdayLabelInSentence(
+  weekday: IsoWeekday,
+  locale: Locale = STAFF_FALLBACK_LOCALE,
+): string {
+  const words = staffWords(locale);
+  const label = (words.weekdaysInSentence as Readonly<Record<string, string>>)[String(weekday)];
+
+  return label === undefined || label === ''
+    ? fillMessage(words.weekdayFallback, { weekday: String(weekday) })
+    : label;
 }
 
 /** Une plage telle que le formulaire la tient — deux champs de texte et un jour. */
@@ -139,32 +184,49 @@ export type ScheduleValidation =
  * au bon endroit — et de repérer, avant Zod, la ligne restée vide, que le schéma
  * ne saurait rattacher à personne.
  */
-export function validateScheduleRows(rows: readonly ScheduleRow[]): ScheduleValidation {
+export function validateScheduleRows(
+  rows: readonly ScheduleRow[],
+  locale: Locale = STAFF_FALLBACK_LOCALE,
+): ScheduleValidation {
+  const words = staffWords(locale).schedule;
   const incomplete = rows.find((row) => row.startsAt === '' || row.endsAt === '');
 
   if (incomplete !== undefined) {
-    return {
-      ok: false,
-      rowId: incomplete.id,
-      message: 'Renseignez les deux bornes de la plage, ou retirez-la.',
-    };
+    return { ok: false, rowId: incomplete.id, message: words.incomplete };
   }
 
   if (rows.length > MAX_STAFF_SCHEDULE_ENTRIES) {
     return {
       ok: false,
       rowId: null,
-      message: `Au plus ${String(MAX_STAFF_SCHEDULE_ENTRIES)} plages par semaine.`,
+      message: fillMessage(words.tooMany, { max: String(MAX_STAFF_SCHEDULE_ENTRIES) }),
     };
   }
 
-  const parsed = setStaffScheduleRequestSchema.safeParse({
-    entries: rows.map((row) => ({
-      weekday: row.weekday,
-      startsAt: row.startsAt,
-      endsAt: row.endsAt,
-    })),
-  });
+  const entries = rows.map((row) => ({
+    weekday: row.weekday,
+    startsAt: row.startsAt,
+    endsAt: row.endsAt,
+  }));
+
+  /*
+   * Le verdict est **celui du schéma**, et lui seul — la phrase vient du
+   * catalogue.
+   *
+   * `setStaffScheduleRequestSchema` porte les deux règles qui restent : une
+   * plage finit après avoir commencé, et deux plages du même jour ne se
+   * recouvrent pas. Les rejouer ici avant lui les ferait diverger — et les
+   * rejouer *dans le mauvais ordre* mentirait : une plage saisie « 12:00 –
+   * 10:00 » à côté d'une journée ouverte se lit comme un recouvrement pour
+   * `staffScheduleEntriesOverlap`, qui compare des bornes sans se demander
+   * laquelle précède l'autre. L'opératrice aurait alors cherché une plage en
+   * double là où elle avait inversé deux heures.
+   *
+   * Ce qui reste à faire ici est donc de **nommer** le refus du schéma sans
+   * recopier son message, qui est un littéral français du contrat partagé : il
+   * aurait parlé français sous une grille d'horaires en anglais.
+   */
+  const parsed = setStaffScheduleRequestSchema.safeParse({ entries });
 
   if (parsed.success) {
     return { ok: true, request: parsed.data };
@@ -179,8 +241,30 @@ export function validateScheduleRows(rows: readonly ScheduleRow[]): ScheduleVali
   return {
     ok: false,
     rowId: index === null ? null : (rows[index]?.id ?? null),
-    message: issue?.message ?? 'La semaine saisie est invalide.',
+    message: scheduleIssueMessage(issue, index, words),
   };
+}
+
+/**
+ * La phrase du catalogue qui dit **ce que** le schéma vient de refuser.
+ *
+ * Les deux règles métier du contrat sont des `refine`, donc des issues `custom`,
+ * et c'est ce qui les distingue d'une borne illisible : celle de la ligne dit
+ * qu'une fin précède son début, celle de l'ensemble que deux plages du même jour
+ * se recouvrent. Tout le reste est une faute de **forme** — une borne qui n'est
+ * pas `HH:MM` —, que le formulaire écarte déjà en ne servant que des
+ * `<input type="time">`, et qui garde donc le repli.
+ */
+function scheduleIssueMessage(
+  issue: { readonly code?: string } | undefined,
+  index: number | null,
+  words: ReturnType<typeof staffWords>['schedule'],
+): string {
+  if (issue?.code !== 'custom') {
+    return words.invalid;
+  }
+
+  return index === null ? words.overlap : words.endBeforeStart;
 }
 
 /**

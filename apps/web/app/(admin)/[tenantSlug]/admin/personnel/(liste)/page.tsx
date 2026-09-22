@@ -4,11 +4,18 @@ import {
   type StaffAccountState,
   type StaffMember,
 } from '@spa/shared';
+import { getLocale, getTranslations } from 'next-intl/server';
 import Link from 'next/link';
 
-import { fetchOwnProfile, fetchStaffAccounts, fetchStaffMembers } from '@/lib/api-client';
+import {
+  fetchOwnProfile,
+  fetchPublicTenant,
+  fetchStaffAccounts,
+  fetchStaffMembers,
+} from '@/lib/api-client';
 import { sortStaffMembers, staffInitials } from '@/lib/admin/staff-directory';
 import { isStaffRole } from '@/lib/admin/staff-contract';
+import type { DisplayLocale } from '@/lib/format';
 import { formatPhoneForDisplay } from '@/lib/phone';
 
 import { roleLabel } from '../../components/navigation';
@@ -108,6 +115,8 @@ interface StaffPageProps {
 
 export default async function StaffPage({ params }: StaffPageProps) {
   const { tenantSlug } = await params;
+  const t = await getTranslations('admin-staff');
+  const locale = await getLocale();
   const accessToken = await requireAdminAccessToken(tenantSlug, adminStaffPath(tenantSlug));
 
   let profile: SessionUser;
@@ -124,10 +133,9 @@ export default async function StaffPage({ params }: StaffPageProps) {
     ]);
   } catch (error) {
     return adminLoadFailure(error, tenantSlug, {
-      deniedTitle: 'Accès réservé',
-      deniedHint:
-        'La gestion du personnel est réservée aux comptes du salon. Demandez l’accès à l’administrateur.',
-      failedTitle: 'Personnel indisponible',
+      deniedTitle: t('denied.title'),
+      deniedHint: t('denied.hint'),
+      failedTitle: t('failure.list'),
     });
   }
 
@@ -142,12 +150,27 @@ export default async function StaffPage({ params }: StaffPageProps) {
   // rend que le personnel — mais toutes les actions de la ligne supposent un
   // rôle interne, et l'afficher offrirait des boutons qui échoueraient.
   const staffAccounts = accounts.filter((account) => isStaffRole(account.role));
-  const practitioners = sortStaffMembers(members);
+  /*
+   * La **région** du classement (#848) — jamais le fuseau, qui ne sert pas ici.
+   *
+   * Elle vient de l'adresse publiée sur la vitrine, `GET /public/{slug}` : la
+   * même réponse que le gabarit du back-office lit déjà pour son pied de rail,
+   * et que Next mémoïse sur la durée du rendu. Aucun aller-retour de plus.
+   *
+   * Un échec ne coûte qu'un ordre de tri : le repli documenté de
+   * `lib/format.ts` s'applique, et l'écran du personnel n'a aucune raison de
+   * tomber parce que la vitrine n'a pas répondu.
+   */
+  const countryCode = await fetchPublicTenant(tenantSlug)
+    .then((tenant) => tenant.address?.country ?? null)
+    .catch(() => null);
+  const display: DisplayLocale = { locale, countryCode };
+  const practitioners = sortStaffMembers(members, display);
 
   return (
     <section aria-labelledby="personnel-titre">
       <h1 className="spa-admin__title" id="personnel-titre">
-        Personnel et horaires
+        {t('title')}
       </h1>
 
       {/* La barre d'outils de /catalogue, aux mêmes classes et dans le même
@@ -160,7 +183,7 @@ export default async function StaffPage({ params }: StaffPageProps) {
         <div className="spa-admin-toolbar__group">
           {canAdminister ? (
             <Link className="spa-button spa-button--neutral" href={adminStaffInvitePath(tenantSlug)}>
-              Inviter un membre
+              {t('toolbar.invite')}
             </Link>
           ) : null}
           {canManage ? (
@@ -168,32 +191,27 @@ export default async function StaffPage({ params }: StaffPageProps) {
               className="spa-button spa-button--accent"
               href={adminNewStaffMemberPath(tenantSlug)}
             >
-              Créer une fiche praticien
+              {t('toolbar.newMember')}
             </Link>
           ) : (
-            <span className="spa-admin-toolbar__hint">
-              La création des fiches praticien et l’invitation de comptes sont réservées aux rangs
-              gérant et administrateur.
-            </span>
+            <span className="spa-admin-toolbar__hint">{t('toolbar.restricted')}</span>
           )}
         </div>
       </div>
 
       <div className="spa-admin__section">
-        <h2 className="spa-admin__section-title">Praticiens — {practitioners.length}</h2>
-        <p className="spa-admin-toolbar__hint">
-          Les fiches qui portent un agenda. Ouvrez-en une pour saisir ses horaires récurrents, ses
-          congés et les prestations qu’elle pratique.
-        </p>
+        <h2 className="spa-admin__section-title">
+          {t('practitioners.title', { count: String(practitioners.length) })}
+        </h2>
+        <p className="spa-admin-toolbar__hint">{t('practitioners.hint')}</p>
 
         {practitioners.length === 0 ? (
           <div className="spa-empty-state">
-            <p className="spa-empty-state__title">Aucun praticien enregistré</p>
+            <p className="spa-empty-state__title">{t('practitioners.emptyTitle')}</p>
             <p className="spa-empty-state__description">
-              Tant que personne n’est déclarée, le parcours de réservation ne propose aucun créneau.
               {canManage
-                ? ' Créez une fiche praticien à partir d’un compte du personnel pour rendre la personne réservable.'
-                : ' Un gérant ou un administrateur peut créer une fiche praticien à partir d’un compte du personnel.'}
+                ? t('practitioners.emptyDescriptionManager')
+                : t('practitioners.emptyDescriptionReader')}
             </p>
             {/* Un lien et non un bouton : c'est une destination. Posé
                 directement dans `.spa-empty-state`, déjà une colonne centrée avec
@@ -203,7 +221,7 @@ export default async function StaffPage({ params }: StaffPageProps) {
                 className="spa-button spa-button--accent"
                 href={adminNewStaffMemberPath(tenantSlug)}
               >
-                <span className="spa-button__label">Créer une fiche praticien</span>
+                <span className="spa-button__label">{t('toolbar.newMember')}</span>
               </Link>
             ) : null}
           </div>
@@ -216,11 +234,11 @@ export default async function StaffPage({ params }: StaffPageProps) {
                   href={adminStaffMemberPath(tenantSlug, member.id)}
                 >
                   <span aria-hidden="true" className="spa-admin-staff__initials">
-                    {staffInitials(member.displayName)}
+                    {staffInitials(member.displayName, display)}
                   </span>
                   <span className="spa-admin-staff__identity">
                     <span className="spa-admin-staff__name">{member.displayName}</span>
-                    <span className="spa-admin-staff__role">Horaires, congés, prestations</span>
+                    <span className="spa-admin-staff__role">{t('practitioners.subtitle')}</span>
                   </span>
                   <span
                     className={
@@ -229,7 +247,7 @@ export default async function StaffPage({ params }: StaffPageProps) {
                         : 'spa-admin-badge spa-admin-badge--cancelled'
                     }
                   >
-                    {member.isActive ? 'Active' : 'Suspendue'}
+                    {member.isActive ? t('practitioners.active') : t('practitioners.suspended')}
                   </span>
                 </Link>
               </li>
@@ -239,54 +257,51 @@ export default async function StaffPage({ params }: StaffPageProps) {
       </div>
 
       <div className="spa-admin__section">
-        <h2 className="spa-admin__section-title">Comptes — {staffAccounts.length}</h2>
-        <p className="spa-admin-toolbar__hint">
-          Les identités qui se connectent au back-office, avec leur rôle. Un compte n’est pas une
-          fiche praticien&nbsp;: il porte l’accès, pas l’agenda.
-        </p>
+        <h2 className="spa-admin__section-title">
+          {t('accounts.title', { count: String(staffAccounts.length) })}
+        </h2>
+        <p className="spa-admin-toolbar__hint">{t('accounts.hint')}</p>
 
         {staffAccounts.length === 0 ? (
           <div className="spa-empty-state">
-            <p className="spa-empty-state__title">Aucun compte du personnel</p>
+            <p className="spa-empty-state__title">{t('accounts.emptyTitle')}</p>
             <p className="spa-empty-state__description">
               {canAdminister
-                ? 'Invitez au moins une personne pour que le salon puisse être tenu à plusieurs.'
-                : 'Un administrateur du salon peut inviter les personnes qui le tiendront avec vous.'}
+                ? t('accounts.emptyDescriptionAdmin')
+                : t('accounts.emptyDescriptionReader')}
             </p>
             {canAdminister ? (
               <Link
                 className="spa-button spa-button--neutral"
                 href={adminStaffInvitePath(tenantSlug)}
               >
-                <span className="spa-button__label">Inviter un membre</span>
+                <span className="spa-button__label">{t('toolbar.invite')}</span>
               </Link>
             ) : null}
           </div>
         ) : (
           <table className="spa-admin-table">
-            <caption className="spa-visually-hidden">
-              Comptes du personnel de l’établissement, avec leur rôle et l’état de leur accès.
-            </caption>
+            <caption className="spa-visually-hidden">{t('accounts.caption')}</caption>
             <thead>
               <tr>
                 <th className="spa-admin-table__head" scope="col">
-                  Nom
+                  {t('accounts.name')}
                 </th>
                 <th className="spa-admin-table__head" scope="col">
-                  Adresse
+                  {t('accounts.email')}
                 </th>
                 <th className="spa-admin-table__head" scope="col">
-                  Téléphone
+                  {t('accounts.phone')}
                 </th>
                 <th className="spa-admin-table__head" scope="col">
-                  Rôle
+                  {t('accounts.role')}
                 </th>
                 <th className="spa-admin-table__head" scope="col">
-                  État
+                  {t('accounts.state')}
                 </th>
                 {canAdminister ? (
                   <th className="spa-admin-table__head" scope="col">
-                    Actions
+                    {t('accounts.actions')}
                   </th>
                 ) : null}
               </tr>
@@ -299,7 +314,7 @@ export default async function StaffPage({ params }: StaffPageProps) {
                   </td>
                   <td className="spa-admin-table__cell">{account.email}</td>
                   <td className="spa-admin-table__cell">{account.phone === null ? '—' : formatPhoneForDisplay(account.phone)}</td>
-                  <td className="spa-admin-table__cell">{roleLabel(account.role)}</td>
+                  <td className="spa-admin-table__cell">{roleLabel(account.role, locale)}</td>
                   <td className="spa-admin-table__cell">
                     <span
                       className={
@@ -308,7 +323,7 @@ export default async function StaffPage({ params }: StaffPageProps) {
                           : 'spa-admin-badge spa-admin-badge--cancelled'
                       }
                     >
-                      {account.isActive ? 'Actif' : 'Désactivé'}
+                      {account.isActive ? t('accounts.active') : t('accounts.disabled')}
                     </span>
                   </td>
                   {canAdminister ? (

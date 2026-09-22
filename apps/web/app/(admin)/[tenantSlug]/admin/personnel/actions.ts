@@ -42,6 +42,7 @@ import {
   type StaffSchedule,
   type StaffTimeOff,
 } from '@spa/shared';
+import { getTranslations } from 'next-intl/server';
 import { revalidatePath } from 'next/cache';
 
 import {
@@ -82,10 +83,11 @@ async function openCall(
 ): Promise<
   { ok: true; accessToken: string; slug: string } | { ok: false; code: string; message: string }
 > {
+  const t = await getTranslations('admin-staff');
   const slug = slugSchema.safeParse(tenantSlug);
 
   if (!slug.success) {
-    return invalid('Établissement inconnu.');
+    return invalid(t('actions.unknownTenant'));
   }
 
   const access = await adminActionAccess(slug.data);
@@ -93,10 +95,15 @@ async function openCall(
   return access.ok ? { ok: true, accessToken: access.accessToken, slug: slug.data } : access;
 }
 
-/** Le message du premier refus de schéma — celui qui nomme la faute. */
-function firstIssue(issues: readonly { readonly message: string }[], fallback: string): string {
-  return issues[0]?.message ?? fallback;
-}
+/*
+ * Le message du premier refus de schéma a disparu d'ici avec #848.
+ *
+ * Il rendait `issues[0].message`, c'est-à-dire un littéral **français** du
+ * contrat partagé : il aurait posé une phrase française sous un formulaire
+ * anglais. Les refus de forme se disent désormais dans la langue de la session,
+ * par le catalogue `admin-staff` — le verdict reste celui du schéma, seule la
+ * phrase change de main.
+ */
 
 /** Rafraîchit la liste du personnel, que toute écriture de compte périme. */
 function revalidateStaffList(slug: string): void {
@@ -134,6 +141,7 @@ export async function inviteStaffAccountAction(
   tenantSlug: string,
   input: unknown,
 ): Promise<AdminActionResult<StaffInvitation>> {
+  const t = await getTranslations('admin-staff');
   const call = await openCall(tenantSlug);
   if (!call.ok) {
     return call;
@@ -141,7 +149,7 @@ export async function inviteStaffAccountAction(
 
   const parsed = inviteStaffAccountRequestSchema.safeParse(input);
   if (!parsed.success) {
-    return invalid(firstIssue(parsed.error.issues, 'Les informations saisies sont invalides.'));
+    return invalid(t('actions.invalid'));
   }
 
   try {
@@ -175,6 +183,7 @@ export async function createStaffMemberAction(
   tenantSlug: string,
   input: unknown,
 ): Promise<AdminActionResult<StaffMember>> {
+  const t = await getTranslations('admin-staff');
   const call = await openCall(tenantSlug);
   if (!call.ok) {
     return call;
@@ -182,7 +191,7 @@ export async function createStaffMemberAction(
 
   const parsed = createStaffMemberRequestSchema.safeParse(input);
   if (!parsed.success) {
-    return invalid(firstIssue(parsed.error.issues, 'Les informations saisies sont invalides.'));
+    return invalid(t('actions.invalid'));
   }
 
   try {
@@ -228,6 +237,7 @@ export async function updateStaffMemberAction(
   staffId: string,
   input: unknown,
 ): Promise<AdminActionResult<StaffMember>> {
+  const t = await getTranslations('admin-staff');
   const call = await openCall(tenantSlug);
   if (!call.ok) {
     return call;
@@ -237,10 +247,10 @@ export async function updateStaffMemberAction(
   const parsed = updateStaffMemberRequestSchema.safeParse(input);
 
   if (!id.success) {
-    return invalid('Praticien inconnu.');
+    return invalid(t('actions.unknownStaff'));
   }
   if (!parsed.success) {
-    return invalid(firstIssue(parsed.error.issues, 'Les informations saisies sont invalides.'));
+    return invalid(t('actions.invalid'));
   }
 
   try {
@@ -258,6 +268,7 @@ export async function reissueStaffInvitationAction(
   tenantSlug: string,
   userId: string,
 ): Promise<AdminActionResult<StaffInvitation>> {
+  const t = await getTranslations('admin-staff');
   const call = await openCall(tenantSlug);
   if (!call.ok) {
     return call;
@@ -265,7 +276,7 @@ export async function reissueStaffInvitationAction(
 
   const id = uuidSchema.safeParse(userId);
   if (!id.success) {
-    return invalid('Compte inconnu.');
+    return invalid(t('actions.unknownAccount'));
   }
 
   try {
@@ -296,6 +307,7 @@ export async function changeStaffAccountRoleAction(
   userId: string,
   input: unknown,
 ): Promise<AdminActionResult<StaffAccount>> {
+  const t = await getTranslations('admin-staff');
   const call = await openCall(tenantSlug);
   if (!call.ok) {
     return call;
@@ -305,10 +317,10 @@ export async function changeStaffAccountRoleAction(
   const parsed = changeStaffRoleRequestSchema.safeParse(input);
 
   if (!id.success) {
-    return invalid('Compte inconnu.');
+    return invalid(t('actions.unknownAccount'));
   }
   if (!parsed.success) {
-    return invalid('Choisissez un rôle du personnel.');
+    return invalid(t('actions.chooseRole'));
   }
 
   try {
@@ -333,6 +345,7 @@ export async function setStaffAccountStatusAction(
   userId: string,
   input: unknown,
 ): Promise<AdminActionResult<StaffAccountState>> {
+  const t = await getTranslations('admin-staff');
   const call = await openCall(tenantSlug);
   if (!call.ok) {
     return call;
@@ -342,10 +355,10 @@ export async function setStaffAccountStatusAction(
   const parsed = setStaffAccountStatusRequestSchema.safeParse(input);
 
   if (!id.success) {
-    return invalid('Compte inconnu.');
+    return invalid(t('actions.unknownAccount'));
   }
   if (!parsed.success) {
-    return invalid('Indiquez si le compte doit être actif.');
+    return invalid(t('actions.statusRequired'));
   }
 
   try {
@@ -369,6 +382,7 @@ export async function setStaffScheduleAction(
   staffId: string,
   input: unknown,
 ): Promise<AdminActionResult<StaffSchedule>> {
+  const t = await getTranslations('admin-staff');
   const call = await openCall(tenantSlug);
   if (!call.ok) {
     return call;
@@ -378,10 +392,10 @@ export async function setStaffScheduleAction(
   const parsed = setStaffScheduleRequestSchema.safeParse(input);
 
   if (!id.success) {
-    return invalid('Praticien inconnu.');
+    return invalid(t('actions.unknownStaff'));
   }
   if (!parsed.success) {
-    return invalid(firstIssue(parsed.error.issues, 'La semaine saisie est invalide.'));
+    return invalid(t('schedule.invalid'));
   }
 
   try {
@@ -405,6 +419,7 @@ export async function createStaffTimeOffAction(
   tenantSlug: string,
   input: unknown,
 ): Promise<AdminActionResult<StaffTimeOff>> {
+  const t = await getTranslations('admin-staff');
   const call = await openCall(tenantSlug);
   if (!call.ok) {
     return call;
@@ -412,7 +427,7 @@ export async function createStaffTimeOffAction(
 
   const parsed = createStaffTimeOffRequestSchema.safeParse(input);
   if (!parsed.success) {
-    return invalid(firstIssue(parsed.error.issues, 'L’absence saisie est invalide.'));
+    return invalid(t('actions.invalidTimeOff'));
   }
 
   try {
@@ -436,6 +451,7 @@ export async function deleteStaffTimeOffAction(
   staffId: string,
   timeOffId: string,
 ): Promise<AdminActionResult<null>> {
+  const t = await getTranslations('admin-staff');
   const call = await openCall(tenantSlug);
   if (!call.ok) {
     return call;
@@ -445,7 +461,7 @@ export async function deleteStaffTimeOffAction(
   const timeOff = uuidSchema.safeParse(timeOffId);
 
   if (!staff.success || !timeOff.success) {
-    return invalid('Absence inconnue.');
+    return invalid(t('actions.unknownTimeOff'));
   }
 
   try {
@@ -473,6 +489,7 @@ export async function assignStaffServiceAction(
   staffId: string,
   serviceId: string,
 ): Promise<AdminActionResult<ServiceStaffMember>> {
+  const t = await getTranslations('admin-staff');
   const call = await openCall(tenantSlug);
   if (!call.ok) {
     return call;
@@ -482,10 +499,10 @@ export async function assignStaffServiceAction(
   const parsed = assignServiceStaffRequestSchema.safeParse({ staffId });
 
   if (!service.success) {
-    return invalid('Prestation inconnue.');
+    return invalid(t('actions.unknownService'));
   }
   if (!parsed.success) {
-    return invalid('Praticien inconnu.');
+    return invalid(t('actions.unknownStaff'));
   }
 
   try {

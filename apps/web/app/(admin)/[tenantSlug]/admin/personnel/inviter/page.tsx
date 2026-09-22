@@ -1,4 +1,5 @@
 import { hasAtLeastRole, type SessionUser } from '@spa/shared';
+import { getTranslations } from 'next-intl/server';
 import Link from 'next/link';
 
 import { Notification } from '@/components/ui/notification';
@@ -37,6 +38,7 @@ interface InviteStaffPageProps {
 
 export default async function InviteStaffPage({ params }: InviteStaffPageProps) {
   const { tenantSlug } = await params;
+  const t = await getTranslations('admin-staff');
   const accessToken = await requireAdminAccessToken(tenantSlug, adminStaffInvitePath(tenantSlug));
 
   let profile: SessionUser;
@@ -45,20 +47,19 @@ export default async function InviteStaffPage({ params }: InviteStaffPageProps) 
     profile = await fetchOwnProfile(accessToken);
   } catch (error) {
     return adminLoadFailure(error, tenantSlug, {
-      deniedTitle: 'Accès réservé',
-      deniedHint:
-        'La gestion du personnel est réservée aux comptes du salon. Demandez l’accès à l’administrateur.',
-      failedTitle: 'Formulaire indisponible',
+      deniedTitle: t('denied.title'),
+      deniedHint: t('denied.hint'),
+      failedTitle: t('failure.form'),
     });
   }
 
   if (!hasAtLeastRole(profile.role, 'admin')) {
     return (
-      <Notification tone="warning" title="Accès réservé">
+      <Notification tone="warning" title={t('invite.deniedTitle')}>
         <p>
-          L’invitation d’un membre du personnel est réservée au rang administrateur. La liste du
-          personnel reste consultable, et un administrateur du salon peut émettre l’invitation pour
-          vous. <Link href={adminStaffPath(tenantSlug)}>Revenir au personnel</Link>.
+          {t.rich('invite.deniedBody', {
+            link: (chunks) => <Link href={adminStaffPath(tenantSlug)}>{chunks}</Link>,
+          })}
         </p>
       </Notification>
     );
@@ -67,12 +68,12 @@ export default async function InviteStaffPage({ params }: InviteStaffPageProps) 
   return (
     <section aria-labelledby="invitation-nouvelle">
       <h1 className="spa-admin__title" id="invitation-nouvelle">
-        Inviter un membre du personnel
+        {t('invite.screenTitle')}
       </h1>
 
       <div className="spa-admin-toolbar">
         <Link className="spa-button spa-button--quiet" href={adminStaffPath(tenantSlug)}>
-          Retour au personnel
+          {t('returnToStaff')}
         </Link>
       </div>
 

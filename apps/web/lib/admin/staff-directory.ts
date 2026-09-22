@@ -24,6 +24,18 @@
 
 import { DISPLAY_NAME_MAX_LENGTH, type StaffMember } from '@spa/shared';
 
+import { formattingLocale, type DisplayLocale } from '../format';
+import { STAFF_FALLBACK_LOCALE } from './staff-messages';
+
+/**
+ * Le repli d'affichage de ce module (#848).
+ *
+ * Il ne sert qu'au **classement** et à la casse des initiales : aucun mot n'est
+ * écrit ici. Le défaut garde le comportement d'avant l'épique #843 pour les
+ * appelants qui n'ont pas encore de langue à passer.
+ */
+const FALLBACK_DISPLAY: DisplayLocale = { locale: STAFF_FALLBACK_LOCALE };
+
 /**
  * Le nom qu'une fiche praticien porterait par défaut pour ce compte.
  *
@@ -87,12 +99,17 @@ export function suggestedStaffDisplayName(account: {
  * seule lettre plutôt que ses deux premières : « Ha » se lit comme un début de
  * mot tronqué, « H » se lit comme une initiale.
  */
-export function staffInitials(displayName: string): string {
+export function staffInitials(
+  displayName: string,
+  display: DisplayLocale = FALLBACK_DISPLAY,
+): string {
   const words = displayName.trim().split(/\s+/).filter((word) => word !== '');
 
+  // La mise en capitale dépend de l'alphabet : elle passe par la langue, comme
+  // celle de `lib/appointment-status.ts`.
   return words
     .slice(0, 2)
-    .map((word) => (word[0] ?? '').toLocaleUpperCase('fr-FR'))
+    .map((word) => (word[0] ?? '').toLocaleUpperCase(display.locale))
     .join('');
 }
 
@@ -103,14 +120,20 @@ export function staffInitials(displayName: string): string {
  * précisément pour réactiver quelqu'un — mais ils passent après : la liste sert
  * d'abord à ouvrir l'agenda de qui travaille aujourd'hui.
  *
- * `localeCompare` en français, sinon « Émilie » se rangerait après « Zoé ».
+ * `localeCompare` dans la langue d'affichage, sinon « Émilie » se rangerait
+ * après « Zoé ».
  */
-export function sortStaffMembers(members: readonly StaffMember[]): StaffMember[] {
+export function sortStaffMembers(
+  members: readonly StaffMember[],
+  display: DisplayLocale = FALLBACK_DISPLAY,
+): StaffMember[] {
+  const tag = formattingLocale(display.locale, display.countryCode);
+
   return [...members].sort((left, right) => {
     if (left.isActive !== right.isActive) {
       return left.isActive ? -1 : 1;
     }
 
-    return left.displayName.localeCompare(right.displayName, 'fr-FR');
+    return left.displayName.localeCompare(right.displayName, tag);
   });
 }

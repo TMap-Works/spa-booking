@@ -1,4 +1,5 @@
 import { hasAtLeastRole, type SessionUser, type StaffAccountState } from '@spa/shared';
+import { getTranslations } from 'next-intl/server';
 import Link from 'next/link';
 
 import { Notification } from '@/components/ui/notification';
@@ -47,6 +48,7 @@ interface NewStaffMemberPageProps {
 
 export default async function NewStaffMemberPage({ params }: NewStaffMemberPageProps) {
   const { tenantSlug } = await params;
+  const t = await getTranslations('admin-staff');
   const accessToken = await requireAdminAccessToken(tenantSlug, adminNewStaffMemberPath(tenantSlug));
 
   let profile: SessionUser;
@@ -61,20 +63,19 @@ export default async function NewStaffMemberPage({ params }: NewStaffMemberPageP
     ]);
   } catch (error) {
     return adminLoadFailure(error, tenantSlug, {
-      deniedTitle: 'Accès réservé',
-      deniedHint:
-        'La gestion du personnel est réservée aux comptes du salon. Demandez l’accès à l’administrateur.',
-      failedTitle: 'Formulaire indisponible',
+      deniedTitle: t('denied.title'),
+      deniedHint: t('denied.hint'),
+      failedTitle: t('failure.form'),
     });
   }
 
   if (!hasAtLeastRole(profile.role, 'manager')) {
     return (
-      <Notification tone="warning" title="Accès réservé">
+      <Notification tone="warning" title={t('member.deniedTitle')}>
         <p>
-          La création d’une fiche praticien est réservée au rang gérant. La liste du personnel reste
-          consultable, et une gérante ou une administratrice du salon peut créer la fiche pour vous.{' '}
-          <Link href={adminStaffPath(tenantSlug)}>Revenir au personnel</Link>.
+          {t.rich('member.deniedBody', {
+            link: (chunks) => <Link href={adminStaffPath(tenantSlug)}>{chunks}</Link>,
+          })}
         </p>
       </Notification>
     );
@@ -83,12 +84,12 @@ export default async function NewStaffMemberPage({ params }: NewStaffMemberPageP
   return (
     <section aria-labelledby="fiche-praticien-nouvelle">
       <h1 className="spa-admin__title" id="fiche-praticien-nouvelle">
-        Créer une fiche praticien
+        {t('member.screenTitle')}
       </h1>
 
       <div className="spa-admin-toolbar">
         <Link className="spa-button spa-button--quiet" href={adminStaffPath(tenantSlug)}>
-          Retour au personnel
+          {t('returnToStaff')}
         </Link>
         <span className="spa-admin-toolbar__spacer" />
         {/* L'enchaînement de l'écran vide : une fiche se rattache à un compte,
@@ -97,7 +98,7 @@ export default async function NewStaffMemberPage({ params }: NewStaffMemberPageP
             `POST /v1/users/invitations`. */}
         {hasAtLeastRole(profile.role, 'admin') ? (
           <Link className="spa-button spa-button--neutral" href={adminStaffInvitePath(tenantSlug)}>
-            Inviter un membre
+            {t('toolbar.invite')}
           </Link>
         ) : null}
       </div>
