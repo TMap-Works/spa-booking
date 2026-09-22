@@ -1,3 +1,5 @@
+import { useTranslations } from 'next-intl';
+
 import { ProgressBar } from '@/components/ui/progress-bar';
 
 /**
@@ -33,8 +35,16 @@ import { ProgressBar } from '@/components/ui/progress-bar';
  * (`components/booking/step-skeleton.tsx`) : il est monté une fois
  * l'établissement et le catalogue connus, sur l'étape que `initial-draft.ts` a
  * lue dans l'adresse, et c'est lui que `BM-ECRAN-01` vise.
+ *
+ * ## La langue (#846)
+ *
+ * Un seul mot à traduire — celui que seul un lecteur d'écran entend. Ce
+ * composant n'est pas asynchrone : `useTranslations` y fonctionne, crochet de
+ * Server Component compris.
  */
 export default function BookingLoading() {
+  const t = useTranslations('booking');
+
   return (
     <>
       <div aria-hidden="true" className="spa-booking__header spa-booking-loading">
@@ -50,7 +60,7 @@ export default function BookingLoading() {
             <span className="spa-skeleton spa-booking-loading__steps" />
             <span className="spa-skeleton spa-booking-loading__title" />
             <div className="spa-card spa-card--loading">
-              <span className="spa-visually-hidden">Chargement de votre réservation…</span>
+              <span className="spa-visually-hidden">{t('tunnel.loading.label')}</span>
               <span className="spa-skeleton spa-card__skeleton-line spa-card__skeleton-line--title" />
               <span className="spa-skeleton spa-card__skeleton-line" />
               <span className="spa-skeleton spa-card__skeleton-line spa-card__skeleton-line--short" />
