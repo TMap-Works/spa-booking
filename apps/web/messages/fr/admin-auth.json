@@ -1,0 +1,91 @@
+{
+  "platformHome": "Accueil {platform}",
+  "login": {
+    "headline": "Le back-office de votre salon",
+    "lead": "Votre journée au même endroit : planning, clientèle, caisse et activité.",
+    "highlights": {
+      "calendar": "Le planning du jour et de la semaine",
+      "users": "Les fiches clientes et l’équipe du salon",
+      "card": "L’encaissement au comptoir, carte ou espèces",
+      "chart": "Le revenu, les rendez-vous et les no-shows"
+    },
+    "title": "Back-office — se connecter",
+    "email": "Adresse e-mail",
+    "password": "Mot de passe",
+    "submit": "Se connecter",
+    "submitting": "Connexion en cours…",
+    "notices": {
+      "session-expiree": {
+        "title": "Votre session a expiré",
+        "body": "Reconnectez-vous pour reprendre là où vous en étiez."
+      },
+      "renouvellement-indisponible": {
+        "title": "Session non renouvelée pour l’instant",
+        "body": "Vous n’avez pas été déconnecté·e : le renouvellement de votre session n’a pas abouti à l’instant. Réessayez dans quelques secondes."
+      },
+      "retry": "Réessayer"
+    },
+    "failures": {
+      "invalidCredentials": {
+        "title": "Connexion refusée",
+        "message": "Adresse e-mail ou mot de passe incorrect."
+      },
+      "unreachable": {
+        "title": "Service indisponible",
+        "message": "Le service est momentanément injoignable. Merci de réessayer dans un instant."
+      },
+      "throttled": {
+        "title": "Trop de tentatives",
+        "message": "Trop de tentatives de connexion en peu de temps. Patientez une minute avant de réessayer."
+      },
+      "unknownTitle": "Connexion impossible"
+    },
+    "noAccess": {
+      "title": "Aucun écran du back-office pour ce compte",
+      "closed": "Le back-office ne vous ouvre aucune section, et la session vient d’être refermée. Vos rendez-vous se consultent depuis votre espace client.",
+      "stillOpen": "Le back-office ne vous ouvre aucune section. La session n’a pas pu être refermée : fermez cet onglet ou déconnectez-vous depuis votre espace client, où se consultent vos rendez-vous."
+    }
+  },
+  "invitation": {
+    "headline": "Bienvenue dans votre back-office",
+    "lead": "Choisissez votre mot de passe : vous arriverez directement dans votre espace.",
+    "highlights": {
+      "store": "Vos prestations, vos horaires et votre vitrine",
+      "users": "Votre équipe et vos fiches clientes",
+      "calendar": "Le planning et les réservations en ligne"
+    },
+    "title": "Activer votre compte",
+    "password": "Mot de passe",
+    "passwordHint": "Douze caractères au minimum.",
+    "confirmation": "Confirmez le mot de passe",
+    "mismatch": "les deux mots de passe ne correspondent pas",
+    "submit": "Activer mon compte",
+    "submitting": "Activation en cours…",
+    "missingToken": {
+      "title": "Lien incomplet",
+      "body": "Ce lien ne contient pas de code d’activation. Ouvrez le lien complet reçu par message, sans le raccourcir."
+    },
+    "failureTitle": "Activation impossible",
+    "expiredLink": "Ce lien d’activation n’est plus valable : il a expiré, ou il a déjà servi. Demandez un nouveau lien à la personne qui vous l’a envoyé — ou, si votre compte est déjà activé, connectez-vous.",
+    "goToLogin": "Aller à la connexion"
+  },
+  "logout": {
+    "label": "Se déconnecter",
+    "pending": "Déconnexion en cours…"
+  },
+  "retry": {
+    "label": "Réessayer",
+    "pending": "Nouvelle tentative en cours…"
+  },
+  "error": {
+    "title": "Écran indisponible",
+    "noticeTitle": "Cet écran n’a pas pu s’afficher",
+    "noticeMessage": "Une erreur inattendue a interrompu l’affichage de cet écran. Réessayez dans un instant."
+  },
+  "guard": {
+    "unreachable": "Le serveur du salon est momentanément injoignable. Réessayez dans un instant."
+  },
+  "establishment": {
+    "switchLabel": "Changer d’établissement"
+  }
+}

@@ -1,8 +1,9 @@
+import { getLocale, getTranslations } from 'next-intl/server';
 import { notFound, redirect } from 'next/navigation';
 
 import { AuthScreen, type AuthHighlight } from '@/components/auth/auth-screen';
 import { PHOTOS } from '@/lib/photos';
-import { PUBLIC_EXIT_LABELS } from '@/components/salon/public-exits';
+import { publicExitLabels } from '@/components/salon/public-exits';
 import { PLATFORM_HOME_PATH, PLATFORM_NAME } from '@/lib/platform';
 import { readSalonIdentity } from '@/lib/salon-identity';
 import { readSessionNotice } from '@/lib/session-refresh';
@@ -109,17 +110,16 @@ import { adminCalendarPath } from '../paths';
  *   pouvait ouvrir ;
  * - une API **muette** n'empêche rien : le cadre se passe du nom, et le
  *   formulaire dira lui-même la panne à la soumission (#759).
+ *
+ * ## Les mots viennent du catalogue `admin-auth` (#853)
+ *
+ * La page est asynchrone : c'est `getTranslations` de `next-intl/server`, et non
+ * `useTranslations`. Les sorties publiques passent de `PUBLIC_EXIT_LABELS` —
+ * la table figée en français, dépréciée par #845 — à `publicExitLabels(locale)`,
+ * exactement comme ce registre l'annonçait pour les six surfaces qui le lisent.
  */
 
 export const dynamic = 'force-dynamic';
-
-/** Ce que le back-office ouvre, dit avant qu'on y entre (#927). */
-const BACK_OFFICE_HIGHLIGHTS: readonly AuthHighlight[] = [
-  { icon: 'calendar', text: 'Le planning du jour et de la semaine' },
-  { icon: 'users', text: 'Les fiches clientes et l’équipe du salon' },
-  { icon: 'card', text: 'L’encaissement au comptoir, carte ou espèces' },
-  { icon: 'chart', text: 'Le revenu, les rendez-vous et les no-shows' },
-];
 
 interface AdminLoginPageProps {
   readonly params: Promise<{ readonly tenantSlug: string }>;
@@ -154,6 +154,16 @@ export default async function AdminLoginPage({ params, searchParams }: AdminLogi
     notFound();
   }
 
+  const [t, locale] = await Promise.all([getTranslations('admin-auth'), getLocale()]);
+
+  /** Ce que le back-office ouvre, dit avant qu'on y entre (#927). */
+  const highlights: readonly AuthHighlight[] = [
+    { icon: 'calendar', text: t('login.highlights.calendar') },
+    { icon: 'users', text: t('login.highlights.users') },
+    { icon: 'card', text: t('login.highlights.card') },
+    { icon: 'chart', text: t('login.highlights.chart') },
+  ];
+
   /*
    * Le motif qui a renvoyé ici, quand il y en a un (#860) — il n'a de sens que
    * sur le formulaire, et la redirection ci-dessus l'emporte donc toujours : une
@@ -166,13 +176,13 @@ export default async function AdminLoginPage({ params, searchParams }: AdminLogi
   return (
     <AuthScreen
       salonName={salon.status === 'found' ? salon.name : null}
-      headline="Le back-office de votre salon"
-      lead="Votre journée au même endroit : planning, clientèle, caisse et activité."
-      highlights={BACK_OFFICE_HIGHLIGHTS}
+      headline={t('login.headline')}
+      lead={t('login.lead')}
+      highlights={highlights}
       photo={PHOTOS.coiffureBrushing}
       exits={[
-        { href: salonPath(tenantSlug), label: PUBLIC_EXIT_LABELS.vitrine },
-        { href: PLATFORM_HOME_PATH, label: `Accueil ${PLATFORM_NAME}` },
+        { href: salonPath(tenantSlug), label: publicExitLabels(locale).vitrine },
+        { href: PLATFORM_HOME_PATH, label: t('platformHome', { platform: PLATFORM_NAME }) },
       ]}
     >
       <AdminLoginForm tenantSlug={tenantSlug} notice={readSessionNotice(motif)} />

@@ -1,3 +1,4 @@
+import { useTranslations } from 'next-intl';
 import Link from 'next/link';
 
 import { adminCalendarPath } from '../paths';
@@ -34,7 +35,8 @@ import { adminCalendarPath } from '../paths';
  *
  * Il n'est pas marqué `'use client'` et n'en a pas besoin : le rail l'importe,
  * ce qui suffit à le faire rendre dans le même arbre, sans y ajouter de
- * frontière.
+ * frontière. `useTranslations` s'y appelle donc en Server Component — la
+ * fonction n'est pas asynchrone, ce qui est la seule condition (#845).
  */
 
 /** Un établissement joignable par ce compte. */
@@ -53,6 +55,7 @@ export function EstablishmentSwitcher({
   currentSlug,
   establishments,
 }: EstablishmentSwitcherProps) {
+  const t = useTranslations('admin-auth.establishment');
   const current = establishments.find((salon) => salon.slug === currentSlug);
   const others = establishments.filter((salon) => salon.slug !== currentSlug);
 
@@ -60,7 +63,7 @@ export function EstablishmentSwitcher({
     <>
       <strong>{current?.name ?? currentSlug}</strong>
       {others.length === 0 ? null : (
-        <nav aria-label="Changer d’établissement">
+        <nav aria-label={t('switchLabel')}>
           {others.map((salon) => (
             <Link className="spa-admin__nav-link" href={adminCalendarPath(salon.slug)} key={salon.slug}>
               {salon.name}

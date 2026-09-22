@@ -1,5 +1,9 @@
 import { cookies } from 'next/headers';
 
+import {
+  clearAccountLocaleCookie,
+  setAccountLocaleMirror,
+} from '@/app/(account)/[tenantSlug]/compte/account-locale';
 import type { ApiSession } from '@/lib/api-client';
 import { accessTokenForAction } from '@/lib/session-refresh';
 
@@ -146,7 +150,32 @@ export async function writeAdminSession(tenantSlug: string, opened: ApiSession):
   attachAdminSession(await cookies(), tenantSlug, opened);
 }
 
-/** Pose la session sur une réponse — depuis la route de renouvellement. */
+/**
+ * Pose la session sur une réponse — depuis la route de renouvellement.
+ *
+ * ## Et, avec elle, la langue du compte (#853, #844)
+ *
+ * `i18n/cookies.ts` nomme d'avance qui écrira `ACCOUNT_LOCALE_COOKIE` : *« les
+ * points d'ouverture et de fermeture de session, dans leurs propres tickets de
+ * l'épique : la connexion et l'inscription de l'espace client, **la connexion du
+ * back-office** »*. C'est ici, parce que c'est le seul point que les trois
+ * chemins d'ouverture traversent — connexion, activation d'une invitation,
+ * renouvellement — sans qu'aucun ait à s'en souvenir. Sans ce miroir, l'étape
+ * « compte » de l'ordre de résolution restait inerte côté back-office, et la
+ * langue enregistrée sur le compte n'avait aucun effet après la connexion.
+ *
+ * ## Le **miroir seul**, jamais l'effacement du choix explicite
+ *
+ * `setAccountLocaleMirror` et non `attachAccountLocaleCookies` : celui-ci efface
+ * le cookie du sélecteur pour que la préférence du compte prenne la main, ce qui
+ * est juste **une fois**, au moment où la personne l'enregistre
+ * (`reglages/actions.ts`). Ici, la même fonction serait rejouée à chaque
+ * renouvellement silencieux — toutes les quelques minutes sur un poste de
+ * comptoir ouvert la journée —, et le choix fait au sélecteur du rail
+ * disparaîtrait tout seul, sans que rien ne l'explique. L'ordre de résolution
+ * garde alors sa promesse : ce qu'une personne a demandé gagne sur ce qu'on
+ * devine d'elle.
+ */
 export function attachAdminSession(
   target: WritableCookies,
   tenantSlug: string,
@@ -155,6 +184,8 @@ export function attachAdminSession(
   for (const cookie of adminSessionCookies(opened)) {
     target.set(cookie.name, cookie.value, adminCookieOptions(tenantSlug, cookie.maxAge));
   }
+
+  setAccountLocaleMirror(target, opened.session.user.locale);
 }
 
 /**
@@ -163,11 +194,20 @@ export function attachAdminSession(
  * Le `path` est reconstruit plutôt que deviné : un cookie posé sur
  * `/{slug}/admin` et effacé sur `/` survit, et la personne resterait connectée
  * après avoir cliqué sur « se déconnecter ».
+ *
+ * Le **miroir de la langue du compte** part avec eux (#853) : il décrit le
+ * compte connecté, et le laisser en place ferait servir la langue de quelqu'un
+ * qui n'est plus là — sur un poste de comptoir partagé, celle de la personne du
+ * matin. Le choix du sélecteur, lui, n'est pas touché : il appartient au
+ * navigateur et non à la session, et qui se déconnecte garde la langue qu'il
+ * lisait (`account-locale.ts`).
  */
 export function clearAdminSession(target: WritableCookies, tenantSlug: string): void {
   for (const name of [ADMIN_ACCESS_COOKIE, ADMIN_REFRESH_COOKIE]) {
     target.set(name, '', adminCookieOptions(tenantSlug, 0));
   }
+
+  clearAccountLocaleCookie(target);
 }
 
 /** Le jeton d'accès courant, ou `null` s'il a expiré. */

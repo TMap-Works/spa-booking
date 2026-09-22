@@ -1,5 +1,6 @@
 'use client';
 
+import { useTranslations } from 'next-intl';
 import { useRouter } from 'next/navigation';
 import { useTransition } from 'react';
 
@@ -33,13 +34,14 @@ import { Button } from '@/components/ui/button';
  * posé (web-frontend §3), si bien qu'un double clic n'envoie qu'une reprise.
  */
 export function AdminRetryButton() {
+  const t = useTranslations('admin-auth.retry');
   const router = useRouter();
   const [retrying, startRetry] = useTransition();
 
   return (
     <Button
       loading={retrying}
-      loadingLabel="Nouvelle tentative en cours…"
+      loadingLabel={t('pending')}
       onClick={() => {
         startRetry(() => {
           router.refresh();
@@ -47,7 +49,7 @@ export function AdminRetryButton() {
       }}
       variant="neutral"
     >
-      Réessayer
+      {t('label')}
     </Button>
   );
 }

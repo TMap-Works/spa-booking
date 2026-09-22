@@ -1,4 +1,4 @@
-import type { Tenant } from '@spa/shared';
+import { ERROR_CODES, errorMessage, type Tenant } from '@spa/shared';
 import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -398,14 +398,23 @@ describe('le verdict d’enregistrement — où il se pose', () => {
   it('pose l’échec au même endroit que le succès', async () => {
     // Un refus renvoyé en tête de page aurait exactement le défaut qu'on corrige,
     // en pire : il faut agir dessus. Les deux tons partagent donc l'emplacement.
+    //
+    // Le refus porte un **code** et non plus un message à réafficher (#853) :
+    // l'écran lit `errorMessage(code, locale)` du contrat, qui en porte une
+    // phrase par langue (#845). Le `message` de l'API est écrit pour un journal,
+    // dans une langue qui n'est pas négociée — c'est la règle qu'énonce
+    // `errors/error-codes.ts` et que l'espace client suit depuis #847.
     updateTenantSettingsAction.mockResolvedValue({
       ok: false,
-      message: 'Le code postal saisi est refusé.',
+      code: ERROR_CODES.VALIDATION_ERROR,
+      message: 'Postal code rejected by the API.',
     });
 
     const notice = await submitAndRead('L’enregistrement a échoué');
 
-    expect(notice.textContent).toContain('Le code postal saisi est refusé.');
+    expect(notice.textContent).toContain(errorMessage(ERROR_CODES.VALIDATION_ERROR, 'fr'));
+    // Et surtout pas la phrase de l'API, qui n'est pas traduite.
+    expect(notice.textContent).not.toContain('Postal code rejected by the API.');
     expect(submitButton().previousElementSibling).toBe(notice.parentElement);
   });
 

@@ -1,5 +1,6 @@
 'use client';
 
+import { useTranslations } from 'next-intl';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 
@@ -32,6 +33,7 @@ interface AdminLogoutButtonProps {
 }
 
 export function AdminLogoutButton({ tenantSlug }: AdminLogoutButtonProps) {
+  const t = useTranslations('admin-auth.logout');
   const router = useRouter();
   const [leaving, setLeaving] = useState(false);
 
@@ -64,11 +66,11 @@ export function AdminLogoutButton({ tenantSlug }: AdminLogoutButtonProps) {
     <Button
       variant="quiet"
       loading={leaving}
-      loadingLabel="Déconnexion en cours…"
+      loadingLabel={t('pending')}
       onClick={() => void logout()}
     >
       <Icon className="spa-admin__logout-icon" name="logout" />
-      Se déconnecter
+      {t('label')}
     </Button>
   );
 }

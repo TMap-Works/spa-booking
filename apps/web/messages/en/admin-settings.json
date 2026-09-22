@@ -1,0 +1,71 @@
+{
+  "title": "Establishment settings",
+  "name": "Establishment name",
+  "slug": "Public address",
+  "slugHint": "The address of your public page. Contact support to change it.",
+  "submit": "Save",
+  "submitting": "Saving…",
+  "deniedTitle": "Restricted access",
+  "deniedHint": "Establishment settings are reserved for administrator accounts. Ask the salon administrator for access.",
+  "failedTitle": "Settings unavailable",
+  "address": {
+    "legend": "Postal address",
+    "hint": "Published on the salon page. Leave street, city and country empty to publish nothing.",
+    "line1": "Number and street",
+    "line2": "Additional line",
+    "line2Hint": "Building, floor, box. Optional.",
+    "postalCode": "Postcode",
+    "city": "City",
+    "country": "Country",
+    "countryHint": "Two-letter code: FR, BE, MG…",
+    "countryFormat": "ISO 3166-1 alpha-2 country code expected (“FR”)",
+    "incomplete": "fill in the street, the city and the country, or leave the address entirely empty",
+    "invalid": "The address entered is invalid."
+  },
+  "hours": {
+    "legend": "Opening hours",
+    "hint": "Untick “Open” for a closing day; two ranges let you record a midday break.",
+    "open": "Open",
+    "openOn": "Open on {day}",
+    "closed": "Closed — no slot offered",
+    "opensAt": "Opening {rank}",
+    "closesAt": "Closing {rank}",
+    "fieldOn": "{field} on {day}",
+    "timezone": "Hours written in the salon time zone ({timezone}), stored in UTC.",
+    "format": "time expected in HH:MM format (“24:00” for midnight)",
+    "pair": "fill in both the opening and the closing, or leave both empty",
+    "order": "the closing must come after the opening",
+    "emptyDay": "fill in a range, or untick “Open” to close the day",
+    "invalid": "The hours entered are invalid."
+  },
+  "contact": {
+    "legend": "Contact details",
+    "email": "Contact email",
+    "emailHint": "Leave empty not to publish an address.",
+    "phone": "Phone",
+    "phoneHint": "Leave empty not to publish a number."
+  },
+  "language": {
+    "legend": "Default language",
+    "label": "Language of the establishment",
+    "hint": "The language of the notifications sent to clients who have expressed no preference, and the language shown to visitors whose browser asks for neither French nor English."
+  },
+  "verdict": {
+    "successTitle": "Settings saved",
+    "successBody": "The salon's public page now shows this information.",
+    "failureTitle": "Saving failed"
+  },
+  "member": {
+    "title": "My language",
+    "label": "Back-office language",
+    "hint": "Applies to your account on every device. Without a choice of your own, the language of the establishment is used.",
+    "establishmentOption": "Language of the establishment",
+    "submit": "Save my language",
+    "submitting": "Saving…",
+    "savedTitle": "Language saved",
+    "savedBody": "The back office is displayed in this language, on every device where you sign in.",
+    "failureTitle": "Saving failed",
+    "unavailableTitle": "Preference unavailable",
+    "unavailableBody": "Your account could not be read just now. Refresh the screen to set your language."
+  }
+}

@@ -1,0 +1,71 @@
+{
+  "title": "Réglages de l’établissement",
+  "name": "Nom de l’établissement",
+  "slug": "Adresse publique",
+  "slugHint": "L’adresse de votre page publique. Contactez le support pour en changer.",
+  "submit": "Enregistrer",
+  "submitting": "Enregistrement…",
+  "deniedTitle": "Accès réservé",
+  "deniedHint": "Le paramétrage de l’établissement est réservé aux comptes administrateurs. Demandez l’accès à l’administrateur du salon.",
+  "failedTitle": "Réglages indisponibles",
+  "address": {
+    "legend": "Adresse postale",
+    "hint": "Publiée sur la page du salon. Laissez la rue, la ville et le pays vides pour ne rien publier.",
+    "line1": "Numéro et voie",
+    "line2": "Complément",
+    "line2Hint": "Bâtiment, étage, boîte. Facultatif.",
+    "postalCode": "Code postal",
+    "city": "Ville",
+    "country": "Pays",
+    "countryHint": "Code à deux lettres : FR, BE, MG…",
+    "countryFormat": "code pays ISO 3166-1 alpha-2 attendu (« FR »)",
+    "incomplete": "renseignez la rue, la ville et le pays, ou laissez l’adresse entièrement vide",
+    "invalid": "L’adresse saisie est invalide."
+  },
+  "hours": {
+    "legend": "Horaires d’ouverture",
+    "hint": "Décochez « Ouvert » pour une journée de fermeture ; deux plages permettent d’indiquer une coupure méridienne.",
+    "open": "Ouvert",
+    "openOn": "Ouvert le {day}",
+    "closed": "Fermé — aucun créneau proposé",
+    "opensAt": "Ouverture {rank}",
+    "closesAt": "Fermeture {rank}",
+    "fieldOn": "{field} du {day}",
+    "timezone": "Heures écrites dans le fuseau du salon ({timezone}), stockées en UTC.",
+    "format": "heure attendue au format HH:MM (« 24:00 » pour minuit)",
+    "pair": "renseignez l’ouverture et la fermeture, ou laissez les deux vides",
+    "order": "la fermeture doit être postérieure à l’ouverture",
+    "emptyDay": "renseignez une plage, ou décochez « Ouvert » pour fermer la journée",
+    "invalid": "Les horaires saisis sont invalides."
+  },
+  "contact": {
+    "legend": "Coordonnées",
+    "email": "E-mail de contact",
+    "emailHint": "Laissez vide pour ne pas publier d’adresse.",
+    "phone": "Téléphone",
+    "phoneHint": "Laissez vide pour ne pas publier de numéro."
+  },
+  "language": {
+    "legend": "Langue par défaut",
+    "label": "Langue de l’établissement",
+    "hint": "C’est la langue des notifications envoyées aux clientes sans préférence, et celle des visiteurs dont le navigateur ne demande ni le français ni l’anglais."
+  },
+  "verdict": {
+    "successTitle": "Réglages enregistrés",
+    "successBody": "La page publique du salon affiche désormais ces informations.",
+    "failureTitle": "L’enregistrement a échoué"
+  },
+  "member": {
+    "title": "Ma langue",
+    "label": "Langue du back-office",
+    "hint": "S’applique à votre compte sur tous vos appareils. Sans choix de votre part, c’est la langue de l’établissement qui s’applique.",
+    "establishmentOption": "Langue de l’établissement",
+    "submit": "Enregistrer ma langue",
+    "submitting": "Enregistrement…",
+    "savedTitle": "Langue enregistrée",
+    "savedBody": "Le back-office s’affiche dans cette langue, sur tous les appareils où vous vous connectez.",
+    "failureTitle": "L’enregistrement a échoué",
+    "unavailableTitle": "Préférence indisponible",
+    "unavailableBody": "Votre compte n’a pas pu être lu à l’instant. Rafraîchissez l’écran pour régler votre langue."
+  }
+}

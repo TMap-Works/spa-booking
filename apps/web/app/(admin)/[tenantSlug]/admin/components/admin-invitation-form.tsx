@@ -1,10 +1,17 @@
 'use client';
 
 import { zodResolver } from '@hookform/resolvers/zod';
-import { ERROR_CODES, passwordSchema } from '@spa/shared';
+import {
+  ERROR_CODES,
+  errorMessage,
+  passwordSchema,
+  zodErrorMap,
+  type Locale,
+} from '@spa/shared';
+import { useLocale, useTranslations } from 'next-intl';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
 
@@ -22,24 +29,40 @@ import { adminLandingPath } from './navigation';
  * La confirmation n'existe que côté écran : l'API ne reçoit que le mot de passe
  * et le jeton (`acceptInvitationRequestSchema`).
  *
- * Tout refus de l'API est un 401 muet — jeton expiré, déjà utilisé, compte
+ * Trois codes disent la même chose — jeton expiré, déjà utilisé, compte
  * désactivé —, et il n'y a qu'un conseil à donner : demander un nouveau lien.
+ *
+ * ## Les mots viennent du catalogue `admin-auth` (#853)
+ *
+ * Y compris le refus du schéma : le message de `.refine` est un texte affiché
+ * sous un champ, et le laisser au module l'aurait figé dans une langue. Le
+ * schéma est donc **construit avec sa phrase**, et mémoïsé sur elle — un schéma
+ * neuf à chaque frappe ferait reconstruire le résolveur de `react-hook-form`.
+ *
+ * Tout autre refus vient de `errorMessage(code, locale)` du contrat partagé et
+ * non du `message` de l'API, qui n'est pas traduit (voir `admin-login-form.tsx`).
  */
 
-const invitationFormSchema = z
-  .object({
-    password: passwordSchema,
-    confirmation: z.string(),
-  })
-  .refine((values) => values.password === values.confirmation, {
-    message: 'les deux mots de passe ne correspondent pas',
-    path: ['confirmation'],
-  });
+function invitationFormSchema(mismatch: string) {
+  return z
+    .object({
+      password: passwordSchema,
+      confirmation: z.string(),
+    })
+    .refine((values) => values.password === values.confirmation, {
+      message: mismatch,
+      path: ['confirmation'],
+    });
+}
 
-type InvitationFormValues = z.infer<typeof invitationFormSchema>;
+type InvitationFormValues = z.infer<ReturnType<typeof invitationFormSchema>>;
 
-const EXPIRED_LINK =
-  'Ce lien d’activation n’est plus valable : il a expiré, ou il a déjà servi. Demandez un nouveau lien à la personne qui vous l’a envoyé — ou, si votre compte est déjà activé, connectez-vous.';
+/** Les refus qui disent tous « ce lien ne vaut plus » — voir l'en-tête. */
+const SPENT_LINK_CODES: ReadonlySet<string> = new Set<string>([
+  ERROR_CODES.UNAUTHORIZED,
+  ERROR_CODES.INVALID_INVITATION,
+  ERROR_CODES.INVITATION_ALREADY_ACCEPTED,
+]);
 
 interface AdminInvitationFormProps {
   readonly tenantSlug: string;
@@ -47,15 +70,30 @@ interface AdminInvitationFormProps {
 }
 
 export function AdminInvitationForm({ tenantSlug, token }: AdminInvitationFormProps) {
+  const t = useTranslations('admin-auth.invitation');
+  const locale = useLocale() as Locale;
   const router = useRouter();
   const [failure, setFailure] = useState<string | null>(null);
+  // Les bornes de `passwordSchema` sont dites par `zodErrorMap` — « au moins 12
+  // caractères » dans la langue de l'écran, et non en anglais brut de zod (#845).
+  // `path` et `async` ne sont là que pour le typage de `@hookform/resolvers` :
+  // zod les recalcule (`safeParseAsync`).
+  const resolver = useMemo(
+    () =>
+      zodResolver(invitationFormSchema(t('mismatch')), {
+        errorMap: zodErrorMap(locale),
+        path: [],
+        async: true,
+      }),
+    [locale, t],
+  );
 
   const {
     register,
     handleSubmit,
     formState: { errors, isSubmitting },
   } = useForm<InvitationFormValues>({
-    resolver: zodResolver(invitationFormSchema),
+    resolver,
     defaultValues: { password: '', confirmation: '' },
     mode: 'onTouched',
   });
@@ -72,11 +110,9 @@ export function AdminInvitationForm({ tenantSlug, token }: AdminInvitationFormPr
 
     if (!result.ok) {
       setFailure(
-        result.code === ERROR_CODES.UNAUTHORIZED ||
-          result.code === ERROR_CODES.INVALID_INVITATION ||
-          result.code === ERROR_CODES.INVITATION_ALREADY_ACCEPTED
-          ? EXPIRED_LINK
-          : result.message,
+        SPENT_LINK_CODES.has(result.code)
+          ? t('expiredLink')
+          : errorMessage(result.code, locale),
       );
       return;
     }
@@ -93,31 +129,28 @@ export function AdminInvitationForm({ tenantSlug, token }: AdminInvitationFormPr
       noValidate
     >
       <h1 className="spa-admin__section-title" id="admin-invitation-titre">
-        Activer votre compte
+        {t('title')}
       </h1>
 
       {token === null ? (
-        <Notification tone="warning" title="Lien incomplet">
-          <p>
-            Ce lien ne contient pas de code d’activation. Ouvrez le lien complet reçu par message,
-            sans le raccourcir.
-          </p>
+        <Notification tone="warning" title={t('missingToken.title')}>
+          <p>{t('missingToken.body')}</p>
         </Notification>
       ) : null}
 
       {failure === null ? null : (
-        <Notification tone="danger" title="Activation impossible">
+        <Notification tone="danger" title={t('failureTitle')}>
           <p>{failure}</p>
           <p>
-            <Link href={adminLoginPath(tenantSlug)}>Aller à la connexion</Link>
+            <Link href={adminLoginPath(tenantSlug)}>{t('goToLogin')}</Link>
           </p>
         </Notification>
       )}
 
       <Field
         id="invitation-password"
-        label="Mot de passe"
-        hint="Douze caractères au minimum."
+        label={t('password')}
+        hint={t('passwordHint')}
         type="password"
         autoComplete="new-password"
         required
@@ -127,7 +160,7 @@ export function AdminInvitationForm({ tenantSlug, token }: AdminInvitationFormPr
       />
       <Field
         id="invitation-confirmation"
-        label="Confirmez le mot de passe"
+        label={t('confirmation')}
         type="password"
         autoComplete="new-password"
         required
@@ -141,9 +174,9 @@ export function AdminInvitationForm({ tenantSlug, token }: AdminInvitationFormPr
         block
         disabled={token === null}
         loading={isSubmitting}
-        loadingLabel="Activation en cours…"
+        loadingLabel={t('submitting')}
       >
-        Activer mon compte
+        {t('submit')}
       </Button>
     </form>
   );
