@@ -196,28 +196,34 @@ export async function reserverParLeTunnel(page: Page): Promise<Reservation> {
     await creneau.click();
   });
 
-  await test.step('4. Coordonnées — renseigner la cliente', async () => {
-    // `getByRole` et non `getByLabel`, et ce n'est pas un choix de style. Le
-    // marqueur d'obligation du design system est un `<span aria-hidden>*</span>`
-    // **à l'intérieur** du `<label>` (`components/ui/field.tsx`). Le texte du
-    // label vaut donc « Nom* » : `getByLabel('Nom', { exact: true })` ne désigne
-    // rien du tout, et sans `exact` « Nom » désignerait aussi « Prénom* ». Le
-    // nom accessible, lui, ignore l'`aria-hidden` — il vaut « Nom », et il est
-    // exact. C'est le seul des deux qui dise ce que la cliente entend.
-    const champ = (nom: string): Locator => page.getByRole('textbox', { name: nom, exact: true });
+  await test.step('4. Identification — se connecter pour réserver', async () => {
+    // Réserver exige un compte depuis le 2026-09-22 : sans session, le tunnel
+    // s'arrête ici, le créneau rappelé, et mène à la connexion du salon. Le
+    // lien est cherché dans le contenu : l'en-tête du tunnel n'en porte pas,
+    // mais c'est ce qui le garantit.
+    await expect(page.getByRole('heading', { level: 1, name: 'Identifiez-vous' })).toBeVisible();
+    await page.getByRole('main').getByRole('link', { name: 'Se connecter' }).click();
 
-    await champ('Prénom').fill(CLIENTE.prenom);
-    await champ('Nom').fill(CLIENTE.nom);
-    await champ('Adresse e-mail').fill(CLIENTE.email);
-    await champ('Téléphone').fill(CLIENTE.telephone);
-    // Le consentement de l'étape 4 (#734, CDC §5.1) : la case est décochée
-    // d'origine et retient la soumission tant qu'elle l'est. C'est le seul
-    // `checkbox` de l'écran.
+    await page.getByLabel('Adresse e-mail').fill(CLIENTE.email);
+    await page.getByLabel('Mot de passe').fill(MOT_DE_PASSE);
+    await page.getByRole('button', { name: 'Se connecter' }).click();
+
+    // Le retour au tunnel (#1087) : le brouillon de l'onglet est repris, et
+    // l'étape s'ouvre sur l'encart du compte au lieu de ses champs (#1050).
+    await page.waitForURL(`**${chemins.reservation()}**`);
+    await expect(page.getByText('Réservé au nom de')).toBeVisible({ timeout: 20_000 });
+  });
+
+  await test.step('5. Coordonnées — donner son accord', async () => {
+    // Connectée, la cliente n'a rien à retaper : le compte a prérempli nom et
+    // adresse. Reste le consentement de l'étape (#734, CDC §5.1) — la case est
+    // décochée d'origine et retient la soumission tant qu'elle l'est. C'est le
+    // seul `checkbox` de l'écran.
     await page.getByRole('checkbox').check();
     await page.getByRole('button', { name: 'Vérifier ma réservation' }).click();
   });
 
-  await test.step('5. Récapitulatif — confirmer la réservation', async () => {
+  await test.step('6. Récapitulatif — confirmer la réservation', async () => {
     const recapitulatif = page.getByRole('region', {
       name: 'Récapitulatif de votre réservation',
     });
@@ -225,7 +231,7 @@ export async function reserverParLeTunnel(page: Page): Promise<Reservation> {
     await page.getByRole('button', { name: 'Confirmer la réservation' }).click();
   });
 
-  return test.step('6. Confirmation — relever la référence', async () => {
+  return test.step('7. Confirmation — relever la référence', async () => {
     const confirmation = page.getByRole('region', {
       name: 'Confirmation de votre réservation',
     });

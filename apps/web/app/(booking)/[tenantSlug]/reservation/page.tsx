@@ -81,7 +81,8 @@ export default async function BookingPage({ params, searchParams }: PageProps) {
         // mise en cache qu'elle n'avait pas.
         presence={presence}
         /*
-         * « Déjà cliente ? Se connecter » ramène ici (#1087).
+         * « Se connecter », sur l'écran qui barre la route à qui n'a pas de
+         * compte, ramène ici (#1087, 2026-09-22).
          *
          * ## Pourquoi le retour ne porte aucune clé de progression
          *
@@ -106,6 +107,11 @@ export default async function BookingPage({ params, searchParams }: PageProps) {
          * à l'arrivée, seul endroit qui compte (`compte/connexion/return-path.ts`).
          */
         loginHref={`${accountPath(tenantSlug)}/connexion?retour=${encodeURIComponent(reservationPath(tenantSlug))}`}
+        // Le même retour, vers l'inscription : réserver exige un compte depuis
+        // le 2026-09-22, et la visiteuse qui n'en a pas doit pouvoir l'ouvrir
+        // sans perdre sa réservation en cours. `register-form.tsx` rejuge le
+        // paramètre de son côté, comme la connexion.
+        registerHref={`${accountPath(tenantSlug)}/inscription?retour=${encodeURIComponent(reservationPath(tenantSlug))}`}
         // L'étape et les choix que l'adresse porte, résolus contre le catalogue
         // qu'on vient de charger (#1055). C'est ce qui fait que la progression
         // et le squelette sont justes dès le premier rendu, au lieu d'annoncer

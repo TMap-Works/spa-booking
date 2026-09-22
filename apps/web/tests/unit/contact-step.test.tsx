@@ -49,7 +49,6 @@ function renderContactStep({
       // rien à rappeler est un état que l'étape sait rendre.
       summary={null}
       presence={presence}
-      loginHref="/salon-zen/compte/connexion"
       onSave={onSave}
       onBack={onBack}
       onSubmit={onSubmit}
@@ -291,22 +290,15 @@ describe('la cliente connectée ne retape pas ses coordonnées (#1050, #1086)', 
     );
   });
 
-  it('ne change rien pour la réservation sans compte', () => {
+  it('ouvre les cinq champs quand aucun compte n’est résumé', () => {
     renderContactStep();
 
-    // Deuxième critère du ticket : les cinq champs, et aucun encart d'identité.
+    // Deuxième critère de #1050 : les cinq champs, et aucun encart d'identité.
     expect(screen.getByLabelText<HTMLInputElement>(/Prénom/).value).toBe('');
     expect(screen.queryByRole('button', { name: /Modifier/ })).toBeNull();
-    // À la place, l'entrée de celle qui a déjà un compte (BM-COMPTE-01) — en
-    // tête d'étape, avant le premier champ qu'elle évite de remplir.
-    expect(
-      screen.getByRole('link', { name: /Se connecter/ }).getAttribute('href'),
-    ).toBe('/salon-zen/compte/connexion');
-  });
-
-  it('ne propose pas de se connecter à qui l’est déjà', () => {
-    renderContactStep({ presence: alice });
-
+    // Et plus de « Déjà cliente ? Se connecter » en tête d'étape : réserver
+    // exige un compte depuis le 2026-09-22, et c'est l'écran qui précède
+    // celui-ci (`AccountGateStep`) qui mène à la connexion.
     expect(screen.queryByRole('link', { name: /Se connecter/ })).toBeNull();
   });
 });

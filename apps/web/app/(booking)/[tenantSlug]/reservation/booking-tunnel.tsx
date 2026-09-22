@@ -22,6 +22,7 @@ import {
 } from '@/lib/booking/draft';
 import { formatDateTimeInTimeZone, timeZoneMention } from '@/lib/format';
 
+import { ACCOUNT_GATE_TITLE, AccountGateStep } from './steps/account-gate-step';
 import { ConfirmationStep } from './steps/confirmation-step';
 import { ContactStep } from './steps/contact-step';
 import { ServiceStep } from './steps/service-step';
@@ -68,17 +69,22 @@ interface BookingTunnelProps {
    * `httpOnly`, et c'est très bien ainsi. Elle traverse donc l'arbre comme une
    * propriété, jamais par l'URL ni par `sessionStorage`.
    *
-   * Le tunnel n'en fait rien lui-même : seule l'étape « Coordonnées » s'en sert,
-   * et il n'y a pas d'état à en tirer. Elle descend telle quelle.
+   * Depuis le 2026-09-22, **réserver exige un compte** : sans elle, l'étape
+   * « Coordonnées » cède la place à `AccountGateStep`, et le récapitulatif
+   * n'est pas atteignable. Elle ne décide pourtant de rien côté serveur — le
+   * cookie sert à afficher —, et c'est l'action de réservation qui a le dernier
+   * mot (`actions.ts`).
    */
   readonly presence: AccountPresence | null;
   /**
-   * L'écran de connexion du salon — « Déjà cliente ? » de l'étape coordonnées.
+   * L'écran de connexion du salon, avec le tunnel en retour (#1087).
    *
    * Composé par la page comme `exitHref`, et pour la même raison : c'est elle
    * qui tient l'arborescence des routes (`salon-data.ts`).
    */
   readonly loginHref: string;
+  /** L'écran d'inscription du salon, avec le tunnel en retour — même raison. */
+  readonly registerHref: string;
   /**
    * L'état de départ, lu **dans l'adresse par le serveur** (#1055).
    *
@@ -202,6 +208,7 @@ export function BookingTunnel({
   exitHref,
   presence,
   loginHref,
+  registerHref,
   initialDraft,
 }: BookingTunnelProps) {
   // L'étape et les choix que l'adresse porte, dès le premier rendu — celui du
@@ -257,6 +264,17 @@ export function BookingTunnel({
   const backJumpRef = useRef(false);
   /** Le titre de l'étape, cible de ce rattrapage. */
   const titleRef = useRef<HTMLHeadingElement | null>(null);
+  /**
+   * L'action de réservation a refusé faute de compte — voir `onSignInRequired`.
+   *
+   * La présence reçue en propriété a été lue au rendu serveur de la page, et
+   * elle peut avoir vieilli : une déconnexion dans un autre onglet efface le
+   * cookie sans que cet écran-ci l'apprenne. Le refus de l'action est alors le
+   * seul signal, et ce drapeau le fait prévaloir sur la propriété.
+   */
+  const [signedOut, setSignedOut] = useState(false);
+  /** La cliente connectée, telle que cet écran doit la tenir pour vraie. */
+  const account = signedOut ? null : presence;
 
   // Relecture du brouillon. Depuis #1055, l'étape et les choix de l'adresse sont
   // déjà là — le serveur les a résolus (`initial-draft.ts`) —, mais
@@ -303,13 +321,22 @@ export function BookingTunnel({
    * catalogue entre deux visites laisse un `serviceId` que plus rien ne résout,
    * et le récapitulatif n'aurait alors ni nom ni prix à montrer. On revient à la
    * première étape qui a du sens, plutôt que d'afficher un écran troué.
+   *
+   * Le récapitulatif est aussi refusé à qui n'est pas connectée (2026-09-22) :
+   * un brouillon d'avant la règle, ou un lien `?etape=recapitulatif`, porte
+   * parfois des coordonnées complètes, et `reachableStep` l'ouvrirait. On
+   * revient alors à « Coordonnées », c'est-à-dire à l'écran de connexion.
    */
   const step: BookingStep =
     draft.appointment !== null
       ? 'confirmation'
       : selectedService === null
         ? 'prestation'
-        : draft.step;
+        : account === null && draft.step === 'recapitulatif'
+          ? 'coordonnees'
+          : draft.step;
+  /** L'étape « Coordonnées » barre la route : il faut un compte pour réserver. */
+  const gated = account === null && step === 'coordonnees';
 
   /**
    * L'adresse suit l'étape affichée (#733).
@@ -619,6 +646,28 @@ export function BookingTunnel({
     setDraft((current) => ({ ...current, startsAt: null, step: 'creneau' }));
   }, [draft.startsAt, tenant.timezone]);
 
+  /**
+   * L'action de réservation a refusé faute de compte (2026-09-22).
+   *
+   * Le récapitulatif ne s'ouvre qu'à une cliente connectée, et ce refus ne
+   * devrait donc jamais arriver — sauf quand le cookie de présence a disparu
+   * depuis le rendu de la page : une déconnexion dans un autre onglet, une
+   * session arrivée à échéance. La cliente est ramenée à l'écran de connexion,
+   * **sans rien perdre** : prestation, créneau et coordonnées restent au
+   * brouillon, exactement comme après un créneau perdu (#46).
+   */
+  const onSignInRequired = useCallback(() => {
+    setSignedOut(true);
+    setNotice({
+      tone: 'warning',
+      title: 'Votre session a pris fin',
+      body:
+        'Connectez-vous de nouveau pour confirmer ce rendez-vous : votre prestation ' +
+        'et votre horaire sont conservés.',
+    });
+    setDraft((current) => ({ ...current, step: 'coordonnees' }));
+  }, []);
+
   const onCancelled = useCallback((appointment: BookedAppointment) => {
     setNotice(null);
     // Même raison qu'à la réservation : l'annulation vient d'être confirmée par
@@ -773,6 +822,7 @@ export function BookingTunnel({
               // reparaît dès le calendrier, où elle qualifie ce qu'on lit.
               timeZoneMention={step === 'prestation' ? null : zoneMention}
               titleRef={titleRef}
+              title={gated ? ACCOUNT_GATE_TITLE : undefined}
             />
 
             {notice === null ? null : (
@@ -823,6 +873,19 @@ export function BookingTunnel({
                 onStaffChange={chooseStaff}
                 onChoose={chooseSlot}
               />
+            ) : gated ? (
+              // Réserver exige un compte : la visiteuse qui n'en a pas ouvert
+              // s'arrête ici, avec ses choix rappelés, et repart vers la
+              // connexion ou l'inscription du salon (2026-09-22).
+              <AccountGateStep
+                tenantName={tenant.name}
+                summary={summary}
+                loginHref={loginHref}
+                registerHref={registerHref}
+                onBack={() => {
+                  goTo('creneau');
+                }}
+              />
             ) : step === 'coordonnees' ? (
               <ContactStep
                 contact={draft.contact}
@@ -842,8 +905,7 @@ export function BookingTunnel({
                 countryCode={tenant.address?.country ?? null}
                 summary={summary}
                 // La cliente connectée, telle que le serveur l'a lue (#1050).
-                presence={presence}
-                loginHref={loginHref}
+                presence={account}
                 onSave={saveContact}
                 onBack={() => {
                   goTo('creneau');
@@ -878,6 +940,7 @@ export function BookingTunnel({
                 }}
                 onBooked={onBooked}
                 onSlotLost={onSlotLost}
+                onSignInRequired={onSignInRequired}
               />
             ) : step === 'confirmation' && draft.appointment !== null ? (
               <ConfirmationStep

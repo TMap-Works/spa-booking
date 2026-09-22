@@ -2,7 +2,6 @@
 
 import { zodResolver } from '@hookform/resolvers/zod';
 import { e164PhoneSchemaFor, guestContactSchemaFor, longTextSchema } from '@spa/shared';
-import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Controller, useForm } from 'react-hook-form';
 import { z } from 'zod';
@@ -157,14 +156,6 @@ interface ContactStepProps {
    */
   readonly presence: AccountPresence | null;
   /**
-   * L'écran de connexion de ce salon — où mène « Déjà cliente ? » (#1050).
-   *
-   * Composé par la page, comme `exitHref` du tunnel : les composants ne
-   * connaissent pas l'arborescence des routes, et le groupe `(booking)` tient
-   * la sienne dans `salon-data.ts`.
-   */
-  readonly loginHref: string;
-  /**
    * Verse la saisie en cours au brouillon **sans changer d'étape**.
    *
    * Le formulaire est non contrôlé (react-hook-form) : sans ce report, ce que la
@@ -196,7 +187,6 @@ export function ContactStep({
   countryCode,
   summary,
   presence,
-  loginHref,
   onSave,
   onBack,
   onSubmit,
@@ -447,23 +437,12 @@ export function ContactStep({
     >
       {/* Plus de titre d'étape ici : le `<h1>` du tunnel pose la question —
           « Comment vous joindre ? » —, et « Vos coordonnées » juste au-dessous
-          la redisait en d'autres mots (#1047, BM-TUNNEL-11). */}
+          la redisait en d'autres mots (#1047, BM-TUNNEL-11).
 
-      {/* La porte d'entrée de la cliente qui a déjà un compte (BM-COMPTE-01,
-          #1050). Elle est **en tête d'étape**, avant le premier champ : plus
-          bas, elle serait lue après avoir retapé ce qu'elle évite.
-
-          Ce n'est pas une sortie de tunnel au sens de la §3 de la skill
-          web-frontend : le brouillon vit dans `sessionStorage`, qui suit
-          l'onglet et non la page, et la réservation en cours est donc retrouvée
-          telle quelle au retour. Le lien le dit, parce qu'une cliente qui a
-          rempli la moitié d'un formulaire n'a aucune raison de le croire. */}
-      {presence === null ? (
-        <p className="spa-booking__signin">
-          Déjà cliente ? <Link href={loginHref}>Se connecter</Link> — votre réservation en
-          cours est conservée.
-        </p>
-      ) : null}
+          Plus de « Déjà cliente ? Se connecter » non plus (#1050) : depuis que
+          réserver exige un compte (2026-09-22), le tunnel ne rend cette étape
+          qu'à une cliente connectée, et arrête les autres sur
+          `AccountGateStep`. */}
 
       {/* Les coordonnées que le compte connaît, résumées plutôt que redemandées.
 
