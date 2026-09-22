@@ -5,6 +5,7 @@ import type { ReactNode } from 'react';
 import { AccountEntry } from '@/components/account/account-entry';
 import { Avatar } from '@/components/ui/avatar';
 import { Icon } from '@/components/ui/icon';
+import { ThemeToggle } from '@/components/ui/theme-toggle';
 import type { AccountName, AccountPresence } from '@/lib/account-presence';
 import { PLATFORM_HOME_PATH, PLATFORM_NAME } from '@/lib/platform';
 
@@ -89,12 +90,19 @@ function nameOnly(presence: AccountPresence | null): AccountName | null {
  *   plus qu'une mention. L'espace client n'y figure pas : l'en-tête le porte,
  *   et un lien « Mon compte » ramènerait la connexion à elle-même (#749).
  *
- * Le tunnel de réservation n'est pas servi ici : son en-tête se réduit à
- * revenir et sortir (BM-TUNNEL-10), c'est l'objet de #1047.
+ * - **Le sélecteur de thème** (#1114) est celui du back-office, sur le même
+ *   cookie : un choix fait d'un côté vaut de l'autre. Il loge dans l'en-tête
+ *   au-delà de 48 rem, et dans le pied en dessous — à 360 px, ses trois
+ *   pastilles réduiraient le nom du salon à quelques lettres.
  *
- * Server Component : seule l'entrée du compte, qui déplie un menu, est un îlot
- * client — et ce qui franchit cette frontière est réduit au nom (`nameOnly`,
- * #1088), parce que tout ce qui la franchit est écrit dans le HTML servi.
+ * Le tunnel de réservation n'est pas servi ici : son en-tête se réduit à
+ * revenir et sortir (BM-TUNNEL-10), c'est l'objet de #1047. Il n'a donc pas de
+ * sélecteur, mais applique le choix fait ailleurs.
+ *
+ * Server Component : l'entrée du compte, qui déplie un menu, et le sélecteur de
+ * thème sont les seuls îlots client — et ce qui franchit cette frontière est
+ * réduit au nom (`nameOnly`, #1088), parce que tout ce qui la franchit est écrit
+ * dans le HTML servi. Le sélecteur, lui, ne reçoit rien.
  */
 export function SalonShell({
   tenantSlug,
@@ -121,6 +129,7 @@ export function SalonShell({
           </Link>
 
           <div className="spa-shell__actions">
+            <ThemeToggle className="spa-shell__theme" />
             <AccountEntry tenantSlug={tenantSlug} signedIn={signedIn} presence={nameOnly(presence)}>
               {accountMenuExtra}
             </AccountEntry>
@@ -215,6 +224,9 @@ function SalonFooter({ tenantSlug, tenant, bookingHref }: SalonFooterProps) {
             </li>
           </ul>
         </nav>
+
+        {/* Au pouce seulement : au-delà de 48 rem, l'en-tête le porte. */}
+        <ThemeToggle className="spa-shell__footer-theme" />
       </div>
 
       <p className="spa-shell__legal">

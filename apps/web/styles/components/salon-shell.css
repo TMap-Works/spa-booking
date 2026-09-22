@@ -116,6 +116,33 @@
   }
 }
 
+/*
+ * Le sélecteur de thème (#1114) suit le même seuil que « Prendre rendez-vous » :
+ * dans l'en-tête au-delà de 48 rem, dans le pied en dessous. À 360 px, ses trois
+ * pastilles et l'entrée du compte ne laissaient au nom du salon que quelques
+ * lettres.
+ *
+ * Sélecteurs composés : `theme-toggle.css` est chargé après cette feuille, et
+ * son `display: inline-flex` l'emporterait sur une classe seule.
+ */
+.spa-theme-toggle.spa-shell__theme {
+  display: none;
+}
+
+.spa-theme-toggle.spa-shell__footer-theme {
+  justify-self: start;
+}
+
+@media (min-width: 48rem) {
+  .spa-theme-toggle.spa-shell__theme {
+    display: inline-flex;
+  }
+
+  .spa-theme-toggle.spa-shell__footer-theme {
+    display: none;
+  }
+}
+
 /* --- Entrée du compte -------------------------------------------------------- */
 
 .spa-account-entry,

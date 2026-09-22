@@ -31,8 +31,22 @@ export function ThemeToggle({ className }: ThemeToggleProps) {
 
   // Le serveur ne connaît pas le choix : l'état se recale sur `<html>`, déjà
   // posé par le script d'amorçage, dès l'hydratation.
+  //
+  // Puis il le **suit** : le parcours client monte deux sélecteurs par page —
+  // l'en-tête au-delà de 48 rem, le pied de page en dessous (#1114) —, et un
+  // choix fait dans l'un doit se voir dans l'autre quand la fenêtre franchit le
+  // seuil. `<html>` est la seule source : chacun s'y abonne.
   useEffect(() => {
-    setChoice(readThemeChoice());
+    const root = document.documentElement;
+    const sync = (): void => {
+      setChoice(readThemeChoice());
+    };
+    sync();
+    const observer = new MutationObserver(sync);
+    observer.observe(root, { attributes: true, attributeFilter: ['data-theme'] });
+    return () => {
+      observer.disconnect();
+    };
   }, []);
 
   function choose(next: ThemeChoice): void {
