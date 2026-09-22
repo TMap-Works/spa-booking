@@ -51,6 +51,100 @@ son `dist` : `npm run verify` exécute `typecheck` avant `build`, et
 `npm run build --workspaces` traite `apps/*` avant `packages/*` — dans les deux
 cas, `packages/shared/dist` n'existerait pas encore.
 
+## Internationalisation FR/EN
+
+Le front est servi en **anglais par défaut** et en français par option, sans
+préfixe de langue dans l'URL. La décision et ses raisons :
+[ADR 0017](../../docs/adr/0017-internationalisation-du-front.md).
+
+| Où | Quoi |
+|---|---|
+| `i18n/resolve.ts` | la règle de résolution, en fonctions pures : choix explicite → compte → `Accept-Language` → établissement → `en` |
+| `i18n/server.ts` | la lecture des signaux sur la requête (cookies, en-têtes, `Tenant.defaultLocale`) |
+| `i18n/request.ts` | ce que `next-intl` lit à chaque requête — désigné par `createNextIntlPlugin` dans `next.config.mjs` |
+| `i18n/actions.ts` | l'action serveur du sélecteur de langue ; le cookie vit un an |
+| `i18n/messages.ts` | la découverte des catalogues sur le disque, par convention |
+| `i18n/catalog.d.ts` | l'augmentation de `next-intl` : la langue et le catalogue assemblé |
+| `messages/<langue>/<namespace>.json` | les catalogues — **un fichier par namespace et par langue** |
+| `messages/<namespace>.d.ts` | le typage des clés de ce namespace |
+| `tests/types/catalog-typing.test-d.ts` | la garde qui fait échouer `tsc` si le typage des clés redevient inerte |
+| `middleware.ts` | recopie le slug du salon visité dans un en-tête, pour l'étape « établissement » |
+
+### Ajouter une clé à un namespace existant
+
+1. l'écrire dans `messages/en/<namespace>.json` **et** dans
+   `messages/fr/<namespace>.json` — le test de parité échoue si l'une manque, et
+   avec elle tout paramètre `{nom}` que l'autre porte ;
+2. la lire dans le composant :
+
+   ```tsx
+   const t = useTranslations('<namespace>');
+   return <p>{t('maCle')}</p>;
+   ```
+
+   `useTranslations` dans un Server Component **non asynchrone** et dans un
+   Client Component ; `getTranslations` de `next-intl/server` dans un composant
+   asynchrone, une action serveur ou un `generateMetadata`.
+
+Une clé mal orthographiée fait échouer `tsc` : les déclarations de
+`messages/<namespace>.d.ts` lisent la version **anglaise**, seule langue dont
+l'existence soit garantie.
+
+### Ajouter un namespace
+
+Deux fichiers JSON et une déclaration de type, **et rien d'autre** — aucun
+fichier central n'est à toucher, c'est ce qui permet à deux tickets d'écrans de
+ne jamais se croiser :
+
+```
+messages/en/booking.json          { "title": "Book an appointment" }
+messages/fr/booking.json          { "title": "Prendre rendez-vous" }
+messages/booking.d.ts             (recopier messages/shell.d.ts, 4 lignes)
+```
+
+Le nom du fichier **est** le namespace : `useTranslations('booking')` fonctionne
+aussitôt. Ni liste d'imports, ni `eslint.config.mjs`, ni `i18n/messages.ts` à
+modifier.
+
+> **Un `X.d.ts` ne cohabite pas avec un `X.ts`.** TypeScript y voit la
+> déclaration générée du second et **écarte le premier du programme, sans un
+> mot** — le typage des clés redevient alors `Record<string, any>` et n'importe
+> quelle clé passe. C'est pour cela que l'augmentation s'appelle
+> `i18n/catalog.d.ts` et non `i18n/messages.d.ts`. Les
+> `messages/<namespace>.d.ts` n'ont pas ce souci, leurs voisins étant des JSON —
+> mais n'ajoutez jamais un `messages/<namespace>.ts` à côté de l'un d'eux.
+> `tests/types/catalog-typing.test-d.ts` monte la garde.
+
+### La règle de lint anti-texte-en-dur
+
+`spa-i18n/no-literal-jsx-text` interdit le texte affichable écrit dans le JSX.
+Elle est **éteinte par défaut** et s'allume répertoire par répertoire, par un
+fichier marqueur `.i18n-lint` déposé sur place :
+
+- **vide**, il couvre tout le sous-arbre ;
+- **rempli**, chaque ligne est un motif relatif à ce répertoire — la forme à
+  employer quand un répertoire mêle des écrans traduits et des écrans qui ne le
+  sont pas encore.
+
+Elle laisse passer la ponctuation seule, les chiffres et tout ce qui vient d'une
+variable ; elle signale aussi `alt`, `title`, `placeholder` et les `aria-*` que
+l'on lit ou entend. Voir `eslint-rules/i18n-markers.mjs`.
+
+### Dates, heures et montants
+
+Jamais `toLocaleString` en direct : tout passe par `lib/format.ts`, qui reçoit
+`{ locale, countryCode }`. La **région** vient du pays de l'établissement
+(`Tenant.countryCode`), avec un repli figé quand il est vide — `en` → `en-US`,
+`fr` → `fr-FR`. Le **fuseau** reste celui de l'établissement, quelle que soit la
+langue.
+
+### Les tests
+
+Les suites Vitest sont amorcées en **français** (`tests/support/next-intl.ts`),
+la langue dans laquelle elles ont été écrites ; les projets Playwright fixent
+`locale: 'fr-FR'`. Un test qui veut éprouver l'anglais rend explicitement sous
+`NextIntlClientProvider`.
+
 ## Design system
 
 Jetons de couleur, typographie, espacement et rayons, et six composants de base
