@@ -90,7 +90,6 @@ function renderContactStep() {
       // due à qui réserve, connectée ou non, et c'est la visiteuse sans compte
       // qui porte les assertions antérieures.
       presence={null}
-      loginHref="/salon-zen/compte/connexion"
       onSave={onSave}
       onBack={vi.fn()}
       onSubmit={onSubmit}

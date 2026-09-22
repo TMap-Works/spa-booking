@@ -38,6 +38,13 @@ interface SummaryStepProps {
    * (#46 — voir `onSlotLost` dans `booking-tunnel.tsx`).
    */
   readonly onSlotLost: () => void;
+  /**
+   * L'action a refusé faute de compte (2026-09-22) — le cookie de présence a
+   * disparu depuis le rendu de la page. Sans argument, pour la même raison que
+   * `onSlotLost` : c'est le tunnel qui ramène à l'écran de connexion et qui
+   * écrit ce qu'il faut en dire.
+   */
+  readonly onSignInRequired: () => void;
 }
 
 /** Ce qui s'affiche au-dessus du récapitulatif quand la réservation est refusée. */
@@ -129,6 +136,7 @@ export function SummaryStep({
   onEditService,
   onBooked,
   onSlotLost,
+  onSignInRequired,
 }: SummaryStepProps) {
   const [submitting, setSubmitting] = useState(false);
   const [refusal, setRefusal] = useState<Refusal | null>(null);
@@ -182,6 +190,14 @@ export function SummaryStep({
     // créneau qu'elle ne pourra jamais obtenir.
     if (result.code === ERROR_CODES.SLOT_NO_LONGER_AVAILABLE) {
       onSlotLost();
+
+      return;
+    }
+
+    // Réserver exige un compte, et l'action l'a constaté absent : la correction
+    // est la connexion, que seul le tunnel sait rouvrir.
+    if (result.code === ERROR_CODES.UNAUTHORIZED) {
+      onSignInRequired();
 
       return;
     }

@@ -23,9 +23,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { BookingTunnel } from '@/app/(booking)/[tenantSlug]/reservation/booking-tunnel';
 import type { AccountPresence } from '@/lib/account-presence';
-import { emptyBookingDraft } from '@/lib/booking/draft';
+import { emptyBookingDraft, readBookingDraft, writeBookingDraft } from '@/lib/booking/draft';
 
-import { service, tenant } from './fixtures';
+import { contact, presence as connectee, service, tenant } from './fixtures';
 
 const loadAvailabilityAction = vi.fn();
 const bookAppointmentAction = vi.fn();
@@ -87,6 +87,17 @@ function rendezVous(): BookedAppointment {
 }
 
 const ADRESSE = `/${tenant.slug}/reservation`;
+const CONNEXION = `/${tenant.slug}/compte/connexion?retour=${encodeURIComponent(ADRESSE)}`;
+const INSCRIPTION = `/${tenant.slug}/compte/inscription?retour=${encodeURIComponent(ADRESSE)}`;
+
+/**
+ * Ce que la cliente laisse au salon à l'étape « Coordonnées ».
+ *
+ * C'est la saisie que les scénarios suivent d'un écran à l'autre : connectée,
+ * la cliente n'a plus à taper ses nom et adresse — le compte les connaît —, et
+ * ce mot est le seul champ de l'étape qu'elle remplit à coup sûr.
+ */
+const MOT = 'Arrivée à 9 h 10';
 
 beforeEach(() => {
   // Le brouillon vit dans `sessionStorage` : sans ce nettoyage, un test
@@ -143,20 +154,22 @@ afterEach(() => {
 });
 
 /**
- * `presence` vaut `null` par défaut — la visiteuse qui n'a pas de compte
- * ouvert (#1050). C'est l'état sous lequel toutes les assertions antérieures ont
- * été écrites : l'étape « Coordonnées » y montre ses cinq champs, et la
- * réservation sans compte reste le chemin par défaut du CDC §1.4. Les cas qui
- * parlent d'une cliente connectée la nomment.
+ * `presence` vaut la **cliente connectée** par défaut.
+ *
+ * Réserver exige un compte depuis le 2026-09-22 : sans présence, le tunnel
+ * s'arrête à l'écran de connexion et n'atteint jamais le récapitulatif. C'est
+ * donc l'état sous lequel le parcours se déroule, et les cas qui parlent d'une
+ * visiteuse sans compte passent `null` explicitement.
  */
-function renderTunnel(presence: AccountPresence | null = null) {
+function renderTunnel(presence: AccountPresence | null = connectee) {
   render(
     <BookingTunnel
       tenant={tenant}
       services={[service]}
       exitHref={`/${tenant.slug}`}
       presence={presence}
-      loginHref={`/${tenant.slug}/compte/connexion`}
+      loginHref={CONNEXION}
+      registerHref={INSCRIPTION}
       // L'état de départ que le serveur lit dans l'adresse (#1055). Ces cas-ci
       // arrivent tous par la première étape : c'est le brouillon vierge, et
       // l'effet d'hydratation prend ensuite le relais sur `sessionStorage`.
@@ -193,9 +206,9 @@ async function allerJusquAuRecapitulatif(
 
   await user.click(await screen.findByRole('button', { name: creneau }));
 
-  await user.type(screen.getByLabelText(/Prénom/), 'Camille');
-  await user.type(screen.getByLabelText(/^Nom/), 'Rakoto');
-  await user.type(screen.getByLabelText(/Adresse e-mail/), 'camille@example.test');
+  // Connectée, la cliente ne retape ni son nom ni son adresse : l'encart
+  // « Réservé au nom de … » les résume (#1050). Elle laisse un mot au salon.
+  await user.type(screen.getByLabelText(/Un mot pour le salon/), MOT);
   // Le consentement est bloquant depuis #734 : sans lui, l'étape ne rend pas la
   // main au récapitulatif. Ce qu'il refuse est éprouvé par
   // `booking-consent.test.tsx` ; ici il n'est qu'un préalable du parcours.
@@ -268,12 +281,8 @@ describe('un créneau pris pendant la saisie', () => {
     // Un seul geste sépare la cliente de sa réservation : reprendre un horaire.
     await user.click(await screen.findByRole('button', { name: '14 h 00' }));
 
-    expect(screen.getByLabelText(/Prénom/)).toHaveProperty('value', 'Camille');
-    expect(screen.getByLabelText(/^Nom/)).toHaveProperty('value', 'Rakoto');
-    expect(screen.getByLabelText(/Adresse e-mail/)).toHaveProperty(
-      'value',
-      'camille@example.test',
-    );
+    expect(screen.getByText(`${contact.firstName} ${contact.lastName}`)).toBeDefined();
+    expect(screen.getByLabelText(/Un mot pour le salon/)).toHaveProperty('value', MOT);
 
     bookAppointmentAction.mockResolvedValue({ ok: true, data: rendezVous() });
 
@@ -289,6 +298,7 @@ describe('un créneau pris pendant la saisie', () => {
       serviceId: service.id,
       startsAt: APRES_MIDI,
       client: { firstName: 'Camille', lastName: 'Rakoto', email: 'camille@example.test' },
+      clientNote: MOT,
     });
   });
 
@@ -372,7 +382,9 @@ describe('la progression est portée par l’adresse (#733)', () => {
   });
 
   it('ne met pas les coordonnées dans une adresse qu’on partage', async () => {
-    const user = renderTunnel();
+    // Un compte dont le cookie ne porte pas encore d'adresse (#1086) : le
+    // champ est ouvert, et c'est la cliente qui la tape.
+    const user = renderTunnel({ ...connectee, email: '' });
 
     await choisirLaPrestation(user);
     await user.click(screen.getByRole('button', { name: 'Choisir un créneau' }));
@@ -389,7 +401,7 @@ describe('la progression est portée par l’adresse (#733)', () => {
     await choisirLaPrestation(user);
     await user.click(screen.getByRole('button', { name: 'Choisir un créneau' }));
     await user.click(await screen.findByRole('button', { name: '09 h 00' }));
-    await user.type(screen.getByLabelText(/Prénom/), 'Camille');
+    await user.type(screen.getByLabelText(/Un mot pour le salon/), MOT);
     // Le formulaire reporte sa saisie au brouillon quand le champ rend la main
     // (`ContactStep`) : sans ce passage au champ suivant, rien n'aurait encore
     // été saisi du point de vue du tunnel.
@@ -404,7 +416,7 @@ describe('la progression est portée par l’adresse (#733)', () => {
 
     // Et le formulaire retrouvé intact : il n'a jamais quitté le brouillon.
     await user.click(screen.getByRole('button', { name: '09 h 00' }));
-    expect(await screen.findByLabelText(/Prénom/)).toHaveProperty('value', 'Camille');
+    expect(await screen.findByLabelText(/Un mot pour le salon/)).toHaveProperty('value', MOT);
   });
 
   /**
@@ -474,9 +486,10 @@ describe('la progression est portée par l’adresse (#733)', () => {
 
     renderTunnel();
 
-    // L'onglet n'a aucun brouillon : tout ce que le tunnel sait vient du lien.
-    expect(await screen.findByLabelText(/Prénom/)).toHaveProperty('value', '');
-    expect(screen.getByLabelText(/Adresse e-mail/)).toHaveProperty('value', '');
+    // L'onglet n'a aucun brouillon : tout ce que le tunnel sait vient du lien —
+    // et, pour les coordonnées, du compte.
+    expect(await screen.findByText('Réservé au nom de')).toBeDefined();
+    expect(screen.getByLabelText(/Un mot pour le salon/)).toHaveProperty('value', '');
   });
 
   it('ramène à l’étape utile ce qu’un lien ne suffit pas à ouvrir', async () => {
@@ -590,12 +603,14 @@ describe('l’écran terminal rend la main au tunnel (#732)', () => {
     expect(screen.queryByText('C’est réservé !')).toBeNull();
 
     // Les coordonnées aussi sont reparties : une nouvelle réservation n'est pas
-    // forcément pour la même personne.
+    // forcément pour la même personne. Ce que l'étape reprend vient du compte,
+    // et le mot laissé la fois précédente ne resservira pas.
     await choisirLaPrestation(user);
     await user.click(screen.getByRole('button', { name: 'Choisir un créneau' }));
     await user.click(await screen.findByRole('button', { name: '14 h 00' }));
 
-    expect(screen.getByLabelText(/Adresse e-mail/)).toHaveProperty('value', '');
+    expect(screen.getByLabelText(/Un mot pour le salon/)).toHaveProperty('value', '');
+    expect(readBookingDraft(tenant.slug).contact.email).toBe('');
   });
 
   it('cesse d’annoncer « enregistré » quand il ne fait que relire le brouillon', async () => {
@@ -799,11 +814,7 @@ describe('l’en-tête et la progression du tunnel (#1047)', () => {
 
     // Le formulaire est rendu tel qu'il a été quitté : le retour est un
     // raccourci, pas une remise à zéro.
-    expect(screen.getByLabelText(/Prénom/)).toHaveProperty('value', 'Camille');
-    expect(screen.getByLabelText(/Adresse e-mail/)).toHaveProperty(
-      'value',
-      'camille@example.test',
-    );
+    expect(screen.getByLabelText(/Un mot pour le salon/)).toHaveProperty('value', MOT);
     expect(titre()).toBe('Comment vous joindre ?');
 
     // Et l'adresse suit, comme elle suit les boutons du bas (#733) : l'en-tête
@@ -864,5 +875,126 @@ describe('l’en-tête et la progression du tunnel (#1047)', () => {
 
     expect(within(confirmation).getByRole('link', { name: 'Quitter sans réserver' })).toBeDefined();
     expect(within(confirmation).getByRole('button', { name: 'Rester' })).toBeDefined();
+  });
+});
+
+/**
+ * Réserver exige un compte — décision du PO du 2026-09-22.
+ *
+ * La visiteuse sans compte parcourt le catalogue et les disponibilités ; c'est
+ * au moment de réserver, une fois le créneau choisi, qu'elle est arrêtée pour se
+ * connecter ou ouvrir un compte. Ce qui s'éprouve ici est ce que le tunnel en
+ * décide : l'écran qui remplace les coordonnées, ce qu'il rappelle, où il mène,
+ * et qu'aucun chemin ne le contourne — ni un brouillon ancien, ni un lien, ni un
+ * cookie disparu depuis le chargement.
+ */
+describe('réserver exige un compte (2026-09-22)', () => {
+  function titre(): string {
+    return screen.getByRole('heading', { level: 1 }).textContent ?? '';
+  }
+
+  /** Prestation → créneau, sans compte : l'arrêt est à l'étape suivante. */
+  async function allerJusquAuCreneauChoisi(
+    user: ReturnType<typeof userEvent.setup>,
+  ): Promise<void> {
+    await choisirLaPrestation(user);
+    await user.click(screen.getByRole('button', { name: 'Choisir un créneau' }));
+    await user.click(await screen.findByRole('button', { name: '09 h 00' }));
+  }
+
+  it('laisse choisir prestation et créneau, puis arrête la visiteuse sans compte', async () => {
+    const user = renderTunnel(null);
+
+    await allerJusquAuCreneauChoisi(user);
+
+    expect(titre()).toBe('Identifiez-vous');
+    // C'est bien l'étape des coordonnées qu'elle a atteinte — le compte le dit
+    // —, mais sans un seul champ à remplir.
+    expect(screen.getByText('Étape 3 sur 4')).toBeDefined();
+    expect(screen.queryByLabelText(/Prénom/)).toBeNull();
+    expect(screen.queryByRole('button', { name: /Vérifier ma réservation/ })).toBeNull();
+  });
+
+  it('mène à la connexion et à l’inscription du salon, le tunnel en retour', async () => {
+    const user = renderTunnel(null);
+
+    await allerJusquAuCreneauChoisi(user);
+
+    expect(screen.getByRole('link', { name: 'Se connecter' }).getAttribute('href')).toBe(
+      CONNEXION,
+    );
+    expect(screen.getByRole('link', { name: 'Créer un compte' }).getAttribute('href')).toBe(
+      INSCRIPTION,
+    );
+  });
+
+  it('rappelle la prestation et l’horaire choisis, là où Booker les perd', async () => {
+    const user = renderTunnel(null);
+
+    await allerJusquAuCreneauChoisi(user);
+
+    const rappel = screen.getByRole('complementary', { name: 'Votre réservation' });
+
+    expect(rappel.textContent).toContain(service.name);
+    expect(rappel.textContent).toContain('1 septembre 2026');
+    expect(rappel.textContent).toContain('09:00');
+  });
+
+  it('rend le calendrier sur « Changer de créneau »', async () => {
+    const user = renderTunnel(null);
+
+    await allerJusquAuCreneauChoisi(user);
+    await user.click(screen.getByRole('button', { name: 'Changer de créneau' }));
+
+    expect(await screen.findByRole('button', { name: '09 h 00' })).toBeDefined();
+    expect(titre()).toBe('Quand souhaitez-vous venir ?');
+  });
+
+  it('ne rouvre pas le récapitulatif d’un brouillon complet à qui n’est pas connectée', async () => {
+    // Un brouillon d'avant la règle : coordonnées complètes, consentement
+    // donné, et l'adresse du récapitulatif. `reachableStep` l'ouvrirait.
+    writeBookingDraft(tenant.slug, {
+      ...emptyBookingDraft(),
+      step: 'recapitulatif',
+      serviceId: service.id,
+      startsAt: MATIN,
+      contact,
+    });
+    window.history.replaceState(
+      null,
+      '',
+      `${ADRESSE}?etape=recapitulatif&prestation=${service.id}&creneau=${MATIN}`,
+    );
+
+    renderTunnel(null);
+
+    expect(await screen.findByRole('link', { name: 'Se connecter' })).toBeDefined();
+    expect(screen.queryByRole('button', { name: /Confirmer la réservation/ })).toBeNull();
+    await waitFor(() => {
+      expect(query().get('etape')).toBe('coordonnees');
+    });
+  });
+
+  it('ramène à la connexion quand la session a pris fin depuis le chargement', async () => {
+    // Le cookie de présence a disparu — une déconnexion dans un autre onglet —,
+    // et seule l'action de réservation le constate.
+    bookAppointmentAction.mockResolvedValue({
+      ok: false,
+      code: 'UNAUTHORIZED',
+      message: 'Connectez-vous pour réserver.',
+    });
+
+    const user = renderTunnel();
+    await allerJusquAuRecapitulatif(user, '09 h 00');
+    await user.click(screen.getByRole('button', { name: /Confirmer la réservation/ }));
+
+    expect(await screen.findByText('Votre session a pris fin')).toBeDefined();
+    expect(screen.getByRole('link', { name: 'Se connecter' })).toBeDefined();
+    expect(titre()).toBe('Identifiez-vous');
+    // Et rien n'est perdu pour le retour : le brouillon garde créneau et saisie.
+    const brouillon = readBookingDraft(tenant.slug);
+
+    expect(brouillon.startsAt).toBe(MATIN);
+    expect(brouillon.contact.clientNote).toBe(MOT);
   });
 });

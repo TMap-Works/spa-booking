@@ -40,6 +40,7 @@ import {
   type BookedAppointment,
 } from '@spa/shared';
 
+import { readAccountPresence } from '@/lib/account-presence';
 import {
   ApiClientError,
   bookGuestAppointment,
@@ -111,6 +112,20 @@ export async function loadAvailabilityAction(
  * confirmée, sur un chargement déjà mémoïsé par requête (`salon-data.ts`). Le
  * payer ici est ce qui garde une seule écriture de la règle : la deviner
  * localement en ferait une seconde, qui divergerait au premier durcissement.
+ *
+ * ## Réserver exige un compte (2026-09-22)
+ *
+ * Le tunnel arrête la visiteuse sans compte avant ses coordonnées
+ * (`AccountGateStep`), et cette frontière-ci refuse à son tour quand le cookie
+ * de présence manque. Ce n'est pas un doublon : l'écran a été rendu avec la
+ * présence **du chargement**, et une déconnexion survenue depuis — un autre
+ * onglet, une session échue — ne se voit qu'ici. Le refus porte `UNAUTHORIZED`,
+ * que le récapitulatif traduit en retour à l'écran de connexion.
+ *
+ * Ce contrôle borne le parcours du navigateur, pas l'API : le cookie de
+ * présence sert à afficher et n'autorise rien (`lib/account-presence.ts`), et
+ * `POST /public/{slug}/appointments` accepte encore une réservation sans
+ * jeton. Fermer cette route-là est un changement de contrat de l'API.
  */
 export async function bookAppointmentAction(
   tenantSlug: string,
@@ -120,6 +135,14 @@ export async function bookAppointmentAction(
 
   if (!slug.success) {
     return invalid('Les informations de réservation sont incomplètes.');
+  }
+
+  if ((await readAccountPresence()) === null) {
+    return {
+      ok: false,
+      code: ERROR_CODES.UNAUTHORIZED,
+      message: 'Connectez-vous pour réserver.',
+    };
   }
 
   try {

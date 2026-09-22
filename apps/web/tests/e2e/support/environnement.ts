@@ -86,12 +86,19 @@ export const COMPTES = {
   client: 'client@e2e.test',
 } as const;
 
-/** La cliente que le tunnel public renseigne, et que le comptoir retrouve. */
+/**
+ * La cliente qui réserve par le tunnel public, et que le comptoir retrouve.
+ *
+ * C'est le compte `CLIENT` du jeu d'essai, et non plus une visiteuse inventée :
+ * réserver exige un compte depuis le 2026-09-22, et le tunnel s'arrête à
+ * l'écran de connexion tant qu'aucune session n'est ouverte. Son nom est celui
+ * que `fixtures/seed.mjs` lui donne — c'est lui que le compte préremplit, donc
+ * lui que le planning affiche.
+ */
 export const CLIENTE = {
-  prenom: 'Chloé',
-  nom: 'Trénois',
-  email: 'chloe.trenois@e2e.test',
-  telephone: '+33612345678',
+  prenom: 'Clara',
+  nom: 'Parcours',
+  email: COMPTES.client,
 } as const;
 
 /** Les chemins du front, construits une fois. */

@@ -26,6 +26,7 @@ function renderSummary() {
   const onEditService = vi.fn();
   const onBooked = vi.fn();
   const onSlotLost = vi.fn();
+  const onSignInRequired = vi.fn();
 
   render(
     <SummaryStep
@@ -39,10 +40,11 @@ function renderSummary() {
       onEditService={onEditService}
       onBooked={onBooked}
       onSlotLost={onSlotLost}
+      onSignInRequired={onSignInRequired}
     />,
   );
 
-  return { onBack, onEditSlot, onEditService, onBooked, onSlotLost };
+  return { onBack, onEditSlot, onEditService, onBooked, onSlotLost, onSignInRequired };
 }
 
 describe('récapitulatif', () => {
@@ -196,6 +198,27 @@ describe('le bouton de soumission se désactive dès le premier clic', () => {
     expect(onSlotLost).toHaveBeenCalledWith();
     // Et rien n'est affiché ici — l'écran de panne dirait le contraire de ce
     // qui se passe : la réservation est reprenable au créneau suivant.
+    expect(screen.queryByText('La réservation n’a pas abouti')).toBeNull();
+  });
+
+  it('remonte l’absence de compte à l’orchestrateur, sans afficher de panne', async () => {
+    // Réserver exige un compte (2026-09-22) : l'action refuse quand le cookie
+    // de présence a disparu depuis le rendu de la page. La correction est la
+    // connexion, que seul le tunnel sait rouvrir.
+    bookAppointmentAction.mockResolvedValue({
+      ok: false,
+      code: 'UNAUTHORIZED',
+      message: 'Connectez-vous pour réserver.',
+    });
+
+    const user = userEvent.setup();
+    const { onSignInRequired, onSlotLost } = renderSummary();
+
+    await user.click(screen.getByRole('button', { name: /Confirmer la réservation/ }));
+
+    expect(onSignInRequired).toHaveBeenCalledTimes(1);
+    expect(onSignInRequired).toHaveBeenCalledWith();
+    expect(onSlotLost).not.toHaveBeenCalled();
     expect(screen.queryByText('La réservation n’a pas abouti')).toBeNull();
   });
 

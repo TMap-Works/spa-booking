@@ -34,7 +34,7 @@ import {
 } from '@/app/(booking)/[tenantSlug]/reservation/use-draft-autosave';
 import { emptyBookingDraft, readBookingDraft, writeBookingDraft } from '@/lib/booking/draft';
 
-import { contact, service, tenant } from './fixtures';
+import { contact, presence, service, tenant } from './fixtures';
 
 vi.mock('@/app/(booking)/[tenantSlug]/reservation/actions', () => ({
   loadAvailabilityAction: vi.fn(),
@@ -251,8 +251,9 @@ describe('« Un mot pour le salon » face à un rechargement', () => {
         tenant={tenant}
         services={[service]}
         exitHref={`/${tenant.slug}`}
-        presence={null}
+        presence={presence}
         loginHref={`/${tenant.slug}/compte/connexion`}
+        registerHref={`/${tenant.slug}/compte/inscription`}
         initialDraft={emptyBookingDraft()}
       />);
 
@@ -272,8 +273,9 @@ describe('« Un mot pour le salon » face à un rechargement', () => {
         tenant={tenant}
         services={[service]}
         exitHref={`/${tenant.slug}`}
-        presence={null}
+        presence={presence}
         loginHref={`/${tenant.slug}/compte/connexion`}
+        registerHref={`/${tenant.slug}/compte/inscription`}
         initialDraft={emptyBookingDraft()}
       />);
 
@@ -289,8 +291,9 @@ describe('« Un mot pour le salon » face à un rechargement', () => {
         tenant={tenant}
         services={[service]}
         exitHref={`/${tenant.slug}`}
-        presence={null}
+        presence={presence}
         loginHref={`/${tenant.slug}/compte/connexion`}
+        registerHref={`/${tenant.slug}/compte/inscription`}
         initialDraft={emptyBookingDraft()}
       />);
 
@@ -305,8 +308,9 @@ describe('« Un mot pour le salon » face à un rechargement', () => {
         tenant={tenant}
         services={[service]}
         exitHref={`/${tenant.slug}`}
-        presence={null}
+        presence={presence}
         loginHref={`/${tenant.slug}/compte/connexion`}
+        registerHref={`/${tenant.slug}/compte/inscription`}
         initialDraft={emptyBookingDraft()}
       />);
 
@@ -365,8 +369,9 @@ describe('une soumission refusée sur le champ en cours de frappe', () => {
         tenant={tenant}
         services={[service]}
         exitHref={`/${tenant.slug}`}
-        presence={null}
+        presence={presence}
         loginHref={`/${tenant.slug}/compte/connexion`}
+        registerHref={`/${tenant.slug}/compte/inscription`}
         initialDraft={emptyBookingDraft()}
       />);
 

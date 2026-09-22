@@ -1161,19 +1161,27 @@
 /* --- Coordonnées, étape 3 --------------------------------------------------- */
 
 /*
- * L'entrée de la cliente qui a déjà un compte (#1050, BM-COMPTE-01).
+ * Réserver exige un compte (2026-09-22) — l'étape qui barre la route à qui
+ * n'est pas connectée (`steps/account-gate-step.tsx`).
  *
- * En tête d'étape, sur une ligne : la proposition doit se lire **avant** le
- * premier champ, sans quoi elle arriverait après le geste qu'elle évite. Le ton
- * atténué et la taille réduite la tiennent sous le titre de l'étape — c'est une
- * alternative offerte, pas l'action de l'écran : la réservation sans compte
- * reste le chemin par défaut (CDC §1.4), et rien ici ne la retarde.
+ * Elle remplaçait jusqu'ici, sous le nom `.spa-booking__signin`, une ligne
+ * atténuée en tête du formulaire : « Déjà cliente ? Se connecter ». C'était une
+ * alternative, et la réservation sans compte le chemin par défaut. Le compte est
+ * désormais la seule voie, et la connexion est donc l'action de l'écran : deux
+ * boutons pleine largeur, au pouce, sous une phrase au corps normal.
+ *
+ * `gap` plus serré que celui de l'étape : les deux boutons répondent à la même
+ * question et se lisent comme une paire, pas comme deux blocs.
  */
-.spa-booking__signin {
+.spa-booking__gate-lead {
   margin: 0;
-  font-size: var(--spa-font-size-sm);
-  color: var(--spa-color-text-muted);
   line-height: var(--spa-line-height-normal);
+}
+
+.spa-booking__gate {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spa-space-3);
 }
 
 /*

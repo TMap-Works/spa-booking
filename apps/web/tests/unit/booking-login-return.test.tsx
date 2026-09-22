@@ -84,9 +84,9 @@ afterEach(() => {
   doubles.tunnelProps.mockReset();
 });
 
-async function loginHrefFor(
+async function tunnelLinksFor(
   search: Record<string, string | string[] | undefined>,
-): Promise<string> {
+): Promise<{ readonly loginHref: string; readonly registerHref: string }> {
   render(
     await BookingPage({
       params: Promise.resolve({ tenantSlug: SLUG }),
@@ -95,14 +95,20 @@ async function loginHrefFor(
   );
 
   const props = doubles.tunnelProps.mock.calls[0]?.[0] as
-    | { readonly loginHref: string }
+    | { readonly loginHref: string; readonly registerHref: string }
     | undefined;
 
   if (props === undefined) {
     throw new Error('le tunnel n’a pas été monté');
   }
 
-  return props.loginHref;
+  return props;
+}
+
+async function loginHrefFor(
+  search: Record<string, string | string[] | undefined>,
+): Promise<string> {
+  return (await tunnelLinksFor(search)).loginHref;
 }
 
 /** Ce que le paramètre de retour porte, une fois relu comme une query string. */
@@ -130,5 +136,29 @@ describe('tunnel — le lien de connexion porte le retour', () => {
 
     expect(retour.has('etape')).toBe(false);
     expect(retour.has('prestation')).toBe(false);
+  });
+});
+
+/**
+ * Réserver exige un compte depuis le 2026-09-22 : l'écran qui arrête la
+ * visiteuse sans compte mène aussi à l'**inscription**, et le retour doit y
+ * traverser de la même façon — `register-form.tsx` le rejuge avec le même
+ * garde-fou que la connexion.
+ */
+describe('tunnel — le lien d’inscription porte le même retour', () => {
+  it('mène à l’inscription du salon avec le tunnel en retour', async () => {
+    const { registerHref } = await tunnelLinksFor({});
+
+    expect(registerHref.startsWith(`/${SLUG}/compte/inscription?`)).toBe(true);
+    expect(safeReturnPath(retourFrom(registerHref), SLUG)).toBe(`/${SLUG}/reservation`);
+  });
+
+  it('ne recopie pas non plus la progression du chargement', async () => {
+    const { registerHref } = await tunnelLinksFor({
+      etape: 'creneau',
+      prestation: doubles.service.id,
+    });
+
+    expect(retourFrom(registerHref)).toBe(`/${SLUG}/reservation`);
   });
 });

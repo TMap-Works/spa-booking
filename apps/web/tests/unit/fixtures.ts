@@ -1,5 +1,6 @@
 import type { PublicService, PublicTenant } from '@spa/shared';
 
+import type { AccountPresence } from '@/lib/account-presence';
 import type { ContactDraft } from '@/lib/booking/draft';
 
 /**
@@ -40,4 +41,19 @@ export const contact: ContactDraft = {
   // Les coordonnées d'une cliente qui a traversé l'étape 4 : le consentement y
   // est donné, sans quoi elle n'aurait pas atteint le récapitulatif (#734).
   consent: true,
+};
+
+/**
+ * La cliente connectée — ce que le cookie de présence porte d'elle.
+ *
+ * Réserver exige un compte depuis le 2026-09-22 : sans présence, le tunnel
+ * s'arrête sur l'écran de connexion au lieu d'ouvrir l'étape « Coordonnées ».
+ * Les suites qui exercent le formulaire montent donc le tunnel avec elle. Ce
+ * sont les coordonnées de `contact`, le numéro compris.
+ */
+export const presence: AccountPresence = {
+  firstName: contact.firstName,
+  lastName: contact.lastName,
+  email: contact.email,
+  phone: contact.phone,
 };

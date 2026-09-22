@@ -76,6 +76,16 @@ interface BookingProgressProps {
    * dépendre le rattrapage d'une chaîne qu'aucun type ne relie à ce fichier.
    */
   readonly titleRef?: RefObject<HTMLHeadingElement | null>;
+  /**
+   * Le titre, quand l'écran pose une autre question que celle de son étape.
+   *
+   * C'est le cas de l'étape « Coordonnées » devant une visiteuse sans compte :
+   * elle y est arrêtée pour se connecter (`AccountGateStep`), et « Comment vous
+   * joindre ? » demanderait ce que l'écran ne permet pas de donner. L'étape, et
+   * donc le compte « Étape 3 sur 4 », reste la même : c'est bien là qu'elle en
+   * est du parcours.
+   */
+  readonly title?: string | undefined;
 }
 
 /**
@@ -115,7 +125,12 @@ interface BookingProgressProps {
  * Server Component : ni état, ni écouteur. Il est rendu dans l'arbre client du
  * tunnel, qui porte l'étape, mais n'ajoute rien à son bundle.
  */
-export function BookingProgress({ step, timeZoneMention, titleRef }: BookingProgressProps) {
+export function BookingProgress({
+  step,
+  timeZoneMention,
+  titleRef,
+  title,
+}: BookingProgressProps) {
   const rank = COUNTED_BOOKING_STEPS.indexOf(step);
   const total = COUNTED_BOOKING_STEPS.length;
 
@@ -159,7 +174,7 @@ export function BookingProgress({ step, timeZoneMention, titleRef }: BookingProg
            à franchir à chaque écran. */
         tabIndex={-1}
       >
-        {STEP_TITLES[step]}
+        {title ?? STEP_TITLES[step]}
       </h1>
 
       {timeZoneMention === null ? null : (
