@@ -1,4 +1,8 @@
+import type { Locale, Money } from '@spa/shared';
+import { useLocale, useTranslations } from 'next-intl';
+
 import { Icon } from '@/components/ui/icon';
+import { formatMoney, formatTimeInTimeZone, type DisplayLocale } from '@/lib/format';
 
 /**
  * L'illustration du héros de l'accueil : un rendez-vous en train de se prendre
@@ -17,42 +21,81 @@ import { Icon } from '@/components/ui/icon';
  * créneau, recevoir la confirmation. Elle est donc masquée aux technologies
  * d'assistance : une lectrice d'écran entendrait sinon un faux rendez-vous, avec
  * un prix et une heure, au milieu de la présentation du produit.
+ *
+ * ## La langue (#846)
+ *
+ * Masquée aux lecteurs d'écran ne veut pas dire invisible : tout ce qui est
+ * peint ici se lit à l'œil, et se traduit donc comme le reste de l'accueil.
+ *
+ * Deux valeurs ne viennent pas du catalogue mais de `lib/format.ts`, parce que
+ * ce sont un montant et des heures, et que la règle de `CLAUDE.md` ne souffre
+ * pas d'exception décorative — une heure écrite à la main annoncerait « 14:00 »
+ * à qui lit « 2:00 PM » :
+ *
+ * - le **prix**, un entier et une devise, mis en forme par `formatMoney` ;
+ * - les **créneaux**, six instants d'un jeudi fictif lus dans le référentiel
+ *   UTC. Le fuseau n'est pas celui d'un établissement — il n'y en a aucun ici —
+ *   mais celui dans lequel ces instants ont été écrits, pour que l'illustration
+ *   montre les mêmes heures d'un continent à l'autre.
+ *
+ * La durée, elle, reste dans le catalogue : `formatDuration(60)` rendrait
+ * « 1 h », quand la vignette veut montrer la durée telle qu'un catalogue de
+ * prestations l'affiche.
+ *
+ * Server Component synchrone : `useLocale` et `useTranslations` y fonctionnent,
+ * et rien ici n'a d'état à hydrater.
  */
 
+/** Le prix de la prestation illustrée — entier et devise, jamais un flottant. */
+const PREVIEW_PRICE: Money = { amountMinor: 7500, currency: 'EUR' };
+
+/**
+ * Le jeudi fictif des créneaux.
+ *
+ * Les instants sont écrits en UTC et relus en UTC : la vignette n'illustre
+ * aucun salon, et un décalage y ferait seulement mentir la légende du jour.
+ * Le 1er janvier 2026 est un jeudi — c'est ce que dit `home.preview.day`.
+ */
 const SLOTS = [
-  { time: '09:30', state: 'free' },
-  { time: '10:00', state: 'taken' },
-  { time: '10:30', state: 'selected' },
-  { time: '11:00', state: 'free' },
-  { time: '14:00', state: 'free' },
-  { time: '15:30', state: 'free' },
+  { at: '2026-01-01T09:30:00Z', state: 'free' },
+  { at: '2026-01-01T10:00:00Z', state: 'taken' },
+  { at: '2026-01-01T10:30:00Z', state: 'selected' },
+  { at: '2026-01-01T11:00:00Z', state: 'free' },
+  { at: '2026-01-01T14:00:00Z', state: 'free' },
+  { at: '2026-01-01T15:30:00Z', state: 'free' },
 ] as const;
 
 export function BookingPreview() {
+  const t = useTranslations('booking');
+  const locale = useLocale() as Locale;
+  // Aucun établissement sur la racine du domaine : la région de repli de
+  // `lib/format.ts` (`en` → `en-US`, `fr` → `fr-FR`) s'applique.
+  const display: DisplayLocale = { locale, countryCode: null };
+
   return (
     <div className="spa-home-preview" aria-hidden="true">
       <div className="spa-home-preview__card spa-home-preview__card--service">
         <span className="spa-home-preview__badge">
           <Icon name="sparkle" className="spa-home-preview__badge-icon" />
-          Soin visage
+          {t('home.preview.category')}
         </span>
-        <p className="spa-home-preview__title">Éclat hydratant</p>
-        <p className="spa-home-preview__meta">60 min · avec Inès</p>
-        <p className="spa-home-preview__price">75,00 €</p>
+        <p className="spa-home-preview__title">{t('home.preview.service')}</p>
+        <p className="spa-home-preview__meta">{t('home.preview.meta')}</p>
+        <p className="spa-home-preview__price">{formatMoney(PREVIEW_PRICE, display)}</p>
       </div>
 
       <div className="spa-home-preview__card spa-home-preview__card--slots">
         <p className="spa-home-preview__day">
           <Icon name="calendar" className="spa-home-preview__day-icon" />
-          Jeudi
+          {t('home.preview.day')}
         </p>
         <ul className="spa-home-preview__slots">
           {SLOTS.map((slot) => (
             <li
-              key={slot.time}
+              key={slot.at}
               className={`spa-home-preview__slot spa-home-preview__slot--${slot.state}`}
             >
-              {slot.time}
+              {formatTimeInTimeZone(slot.at, 'UTC', display)}
             </li>
           ))}
         </ul>
@@ -63,8 +106,8 @@ export function BookingPreview() {
           <Icon name="check" />
         </span>
         <p className="spa-home-preview__toast-text">
-          <strong>Rendez-vous confirmé</strong>
-          <span>Rappel envoyé la veille</span>
+          <strong>{t('home.preview.toastTitle')}</strong>
+          <span>{t('home.preview.toastText')}</span>
         </p>
       </div>
     </div>

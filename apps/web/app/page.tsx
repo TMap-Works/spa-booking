@@ -1,20 +1,22 @@
-import { SUBSCRIPTION_PLAN } from '@spa/shared';
+import { SUBSCRIPTION_PLAN, type Locale } from '@spa/shared';
 import type { Metadata } from 'next';
+import { getLocale, getTranslations } from 'next-intl/server';
 import Image from 'next/image';
 import Link from 'next/link';
 
 import { BookingPreview } from '@/components/home/booking-preview';
 import { SalonFinder } from '@/components/home/salon-finder';
+import { publicExitLabels } from '@/components/salon/public-exits';
 import { Icon, type IconName } from '@/components/ui/icon';
 import { ThemeToggle } from '@/components/ui/theme-toggle';
+import { formatMoneyCompact, type DisplayLocale } from '@/lib/format';
 import { PHOTOS, type Photo } from '@/lib/photos';
-import { PLAN_PRICE_LABEL, PLAN_PROMISE } from '@/lib/plan';
 import { PLATFORM_HOME_PATH, PLATFORM_NAME } from '@/lib/platform';
 import { readSalonIdentity } from '@/lib/salon-identity';
 
 import { salonPath } from './(account)/[tenantSlug]/compte/paths';
 import { readLastSalon } from './last-salon';
-import { SALON_DOORS, SALON_DOOR_LABELS, salonDoorPath } from './salon-doors';
+import { SALON_DOORS, salonDoorPath, type SalonDoor } from './salon-doors';
 
 /**
  * La page d'accueil de la plateforme — la racine du domaine (#927).
@@ -52,51 +54,64 @@ import { SALON_DOORS, SALON_DOOR_LABELS, salonDoorPath } from './salon-doors';
  *
  * Tout ici est du contenu. Seul le formulaire est un Client Component, pour
  * garder la saisie et afficher son erreur sur le champ.
+ *
+ * ## La langue (#846)
+ *
+ * Tous les libellés viennent du namespace `booking`, sous la racine `home`. Les
+ * tableaux ci-dessous ne portent donc plus de phrases mais des **clés** : ce qui
+ * reste en dur ici est l'ordre des sections, l'icône de chacune et la
+ * photographie qui l'illustre, c'est-à-dire ce qui ne se traduit pas.
+ *
+ * Deux choses n'en viennent pas :
+ *
+ * - le **nom des deux premières portes**, qui vient de `publicExitLabels` — la
+ *   source unique des destinations du parcours public (#749). Le registre
+ *   `SALON_DOOR_LABELS` de `salon-doors.ts` reste figé en français le temps de
+ *   l'épique #843 : cet écran lit donc la source directement, comme le fait le
+ *   formulaire pour ses trois boutons ;
+ * - le **prix de l'offre**, mis en forme par `lib/format.ts` dans la langue
+ *   résolue. `PLAN_PRICE_LABEL` (`lib/plan.ts`) est une constante de module,
+ *   évaluée à l'importation : elle ne peut pas connaître la langue de la
+ *   requête, et annoncerait « 29 € » à qui lit « €29 ».
  */
 
-export const metadata: Metadata = {
-  title: `${PLATFORM_NAME} — la réservation en ligne des spas et salons`,
-  description:
-    'Réservation en ligne 24 h/24, confirmations et rappels automatiques, planning, encaissement et suivi de l’activité : tout le parcours d’un rendez-vous de spa ou de salon, au même endroit.',
-};
+/**
+ * Le titre et la description de l'onglet, dans la langue résolue.
+ *
+ * `generateMetadata` et non un objet `metadata` constant, pour la même raison
+ * que dans `layout.tsx` : un littéral ne peut pas lire la requête, et ces deux
+ * phrases sont ce qu'un moteur de recherche montre de la plateforme.
+ */
+export async function generateMetadata(): Promise<Metadata> {
+  const t = await getTranslations('booking');
+
+  return {
+    title: t('home.metadata.title', { platform: PLATFORM_NAME }),
+    description: t('home.metadata.description'),
+  };
+}
 
 /** Le cookie du dernier salon est propre à chaque visiteur : aucun rendu partagé. */
 export const dynamic = 'force-dynamic';
 
-interface Feature {
+interface Feature<Key extends string> {
   readonly icon: IconName;
-  readonly title: string;
-  readonly text: string;
+  /** La section du catalogue qui porte le titre et le texte de cette carte. */
+  readonly key: Key;
 }
 
-const PROOFS: readonly string[] = [
-  'Réservation en ligne, jour et nuit',
-  'Confirmation immédiate, rappel la veille',
-  'Aucun créneau réservé deux fois',
+const PROOFS = ['always', 'reminder', 'noDouble'] as const;
+
+type TrustKey = 'always' | 'reminders' | 'payment' | 'noDouble';
+
+const TRUST: readonly Feature<TrustKey>[] = [
+  { icon: 'clock', key: 'always' },
+  { icon: 'bell', key: 'reminders' },
+  { icon: 'lock', key: 'payment' },
+  { icon: 'shield', key: 'noDouble' },
 ];
 
-const TRUST: readonly Feature[] = [
-  {
-    icon: 'clock',
-    title: 'Ouvert 24 h/24',
-    text: 'Les créneaux libres se réservent à toute heure, au fuseau du salon.',
-  },
-  {
-    icon: 'bell',
-    title: 'Rappels automatiques',
-    text: 'Une confirmation tout de suite, un rappel 24 h avant, par e-mail ou SMS.',
-  },
-  {
-    icon: 'lock',
-    title: 'Paiement sécurisé',
-    text: 'Confié à Stripe : aucune donnée de carte ne passe par nos serveurs.',
-  },
-  {
-    icon: 'shield',
-    title: 'Zéro double réservation',
-    text: 'Un créneau pris est verrouillé à l’instant même, pour tout le monde.',
-  },
-];
+type TradeKey = 'spa' | 'beauty' | 'hair' | 'barber';
 
 /**
  * Les quatre métiers du périmètre, illustrés — CDC §1.1.
@@ -112,118 +127,34 @@ const TRUST: readonly Feature[] = [
  * portent donc l'`alt` du registre (`lib/photos.ts`) plutôt qu'un
  * `aria-hidden`.
  */
-const TRADES: readonly { readonly label: string; readonly photo: Photo }[] = [
-  { label: 'Spas', photo: PHOTOS.spaInterieur },
-  { label: 'Instituts de beauté', photo: PHOTOS.soinVisage },
-  { label: 'Salons de coiffure', photo: PHOTOS.salonInterieur },
-  { label: 'Barbershops', photo: PHOTOS.barbier },
+const TRADES: readonly { readonly key: TradeKey; readonly photo: Photo }[] = [
+  { key: 'spa', photo: PHOTOS.spaInterieur },
+  { key: 'beauty', photo: PHOTOS.soinVisage },
+  { key: 'hair', photo: PHOTOS.salonInterieur },
+  { key: 'barber', photo: PHOTOS.barbier },
 ];
 
-const LOOP: readonly Feature[] = [
-  {
-    icon: 'calendar',
-    title: 'Réserver',
-    text: 'La cliente choisit sa prestation, son praticien — ou le premier disponible — et un créneau libre en temps réel.',
-  },
-  {
-    icon: 'bell',
-    title: 'Confirmer',
-    text: 'La confirmation part aussitôt, le rappel la veille. Un report ou une annulation prévient le salon comme la cliente.',
-  },
-  {
-    icon: 'users',
-    title: 'Honorer',
-    text: 'L’équipe suit sa journée sur le planning, retrouve la fiche de chaque cliente et marque les absences.',
-  },
-  {
-    icon: 'card',
-    title: 'Encaisser',
-    text: 'Au comptoir, par carte ou en espèces, prestations et produits compris, avec son ticket de caisse.',
-  },
-  {
-    icon: 'chart',
-    title: 'Mesurer',
-    text: 'Le revenu du jour, le volume de rendez-vous et les no-shows, sans tableur.',
-  },
+type LoopKey = 'book' | 'confirm' | 'keep' | 'collect' | 'measure';
+
+const LOOP: readonly Feature<LoopKey>[] = [
+  { icon: 'calendar', key: 'book' },
+  { icon: 'bell', key: 'confirm' },
+  { icon: 'users', key: 'keep' },
+  { icon: 'card', key: 'collect' },
+  { icon: 'chart', key: 'measure' },
 ];
 
-const FOR_CLIENTS: readonly string[] = [
-  'Les prestations, leur durée et leur prix, avant de choisir',
-  'Le praticien de votre choix, ou le premier disponible',
-  'Une réservation sans compte, en quelques secondes',
-  'Vos rendez-vous à venir et passés, dans votre espace',
-  'Un report ou une annulation en ligne, sans appeler',
-];
+const FOR_CLIENTS = ['services', 'practitioner', 'noAccount', 'history', 'reschedule'] as const;
 
-const FOR_TEAMS: readonly string[] = [
-  'Le planning du jour et de la semaine, rendez-vous du comptoir compris',
-  'Les fiches clientes : coordonnées, notes et historique des visites',
-  'Les comptes de l’équipe, leurs rôles, horaires et absences',
-  'L’encaissement par carte ou en espèces, et l’historique des ventes',
-  'Le revenu, le volume de rendez-vous et les no-shows',
-];
+const FOR_TEAMS = ['schedule', 'records', 'staff', 'checkout', 'figures'] as const;
 
-const STEPS: readonly { readonly title: string; readonly text: string }[] = [
-  {
-    title: 'Choisissez votre prestation',
-    text: 'Le catalogue du salon affiche la durée et le prix de chaque soin.',
-  },
-  {
-    title: 'Choisissez votre créneau',
-    text: 'Avec le praticien de votre choix, parmi les horaires réellement libres.',
-  },
-  {
-    title: 'C’est confirmé',
-    text: 'Vous recevez la confirmation tout de suite, et un rappel la veille.',
-  },
-];
+const STEPS = ['service', 'slot', 'done'] as const;
 
 /** L'inscription d'un salon en libre-service (ADR 0016). */
 const SIGNUP_PATH = '/inscription';
 
 /** Ce que comprend l'offre unique — chaque ligne est une fonctionnalité livrée. */
-const PLAN_INCLUDES: readonly string[] = [
-  'Votre page de réservation en ligne, ouverte 24 h/24',
-  'Confirmations et rappels automatiques',
-  'Planning jour et semaine, équipe et horaires',
-  'Fiches clientes, notes et historique des visites',
-  'Encaissement au comptoir et reçus',
-  'Revenu, rendez-vous et absences en un coup d’œil',
-];
-
-const QUESTIONS: readonly { readonly question: string; readonly answer: string }[] = [
-  {
-    question: 'Je ne connais pas l’adresse de mon salon.',
-    answer:
-      'Saisissez simplement son nom ci-dessus. Le lien exact figure aussi dans l’e-mail de confirmation de votre dernier rendez-vous, et le salon peut vous le transmettre.',
-  },
-  {
-    question: 'Faut-il créer un compte pour réserver ?',
-    answer:
-      'Non : vos coordonnées suffisent. Un compte vous permet ensuite de retrouver tous vos rendez-vous, et de les reporter ou de les annuler en ligne.',
-  },
-  {
-    question: 'Comment reporter ou annuler un rendez-vous ?',
-    // La porte est nommée par le registre et non recopiée : cette réponse
-    // désigne le bouton qui se trouve juste au-dessus, et deux libellés écrits
-    // séparément finissent par diverger — c'est l'écart que #749 a fermé.
-    answer: `Depuis « ${SALON_DOOR_LABELS.compte} », dans l’espace client de votre salon, tant que le délai fixé par le salon le permet. Le salon est prévenu automatiquement.`,
-  },
-  {
-    question: 'Mes données de carte bancaire sont-elles conservées ?',
-    answer:
-      'Non. Le paiement est confié à Stripe : les données de votre carte vont directement de votre navigateur à Stripe, sans jamais passer par nos serveurs.',
-  },
-  {
-    question: 'Combien coûte la plateforme pour un salon ?',
-    answer: `${PLAN_PROMISE}, sans engagement. Votre carte est enregistrée par Stripe à l’inscription et n’est débitée qu’à la fin de l’essai ; vous résiliez quand vous voulez depuis votre back-office.`,
-  },
-  {
-    question: 'Je travaille dans un salon : comment me connecter ?',
-    answer:
-      'Indiquez le salon ci-dessus puis choisissez « Back-office du salon ». Vos identifiants vous sont remis par la gérance du salon.',
-  },
-];
+const PLAN_INCLUDES = ['page', 'reminders', 'schedule', 'records', 'checkout', 'figures'] as const;
 
 /** Le salon de la dernière visite, avec son nom — ou ce qu'il reste à préremplir. */
 async function rememberedSalon(): Promise<{
@@ -246,8 +177,79 @@ async function rememberedSalon(): Promise<{
   return { salon: null, prefill: identity.status === 'unavailable' ? slug : '' };
 }
 
+/**
+ * Le nom des trois portes, dans la langue résolue.
+ *
+ * Composé ici plutôt que lu dans `SALON_DOOR_LABELS` : ce registre est figé en
+ * français le temps de l'épique #843 et n'est pas dans l'empreinte de #846. Les
+ * deux premières destinations gardent leur **source unique** — le registre des
+ * sorties du parcours public, pour que la même page ne s'appelle pas autrement
+ * ici que sur la vitrine (#749) — et seul le back-office, que rien d'autre ne
+ * nomme, vient du catalogue de cet écran.
+ *
+ * `SalonFinder` compose la même table pour ses trois boutons, depuis les mêmes
+ * deux sources : la descendre en propriété aurait changé le contrat du
+ * composant, que ses propres tests montent seul. Deux compositions, mais une
+ * seule écriture de chaque libellé.
+ */
+function doorLabels(locale: Locale, backOffice: string): Readonly<Record<SalonDoor, string>> {
+  const exits = publicExitLabels(locale);
+
+  return {
+    reservation: exits.reservation,
+    compte: exits.compte,
+    'back-office': backOffice,
+  };
+}
+
 export default async function HomePage() {
   const { salon, prefill } = await rememberedSalon();
+  const t = await getTranslations('booking');
+  const locale = (await getLocale()) as Locale;
+  // Aucun établissement sous la main sur la racine du domaine : la région de
+  // repli de `lib/format.ts` (`en` → `en-US`, `fr` → `fr-FR`) s'applique.
+  const display: DisplayLocale = { locale, countryCode: null };
+  const doors = doorLabels(locale, t('home.common.doorBackOffice'));
+  const planPrice = formatMoneyCompact(
+    { amountMinor: SUBSCRIPTION_PLAN.amountMinor, currency: SUBSCRIPTION_PLAN.currency },
+    display,
+  );
+
+  // Les six questions sont montées ici, et non lues par une clé construite dans
+  // la boucle : trois d'entre elles portent des paramètres — une porte, la durée
+  // de l'essai, le prix — que les autres n'ont pas.
+  const questions: readonly { readonly question: string; readonly answer: string }[] = [
+    {
+      question: t('home.faq.address.question'),
+      answer: t('home.faq.address.answer'),
+    },
+    {
+      question: t('home.faq.account.question'),
+      answer: t('home.faq.account.answer'),
+    },
+    {
+      question: t('home.faq.reschedule.question'),
+      // La porte est nommée par le registre et non recopiée : cette réponse
+      // désigne le bouton qui se trouve juste au-dessus, et deux libellés écrits
+      // séparément finissent par diverger — c'est l'écart que #749 a fermé.
+      answer: t('home.faq.reschedule.answer', { door: doors.compte }),
+    },
+    {
+      question: t('home.faq.card.question'),
+      answer: t('home.faq.card.answer'),
+    },
+    {
+      question: t('home.faq.price.question'),
+      answer: t('home.faq.price.answer', {
+        days: SUBSCRIPTION_PLAN.trialDays,
+        price: planPrice,
+      }),
+    },
+    {
+      question: t('home.faq.staff.question'),
+      answer: t('home.faq.staff.answer', { door: doors['back-office'] }),
+    },
+  ];
 
   return (
     <div className="spa-home">
@@ -259,24 +261,24 @@ export default async function HomePage() {
             </span>
             <span className="spa-home-bar__name">{PLATFORM_NAME}</span>
           </Link>
-          <nav className="spa-home-bar__nav" aria-label="Sections de la page">
+          <nav className="spa-home-bar__nav" aria-label={t('home.nav.label')}>
             <a className="spa-home-bar__link" href="#parcours">
-              Fonctionnalités
+              {t('home.nav.features')}
             </a>
             <a className="spa-home-bar__link" href="#reserver">
-              Comment ça marche
+              {t('home.nav.howItWorks')}
             </a>
             <a className="spa-home-bar__link" href="#tarifs">
-              Tarifs
+              {t('home.nav.pricing')}
             </a>
             <a className="spa-home-bar__link" href="#questions">
-              Questions
+              {t('home.nav.questions')}
             </a>
             <a className="spa-home-bar__link spa-home-bar__link--access" href="#acces">
-              Accéder à mon salon
+              {t('home.common.accessSalon')}
             </a>
             <Link className="spa-home-bar__cta" href={SIGNUP_PATH}>
-              Essai gratuit
+              {t('home.nav.trial')}
             </Link>
           </nav>
         </div>
@@ -286,22 +288,26 @@ export default async function HomePage() {
         <section className="spa-home-hero" aria-labelledby="accueil-titre">
           <div className="spa-home__inner spa-home-hero__inner">
             <div className="spa-home-hero__copy">
-              <p className="spa-home__eyebrow">Spas · instituts · coiffure · barbiers · massage</p>
+              <p className="spa-home__eyebrow">{t('home.hero.eyebrow')}</p>
               <h1 className="spa-home-hero__title" id="accueil-titre">
-                Des rendez-vous qui font du bien,{' '}
-                <span className="spa-home-hero__title-accent">
-                  de la réservation à l’encaissement.
-                </span>
+                {/* L'accent porte la seconde moitié de la phrase : la coupure est
+                    dans le message, chaque langue décidant où elle tombe. */}
+                {t.rich('home.hero.title', {
+                  accent: (chunks) => (
+                    <span className="spa-home-hero__title-accent">{chunks}</span>
+                  ),
+                })}
               </h1>
-              <p className="spa-home-hero__lead">
-                Vos clientes réservent en quelques secondes, à toute heure. Votre équipe retrouve
-                son planning, ses fiches clientes, sa caisse et ses chiffres au même endroit.
-              </p>
+              <p className="spa-home-hero__lead">{t('home.hero.lead')}</p>
               <ul className="spa-home-hero__proofs">
                 {PROOFS.map((proof) => (
                   <li className="spa-home-hero__proof" key={proof}>
                     <Icon name="check" className="spa-home-hero__proof-icon" />
-                    {proof}
+                    {/* Clé construite puis fixée par un `as`, comme le fait
+                        `components/ui/locale-switcher.tsx` : le suffixe vient
+                        d'une union fermée de trois valeurs, toutes présentes
+                        dans les deux catalogues. */}
+                    {t(`home.hero.proofs.${proof}` as 'home.hero.proofs.always')}
                   </li>
                 ))}
               </ul>
@@ -312,7 +318,7 @@ export default async function HomePage() {
                 <section className="spa-home-return" aria-labelledby="retour-titre">
                   <p className="spa-home-return__eyebrow">
                     <Icon name="store" className="spa-home-return__eyebrow-icon" />
-                    Votre salon
+                    {t('home.returning.eyebrow')}
                   </p>
                   <h2 className="spa-home-return__name" id="retour-titre">
                     <Link href={salonPath(salon.slug)}>{salon.name}</Link>
@@ -321,7 +327,7 @@ export default async function HomePage() {
                     {SALON_DOORS.map((door) => (
                       <li key={door}>
                         <Link className="spa-home-return__door" href={salonDoorPath(salon.slug, door)}>
-                          {SALON_DOOR_LABELS[door]}
+                          {doors[door]}
                           <Icon name="arrow" className="spa-home-return__door-icon" />
                         </Link>
                       </li>
@@ -331,22 +337,22 @@ export default async function HomePage() {
               )}
               <SalonFinder
                 initialAddress={prefill}
-                title={salon === null ? 'Accéder à mon salon' : 'Un autre salon ?'}
+                title={salon === null ? t('home.common.accessSalon') : t('home.finder.titleOther')}
               />
             </div>
           </div>
         </section>
 
-        <section className="spa-home-trust" aria-label="Nos engagements">
+        <section className="spa-home-trust" aria-label={t('home.trust.label')}>
           <ul className="spa-home__inner spa-home-trust__list">
             {TRUST.map((item) => (
-              <li className="spa-home-trust__item" key={item.title}>
+              <li className="spa-home-trust__item" key={item.key}>
                 <span className="spa-home__badge">
                   <Icon name={item.icon} />
                 </span>
                 <p className="spa-home-trust__text">
-                  <strong>{item.title}</strong>
-                  <span>{item.text}</span>
+                  <strong>{t(`home.trust.${item.key}.title` as 'home.trust.always.title')}</strong>
+                  <span>{t(`home.trust.${item.key}.text` as 'home.trust.always.text')}</span>
                 </p>
               </li>
             ))}
@@ -356,18 +362,15 @@ export default async function HomePage() {
         <section className="spa-home-trades" aria-labelledby="metiers-titre">
           <div className="spa-home__inner">
             <div className="spa-home-section__heading">
-              <p className="spa-home__eyebrow">Pour qui c’est fait</p>
+              <p className="spa-home__eyebrow">{t('home.trades.eyebrow')}</p>
               <h2 className="spa-home-section__title" id="metiers-titre">
-                Tous les métiers du rendez-vous
+                {t('home.trades.title')}
               </h2>
-              <p className="spa-home-section__lead">
-                Une prestation, une durée, un praticien, un créneau : la même mécanique sert un
-                soin du visage comme une coupe de barbe.
-              </p>
+              <p className="spa-home-section__lead">{t('home.trades.lead')}</p>
             </div>
             <ul className="spa-home-trades__list">
               {TRADES.map((trade) => (
-                <li className="spa-home-trades__item" key={trade.label}>
+                <li className="spa-home-trades__item" key={trade.key}>
                   {/*
                     `sizes` décrit la place réellement occupée, sinon Next sert
                     l'image pleine largeur de l'écran pour une vignette de
@@ -382,7 +385,9 @@ export default async function HomePage() {
                     height={trade.photo.height}
                     sizes="(min-width: 60rem) 25vw, (min-width: 40rem) 50vw, 100vw"
                   />
-                  <span className="spa-home-trades__label">{trade.label}</span>
+                  <span className="spa-home-trades__label">
+                    {t(`home.trades.${trade.key}` as 'home.trades.spa')}
+                  </span>
                 </li>
               ))}
             </ul>
@@ -392,21 +397,18 @@ export default async function HomePage() {
         <section className="spa-home-section" id="parcours" aria-labelledby="parcours-titre">
           <div className="spa-home__inner">
             <div className="spa-home-section__heading">
-              <p className="spa-home__eyebrow">Fonctionnalités</p>
+              <p className="spa-home__eyebrow">{t('home.loop.eyebrow')}</p>
               <h2 className="spa-home-section__title" id="parcours-titre">
-                Tout le parcours d’un rendez-vous, au même endroit
+                {t('home.loop.title')}
               </h2>
-              <p className="spa-home-section__lead">
-                De la réservation au bilan de la journée, chaque étape passe la main à la suivante
-                sans ressaisie.
-              </p>
+              <p className="spa-home-section__lead">{t('home.loop.lead')}</p>
             </div>
             {/* `role="list"` explicite : le socle retire le marqueur de tout `<ol>`,
                 et Safari retire alors la sémantique de liste à VoiceOver — or
                 l'ordre des cinq étapes est le propos (styles/README.md §3). */}
             <ol className="spa-home-loop" role="list">
               {LOOP.map((step, index) => (
-                <li className="spa-home-loop__step" key={step.title}>
+                <li className="spa-home-loop__step" key={step.key}>
                   <div className="spa-home-loop__top">
                     <span className="spa-home__badge">
                       <Icon name={step.icon} />
@@ -415,8 +417,12 @@ export default async function HomePage() {
                       {String(index + 1).padStart(2, '0')}
                     </span>
                   </div>
-                  <h3 className="spa-home-loop__title">{step.title}</h3>
-                  <p className="spa-home-loop__text">{step.text}</p>
+                  <h3 className="spa-home-loop__title">
+                    {t(`home.loop.${step.key}.title` as 'home.loop.book.title')}
+                  </h3>
+                  <p className="spa-home-loop__text">
+                    {t(`home.loop.${step.key}.text` as 'home.loop.book.text')}
+                  </p>
                 </li>
               ))}
             </ol>
@@ -426,9 +432,9 @@ export default async function HomePage() {
         <section className="spa-home-section spa-home-section--sunken" aria-labelledby="publics-titre">
           <div className="spa-home__inner">
             <div className="spa-home-section__heading">
-              <p className="spa-home__eyebrow">Pour qui</p>
+              <p className="spa-home__eyebrow">{t('home.audiences.eyebrow')}</p>
               <h2 className="spa-home-section__title" id="publics-titre">
-                Pensé pour la clientèle comme pour l’équipe du salon
+                {t('home.audiences.title')}
               </h2>
             </div>
             <div className="spa-home-audiences">
@@ -453,18 +459,18 @@ export default async function HomePage() {
                   <Icon name="sparkle" />
                 </span>
                 <h3 className="spa-home-audience__title" id="clientele-titre">
-                  Pour la clientèle
+                  {t('home.audiences.clients.title')}
                 </h3>
                 <ul className="spa-home-audience__list">
                   {FOR_CLIENTS.map((item) => (
                     <li className="spa-home-audience__item" key={item}>
                       <Icon name="check" className="spa-home-audience__check" />
-                      {item}
+                      {t(`home.audiences.clients.${item}` as 'home.audiences.clients.services')}
                     </li>
                   ))}
                 </ul>
                 <a className="spa-home-audience__link" href="#acces">
-                  Trouver mon salon
+                  {t('home.audiences.clients.link')}
                   <Icon name="arrow" className="spa-home-audience__link-icon" />
                 </a>
               </article>
@@ -484,22 +490,22 @@ export default async function HomePage() {
                   <Icon name="store" />
                 </span>
                 <h3 className="spa-home-audience__title" id="equipe-titre">
-                  Pour l’équipe du salon
+                  {t('home.audiences.teams.title')}
                 </h3>
                 <ul className="spa-home-audience__list">
                   {FOR_TEAMS.map((item) => (
                     <li className="spa-home-audience__item" key={item}>
                       <Icon name="check" className="spa-home-audience__check" />
-                      {item}
+                      {t(`home.audiences.teams.${item}` as 'home.audiences.teams.schedule')}
                     </li>
                   ))}
                 </ul>
                 <a className="spa-home-audience__link" href="#acces">
-                  Ouvrir le back-office
+                  {t('home.audiences.teams.link')}
                   <Icon name="arrow" className="spa-home-audience__link-icon" />
                 </a>
                 <Link className="spa-home-audience__link" href={SIGNUP_PATH}>
-                  Pas encore inscrit ? Créer mon salon
+                  {t('home.audiences.teams.signup')}
                   <Icon name="arrow" className="spa-home-audience__link-icon" />
                 </Link>
               </article>
@@ -511,21 +517,25 @@ export default async function HomePage() {
           <div className="spa-home__inner spa-home-steps">
             <div className="spa-home-steps__copy">
               <div className="spa-home-section__heading">
-                <p className="spa-home__eyebrow">Comment ça marche</p>
+                <p className="spa-home__eyebrow">{t('home.steps.eyebrow')}</p>
                 <h2 className="spa-home-section__title" id="reserver-titre">
-                  Réserver en trois gestes
+                  {t('home.steps.title')}
                 </h2>
               </div>
               {/* Même raison : les trois gestes se font dans cet ordre. */}
               <ol className="spa-home-steps__list" role="list">
                 {STEPS.map((step, index) => (
-                  <li className="spa-home-steps__item" key={step.title}>
+                  <li className="spa-home-steps__item" key={step}>
                     <span className="spa-home-steps__number" aria-hidden="true">
                       {index + 1}
                     </span>
                     <div>
-                      <h3 className="spa-home-steps__title">{step.title}</h3>
-                      <p className="spa-home-steps__text">{step.text}</p>
+                      <h3 className="spa-home-steps__title">
+                        {t(`home.steps.${step}.title` as 'home.steps.service.title')}
+                      </h3>
+                      <p className="spa-home-steps__text">
+                        {t(`home.steps.${step}.text` as 'home.steps.service.text')}
+                      </p>
                     </div>
                   </li>
                 ))}
@@ -538,33 +548,33 @@ export default async function HomePage() {
         <section className="spa-home-section" id="tarifs" aria-labelledby="tarifs-titre">
           <div className="spa-home__inner spa-home-pricing">
             <div className="spa-home-section__heading">
-              <p className="spa-home__eyebrow">Tarifs</p>
+              <p className="spa-home__eyebrow">{t('home.pricing.eyebrow')}</p>
               <h2 className="spa-home-section__title" id="tarifs-titre">
-                Une offre, tout compris
+                {t('home.pricing.title')}
               </h2>
             </div>
             <article className="spa-home-pricing__card" aria-labelledby="offre-titre">
               <h3 className="spa-home-pricing__name" id="offre-titre">
+                {/* Le nom de l'offre est celui du produit : une marque ne se traduit pas. */}
                 {SUBSCRIPTION_PLAN.name}
               </h3>
               <p className="spa-home-pricing__price">
-                <span className="spa-home-pricing__amount">{PLAN_PRICE_LABEL}</span>
-                <span className="spa-home-pricing__period">par mois, sans engagement</span>
+                <span className="spa-home-pricing__amount">{planPrice}</span>
+                <span className="spa-home-pricing__period">{t('home.pricing.period')}</span>
               </p>
               <p className="spa-home-pricing__trial">
-                {SUBSCRIPTION_PLAN.trialDays} jours d’essai gratuit — la carte n’est débitée qu’à la
-                fin de l’essai.
+                {t('home.pricing.trial', { days: SUBSCRIPTION_PLAN.trialDays })}
               </p>
               <ul className="spa-home-pricing__list">
                 {PLAN_INCLUDES.map((item) => (
                   <li className="spa-home-pricing__item" key={item}>
                     <Icon name="check" className="spa-home-pricing__check" />
-                    {item}
+                    {t(`home.pricing.includes.${item}` as 'home.pricing.includes.page')}
                   </li>
                 ))}
               </ul>
               <Link className="spa-home-pricing__cta" href={SIGNUP_PATH}>
-                Démarrer mon essai gratuit
+                {t('home.pricing.cta')}
                 <Icon name="arrow" className="spa-home-pricing__cta-icon" />
               </Link>
             </article>
@@ -578,13 +588,13 @@ export default async function HomePage() {
         >
           <div className="spa-home__inner spa-home-faq">
             <div className="spa-home-section__heading">
-              <p className="spa-home__eyebrow">Questions fréquentes</p>
+              <p className="spa-home__eyebrow">{t('home.faq.eyebrow')}</p>
               <h2 className="spa-home-section__title" id="questions-titre">
-                Bon à savoir
+                {t('home.faq.title')}
               </h2>
             </div>
             <div className="spa-home-faq__list">
-              {QUESTIONS.map((item) => (
+              {questions.map((item) => (
                 <details className="spa-home-faq__item" key={item.question}>
                   <summary className="spa-home-faq__question">{item.question}</summary>
                   <p className="spa-home-faq__answer">{item.answer}</p>
@@ -597,14 +607,14 @@ export default async function HomePage() {
         <section className="spa-home-closing" aria-labelledby="fin-titre">
           <div className="spa-home__inner spa-home-closing__inner">
             <h2 className="spa-home-closing__title" id="fin-titre">
-              Votre prochain rendez-vous commence ici.
+              {t('home.closing.title')}
             </h2>
             <a className="spa-home-closing__link" href="#acces">
-              Accéder à mon salon
+              {t('home.common.accessSalon')}
               <Icon name="arrow" className="spa-home-closing__link-icon" />
             </a>
             <Link className="spa-home-closing__link" href={SIGNUP_PATH}>
-              Ouvrir mon salon — {SUBSCRIPTION_PLAN.trialDays} jours gratuits
+              {t('home.closing.signup', { days: SUBSCRIPTION_PLAN.trialDays })}
               <Icon name="arrow" className="spa-home-closing__link-icon" />
             </Link>
           </div>
@@ -614,10 +624,7 @@ export default async function HomePage() {
       <footer className="spa-home-footer">
         <div className="spa-home__inner spa-home-footer__inner">
           <p className="spa-home-footer__brand">{PLATFORM_NAME}</p>
-          <p className="spa-home-footer__text">
-            La réservation en ligne des spas, instituts, salons de coiffure, barbiers et studios de
-            massage.
-          </p>
+          <p className="spa-home-footer__text">{t('home.footer.text')}</p>
           {/* Le sélecteur de thème du back-office, sur le même cookie (#1114).
               Dans le pied et non dans la barre : même à 1280 px, ses trois
               pastilles faisaient passer la marque et deux ancres sur deux

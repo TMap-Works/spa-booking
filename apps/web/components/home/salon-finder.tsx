@@ -1,9 +1,12 @@
 'use client';
 
+import type { Locale } from '@spa/shared';
+import { useLocale, useTranslations } from 'next-intl';
 import { useActionState, useState } from 'react';
 
 import { openSalonAction, type SalonFinderState } from '@/app/actions';
-import { SALON_DOOR_LABELS, type SalonDoor } from '@/app/salon-doors';
+import { type SalonDoor } from '@/app/salon-doors';
+import { publicExitLabels } from '@/components/salon/public-exits';
 import { Button } from '@/components/ui/button';
 import { Field } from '@/components/ui/field';
 import { Notification } from '@/components/ui/notification';
@@ -31,6 +34,25 @@ import { Notification } from '@/components/ui/notification';
  * Tous les boutons se désactivent pendant la vérification : un second clic sur
  * une autre porte n'a rien à apprendre du premier, et ne ferait que doubler
  * l'appel.
+ *
+ * ## La langue (#846)
+ *
+ * Les libellés de ce formulaire viennent du namespace `booking`, racine `home` ;
+ * `useTranslations` et non `getTranslations`, la lecture se faisant dans un
+ * Client Component, sous le fournisseur posé par le layout racine.
+ *
+ * Le **nom des deux premières portes** n'en vient pas : il est lu dans
+ * `publicExitLabels`, la source unique des destinations du parcours public, pour
+ * que la même page ne s'appelle pas autrement ici que sur la vitrine (#749). Le
+ * registre `SALON_DOOR_LABELS` de `app/salon-doors.ts` reste figé en français le
+ * temps de l'épique #843 et n'est pas dans l'empreinte de ce ticket : l'accueil
+ * et ce formulaire lisent donc la source directement. Deux compositions, mais
+ * une seule écriture de chaque libellé — c'est ce que #749 demande.
+ *
+ * Ce qui reste en français quelle que soit la langue : les **messages d'erreur**
+ * de `app/actions.ts`, que ce composant ne fait qu'afficher. Ce module est hors
+ * de l'empreinte de #846 ; le ticket qui le reprendra lui fera rendre des clés
+ * plutôt que des phrases.
  */
 
 interface SalonFinderProps {
@@ -49,16 +71,29 @@ const DOORS: readonly { readonly door: SalonDoor; readonly variant: 'accent' | '
   { door: 'back-office', variant: 'quiet' },
 ];
 
-const PENDING_LABELS: Readonly<Record<SalonDoor, string>> = {
-  reservation: 'Recherche du salon, puis ouverture de la réservation…',
-  compte: 'Recherche du salon, puis ouverture de vos rendez-vous…',
-  'back-office': 'Recherche du salon, puis ouverture du back-office…',
-};
-
 export function SalonFinder({ initialAddress, title }: SalonFinderProps) {
   const initialState: SalonFinderState = { address: initialAddress, fieldError: null, formError: null };
   const [state, formAction, pending] = useActionState(openSalonAction, initialState);
   const [door, setDoor] = useState<SalonDoor>('reservation');
+  const t = useTranslations('booking');
+  const locale = useLocale() as Locale;
+  const exits = publicExitLabels(locale);
+
+  /** Le nom des trois portes — voir l'en-tête sur d'où vient chacun. */
+  const doorLabels: Readonly<Record<SalonDoor, string>> = {
+    reservation: exits.reservation,
+    compte: exits.compte,
+    'back-office': t('home.common.doorBackOffice'),
+  };
+
+  // Ce que les lecteurs d'écran annoncent pendant la vérification, porte par
+  // porte. Écrite clé par clé et non par concaténation : les identifiants de
+  // porte portent un tiret (`back-office`) que le catalogue nomme en camelCase.
+  const pendingLabels: Readonly<Record<SalonDoor, string>> = {
+    reservation: t('home.finder.pending.reservation'),
+    compte: t('home.finder.pending.account'),
+    'back-office': t('home.finder.pending.backOffice'),
+  };
 
   return (
     <form className="spa-home-finder" action={formAction} aria-labelledby="acces-titre" noValidate>
@@ -66,13 +101,11 @@ export function SalonFinder({ initialAddress, title }: SalonFinderProps) {
         <h2 className="spa-home-finder__title" id="acces-titre">
           {title}
         </h2>
-        <p className="spa-home-finder__lead">
-          Indiquez votre salon, puis choisissez ce que vous venez faire.
-        </p>
+        <p className="spa-home-finder__lead">{t('home.finder.lead')}</p>
       </div>
 
       {state.formError === null ? null : (
-        <Notification tone="danger" title="Vérification impossible">
+        <Notification tone="danger" title={t('home.finder.errorTitle')}>
           <p>{state.formError}</p>
         </Notification>
       )}
@@ -80,8 +113,8 @@ export function SalonFinder({ initialAddress, title }: SalonFinderProps) {
       <Field
         id="acces-adresse"
         name="adresse"
-        label="Nom ou adresse du salon"
-        hint="Par exemple « Salon des Lilas », ou le lien reçu dans votre e-mail de confirmation."
+        label={t('home.finder.addressLabel')}
+        hint={t('home.finder.addressHint')}
         autoComplete="off"
         autoCapitalize="none"
         spellCheck={false}
@@ -102,10 +135,10 @@ export function SalonFinder({ initialAddress, title }: SalonFinderProps) {
             block
             disabled={pending}
             loading={pending && door === value}
-            loadingLabel={PENDING_LABELS[value]}
+            loadingLabel={pendingLabels[value]}
             onClick={() => setDoor(value)}
           >
-            {SALON_DOOR_LABELS[value]}
+            {doorLabels[value]}
           </Button>
         ))}
       </div>
