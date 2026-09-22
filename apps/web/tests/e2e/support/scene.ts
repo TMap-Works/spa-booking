@@ -238,15 +238,15 @@ export async function reserverParLeTunnel(page: Page, langue: Locale = 'fr'): Pr
       .getByRole('link', { name: libelle(langue, 'booking.tunnel.gateStep.signIn') })
       .click();
 
-    // **Libellés français en dur, et c'est voulu** : l'écran de connexion de
-    // l'espace client n'est pas dans l'empreinte de #846 — il a son propre
-    // ticket dans l'épique #843, avec son propre namespace. Tant qu'il n'est pas
-    // traduit, il s'affiche en français quelle que soit la langue résolue, et
-    // c'est bien ce que la scène doit traverser. Ces trois lignes passeront au
-    // catalogue avec lui.
-    await page.getByLabel('Adresse e-mail').fill(CLIENTE.email);
-    await page.getByLabel('Mot de passe').fill(MOT_DE_PASSE);
-    await page.getByRole('button', { name: 'Se connecter' }).click();
+    // Ces trois lignes attendaient leur catalogue : #1134 a traduit l'écran de
+    // connexion de l'espace client, elles passent donc au namespace `account`
+    // comme la note qui les tenait en français l'annonçait. Les y laisser en dur
+    // aurait fait échouer le parcours anglais sur « Email address » — non parce
+    // que l'écran a perdu un champ, mais parce que la scène ne parlait qu'une
+    // des deux langues.
+    await page.getByLabel(libelle(langue, 'account.login.email')).fill(CLIENTE.email);
+    await page.getByLabel(libelle(langue, 'account.login.password')).fill(MOT_DE_PASSE);
+    await page.getByRole('button', { name: libelle(langue, 'account.login.submit') }).click();
 
     // Le retour au tunnel (#1087) : le brouillon de l'onglet est repris, et
     // l'étape s'ouvre sur l'encart du compte au lieu de ses champs (#1050).
