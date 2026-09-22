@@ -45,9 +45,17 @@ import type {
 import { isBlockingAppointmentStatus, isoWeekdayOf } from '@spa/shared';
 
 import { appointmentTone } from '../appointment-status';
+import { formattingLocale, type DisplayLocale } from '../format';
 import { minutesOfClock } from './appointment-desk';
+import { fillMessage, planningWords, CALENDAR_FALLBACK_LOCALE } from './calendar-messages';
 import type { CalendarRange, CalendarView } from './calendar-range';
 import { daysOf, weekdayLabel } from './calendar-range';
+
+/** Les mots de la grille, dans la langue d'affichage. */
+type GridWords = ReturnType<typeof planningWords>['grid'];
+
+/** Le repli d'affichage — voir `lib/format.ts`, même arbitrage. */
+const FALLBACK_DISPLAY: DisplayLocale = { locale: CALENDAR_FALLBACK_LOCALE };
 
 /** Hauteur d'une rangée, en minutes — le pas de la grille CSS. */
 export const SLOT_MINUTES = 30;
@@ -359,9 +367,18 @@ export interface CalendarBoard {
   readonly appointmentCount: number;
 }
 
-/** « 09 h » — l'étiquette d'heure de la gouttière. */
-function hourLabel(hour: number): string {
-  return `${String(hour).padStart(2, '0')} h`;
+/**
+ * « 09 h », « 09:00 » — l'étiquette d'heure de la gouttière.
+ *
+ * Le motif vient du catalogue et non d'`Intl` : la gouttière est une règle de
+ * 24 heures que la grille aligne sur des rangées de 30 minutes, et l'écriture
+ * en 12 heures qu'`en-US` imposerait doublerait sa largeur pour la moitié des
+ * graduations — « 12 PM » contre « 12 » — sur l'écran le plus dense du
+ * back-office. Les deux langues gardent donc l'horloge de 24 heures, qui est
+ * celle du planning d'un salon, et seul le séparateur suit la langue.
+ */
+function hourLabel(hour: number, words: GridWords): string {
+  return fillMessage(words.hour, { hour: String(hour).padStart(2, '0') });
 }
 
 /** « 09:15 » — des minutes depuis minuit, déjà locales : aucun fuseau ici. */
@@ -374,11 +391,14 @@ function slotClock(slot: number): string {
   return clockOf(slot * SLOT_MINUTES);
 }
 
-/** « 10 h 30 » — la même heure, telle qu'un lecteur d'écran doit l'entendre. */
-function spokenClock(slot: number): string {
+/** « 10 h 30 », « 10:30 » — la même heure, telle qu'un lecteur d'écran l'entend. */
+function spokenClock(slot: number, words: GridWords): string {
   const minutes = slot * SLOT_MINUTES;
 
-  return `${String(Math.floor(minutes / 60)).padStart(2, '0')} h ${String(minutes % 60).padStart(2, '0')}`;
+  return fillMessage(words.spokenTime, {
+    hours: String(Math.floor(minutes / 60)).padStart(2, '0'),
+    minutes: String(minutes % 60).padStart(2, '0'),
+  });
 }
 
 /** « Rina A. » — la vue semaine n'a pas la largeur d'un nom complet. */
@@ -457,6 +477,19 @@ interface BuildOptions {
   readonly openingHours?: readonly OpeningHoursEntry[];
   /** Instant de référence du trait d'heure courante. */
   readonly now?: Date;
+  /**
+   * La langue des mots et la région des formats (#848).
+   *
+   * Deux choses distinctes réunies dans un seul objet, et c'est délibéré : la
+   * **langue** dit « Fermé » ou « Closed », la **région de l'établissement** dit
+   * si le 26 août s'écrit « mer. 26 » ou « Wed 26 ». Aucune des deux ne touche au
+   * fuseau, qui reste celui du salon et décide seul de la rangée où un
+   * rendez-vous se pose.
+   *
+   * Facultatif, et français par défaut : les appelants qui ne lisent de cette
+   * grille que `statusModifier` ou `zonedFields` n'ont pas de langue à passer.
+   */
+  readonly display?: DisplayLocale;
 }
 
 /** Une plage d'ouverture ramenée à des minutes depuis minuit, borne haute exclue. */
@@ -578,7 +611,16 @@ function windowsOfDay(week: OpeningWeek, day: CalendarDate): readonly OpeningWin
  * la fiche de son praticien a changé d'état.
  */
 export function buildCalendarBoard(options: BuildOptions): CalendarBoard {
-  const { view, range, appointments, timeZone, staff = [], openingHours = [] } = options;
+  const {
+    view,
+    range,
+    appointments,
+    timeZone,
+    staff = [],
+    openingHours = [],
+    display = FALLBACK_DISPLAY,
+  } = options;
+  const words = planningWords(display.locale).grid;
   const spans = new Map<string, SlotSpan>();
 
   for (const appointment of appointments) {
@@ -587,13 +629,14 @@ export function buildCalendarBoard(options: BuildOptions): CalendarBoard {
 
   const week = openingWeekOf(openingHours);
   const { firstSlot, lastSlot } = displayedSlots([...spans.values()], daysOf(range), week);
-  const inputs = columnInputs(view, range, appointments, spans, staff);
+  const inputs = columnInputs(view, range, appointments, spans, staff, display);
   const columns = inputs.map((input) =>
     buildColumn(input, spans, {
       view,
       firstSlot,
       lastSlot,
       timeZone,
+      words,
       windows: windowsOfDay(week, input.day),
       ...(options.now === undefined ? {} : { now: options.now }),
     }),
@@ -601,7 +644,7 @@ export function buildCalendarBoard(options: BuildOptions): CalendarBoard {
 
   const hours: string[] = [];
   for (let hour = firstSlot / SLOTS_PER_HOUR; hour < lastSlot / SLOTS_PER_HOUR; hour += 1) {
-    hours.push(hourLabel(hour));
+    hours.push(hourLabel(hour, words));
   }
 
   return {
@@ -664,11 +707,12 @@ function columnInputs(
   appointments: readonly Appointment[],
   spans: ReadonlyMap<string, SlotSpan>,
   staff: readonly StaffMemberSummary[],
+  display: DisplayLocale,
 ): ColumnInput[] {
   if (view === 'semaine') {
     return daysOf(range).map((day) => ({
       id: `col-${day}`,
-      name: weekdayLabel(day),
+      name: weekdayLabel(day, display),
       day,
       staffId: null,
       appointments: appointments.filter((item) => spans.get(item.id)?.day === day),
@@ -712,8 +756,11 @@ function columnInputs(
   return [...byStaff.entries()]
     // Ordre alphabétique et non ordre d'arrivée : les colonnes doivent rester à
     // la même place d'un rafraîchissement à l'autre, sinon l'opérateur clique à
-    // côté après chaque rechargement.
-    .sort(([, left], [, right]) => left.name.localeCompare(right.name, 'fr-FR'))
+    // côté après chaque rechargement. L'ordre suit la langue d'affichage, sans
+    // quoi « Émilie » se rangerait après « Zoé ».
+    .sort(([, left], [, right]) =>
+      left.name.localeCompare(right.name, formattingLocale(display.locale, display.countryCode)),
+    )
     .map(([id, staff]) => ({
       id: `col-${id}`,
       name: staff.name,
@@ -728,6 +775,8 @@ interface ColumnContext {
   readonly firstSlot: number;
   readonly lastSlot: number;
   readonly timeZone: TimeZone;
+  /** Les mots de la grille, dans la langue résolue. */
+  readonly words: GridWords;
   /** Ce que le salon ouvre ce jour-là, `null` si ses horaires sont inconnus. */
   readonly windows: readonly OpeningWindow[] | null;
   readonly now?: Date;
@@ -778,6 +827,7 @@ function labelsOf(
   appointment: Appointment,
   span: SlotSpan,
   view: CalendarView,
+  words: GridWords,
 ): {
   timeLabel: string;
   clientLabel: string;
@@ -808,7 +858,7 @@ function labelsOf(
     // « Prestation » et « Praticien » sont les mots du tiroir de rendez-vous et
     // du comptoir d'encaissement : le planning nomme les mêmes objets de la même
     // façon, ce que `ds:coherence` demande.
-    detailLabel: `Prestation : ${service}. Praticien : ${staffName}.`,
+    detailLabel: fillMessage(words.detail, { service, staff: staffName }),
     tooltip: `${timeRange} · ${fullClientName} · ${service} · ${staffName}`,
   };
 }
@@ -851,7 +901,7 @@ function buildColumn(
       span: Math.max(end - start, 1),
       lane: lanes[index] ?? 0,
       appointment,
-      ...labelsOf(appointment, span, context.view),
+      ...labelsOf(appointment, span, context.view, context.words),
     });
   });
 
@@ -870,7 +920,7 @@ function buildColumn(
       lane: settledLanes.lanes[index] ?? 0,
       laneCount: settledLanes.laneCount,
       appointment,
-      ...labelsOf(appointment, span, context.view),
+      ...labelsOf(appointment, span, context.view, context.words),
     });
   });
 
@@ -890,7 +940,7 @@ function buildColumn(
       key: `ferme-${input.id}-${String(closedFrom)}`,
       slot: closedFrom - context.firstSlot,
       span: until - closedFrom,
-      label: closedLabel(closedFrom, context.windows ?? []),
+      label: closedLabel(closedFrom, context.windows ?? [], context.words),
       nowOffset: nowOffsetWithin(nowSlot, closedFrom, until),
     });
 
@@ -915,7 +965,7 @@ function buildColumn(
       key: `libre-${input.id}-${String(slot)}`,
       slot: slot - context.firstSlot,
       span: 1,
-      timeLabel: spokenClock(slot),
+      timeLabel: spokenClock(slot, context.words),
       day: input.day,
       time: slotClock(slot),
       nowOffset: nowOffsetWithin(nowSlot, slot, slot + 1),
@@ -933,7 +983,7 @@ function buildColumn(
   return {
     id: input.id,
     name: input.name,
-    meta: columnMeta(input.appointments.length, context.windows),
+    meta: columnMeta(input.appointments.length, context.windows, context.words),
     staffId: input.staffId,
     laneCount,
     cells,
@@ -967,9 +1017,13 @@ function isClosed(slot: number, windows: readonly OpeningWindow[] | null): boole
  * fermeture d'un défaut d'affichage, et l'opérateur qui cherche pourquoi il ne
  * peut pas poser à 13 h doit lire la réponse sur la rangée même.
  */
-function closedLabel(slot: number, windows: readonly OpeningWindow[]): string {
+function closedLabel(
+  slot: number,
+  windows: readonly OpeningWindow[],
+  words: GridWords,
+): string {
   if (windows.length === 0) {
-    return 'Fermé';
+    return words.closed;
   }
 
   const minutes = slot * SLOT_MINUTES;
@@ -979,7 +1033,7 @@ function closedLabel(slot: number, windows: readonly OpeningWindow[]): string {
     windows.some((window) => window.end <= minutes) &&
     windows.some((window) => window.start > minutes);
 
-  return enclosed ? 'Pause' : 'Hors horaires';
+  return enclosed ? words.break : words.outsideHours;
 }
 
 /**
@@ -989,8 +1043,14 @@ function closedLabel(slot: number, windows: readonly OpeningWindow[]): string {
  * ouverte et creuse — celle qu'on propose de remplir. Un jour fermé qui porte
  * malgré tout un rendez-vous garde son compte : c'est lui l'information.
  */
-function columnMeta(count: number, windows: readonly OpeningWindow[] | null): string {
-  return count === 0 && windows !== null && windows.length === 0 ? 'Fermé' : countLabel(count);
+function columnMeta(
+  count: number,
+  windows: readonly OpeningWindow[] | null,
+  words: GridWords,
+): string {
+  return count === 0 && windows !== null && windows.length === 0
+    ? words.closed
+    : countLabel(count, words);
 }
 
 /**
@@ -1016,12 +1076,20 @@ function laneOf(cell: CalendarCell): number {
   return cell.kind === 'ghost' ? 1 : 0;
 }
 
-function countLabel(count: number): string {
+/**
+ * « Aucun rendez-vous », « 1 RDV », « 4 RDV ».
+ *
+ * Trois clés plutôt qu'une règle de pluriel : le zéro ne se dit pas « 0 RDV »
+ * mais par une phrase, et l'abréviation du singulier n'est pas celle du pluriel
+ * en anglais (« 1 appt », « 4 appts »). Une sélection ICU aurait porté la même
+ * information avec un formateur à monter sur chaque colonne de la grille.
+ */
+function countLabel(count: number, words: GridWords): string {
   if (count === 0) {
-    return 'Aucun rendez-vous';
+    return words.noAppointment;
   }
 
-  return count === 1 ? '1 RDV' : `${String(count)} RDV`;
+  return count === 1 ? words.countOne : fillMessage(words.countOther, { count: String(count) });
 }
 
 /**

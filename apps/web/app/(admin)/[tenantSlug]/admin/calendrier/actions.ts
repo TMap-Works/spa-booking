@@ -50,6 +50,7 @@ import {
   type Notification as NotificationTrace,
   type ServiceStaffMember,
 } from '@spa/shared';
+import { getTranslations } from 'next-intl/server';
 
 import {
   cancelDeskAppointment,
@@ -89,17 +90,28 @@ export async function loadCalendarRangeAction(
   tenantSlug: string,
   view: string,
   date: string,
+  /**
+   * Le jour qui ouvre la semaine, tel que la région de l'établissement le veut
+   * (#848) — `1` lundi, `0` dimanche.
+   *
+   * Il arrive de l'écran et n'est pas cru sur parole : une action serveur est un
+   * point d'entrée public, et tout ce qui n'est pas exactement `0` retombe sur le
+   * lundi. Il ne sert qu'à **borner la plage** demandée à l'API ; l'ancrage,
+   * lui, a déjà été normalisé côté écran.
+   */
+  weekStart?: number,
 ): Promise<AdminActionResult<{ readonly appointments: Appointment[] }>> {
+  const t = await getTranslations('admin-planning');
   const slug = slugSchema.safeParse(tenantSlug);
 
   if (!slug.success) {
-    return invalid('Établissement inconnu.');
+    return invalid(t('actions.unknownTenant'));
   }
 
   const anchor = parseCalendarDate(date);
 
   if (anchor === null) {
-    return invalid('Date de planning invalide.');
+    return invalid(t('actions.invalidDate'));
   }
 
   const access = await adminActionAccess(slug.data);
@@ -111,7 +123,7 @@ export async function loadCalendarRangeAction(
   const { accessToken } = access;
 
   const parsedView: CalendarView = parseCalendarView(view);
-  const range = rangeOf(parsedView, anchor);
+  const range = rangeOf(parsedView, anchor, weekStart === 0 ? 0 : 1);
 
   try {
     return { ok: true, data: { appointments: await fetchAppointments(accessToken, range) } };
@@ -132,8 +144,9 @@ export async function loadCalendarRangeAction(
 async function deskToken(
   tenantSlug: string,
 ): Promise<{ readonly token: string } | { readonly refusal: AdminActionResult<never> }> {
+  const t = await getTranslations('admin-planning');
   if (!slugSchema.safeParse(tenantSlug).success) {
-    return { refusal: invalid('Établissement inconnu.') };
+    return { refusal: invalid(t('actions.unknownTenant')) };
   }
 
   const access = await adminActionAccess(tenantSlug);
@@ -153,6 +166,7 @@ export async function searchDeskClientsAction(
   tenantSlug: string,
   term: string,
 ): Promise<AdminActionResult<{ readonly clients: CustomerSummary[] }>> {
+  const t = await getTranslations('admin-planning');
   const access = await deskToken(tenantSlug);
 
   if ('refusal' in access) {
@@ -162,7 +176,7 @@ export async function searchDeskClientsAction(
   const parsed = customerSearchQuerySchema.safeParse({ q: term });
 
   if (!parsed.success) {
-    return invalid(parsed.error.issues[0]?.message ?? 'Recherche invalide.');
+    return invalid(t('actions.invalidSearch'));
   }
 
   try {
@@ -184,6 +198,7 @@ export async function createDeskClientAction(
   tenantSlug: string,
   payload: unknown,
 ): Promise<AdminActionResult<Customer>> {
+  const t = await getTranslations('admin-planning');
   const access = await deskToken(tenantSlug);
 
   if ('refusal' in access) {
@@ -193,7 +208,7 @@ export async function createDeskClientAction(
   const parsed = createCustomerRequestSchema.safeParse(payload);
 
   if (!parsed.success) {
-    return invalid(parsed.error.issues[0]?.message ?? 'La fiche client saisie est invalide.');
+    return invalid(t('actions.invalidClient'));
   }
 
   try {
@@ -215,6 +230,7 @@ export async function loadDeskServiceStaffAction(
   tenantSlug: string,
   serviceId: string,
 ): Promise<AdminActionResult<{ readonly staff: ServiceStaffMember[] }>> {
+  const t = await getTranslations('admin-planning');
   const access = await deskToken(tenantSlug);
 
   if ('refusal' in access) {
@@ -222,7 +238,7 @@ export async function loadDeskServiceStaffAction(
   }
 
   if (!uuidSchema.safeParse(serviceId).success) {
-    return invalid('Prestation inconnue.');
+    return invalid(t('actions.unknownService'));
   }
 
   try {
@@ -279,6 +295,7 @@ export async function loadDeskAvailabilityAction(
   tenantSlug: string,
   query: unknown,
 ): Promise<AdminActionResult<{ readonly slots: readonly AvailabilitySlot[] }>> {
+  const t = await getTranslations('admin-planning');
   const access = await deskToken(tenantSlug);
 
   if ('refusal' in access) {
@@ -286,7 +303,7 @@ export async function loadDeskAvailabilityAction(
   }
 
   if (typeof query !== 'object' || query === null) {
-    return invalid('Interrogation de disponibilité invalide.');
+    return invalid(t('actions.invalidAvailabilityQuery'));
   }
 
   const raw: Record<string, unknown> = { ...query };
@@ -306,7 +323,7 @@ export async function loadDeskAvailabilityAction(
   });
 
   if (!parsed.success) {
-    return invalid(parsed.error.issues[0]?.message ?? 'Interrogation de disponibilité invalide.');
+    return invalid(t('actions.invalidAvailabilityQuery'));
   }
 
   try {
@@ -335,6 +352,7 @@ export async function loadAppointmentNotificationsAction(
   tenantSlug: string,
   appointmentId: string,
 ): Promise<AdminActionResult<{ readonly notifications: readonly NotificationTrace[] }>> {
+  const t = await getTranslations('admin-planning');
   const access = await deskToken(tenantSlug);
 
   if ('refusal' in access) {
@@ -342,7 +360,7 @@ export async function loadAppointmentNotificationsAction(
   }
 
   if (!uuidSchema.safeParse(appointmentId).success) {
-    return invalid('Rendez-vous inconnu.');
+    return invalid(t('actions.unknownAppointment'));
   }
 
   try {
@@ -370,6 +388,7 @@ export async function createDeskAppointmentAction(
   tenantSlug: string,
   payload: unknown,
 ): Promise<AdminActionResult<Appointment>> {
+  const t = await getTranslations('admin-planning');
   const access = await deskToken(tenantSlug);
 
   if ('refusal' in access) {
@@ -379,7 +398,7 @@ export async function createDeskAppointmentAction(
   const parsed = createAppointmentRequestSchema.safeParse(payload);
 
   if (!parsed.success) {
-    return invalid(parsed.error.issues[0]?.message ?? 'Le rendez-vous saisi est invalide.');
+    return invalid(t('actions.invalidAppointment'));
   }
 
   try {
@@ -401,6 +420,7 @@ export async function rescheduleDeskAppointmentAction(
   appointmentId: string,
   payload: unknown,
 ): Promise<AdminActionResult<Appointment>> {
+  const t = await getTranslations('admin-planning');
   const access = await deskToken(tenantSlug);
 
   if ('refusal' in access) {
@@ -408,13 +428,13 @@ export async function rescheduleDeskAppointmentAction(
   }
 
   if (!uuidSchema.safeParse(appointmentId).success) {
-    return invalid('Rendez-vous inconnu.');
+    return invalid(t('actions.unknownAppointment'));
   }
 
   const parsed = rescheduleAppointmentRequestSchema.safeParse(payload);
 
   if (!parsed.success) {
-    return invalid(parsed.error.issues[0]?.message ?? 'Le report saisi est invalide.');
+    return invalid(t('actions.invalidReschedule'));
   }
 
   try {
@@ -436,6 +456,7 @@ export async function markDeskAppointmentStatusAction(
   appointmentId: string,
   payload: unknown,
 ): Promise<AdminActionResult<Appointment>> {
+  const t = await getTranslations('admin-planning');
   const access = await deskToken(tenantSlug);
 
   if ('refusal' in access) {
@@ -443,13 +464,13 @@ export async function markDeskAppointmentStatusAction(
   }
 
   if (!uuidSchema.safeParse(appointmentId).success) {
-    return invalid('Rendez-vous inconnu.');
+    return invalid(t('actions.unknownAppointment'));
   }
 
   const parsed = changeAppointmentStatusRequestSchema.safeParse(payload);
 
   if (!parsed.success) {
-    return invalid(parsed.error.issues[0]?.message ?? 'Statut de rendez-vous invalide.');
+    return invalid(t('actions.invalidStatus'));
   }
 
   try {
@@ -499,6 +520,7 @@ export async function cancelDeskAppointmentAction(
   appointmentId: string,
   payload: unknown,
 ): Promise<AdminActionResult<BookedAppointment>> {
+  const t = await getTranslations('admin-planning');
   const access = await deskToken(tenantSlug);
 
   if ('refusal' in access) {
@@ -506,13 +528,13 @@ export async function cancelDeskAppointmentAction(
   }
 
   if (!uuidSchema.safeParse(appointmentId).success) {
-    return invalid('Rendez-vous inconnu.');
+    return invalid(t('actions.unknownAppointment'));
   }
 
   const parsed = cancelAppointmentRequestSchema.safeParse(payload);
 
   if (!parsed.success) {
-    return invalid(parsed.error.issues[0]?.message ?? 'Le motif d’annulation est invalide.');
+    return invalid(t('actions.invalidCancelReason'));
   }
 
   try {

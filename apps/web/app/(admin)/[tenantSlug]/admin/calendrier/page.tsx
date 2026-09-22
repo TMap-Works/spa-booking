@@ -1,4 +1,5 @@
-import type { Appointment, PublicTenant, Service, StaffMember } from '@spa/shared';
+import type { Appointment, Locale, PublicTenant, Service, StaffMember } from '@spa/shared';
+import { getLocale, getTranslations } from 'next-intl/server';
 import { redirect } from 'next/navigation';
 
 import {
@@ -17,6 +18,7 @@ import {
   rangeOf,
   shiftAnchor,
   todayInTimeZone,
+  weekStartOf,
   type CalendarView,
 } from '@/lib/admin/calendar-range';
 
@@ -117,6 +119,8 @@ interface CalendarPageProps {
 export default async function CalendarPage({ params, searchParams }: CalendarPageProps) {
   const { tenantSlug } = await params;
   const query = await searchParams;
+  const t = await getTranslations('admin-planning');
+  const locale = await getLocale();
 
   // La vue et la date sont lues **avant** la garde : elles ne demandent aucun
   // jeton, et c'est ce qui permet de dire à la garde où revenir après un
@@ -142,17 +146,29 @@ export default async function CalendarPage({ params, searchParams }: CalendarPag
     tenant = await fetchPublicTenant(tenantSlug);
   } catch (error) {
     return adminLoadFailure(error, tenantSlug, {
-      deniedTitle: 'Accès réservé',
-      deniedHint: 'La vitrine publique de ce salon n’a pas pu être lue avec ce compte.',
-      failedTitle: 'Planning indisponible',
+      deniedTitle: t('denied.title'),
+      deniedHint: t('denied.hint'),
+      failedTitle: t('failure.title'),
       renewal,
     });
   }
 
+  /*
+   * Le pays de l'établissement — la **région** des formats, et le jour qui
+   * ouvre la semaine (#848).
+   *
+   * Il vient de l'adresse publiée sur la vitrine, la même réponse que le fuseau
+   * et les horaires d'ouverture : aucune lecture de plus. Il ne touche pas au
+   * fuseau, qui reste `tenant.timezone` — la langue et la région disent comment
+   * une heure s'écrit, jamais quelle heure il est.
+   */
+  const countryCode = tenant.address?.country ?? null;
+  const weekStart = weekStartOf(countryCode);
+
   // La journée par défaut est celle du **salon**, pas celle du navigateur : une
   // gérante qui consulte depuis un autre fuseau doit ouvrir sur le jour que son
   // équipe travaille.
-  const anchor = anchorOf(view, requested ?? todayInTimeZone(tenant.timezone));
+  const anchor = anchorOf(view, requested ?? todayInTimeZone(tenant.timezone), weekStart);
 
   // Les prestations actives seules : le tiroir sert à **poser** un rendez-vous,
   // et une prestation retirée du catalogue n'est plus vendable. Un échec ne
@@ -185,14 +201,21 @@ export default async function CalendarPage({ params, searchParams }: CalendarPag
       (): readonly StaffMember[] | null => null,
     ),
     Promise.all(
-      [anchor, shiftAnchor(view, anchor, -1), shiftAnchor(view, anchor, 1)].map(async (target) => {
+      [
+        anchor,
+        shiftAnchor(view, anchor, -1, weekStart),
+        shiftAnchor(view, anchor, 1, weekStart),
+      ].map(async (target) => {
         try {
           return {
-            key: rangeKey(view, target),
-            appointments: await fetchAppointments(accessToken, rangeOf(view, target)),
+            key: rangeKey(view, target, weekStart),
+            appointments: await fetchAppointments(
+              accessToken,
+              rangeOf(view, target, weekStart),
+            ),
           };
         } catch (error) {
-          return { key: rangeKey(view, target), error };
+          return { key: rangeKey(view, target, weekStart), error };
         }
       }),
     ),
@@ -229,18 +252,19 @@ export default async function CalendarPage({ params, searchParams }: CalendarPag
 
     // L'échec d'un **préchargement** ne se montre pas : personne ne l'a demandé,
     // et la période affichée est intacte. Seul celui de la période ouverte parle.
-    if (result.key === rangeKey(view, anchor)) {
-      loadError = describeLoadFailure(result.error);
+    if (result.key === rangeKey(view, anchor, weekStart)) {
+      loadError = describeLoadFailure(result.error, locale);
     }
   }
 
   return (
     <section aria-labelledby="planning-titre">
       <h1 className="spa-admin__title" id="planning-titre">
-        Planning
+        {t('title')}
       </h1>
 
       <CalendarBoard
+        countryCode={countryCode}
         date={anchor}
         initialPeriods={periods}
         loadError={loadError}
@@ -266,10 +290,10 @@ export default async function CalendarPage({ params, searchParams }: CalendarPag
  * Ce qui n'est pas une erreur d'API est **relancé** : une panne de rendu n'est
  * pas un refus métier, et l'avaler la ferait passer pour un agenda vide.
  */
-function describeLoadFailure(error: unknown): string {
+function describeLoadFailure(error: unknown, locale: Locale): string {
   if (!(error instanceof ApiClientError)) {
     throw error;
   }
 
-  return calendarFailureMessage(error.code, error.message);
+  return calendarFailureMessage(error.code, error.message, locale);
 }

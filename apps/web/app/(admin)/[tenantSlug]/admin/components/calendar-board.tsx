@@ -8,6 +8,7 @@ import type {
   TimeZone,
 } from '@spa/shared';
 import { ERROR_CODES } from '@spa/shared';
+import { useLocale, useTranslations } from 'next-intl';
 import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
@@ -15,8 +16,9 @@ import { useAppointmentFeed } from '@/components/live/appointment-feed';
 import { Button } from '@/components/ui/button';
 import { Notification } from '@/components/ui/notification';
 import {
+  deskMoment,
   isReschedulable,
-  moveRefusal,
+  isSlotConflict,
   planDeskMove,
   type DeskMove,
   type DeskMoveRefusal,
@@ -39,10 +41,12 @@ import {
   rangeOf,
   shiftAnchor,
   todayInTimeZone,
+  weekStartOf,
   type CalendarView,
 } from '@/lib/admin/calendar-range';
 import { calendarPeriodEmptyState, calendarStartState } from '@/lib/admin/calendar-start';
-import { APPOINTMENT_STATUS_LABELS, appointmentOutcomeLabel } from '@/lib/appointment-status';
+import { appointmentOutcomeLabel, appointmentStatusLabels } from '@/lib/appointment-status';
+import type { DisplayLocale } from '@/lib/format';
 import { initialsOf } from '@/lib/initials';
 
 import type { AdminActionResult } from '../action-result';
@@ -223,6 +227,17 @@ interface CalendarBoardProps {
    * son comportement d'avant ce ticket plutôt que de peindre une semaine close.
    */
   readonly openingHours?: readonly OpeningHoursEntry[];
+  /**
+   * Le pays de l'établissement — `Tenant.countryCode`, lu sur la vitrine
+   * publique (#848).
+   *
+   * Il décide de deux choses, et d'aucune autre : la **région** des formats de
+   * date, et le **jour qui ouvre la semaine**. Ni l'une ni l'autre n'est la
+   * langue de qui regarde — un salon de Boston tient son planning du dimanche au
+   * samedi, y compris consulté en français —, et ni l'une ni l'autre ne touche
+   * au fuseau, qui reste celui du salon.
+   */
+  readonly countryCode?: string | null;
 }
 
 /** Rafraîchissement du trait d'heure courante — sa résolution est la minute. */
@@ -251,7 +266,13 @@ export function CalendarBoard({
   staff,
   setupKnown = true,
   openingHours = EMPTY_OPENING_HOURS,
+  countryCode = null,
 }: CalendarBoardProps) {
+  const t = useTranslations('admin-planning');
+  const locale = useLocale();
+  const display: DisplayLocale = useMemo(() => ({ locale, countryCode }), [locale, countryCode]);
+  /** Le jour qui ouvre la semaine — celui de la région du salon (#848). */
+  const weekStart = useMemo(() => weekStartOf(countryCode), [countryCode]);
   const { renew } = useAdminSessionRenewal(tenantSlug);
   const [view, setView] = useState<CalendarView>(initialView);
   const [date, setDate] = useState<string>(initialDate);
@@ -294,7 +315,7 @@ export function CalendarBoard({
   // vient de créer disparaîtrait de l'écran (#50).
   const cacheAge = useRef(0);
 
-  const currentKey = rangeKey(view, date);
+  const currentKey = rangeKey(view, date, weekStart);
   const appointments = periods.get(currentKey);
   /** L'URL de la période affichée — celle que l'effet d'historique y écrit. */
   const currentPath = adminCalendarPath(tenantSlug, { view, date });
@@ -339,14 +360,15 @@ export function CalendarBoard({
     () =>
       buildCalendarBoard({
         view,
-        range: rangeOf(view, date),
+        range: rangeOf(view, date, weekStart),
         appointments: appointments ?? [],
         staff,
         openingHours,
         timeZone,
+        display,
         ...(now === null ? {} : { now }),
       }),
-    [view, date, appointments, staff, openingHours, timeZone, now],
+    [view, date, weekStart, appointments, staff, openingHours, timeZone, display, now],
   );
 
   // Une période qu'on n'a pas encore n'est pas une période vide : dire « aucun
@@ -376,9 +398,10 @@ export function CalendarBoard({
         ? calendarStartState(
             { serviceCount: services.length, staffCount: staff.length },
             { catalog: adminCatalogPath(tenantSlug), staff: adminStaffPath(tenantSlug) },
+            locale,
           )
-        : calendarPeriodEmptyState(),
-    [setupKnown, failure, services.length, staff.length, tenantSlug],
+        : calendarPeriodEmptyState(locale),
+    [setupKnown, failure, services.length, staff.length, tenantSlug, locale],
   );
 
   // Aucune colonne à rendre : il n'y a littéralement rien à dessiner, et la
@@ -424,7 +447,7 @@ export function CalendarBoard({
   /** Charge une période absente du cache, et la range dedans. */
   const load = useCallback(
     async (nextView: CalendarView, anchor: string, background: boolean): Promise<void> => {
-      const key = rangeKey(nextView, anchor);
+      const key = rangeKey(nextView, anchor, weekStart);
       const age = cacheAge.current;
       // Une période déjà demandée ne repart pas — mais l'appel se **greffe** sur
       // la requête en cours au lieu d'abandonner. Abandonner laissait un clic
@@ -435,7 +458,11 @@ export function CalendarBoard({
       const owned = pending === undefined;
 
       if (pending === undefined) {
-        pending = loadCalendarRangeAction(tenantSlug, nextView, anchor);
+        // Le jour d'ouverture part avec la requête : l'ancrage est déjà celui de
+        // la région du salon, et l'action recalcule la plage à partir de lui.
+        // Sans lui, un ancrage posé un dimanche serait ramené au lundi précédent
+        // côté serveur, et la semaine chargée ne serait pas celle qu'on affiche.
+        pending = loadCalendarRangeAction(tenantSlug, nextView, anchor, weekStart);
         inFlight.current.set(key, pending);
       }
 
@@ -495,21 +522,21 @@ export function CalendarBoard({
         // La même traduction que le premier rendu, côté serveur : sans elle,
         // ouvrir la semaine suivante afficherait le « Cannot GET … » brut du
         // cadre HTTP là où la journée ouverte disait ce qui manque.
-        setFailure(calendarFailureMessage(result.code, result.message));
+        setFailure(calendarFailureMessage(result.code, result.message, locale));
       }
     },
-    [renewSession, tenantSlug],
+    [renewSession, tenantSlug, weekStart, locale],
   );
 
   /** Ouvre une période — depuis le cache si elle y est, sinon par l'action. */
   const openPeriod = useCallback(
     (nextView: CalendarView, rawDate: string): void => {
-      const anchor = anchorOf(nextView, rawDate);
+      const anchor = anchorOf(nextView, rawDate, weekStart);
 
       setView(nextView);
       setDate(anchor);
 
-      if (periods.has(rangeKey(nextView, anchor))) {
+      if (periods.has(rangeKey(nextView, anchor, weekStart))) {
         // La période est déjà là et s'affiche : la bannière de celle qu'on vient
         // de quitter n'a plus rien à dire au-dessus d'un planning intact.
         setFailure(null);
@@ -518,7 +545,7 @@ export function CalendarBoard({
 
       void load(nextView, anchor, false);
     },
-    [load, periods],
+    [load, periods, weekStart],
   );
 
   /**
@@ -585,6 +612,52 @@ export function CalendarBoard({
    * lui, le retour arrière serait juste et l'opérateur ne saurait pas quoi en
    * faire.
    */
+  /**
+   * Le retour arrière rendu lisible — troisième critère de #51, et **traduit**
+   * depuis #848.
+   *
+   * La composition vit ici et non plus dans `lib/admin/appointment-desk.ts` :
+   * elle assemble quatre phrases du catalogue, et un module de calcul pur n'a
+   * pas de traducteur sous la main. Le **verdict**, lui, reste au module — c'est
+   * `isSlotConflict` qui dit si le refus est passager, et lui seul.
+   *
+   * Ce que la bannière annonce n'a pas changé d'un mot : où le rendez-vous est
+   * revenu, et pourquoi il n'a pas pu aller ailleurs. Le ton distingue le
+   * passager du définitif — un créneau pris depuis un autre poste est le cas
+   * normal de la concurrence (web-frontend §3), un autre horaire le lève.
+   */
+  const refusalOf = useCallback(
+    (previous: Appointment, code: string, message: string): DeskMoveRefusal => {
+      const transient = isSlotConflict(code);
+      // `NOT_FOUND` et `HTTP_404` sont les deux façons dont un 404 remonte du
+      // client d'API. Sur un report, ni l'un ni l'autre ne dit l'absence de
+      // route — elle est servie depuis #464 : ils disent que le rendez-vous
+      // qu'on vient de saisir n'est plus là.
+      const gone = code === ERROR_CODES.NOT_FOUND || code === 'HTTP_404';
+      const reason = transient
+        ? t('move.conflictBody')
+        : gone
+          ? t('move.goneBody')
+          : message;
+
+      return {
+        // « Indisponible » et non « déjà pris » : le titre est la première chose
+        // que l'opératrice lit, et le refus ne donne pas sa cause (#611).
+        title: transient ? t('move.conflictTitle') : t('move.refusedTitle'),
+        // « Le rendez-vous de X est resté le … » plutôt que « X est resté au … » :
+        // la phrase s'accorde sur le rendez-vous, et non sur une cliente dont le
+        // contrat ne porte pas le genre.
+        body: `${t('move.restored', {
+          client: `${previous.client.firstName} ${previous.client.lastName}`,
+          moment: deskMoment(previous.startsAt, timeZone, display),
+          staff: previous.staff.displayName,
+        })} ${reason}`,
+        tone: transient ? 'warning' : 'danger',
+      };
+    },
+    [t, timeZone, display],
+  );
+
   const commitMove = useCallback(
     async (move: DeskMove, key: string): Promise<void> => {
       setMoving({ move, key });
@@ -604,7 +677,7 @@ export function CalendarBoard({
 
       replaceAppointment(key, move.previous.id, move.previous);
       setRefusal({
-        notice: moveRefusal(move.previous, timeZone, result.code, result.message),
+        notice: refusalOf(move.previous, result.code, result.message),
         appointmentId: move.previous.id,
       });
 
@@ -612,7 +685,7 @@ export function CalendarBoard({
         renewSession();
       }
     },
-    [tenantSlug, timeZone, replaceAppointment, renewSession],
+    [tenantSlug, refusalOf, replaceAppointment, renewSession],
   );
 
   /**
@@ -839,13 +912,13 @@ export function CalendarBoard({
   // Préchargement des deux périodes voisines — deuxième critère du ticket.
   useEffect(() => {
     for (const step of [-1, 1]) {
-      const anchor = shiftAnchor(view, date, step);
+      const anchor = shiftAnchor(view, date, step, weekStart);
 
-      if (!periods.has(rangeKey(view, anchor))) {
+      if (!periods.has(rangeKey(view, anchor, weekStart))) {
         void load(view, anchor, true);
       }
     }
-  }, [view, date, periods, load]);
+  }, [view, date, weekStart, periods, load]);
 
   useEffect(() => {
     setNow(new Date());
@@ -917,19 +990,19 @@ export function CalendarBoard({
          * gestes et non des liens — la période voisine est déjà en cache, et la
          * faire repasser par le serveur annulerait ce préchargement. */}
         <PeriodNav
-          label={rangeLabel(view, date)}
+          label={rangeLabel(view, date, display, weekStart)}
           next={{
             onSelect: () => {
-              openPeriod(view, shiftAnchor(view, date, 1));
+              openPeriod(view, shiftAnchor(view, date, 1, weekStart));
             },
           }}
-          nextLabel={view === 'jour' ? 'Jour suivant' : 'Semaine suivante'}
+          nextLabel={view === 'jour' ? t('toolbar.nextDay') : t('toolbar.nextWeek')}
           previous={{
             onSelect: () => {
-              openPeriod(view, shiftAnchor(view, date, -1));
+              openPeriod(view, shiftAnchor(view, date, -1, weekStart));
             },
           }}
-          previousLabel={view === 'jour' ? 'Jour précédent' : 'Semaine précédente'}
+          previousLabel={view === 'jour' ? t('toolbar.previousDay') : t('toolbar.previousWeek')}
           today={{
             onSelect: () => {
               openPeriod(view, todayInTimeZone(timeZone));
@@ -938,7 +1011,7 @@ export function CalendarBoard({
         />
 
         <fieldset className="spa-admin-segmented">
-          <legend className="spa-visually-hidden">Vue du planning</legend>
+          <legend className="spa-visually-hidden">{t('toolbar.viewLegend')}</legend>
           <input
             className="spa-admin-segmented__input spa-visually-hidden"
             type="radio"
@@ -950,7 +1023,7 @@ export function CalendarBoard({
             }}
           />
           <label className="spa-admin-segmented__option" htmlFor="vue-jour">
-            Jour
+            {t('toolbar.day')}
           </label>
           <input
             className="spa-admin-segmented__input spa-visually-hidden"
@@ -963,19 +1036,17 @@ export function CalendarBoard({
             }}
           />
           <label className="spa-admin-segmented__option" htmlFor="vue-semaine">
-            Semaine
+            {t('toolbar.week')}
           </label>
         </fieldset>
 
         <div className="spa-admin-toolbar__group spa-admin-toolbar__spacer">
-          <span className="spa-admin-toolbar__hint">
-            Heures affichées dans le fuseau du salon ({timeZone})
-          </span>
+          <span className="spa-admin-toolbar__hint">{t('toolbar.timeZone', { timeZone })}</span>
         </div>
       </div>
 
       {failure === null ? null : (
-        <Notification tone="danger" title="Planning indisponible">
+        <Notification tone="danger" title={t('failure.title')}>
           <p>{failure}</p>
         </Notification>
       )}
@@ -988,6 +1059,7 @@ export function CalendarBoard({
 
       {confirming === null ? null : (
         <CalendarMoveConfirm
+          display={display}
           move={confirming.move}
           onCancel={() => {
             // Refuser replace le rendez-vous exactement comme le ferait un 409 :
@@ -1015,12 +1087,14 @@ export function CalendarBoard({
         {picked === null
           ? moving === null
             ? ''
-            : 'Report en cours…'
-          : `${picked.client.firstName} ${picked.client.lastName} est saisi : choisissez un créneau libre, ou Échap pour reposer.`}
+            : t('board.moving')
+          : t('board.picked', {
+              client: `${picked.client.firstName} ${picked.client.lastName}`,
+            })}
       </p>
 
       <div className={classes} aria-busy={loading}>
-        {loading ? <p className="spa-visually-hidden">Chargement du planning…</p> : null}
+        {loading ? <p className="spa-visually-hidden">{t('board.loading')}</p> : null}
 
         <div className="spa-admin-calendar__legend">
           {/* La légende décrit les cinq **statuts**, sans les raconter : elle dit
@@ -1028,13 +1102,16 @@ export function CalendarBoard({
               devenu. C'est la seule surface du planning qui lise la table brute
               plutôt qu'`appointmentOutcomeLabel` (#917). */}
           {(
-            Object.keys(APPOINTMENT_STATUS_LABELS) as (keyof typeof APPOINTMENT_STATUS_LABELS)[]
-          ).map((status) => (
+            Object.entries(appointmentStatusLabels(locale)) as [
+              keyof ReturnType<typeof appointmentStatusLabels>,
+              string,
+            ][]
+          ).map(([status, label]) => (
             <span
               className={`spa-admin-badge spa-admin-badge--${statusModifier(status)}`}
               key={status}
             >
-              {APPOINTMENT_STATUS_LABELS[status]}
+              {label}
             </span>
           ))}
         </div>
@@ -1043,9 +1120,11 @@ export function CalendarBoard({
           <div className="spa-admin-calendar__head-spacer" />
           {!showsGrid ? (
             <div className="spa-admin-calendar__column-head">
-              <span className="spa-admin-calendar__column-name">{rangeLabel(view, date)}</span>
+              <span className="spa-admin-calendar__column-name">
+                {rangeLabel(view, date, display, weekStart)}
+              </span>
               <span className="spa-admin-calendar__column-meta">
-                {isPending ? 'Chargement…' : 'Aucun rendez-vous'}
+                {isPending ? t('board.columnLoading') : t('board.columnEmpty')}
               </span>
             </div>
           ) : (
@@ -1070,10 +1149,8 @@ export function CalendarBoard({
         <div className="spa-admin-calendar__body">
           {isPending ? (
             <div className="spa-empty-state">
-              <p className="spa-empty-state__title">Chargement de la période…</p>
-              <p className="spa-empty-state__description">
-                Les rendez-vous de cette période arrivent.
-              </p>
+              <p className="spa-empty-state__title">{t('board.loadingTitle')}</p>
+              <p className="spa-empty-state__description">{t('board.loadingDescription')}</p>
             </div>
           ) : isEmpty ? (
             <div className="spa-empty-state">
@@ -1085,10 +1162,10 @@ export function CalendarBoard({
                 <Button
                   variant="neutral"
                   onClick={() => {
-                    openPeriod(view, shiftAnchor(view, date, 1));
+                    openPeriod(view, shiftAnchor(view, date, 1, weekStart));
                   }}
                 >
-                  {view === 'jour' ? 'Aller au jour suivant' : 'Aller à la semaine suivante'}
+                  {view === 'jour' ? t('board.goNextDay') : t('board.goNextWeek')}
                 </Button>
               ) : (
                 // Des liens et non des boutons : ce sont des destinations, elles
@@ -1158,6 +1235,7 @@ export function CalendarBoard({
           target={target}
           tenantSlug={tenantSlug}
           timeZone={timeZone}
+          countryCode={countryCode}
         />
       )}
     </>
@@ -1247,6 +1325,12 @@ function CalendarCellView({
   /** Praticien de la colonne — `null` en vue semaine, où elle vaut pour l'équipe. */
   readonly staff: Appointment['staff'] | null;
 }) {
+  // Les crochets sont appelés ici plutôt que passés de proche en proche :
+  // `next-intl` mémoïse le traducteur sur le contexte de la requête, si bien
+  // qu'une cellule n'en monte pas un de plus — et une grille en compte plusieurs
+  // centaines en vue semaine.
+  const t = useTranslations('admin-planning');
+  const locale = useLocale();
   const placement = {
     gridRow: `${String(cell.slot + 1)} / span ${String(cell.span)}`,
     gridColumn: cell.kind === 'event' ? String(cell.lane + 1) : `1 / span ${String(laneCount)}`,
@@ -1276,7 +1360,7 @@ function CalendarCellView({
               soir, un dimanche entier. Sans cette annonce, il ne serait visible
               que des voyants. */}
           {cell.nowOffset === null ? null : (
-            <span className="spa-visually-hidden">heure courante</span>
+            <span className="spa-visually-hidden">{t('grid.currentTime')}</span>
           )}
         </div>
       </li>
@@ -1321,7 +1405,8 @@ function CalendarCellView({
               même endroit sans comprendre lequel des deux fait foi. */}
           <span className="spa-visually-hidden">
             {cell.detailLabel === null ? null : `${cell.detailLabel} `}
-            Statut : {appointmentOutcomeLabel(settled)}. Ce créneau est de nouveau réservable.
+            {t('grid.status', { status: appointmentOutcomeLabel(settled, 'desk', locale) })}{' '}
+            {t('grid.reopened')}
           </span>
 
           {/* La fiche s'ouvre par ce bouton-là, et non par le repère entier.
@@ -1346,7 +1431,7 @@ function CalendarCellView({
           >
             <span aria-hidden="true">⋯</span>
             <span className="spa-visually-hidden">
-              Ouvrir la fiche de {cell.clientLabel}, {cell.timeLabel}
+              {t('grid.openRecord', { client: cell.clientLabel, time: cell.timeLabel })}
             </span>
           </button>
         </div>
@@ -1402,15 +1487,17 @@ function CalendarCellView({
         >
           <span className="spa-visually-hidden">
             {cell.timeLabel}
-            {cell.nowOffset === null ? ', libre' : ', libre, heure courante'}
+            {cell.nowOffset === null ? t('grid.free') : t('grid.freeNow')}
             {/* « à partir de cette heure », et non « à cette heure » : la rangée
                 de la grille n'est pas un créneau du moteur, et le tiroir
                 proposera le premier créneau réel qui la suit (#611). Promettre
                 l'heure exacte était le mensonge que la campagne de QA a relevé —
                 six refus au comptoir sur une journée entièrement libre. */}
             {dropping === null
-              ? ' — poser un rendez-vous à partir de cette heure'
-              : ` — déplacer ici le rendez-vous de ${dropping.client.firstName} ${dropping.client.lastName}`}
+              ? t('grid.freeHint')
+              : t('grid.dropHint', {
+                  client: `${dropping.client.firstName} ${dropping.client.lastName}`,
+                })}
           </span>
         </button>
       </li>
@@ -1473,7 +1560,7 @@ function CalendarCellView({
             mange le saut de ligne, d'où l'espace posé ici à la main (#762). */}
         <span className="spa-visually-hidden">
           {cell.detailLabel === null ? null : `${cell.detailLabel} `}
-          Statut : {appointmentOutcomeLabel(appointment)}.
+          {t('grid.status', { status: appointmentOutcomeLabel(appointment, 'desk', locale) })}
         </span>
       </button>
 
@@ -1490,7 +1577,9 @@ function CalendarCellView({
           }}
         >
           <span aria-hidden="true">⠿</span>
-          <span className="spa-visually-hidden">Déplacer {cell.clientLabel}</span>
+          <span className="spa-visually-hidden">
+            {t('grid.move', { client: cell.clientLabel })}
+          </span>
         </button>
       ) : null}
     </li>
