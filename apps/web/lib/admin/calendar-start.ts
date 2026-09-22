@@ -54,6 +54,10 @@
  * routeur, sans établissement, et sans monter un seul composant.
  */
 
+import type { Locale } from '@spa/shared';
+
+import { planningWords, CALENDAR_FALLBACK_LOCALE } from './calendar-messages';
+
 /** Une amorce : un libellé, et l'écran où elle mène. */
 export interface CalendarStartLink {
   /** Clé de rendu stable — jamais l'index d'un tableau. */
@@ -95,13 +99,19 @@ export interface CalendarStartCounts {
  * au rang gérant, tandis que le planning s'ouvre dès le rang praticien. Une
  * amorce qui finirait sur « accès réservé » serait un second cul-de-sac.
  */
-export function catalogStartLink(catalogHref: string): CalendarStartLink {
-  return { key: 'catalogue', label: 'Ouvrir le catalogue', href: catalogHref };
+export function catalogStartLink(
+  catalogHref: string,
+  locale: Locale = CALENDAR_FALLBACK_LOCALE,
+): CalendarStartLink {
+  return { key: 'catalogue', label: planningWords(locale).start.catalogLink, href: catalogHref };
 }
 
 /** Le lien vers le personnel — même règle : la liste, lisible à tout rang. */
-export function staffStartLink(staffHref: string): CalendarStartLink {
-  return { key: 'personnel', label: 'Ouvrir le personnel', href: staffHref };
+export function staffStartLink(
+  staffHref: string,
+  locale: Locale = CALENDAR_FALLBACK_LOCALE,
+): CalendarStartLink {
+  return { key: 'personnel', label: planningWords(locale).start.staffLink, href: staffHref };
 }
 
 /**
@@ -113,9 +123,13 @@ export function staffStartLink(staffHref: string): CalendarStartLink {
  * s'agisse de la même chose. Le tiroir le recopiait : la première correction
  * apportée à l'une des deux copies aurait fait diverger l'autre en silence.
  */
-export const CATALOG_EMPTY_TITLE = 'Le catalogue est vide';
-export const CATALOG_EMPTY_DESCRIPTION =
-  'Un rendez-vous se pose sur une prestation. Créez-en au moins une — durée et prix compris — avant de planifier.';
+export function catalogEmptyTitle(locale: Locale = CALENDAR_FALLBACK_LOCALE): string {
+  return planningWords(locale).start.catalogEmptyTitle;
+}
+
+export function catalogEmptyDescription(locale: Locale = CALENDAR_FALLBACK_LOCALE): string {
+  return planningWords(locale).start.catalogEmptyDescription;
+}
 
 /**
  * L'état vide d'avant ce ticket : la période est creuse, et rien n'est affirmé
@@ -132,11 +146,14 @@ export const CATALOG_EMPTY_DESCRIPTION =
  * ne porte aucun lien que la vue semaine y garde sa grille, et qu'on peut donc
  * l'y envoyer. Seule la vue jour le rend, faute de colonne à dessiner.
  */
-export function calendarPeriodEmptyState(): CalendarStartState {
+export function calendarPeriodEmptyState(
+  locale: Locale = CALENDAR_FALLBACK_LOCALE,
+): CalendarStartState {
+  const words = planningWords(locale).start;
+
   return {
-    title: 'Aucun rendez-vous sur cette période',
-    description:
-      'Rien n’est encore posé ici. Changez de période, ou passez en vue semaine pour voir plus large.',
+    title: words.periodEmptyTitle,
+    description: words.periodEmptyDescription,
     links: [],
   };
 }
@@ -151,37 +168,37 @@ export function calendarPeriodEmptyState(): CalendarStartState {
 export function calendarStartState(
   counts: CalendarStartCounts,
   paths: CalendarStartPaths,
+  locale: Locale = CALENDAR_FALLBACK_LOCALE,
 ): CalendarStartState {
+  const words = planningWords(locale).start;
   const missingCatalog = counts.serviceCount === 0;
   const missingStaff = counts.staffCount === 0;
 
   if (missingCatalog && missingStaff) {
     return {
-      title: 'Ce salon n’est pas encore installé',
-      description:
-        'Un rendez-vous se pose sur une prestation, dans l’agenda d’un praticien. Tant que l’un des deux manque, ce planning reste vide — demain comme la semaine prochaine.',
-      links: [catalogStartLink(paths.catalog), staffStartLink(paths.staff)],
+      title: words.notInstalledTitle,
+      description: words.notInstalledDescription,
+      links: [catalogStartLink(paths.catalog, locale), staffStartLink(paths.staff, locale)],
     };
   }
 
   if (missingStaff) {
     return {
-      title: 'Aucune fiche praticien n’est ouverte',
-      description:
-        'Le catalogue est prêt, mais un rendez-vous a besoin de l’agenda de quelqu’un. Ouvrez une fiche praticien : le planning lui donnera sa colonne.',
-      links: [staffStartLink(paths.staff)],
+      title: words.noStaffTitle,
+      description: words.noStaffDescription,
+      links: [staffStartLink(paths.staff, locale)],
     };
   }
 
   if (missingCatalog) {
-    // Le même énoncé que le tiroir, et littéralement le même texte : voir
-    // `CATALOG_EMPTY_TITLE`.
+    // Le même énoncé que le tiroir, et littéralement les mêmes clés : voir
+    // `catalogEmptyTitle`.
     return {
-      title: CATALOG_EMPTY_TITLE,
-      description: CATALOG_EMPTY_DESCRIPTION,
-      links: [catalogStartLink(paths.catalog)],
+      title: catalogEmptyTitle(locale),
+      description: catalogEmptyDescription(locale),
+      links: [catalogStartLink(paths.catalog, locale)],
     };
   }
 
-  return calendarPeriodEmptyState();
+  return calendarPeriodEmptyState(locale);
 }

@@ -1,6 +1,7 @@
 'use client';
 
 import { ERROR_CODES } from '@spa/shared';
+import { useTranslations } from 'next-intl';
 import { useRouter } from 'next/navigation';
 import { useState, useTransition } from 'react';
 
@@ -58,6 +59,7 @@ export function StaffServicesPanel({
    */
   readonly canManage?: boolean;
 }) {
+  const t = useTranslations('admin-staff');
   const router = useRouter();
   const { renewIfExpired } = useAdminSessionRenewal(tenantSlug);
   const [pending, setPending] = useState<string | null>(null);
@@ -82,9 +84,7 @@ export function StaffServicesPanel({
       // le rendu de la page et le clic. On le dit, et le rafraîchissement remet
       // la liste d'aplomb.
       setFailure(
-        result.code === ERROR_CODES.CONFLICT
-          ? 'Cette prestation lui est déjà affectée.'
-          : result.message,
+        result.code === ERROR_CODES.CONFLICT ? t('services.conflict') : result.message,
       );
     }
 
@@ -96,25 +96,20 @@ export function StaffServicesPanel({
   return (
     <section className="spa-admin__section" aria-labelledby="prestations-titre">
       <h2 className="spa-admin__section-title" id="prestations-titre">
-        Prestations pratiquées
+        {t('services.title')}
       </h2>
-      <p className="spa-admin-toolbar__hint">
-        Une prestation qu’aucun praticien ne pratique ne produit aucun créneau, quels que soient
-        les horaires saisis.
-      </p>
+      <p className="spa-admin-toolbar__hint">{t('services.hint')}</p>
 
       {failure === null ? null : (
-        <Notification tone="danger" title="Affectation impossible">
+        <Notification tone="danger" title={t('services.failureTitle')}>
           <p>{failure}</p>
         </Notification>
       )}
 
       {services.length === 0 ? (
         <div className="spa-empty-state">
-          <p className="spa-empty-state__title">Catalogue vide</p>
-          <p className="spa-empty-state__description">
-            Créez au moins une prestation pour pouvoir l’affecter à ce praticien.
-          </p>
+          <p className="spa-empty-state__title">{t('services.emptyTitle')}</p>
+          <p className="spa-empty-state__description">{t('services.emptyDescription')}</p>
         </div>
       ) : (
         <ul className="spa-admin__nav" role="list">
@@ -122,10 +117,14 @@ export function StaffServicesPanel({
             <li className="spa-admin-toolbar" key={service.id}>
               <span className="spa-admin-toolbar__caption">{service.name}</span>
               {service.isActive ? null : (
-                <span className="spa-admin-badge spa-admin-badge--cancelled">Désactivée</span>
+                <span className="spa-admin-badge spa-admin-badge--cancelled">
+                  {t('services.disabled')}
+                </span>
               )}
               {service.assigned ? (
-                <span className="spa-admin-badge spa-admin-badge--confirmed">Affectée</span>
+                <span className="spa-admin-badge spa-admin-badge--confirmed">
+                  {t('services.assigned')}
+                </span>
               ) : null}
               <span className="spa-admin-toolbar__spacer" />
               {/* La bascule d'une ligne rend les autres inertes : `pending` est une
@@ -140,12 +139,14 @@ export function StaffServicesPanel({
                 <Button
                   disabled={refreshing || (pending !== null && pending !== service.id)}
                   loading={pending === service.id}
-                  loadingLabel="Enregistrement…"
+                  loadingLabel={t('services.saving')}
                   onClick={() => void toggle(service)}
                   variant={service.assigned ? 'quiet' : 'neutral'}
                 >
-                  {service.assigned ? 'Retirer' : 'Affecter'}
-                  <span className="spa-visually-hidden"> {service.name}</span>
+                  {service.assigned ? t('services.remove') : t('services.assign')}
+                  <span className="spa-visually-hidden">
+                    {t('services.forService', { name: service.name })}
+                  </span>
                 </Button>
               ) : null}
             </li>

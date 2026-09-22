@@ -6,6 +6,7 @@ import {
   ERROR_CODES,
   type CustomerSummary,
 } from '@spa/shared';
+import { useTranslations } from 'next-intl';
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
@@ -59,6 +60,7 @@ interface ClientPickerProps {
 }
 
 export function ClientPicker({ tenantSlug, selected, onSelect, onExpired }: ClientPickerProps) {
+  const t = useTranslations('admin-planning');
   const fieldId = useId();
   const [term, setTerm] = useState('');
   const [results, setResults] = useState<readonly CustomerSummary[] | null>(null);
@@ -158,7 +160,7 @@ export function ClientPicker({ tenantSlug, selected, onSelect, onExpired }: Clie
   if (selected !== null) {
     return (
       <div className="spa-field spa-admin-appointment__span">
-        <span className="spa-field__label">Client</span>
+        <span className="spa-field__label">{t('client.label')}</span>
         <p className="spa-admin-appointment__summary-row">
           <span className="spa-admin-appointment__summary-value">
             {selected.firstName} {selected.lastName}
@@ -170,7 +172,7 @@ export function ClientPicker({ tenantSlug, selected, onSelect, onExpired }: Clie
               setTerm('');
             }}
           >
-            Changer de client
+            {t('client.change')}
           </Button>
         </p>
       </div>
@@ -181,11 +183,11 @@ export function ClientPicker({ tenantSlug, selected, onSelect, onExpired }: Clie
     <div className="spa-admin-appointment__span">
       <Field
         id={`${fieldId}-recherche`}
-        label="Client"
+        label={t('client.label')}
         required
         type="search"
         value={term}
-        hint={`Recherche par nom, téléphone ou e-mail — ${String(CUSTOMER_SEARCH_MIN_LENGTH)} caractères au moins. Un client inconnu se crée à la volée.`}
+        hint={t('client.searchHint', { min: String(CUSTOMER_SEARCH_MIN_LENGTH) })}
         {...(failure === null ? {} : { error: failure })}
         onChange={(event) => {
           setTerm(event.target.value);
@@ -197,10 +199,10 @@ export function ClientPicker({ tenantSlug, selected, onSelect, onExpired }: Clie
           contient sans qu'il ait à y aller. */}
       <p aria-live="polite" className="spa-visually-hidden">
         {searching
-          ? 'Recherche en cours…'
+          ? t('client.searching')
           : results === null
             ? ''
-            : `${String(results.length)} fiche(s) trouvée(s).`}
+            : t('client.results', { count: String(results.length) })}
       </p>
 
       {results !== null && results.length > 0 ? (
@@ -224,17 +226,15 @@ export function ClientPicker({ tenantSlug, selected, onSelect, onExpired }: Clie
 
       {results !== null && results.length === 0 && !creating ? (
         <div className="spa-empty-state spa-empty-state--inline">
-          <p className="spa-empty-state__title">Aucune fiche pour « {term.trim()} »</p>
-          <p className="spa-empty-state__description">
-            Créez la fiche maintenant : le rendez-vous se posera dessus sans quitter le planning.
-          </p>
+          <p className="spa-empty-state__title">{t('client.noneTitle', { term: term.trim() })}</p>
+          <p className="spa-empty-state__description">{t('client.noneDescription')}</p>
           <Button
             variant="accent"
             onClick={() => {
               setCreating(true);
             }}
           >
-            Créer la fiche
+            {t('client.createRecord')}
           </Button>
         </div>
       ) : null}
@@ -243,7 +243,7 @@ export function ClientPicker({ tenantSlug, selected, onSelect, onExpired }: Clie
         <div className="spa-admin-appointment__grid">
           <Field
             id={`${fieldId}-prenom`}
-            label="Prénom"
+            label={t('client.firstName')}
             required
             value={draft.firstName}
             onChange={(event) => {
@@ -252,7 +252,7 @@ export function ClientPicker({ tenantSlug, selected, onSelect, onExpired }: Clie
           />
           <Field
             id={`${fieldId}-nom`}
-            label="Nom"
+            label={t('client.lastName')}
             required
             value={draft.lastName}
             onChange={(event) => {
@@ -261,21 +261,21 @@ export function ClientPicker({ tenantSlug, selected, onSelect, onExpired }: Clie
           />
           <Field
             id={`${fieldId}-email`}
-            label="E-mail"
+            label={t('client.email')}
             required
             type="email"
             value={draft.email}
-            hint="La confirmation part sur cette adresse."
+            hint={t('client.emailHint')}
             onChange={(event) => {
               setDraft((current) => ({ ...current, email: event.target.value }));
             }}
           />
           <PhoneField
             id={`${fieldId}-telephone`}
-            label="Téléphone"
+            label={t('client.phone')}
             autoComplete="off"
             value={draft.phone}
-            hint="Facultatif — pour le rappel J-1 par SMS."
+            hint={t('client.phoneHint')}
             invalid={phoneInvalid}
             onChange={(phone) => {
               setDraft((current) => ({ ...current, phone }));
@@ -292,7 +292,7 @@ export function ClientPicker({ tenantSlug, selected, onSelect, onExpired }: Clie
                 void submitDraft();
               }}
             >
-              Enregistrer la fiche
+              {t('client.save')}
             </Button>
             <Button
               variant="quiet"
@@ -300,7 +300,7 @@ export function ClientPicker({ tenantSlug, selected, onSelect, onExpired }: Clie
                 setCreating(false);
               }}
             >
-              Revenir à la recherche
+              {t('client.back')}
             </Button>
           </div>
         </div>

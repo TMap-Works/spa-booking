@@ -37,7 +37,12 @@ import {
 } from '@spa/shared';
 
 import { appointmentStatusLabelInSentence } from '../appointment-status';
+import { formattingLocale, type DisplayLocale } from '../format';
+import { fillMessage, planningWords, CALENDAR_FALLBACK_LOCALE } from './calendar-messages';
 import { zonedFields } from './calendar-grid';
+
+/** Le repli d'affichage de ce module — voir `lib/format.ts`, même arbitrage. */
+const FALLBACK_DISPLAY: DisplayLocale = { locale: CALENDAR_FALLBACK_LOCALE };
 
 // ---------------------------------------------------------------------------
 // Les routes que l'API ne sert pas encore
@@ -704,20 +709,36 @@ export function planDeskMove(
   };
 }
 
-/** « mercredi 26 août à 09:00 » — un instant UTC dit à l'heure du salon. */
-export function deskMoment(instant: string, timeZone: TimeZone): string {
+/**
+ * « mercredi 26 août à 09:00 », « Wednesday, August 26 at 09:00 » — un instant
+ * UTC dit à l'heure du salon.
+ *
+ * La langue vient de la session et la région de l'établissement (#848) : ce
+ * libellé est **inséré dans des phrases traduites** — la question du changement
+ * de praticien et la bannière de retour arrière du planning —, et une date
+ * française au milieu d'une phrase anglaise s'y lisait comme un défaut
+ * d'affichage. Le fuseau, lui, reste `timeZone` : il décide de l'heure, jamais
+ * de son écriture.
+ */
+export function deskMoment(
+  instant: string,
+  timeZone: TimeZone,
+  display: DisplayLocale = FALLBACK_DISPLAY,
+): string {
   const { date, time } = tenantFields(instant, timeZone);
   // La date civile est mise en forme **en UTC** : elle est déjà celle du salon,
   // et la reprojeter dans son fuseau la décalerait d'un jour à l'est de
   // Greenwich. Même raison que `rangeLabel` de `calendar-range.ts`.
-  const day = new Intl.DateTimeFormat('fr-FR', {
+  const day = new Intl.DateTimeFormat(formattingLocale(display.locale, display.countryCode), {
     timeZone: 'UTC',
     weekday: 'long',
     day: 'numeric',
     month: 'long',
   }).format(new Date(`${date}T00:00:00Z`));
 
-  return `${day} à ${time}`;
+  // Le joint des deux — « à » en français, « at » en anglais — vient du
+  // catalogue : `Intl` ne sait pas dire ce mot-là.
+  return fillMessage(planningWords(display.locale).move.moment, { day, time });
 }
 
 /**

@@ -1,0 +1,5 @@
+# Marqueur de lint i18n — voir eslint-rules/i18n-markers.mjs.
+# Le personnel du back-office, traduit par #848 : la liste des comptes et des
+# fiches, la fiche d'un praticien, les deux formulaires et leurs écrans, les
+# actions serveur. Le sous-arbre entier est sous la règle — il n'y reste aucun
+# écran non traduit.

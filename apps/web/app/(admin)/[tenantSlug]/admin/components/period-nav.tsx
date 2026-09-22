@@ -1,3 +1,4 @@
+import { useTranslations } from 'next-intl';
 import Link from 'next/link';
 import type { ReactNode } from 'react';
 
@@ -74,6 +75,18 @@ export function PeriodNav({
   nextLabel,
   today,
 }: PeriodNavProps) {
+  /*
+   * Le seul libellé que cette barre écrit elle-même — les deux autres lui sont
+   * passés, parce qu'ils dépendent de la vue de l'appelant (#848).
+   *
+   * `useTranslations` et non une prop de plus : la barre est aussi rendue par
+   * l'encaissement, qui est hors du périmètre de ce ticket, et lui imposer une
+   * prop l'aurait fait entrer dedans. Le crochet fonctionne des deux côtés de la
+   * frontière serveur/client — c'est précisément ce qui permet à ce fichier de
+   * rester sans directive.
+   */
+  const t = useTranslations('admin-planning');
+
   return (
     <div className="spa-admin-toolbar__group">
       <PeriodNavButton control={previous} variant="neutral">
@@ -92,7 +105,7 @@ export function PeriodNav({
       </PeriodNavButton>
 
       <PeriodNavButton control={today} variant="quiet">
-        Aujourd’hui
+        {t('toolbar.today')}
       </PeriodNavButton>
     </div>
   );

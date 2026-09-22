@@ -16,6 +16,7 @@ import {
   type TimeZone,
   type UtcInstant,
 } from '@spa/shared';
+import { useLocale, useTranslations } from 'next-intl';
 import Link from 'next/link';
 import {
   useCallback,
@@ -35,12 +36,6 @@ import { Notification } from '@/components/ui/notification';
 import { Select } from '@/components/ui/select';
 import { TextArea } from '@/components/ui/textarea';
 import {
-  DESK_CANCEL_QUESTION,
-  DESK_CANCEL_REASON_HINT,
-  DESK_NO_SLOT_MESSAGE,
-  DESK_SLOTS_UNREADABLE_MESSAGE,
-  deskCancelFailureMessage,
-  deskFailureMessage,
   deskSlotOptions,
   deskStatusActions,
   isCancellable,
@@ -53,14 +48,14 @@ import {
   type DeskSlotOption,
 } from '@/lib/admin/appointment-desk';
 import { statusModifier } from '@/lib/admin/calendar-grid';
-import { appointmentOutcomeLabel } from '@/lib/appointment-status';
+import { appointmentOutcomeLabel, appointmentStatusLabelInSentence } from '@/lib/appointment-status';
 import { parseCalendarDate } from '@/lib/admin/calendar-range';
 import {
   catalogStartLink,
-  CATALOG_EMPTY_DESCRIPTION,
-  CATALOG_EMPTY_TITLE,
+  catalogEmptyDescription,
+  catalogEmptyTitle,
 } from '@/lib/admin/calendar-start';
-import { formatDateTimeInTimeZone, formatMoney } from '@/lib/format';
+import { formatDateTimeInTimeZone, formatMoney, type DisplayLocale } from '@/lib/format';
 
 import {
   cancelDeskAppointmentAction,
@@ -190,6 +185,12 @@ interface AppointmentPanelProps {
   readonly onReload: () => void;
   /** Session expirée — le planning la renouvelle et revient sur la période affichée. */
   readonly onExpired: () => void;
+  /**
+   * Le pays de l'établissement — la **région** des dates et des montants
+   * affichés (#848). Le fuseau, lui, reste `timeZone` et ne dépend d'aucune
+   * langue.
+   */
+  readonly countryCode?: string | null;
 }
 
 export function AppointmentPanel({
@@ -200,7 +201,11 @@ export function AppointmentPanel({
   onClose,
   onReload,
   onExpired,
+  countryCode = null,
 }: AppointmentPanelProps) {
+  const t = useTranslations('admin-planning');
+  const locale = useLocale();
+  const display: DisplayLocale = useMemo(() => ({ locale, countryCode }), [locale, countryCode]);
   const formId = useId();
   const editing = target.kind === 'edit' ? target.appointment : null;
   // La région du tiroir — c'est elle qui prend le focus à l'ouverture (#617).
@@ -345,13 +350,13 @@ export function AppointmentPanel({
       // Le journal illisible ne bloque rien : c'est une information de contexte,
       // et le tiroir sert d'abord à poser et déplacer des rendez-vous. Le dire
       // vaut mieux que d'afficher un « aucun message » qui, lui, serait faux.
-      setNotificationsFailure('Le journal d’envois n’a pas pu être lu.');
+      setNotificationsFailure(t('desk.notificationsUnreadable'));
     });
 
     return () => {
       current = false;
     };
-  }, [tenantSlug, editingId, onExpired]);
+  }, [tenantSlug, editingId, onExpired, t]);
 
   // Les créneaux de la journée retenue — le cœur de #611.
   //
@@ -422,13 +427,13 @@ export function AppointmentPanel({
       // La disponibilité illisible ne ferme pas le comptoir : le sélecteur
       // retombe sur la saisie libre, et l'API reste juge du créneau.
       setSlots(null);
-      setSlotsFailure(DESK_SLOTS_UNREADABLE_MESSAGE);
+      setSlotsFailure(t('desk.slotsUnreadable'));
     });
 
     return () => {
       current = false;
     };
-  }, [tenantSlug, serviceId, staffId, day, editingId, timeZone, slotsVersion, onExpired]);
+  }, [tenantSlug, serviceId, staffId, day, editingId, timeZone, slotsVersion, onExpired, t]);
 
   // Le créneau retenu, quand il vient bien de la liste du moteur. `null` en
   // saisie libre — liste illisible — et pendant le chargement.
@@ -471,6 +476,31 @@ export function AppointmentPanel({
     }
   }, [staff, offered, staffId]);
 
+  /**
+   * Le message d'un refus d'écriture du comptoir, dans la langue de la session.
+   *
+   * La composition vit ici depuis #848, et non plus dans
+   * `lib/admin/appointment-desk.ts` : le **verdict** reste au module — c'est
+   * `isSlotConflict` qui dit si le refus est un créneau perdu —, la phrase vient
+   * du catalogue. Un module de calcul pur n'a pas de traducteur sous la main.
+   *
+   * `NOT_FOUND` et `HTTP_404` sont les deux façons dont un 404 remonte du client
+   * d'API ; sur les écritures du comptoir, les deux disent la même absence de
+   * route.
+   */
+  const failureMessage = useCallback(
+    (code: string, message: string): string => {
+      if (isSlotConflict(code)) {
+        return t('desk.conflictBody');
+      }
+
+      return code === ERROR_CODES.NOT_FOUND || code === 'HTTP_404'
+        ? t('desk.routeMissing')
+        : message;
+    },
+    [t],
+  );
+
   /** Traite le refus d'une écriture — conflit, session, ou message de l'API. */
   const refuse = useCallback(
     (code: string, message: string): void => {
@@ -482,7 +512,7 @@ export function AppointmentPanel({
       if (isSlotConflict(code)) {
         // Le planning est relu : le créneau perdu doit se voir occupé. Aucune
         // saisie n'est touchée — c'est tout l'objet du quatrième critère.
-        setConflict(deskFailureMessage(code, message));
+        setConflict(failureMessage(code, message));
         setFailure(null);
         // …et la liste des créneaux avec lui (#611) : celui que l'API vient de
         // refuser n'a plus à être proposé, et le suivant se choisit sans quitter
@@ -493,9 +523,9 @@ export function AppointmentPanel({
       }
 
       setConflict(null);
-      setFailure(deskFailureMessage(code, message));
+      setFailure(failureMessage(code, message));
     },
-    [onExpired, onReload],
+    [onExpired, onReload, failureMessage],
   );
 
   const submit = useCallback(async (): Promise<void> => {
@@ -622,11 +652,15 @@ export function AppointmentPanel({
     //
     // Le refus ne passe **pas** par `refuse` : celui-ci lit un `CONFLICT` comme
     // un créneau perdu et un `NOT_FOUND` comme une route absente — deux lectures
-    // que l'annulation ne supporte pas, sa route étant servie et n'ayant pas de
-    // créneau à reprendre (`deskCancelFailureMessage`).
+    // que l'annulation ne supporte pas, sa route étant servie depuis #40 et
+    // n'ayant aucun créneau à reprendre. Le 409 y désigne deux annulations
+    // concurrentes, et tout le reste se dit avec le message de l'API, qui nomme
+    // déjà le refus — `INVALID_STATE_TRANSITION` compris.
     setConflict(null);
-    setFailure(deskCancelFailureMessage(result.code, result.message));
-  }, [editing, cancelReason, tenantSlug, onReload, onClose, onExpired]);
+    setFailure(
+      result.code === ERROR_CODES.CONFLICT ? t('desk.cancelConflict') : result.message,
+    );
+  }, [editing, cancelReason, tenantSlug, onReload, onClose, onExpired, t]);
 
   /**
    * Le focus entre dans le tiroir à son ouverture (#617).
@@ -673,7 +707,7 @@ export function AppointmentPanel({
 
   const title =
     editing === null
-      ? 'Nouveau rendez-vous'
+      ? t('desk.newTitle')
       : `${editing.client.firstName} ${editing.client.lastName}`;
 
   // Le catalogue vide est un état à part entière : un rendez-vous se pose sur une
@@ -682,7 +716,7 @@ export function AppointmentPanel({
   // avec lui, et refuser de l'ouvrir parce que le catalogue actif s'est vidé
   // interdirait de le marquer honoré ou non présenté.
   if (services.length === 0 && editing === null) {
-    const catalogue = catalogStartLink(adminCatalogPath(tenantSlug));
+    const catalogue = catalogStartLink(adminCatalogPath(tenantSlug), locale);
 
     return (
       <aside
@@ -698,14 +732,14 @@ export function AppointmentPanel({
           </h2>
           <Button variant="quiet" onClick={onClose}>
             <span aria-hidden="true">×</span>
-            <span className="spa-visually-hidden">Fermer le tiroir</span>
+            <span className="spa-visually-hidden">{t('desk.close')}</span>
           </Button>
         </div>
         <div className="spa-admin-panel__body">
           <div className="spa-admin-appointment spa-admin-appointment--empty">
             <div className="spa-empty-state spa-empty-state--inline">
-              <p className="spa-empty-state__title">{CATALOG_EMPTY_TITLE}</p>
-              <p className="spa-empty-state__description">{CATALOG_EMPTY_DESCRIPTION}</p>
+              <p className="spa-empty-state__title">{catalogEmptyTitle(locale)}</p>
+              <p className="spa-empty-state__description">{catalogEmptyDescription(locale)}</p>
               {/* L'explication seule restait un cul-de-sac : elle nommait ce qui
                   manque sans donner le moyen d'y remédier (#751). Le lien est le
                   même que celui de l'état vide du planning — même impasse, même
@@ -740,12 +774,12 @@ export function AppointmentPanel({
                 annulée il dit « Déplacé », « Annulé par la cliente » ou
                 « Annulé par le salon » selon l'auteur — au mot près ce que
                 l'espace client montre à la cliente (#917). */}
-            {appointmentOutcomeLabel(editing)}
+            {appointmentOutcomeLabel(editing, 'desk', locale)}
           </span>
         )}
         <Button variant="quiet" onClick={onClose}>
           <span aria-hidden="true">×</span>
-          <span className="spa-visually-hidden">Fermer le tiroir</span>
+          <span className="spa-visually-hidden">{t('desk.close')}</span>
         </Button>
       </div>
 
@@ -770,7 +804,9 @@ export function AppointmentPanel({
         {editing === null ? null : (
           <div className="spa-admin-appointment__summary">
             <div className="spa-admin-appointment__summary-row">
-              <span className="spa-admin-appointment__summary-label">Réf.</span>
+              <span className="spa-admin-appointment__summary-label">
+                {t('desk.reference')}
+              </span>
               <span className="spa-admin-appointment__summary-value">{editing.reference}</span>
             </div>
           </div>
@@ -780,7 +816,7 @@ export function AppointmentPanel({
           <div className="spa-admin-appointment__conflict">
             {/* « Indisponible » et non « déjà réservé » : le 409 couvre cinq
                 refus différents et n'en distingue aucun (#611). */}
-            <Notification tone="warning" title="Créneau indisponible">
+            <Notification tone="warning" title={t('desk.conflictTitle')}>
               <p>{conflict}</p>
             </Notification>
           </div>
@@ -788,7 +824,7 @@ export function AppointmentPanel({
 
         {failure === null ? null : (
           <div className="spa-admin-appointment__conflict">
-            <Notification tone="danger" title="Enregistrement impossible">
+            <Notification tone="danger" title={t('desk.failureTitle')}>
               <p>{failure}</p>
             </Notification>
           </div>
@@ -809,6 +845,7 @@ export function AppointmentPanel({
             // un report — et la conversion se fait ici, une fois.
             cancelledBy={editing.cancelledBy ?? null}
             reason={editing.cancellationReason ?? null}
+            display={display}
             rescheduledFromId={editing.rescheduledFromId ?? null}
             timeZone={timeZone}
             titleId={`${formId}-annulation`}
@@ -829,8 +866,8 @@ export function AppointmentPanel({
             rien à voir avec un déplacement d'heure. */}
         {!confirmingCancel ? null : (
           <div className="spa-admin-appointment__cancel">
-            <Notification tone="warning" title="Annuler ce rendez-vous">
-              <p>{DESK_CANCEL_QUESTION}</p>
+            <Notification tone="warning" title={t('desk.cancelTitle')}>
+              <p>{t('desk.cancelQuestion')}</p>
             </Notification>
             <TextArea
               // Le focus suit la question : sans cela, l'opérateur qui vient de
@@ -839,10 +876,10 @@ export function AppointmentPanel({
               // pied avec le premier temps.
               autoFocus
               id={`${formId}-motif`}
-              label="Motif de l’annulation"
+              label={t('desk.cancelReasonLabel')}
               rows={2}
               value={cancelReason}
-              hint={DESK_CANCEL_REASON_HINT}
+              hint={t('desk.cancelReasonHint')}
               maxLength={REASON_MAX_LENGTH}
               onChange={(event) => {
                 setCancelReason(event.target.value);
@@ -871,7 +908,7 @@ export function AppointmentPanel({
 
             <Select
               id={`${formId}-prestation`}
-              label="Prestation"
+              label={t('desk.serviceLabel')}
               value={serviceId}
               disabled={editing !== null}
               {...(editing === null
@@ -886,8 +923,8 @@ export function AppointmentPanel({
                     // cycle de vie refuse l'annulation, et l'invite retombe au
                     // constat seul.
                     hint: isCancellable(editing.status)
-                      ? 'La prestation d’un rendez-vous posé ne se change pas : son prix et sa durée sont figés à la réservation. Pour en changer, annulez ce rendez-vous au pied du tiroir, puis reposez-en un nouveau.'
-                      : 'La prestation d’un rendez-vous posé ne se change pas : son prix et sa durée sont figés à la réservation.',
+                      ? t('desk.serviceHintCancellable')
+                      : t('desk.serviceHintSettled'),
                   })}
               onChange={(event) => {
                 setServiceId(event.target.value);
@@ -902,26 +939,32 @@ export function AppointmentPanel({
                   afficherait le nom d'une autre prestation. */}
               {booked === null ? null : (
                 <option value={booked.id}>
-                  {booked.name} — {String(booked.durationMinutes)} min
+                  {t('desk.serviceOption', {
+                    name: booked.name,
+                    minutes: String(booked.durationMinutes),
+                  })}
                 </option>
               )}
               {services.map((candidate) => (
                 <option key={candidate.id} value={candidate.id}>
-                  {candidate.name} — {String(candidate.durationMinutes)} min
+                  {t('desk.serviceOption', {
+                    name: candidate.name,
+                    minutes: String(candidate.durationMinutes),
+                  })}
                 </option>
               ))}
             </Select>
 
             <Select
               id={`${formId}-praticien`}
-              label="Praticien"
+              label={t('desk.staffLabel')}
               value={staffId}
-              hint="Sans choix, le serveur affecte le premier disponible."
+              hint={t('desk.staffHint')}
               onChange={(event) => {
                 setStaffId(event.target.value);
               }}
             >
-              <option value="">Premier disponible</option>
+              <option value="">{t('desk.staffAny')}</option>
               {offered.map((member) => (
                 <option key={member.id} value={member.id}>
                   {member.displayName}
@@ -931,7 +974,7 @@ export function AppointmentPanel({
 
             <Field
               id={`${formId}-date`}
-              label="Date"
+              label={t('desk.dateLabel')}
               required
               type="date"
               value={day}
@@ -945,11 +988,11 @@ export function AppointmentPanel({
             {slotsFailure === null ? (
               <Select
                 id={`${formId}-heure`}
-                label="Heure de début"
+                label={t('desk.timeLabel')}
                 value={time}
                 disabled={slots === null}
                 {...(slots !== null && slots.length === 0
-                  ? { emptyLabel: DESK_NO_SLOT_MESSAGE }
+                  ? { emptyLabel: t('desk.slotsEmpty') }
                   : {})}
                 {...(slots !== null && slots.length === 0
                   ? // Le message de liste vide dit déjà tout : y ajouter
@@ -958,10 +1001,7 @@ export function AppointmentPanel({
                     // qu'il ne propose rien.
                     {}
                   : {
-                      hint:
-                        slots === null
-                          ? 'Lecture des créneaux disponibles…'
-                          : 'Seuls les créneaux que le planning peut honorer sont proposés.',
+                      hint: slots === null ? t('desk.slotsLoading') : t('desk.slotsHint'),
                     })}
                 onChange={(event) => {
                   setTime(event.target.value);
@@ -986,11 +1026,11 @@ export function AppointmentPanel({
             ) : (
               <Field
                 id={`${formId}-heure`}
-                label="Heure de début"
+                label={t('desk.timeLabel')}
                 required
                 type="time"
                 value={time}
-                hint={DESK_SLOTS_UNREADABLE_MESSAGE}
+                hint={t('desk.slotsUnreadable')}
                 onChange={(event) => {
                   setTime(event.target.value);
                 }}
@@ -998,18 +1038,17 @@ export function AppointmentPanel({
             )}
 
             <p className="spa-admin-appointment__timezone">
-              Heures saisies et affichées dans le fuseau du salon — {timeZone}. Le stockage se fait
-              en UTC.
+              {t('desk.timeZoneNote', { timeZone })}
             </p>
 
             {editing === null ? (
               <div className="spa-admin-appointment__span">
                 <TextArea
                   id={`${formId}-note`}
-                  label="Note jointe au rendez-vous"
+                  label={t('desk.noteLabel')}
                   rows={2}
                   value={note}
-                  hint="Reprise dans la confirmation : elle est visible du client."
+                  hint={t('desk.noteHint')}
                   onChange={(event) => {
                     setNote(event.target.value);
                   }}
@@ -1021,27 +1060,38 @@ export function AppointmentPanel({
           {summary === null ? null : (
             <div className="spa-admin-appointment__summary">
               <div className="spa-admin-appointment__summary-row">
-                <span className="spa-admin-appointment__summary-label">Début</span>
+                <span className="spa-admin-appointment__summary-label">
+                  {t('desk.summaryStart')}
+                </span>
                 <span className="spa-admin-appointment__summary-value">{summary.startTime}</span>
               </div>
               <div className="spa-admin-appointment__summary-row">
-                <span className="spa-admin-appointment__summary-label">Fin (calculée)</span>
+                <span className="spa-admin-appointment__summary-label">
+                  {t('desk.summaryEnd')}
+                </span>
                 <span className="spa-admin-appointment__summary-value">{summary.endTime}</span>
               </div>
               {summary.bufferMinutes === 0 ? null : (
                 <div className="spa-admin-appointment__summary-row spa-admin-appointment__summary-row--buffer">
                   <span className="spa-admin-appointment__summary-label">
-                    Tampon de remise en état
+                    {t('desk.summaryBuffer')}
                   </span>
                   <span className="spa-admin-appointment__summary-value">
-                    {String(summary.bufferMinutes)} min — libre à {summary.freeAtTime}
+                    {t('desk.summaryBufferValue', {
+                      minutes: String(summary.bufferMinutes),
+                      time: summary.freeAtTime,
+                    })}
                   </span>
                 </div>
               )}
               {price === null ? null : (
                 <div className="spa-admin-appointment__summary-row spa-admin-appointment__summary-row--total">
-                  <span className="spa-admin-appointment__summary-label">Montant</span>
-                  <span className="spa-admin-appointment__summary-value">{formatMoney(price)}</span>
+                  <span className="spa-admin-appointment__summary-label">
+                    {t('desk.summaryAmount')}
+                  </span>
+                  <span className="spa-admin-appointment__summary-value">
+                    {formatMoney(price, display)}
+                  </span>
                 </div>
               )}
             </div>
@@ -1068,6 +1118,7 @@ export function AppointmentPanel({
           <NotificationStatusList
             notifications={notifications}
             timeZone={timeZone}
+            countryCode={countryCode}
             loading={notifications === null && notificationsFailure === null}
             failure={notificationsFailure}
           />
@@ -1097,17 +1148,17 @@ export function AppointmentPanel({
                 drawerRef.current?.focus();
               }}
             >
-              Garder ce rendez-vous
+              {t('desk.keep')}
             </Button>
             <Button
               variant="danger"
               loading={saving}
-              loadingLabel="Annulation en cours…"
+              loadingLabel={t('desk.cancelling')}
               onClick={() => {
                 void cancel();
               }}
             >
-              Confirmer l’annulation
+              {t('desk.confirmCancel')}
             </Button>
           </>
         ) : (
@@ -1125,7 +1176,7 @@ export function AppointmentPanel({
                   setConfirmingCancel(true);
                 }}
               >
-                Annuler le rendez-vous
+                {t('desk.cancel')}
               </Button>
             ) : null}
 
@@ -1140,12 +1191,23 @@ export function AppointmentPanel({
                       void mark(action.status);
                     }}
                   >
-                    {action.label}
+                    {/* Le libellé se compose ici, et non dans le module de
+                        calcul : « Confirmer le rendez-vous » nomme un **acte**
+                        que le comptoir pose, quand les deux autres constatent ce
+                        qui a eu lieu au salon — d'où le verbe pour l'un et
+                        « Marquer <statut> » pour les autres, ce dernier lisant
+                        son mot dans `lib/appointment-status.ts`, seul endroit du
+                        front où ce vocabulaire s'écrit (#917). */}
+                    {action.status === 'confirmed'
+                      ? t('desk.confirmAppointment')
+                      : t('desk.mark', {
+                          status: appointmentStatusLabelInSentence(action.status, locale),
+                        })}
                   </Button>
                 ))}
 
             <Button variant="neutral" onClick={onClose}>
-              Fermer
+              {t('desk.closeButton')}
             </Button>
 
             {/* Le pied est hors du `<form>` : le bouton doit désigner son
@@ -1160,7 +1222,7 @@ export function AppointmentPanel({
                 !bookable || (editing === null ? client === null : !isReschedulable(editing.status))
               }
             >
-              {editing === null ? 'Créer le rendez-vous' : 'Enregistrer'}
+              {editing === null ? t('desk.create') : t('desk.save')}
             </Button>
           </>
         )}
@@ -1217,6 +1279,7 @@ function AppointmentCancellation({
   reason,
   rescheduledFromId,
   timeZone,
+  display,
   titleId,
 }: {
   /** Quand la ligne est passée `cancelled`, ou `null` — le contrat omet le champ. */
@@ -1233,8 +1296,12 @@ function AppointmentCancellation({
   /** Le rendez-vous que celui-ci remplace, s'il est né d'un report. */
   readonly rescheduledFromId: string | null;
   readonly timeZone: TimeZone;
+  /** La langue des mots, la région des dates — jamais le fuseau (#848). */
+  readonly display: DisplayLocale;
   readonly titleId: string;
 }) {
+  const t = useTranslations('admin-planning');
+
   // Rien à raconter sur un rendez-vous qui suit son cours, et le dire serait
   // pire que se taire : un bloc « aucune annulation » sur les neuf rendez-vous
   // sur dix qui se déroulent normalement noierait celui qui compte.
@@ -1249,19 +1316,18 @@ function AppointmentCancellation({
           (#917). Dire « Annulation » au-dessus d'un créneau simplement déplacé
           était la moitié du constat de l'audit. */}
       <h3 className="spa-admin__section-title" id={titleId}>
-        {cancelledAt === null || cancelledBy === null ? 'Report' : 'Annulation'}
+        {cancelledAt === null || cancelledBy === null
+          ? t('cancellation.reportTitle')
+          : t('cancellation.cancelTitle')}
       </h3>
 
       <ul className="spa-admin-notes__list">
         {rescheduledFromId === null ? null : (
           <li className="spa-admin-notes__item">
             <div className="spa-admin-notes__meta">
-              <span>Né d’un report</span>
+              <span>{t('cancellation.bornOfReport')}</span>
             </div>
-            <p className="spa-admin-notes__body">
-              Ce rendez-vous en remplace un autre, déplacé. Le rendez-vous d’origine est resté au
-              planning, à son heure initiale, marqué annulé.
-            </p>
+            <p className="spa-admin-notes__body">{t('cancellation.bornOfReportBody')}</p>
           </li>
         )}
 
@@ -1273,20 +1339,23 @@ function AppointmentCancellation({
                   s'afficherait au mauvais jour (CLAUDE.md, « tout est stocké en
                   UTC, converti à l'affichage selon le fuseau du tenant »). */}
               <span>
-                {appointmentOutcomeLabel({ status: 'cancelled', cancelledBy })} le{' '}
-                {formatDateTimeInTimeZone(cancelledAt, timeZone)}
+                {t('cancellation.when', {
+                  outcome: appointmentOutcomeLabel(
+                    { status: 'cancelled', cancelledBy },
+                    'desk',
+                    display.locale,
+                  ),
+                  moment: formatDateTimeInTimeZone(cancelledAt, timeZone, display),
+                })}
               </span>
             </div>
             {cancelledBy === null ? (
               // Un report : il n'y a pas de motif à chercher, et il n'y a pas
               // non plus de créneau perdu. Le dire lève l'ambiguïté que #756
               // avait dû laisser ouverte, faute de connaître l'auteur.
-              <p className="spa-admin-notes__body">
-                Ce créneau a été libéré par un déplacement, non par une annulation : la cliente a
-                gardé son rendez-vous à une autre heure. Un report ne laisse pas de motif.
-              </p>
+              <p className="spa-admin-notes__body">{t('cancellation.reportBody')}</p>
             ) : reason === null || reason.trim() === '' ? (
-              <p className="spa-admin-notes__body">Aucun motif n’a été consigné.</p>
+              <p className="spa-admin-notes__body">{t('cancellation.noReason')}</p>
             ) : (
               <p className="spa-admin-notes__body">{reason}</p>
             )}
@@ -1368,6 +1437,7 @@ function AppointmentNote({
   readonly note: string | null;
   readonly titleId: string;
 }) {
+  const t = useTranslations('admin-planning');
   const written = note === null || note.trim() === '' ? null : note;
 
   return (
@@ -1375,25 +1445,24 @@ function AppointmentNote({
       {/* Le titre reprend **au mot près** le libellé du champ de création, dix
           lignes plus haut dans ce même tiroir : c'est le même objet, et le
           nommer autrement selon qu'on l'écrit ou qu'on le lit aurait fait deux
-          choses de la même note. */}
+          choses de la même note. Depuis #848 c'est la **même clé** de catalogue
+          qui le dit des deux côtés, si bien que les deux libellés ne peuvent
+          plus diverger d'une traduction à l'autre. */}
       <h3 className="spa-admin__section-title" id={titleId}>
-        Note jointe au rendez-vous
+        {t('desk.noteLabel')}
       </h3>
 
       {written === null ? (
         <div className="spa-empty-state spa-empty-state--inline">
-          <p className="spa-empty-state__title">Aucune note jointe à ce rendez-vous</p>
-          <p className="spa-empty-state__description">
-            Rien n’a été écrit à la réservation. La note interne du salon, elle, se tient sur la
-            fiche client.
-          </p>
+          <p className="spa-empty-state__title">{t('note.emptyTitle')}</p>
+          <p className="spa-empty-state__description">{t('note.emptyDescription')}</p>
         </div>
       ) : (
         <ul className="spa-admin-notes__list">
           <li className="spa-admin-notes__item">
             <div className="spa-admin-notes__meta">
-              <span>Jointe à la réservation</span>
-              <span>Visible du client — ce n’est pas la note interne du salon</span>
+              <span>{t('note.meta')}</span>
+              <span>{t('note.visibility')}</span>
             </div>
             <p className="spa-admin-notes__body">{written}</p>
           </li>

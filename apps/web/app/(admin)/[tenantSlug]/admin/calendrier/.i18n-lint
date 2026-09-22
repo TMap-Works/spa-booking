@@ -1,0 +1,5 @@
+# Marqueur de lint i18n — voir eslint-rules/i18n-markers.mjs.
+# Le planning du back-office, traduit par #848 : la page, son action serveur et
+# son squelette. Le sous-arbre entier est sous la règle — il n'y reste aucun
+# écran non traduit. Les composants du planning, eux, vivent dans
+# `../components/` et portent leur ligne dans le marqueur de ce répertoire-là.

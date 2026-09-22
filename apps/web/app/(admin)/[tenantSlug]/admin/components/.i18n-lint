@@ -6,3 +6,11 @@
 #
 # L'abonnement du salon — #1105.
 billing-panel.tsx
+#
+# Les composants du planning et du tiroir de rendez-vous — #848.
+appointment-panel.tsx
+calendar-board.tsx
+calendar-move-confirm.tsx
+client-picker.tsx
+notification-status-list.tsx
+period-nav.tsx

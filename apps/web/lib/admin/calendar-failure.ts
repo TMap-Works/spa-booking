@@ -10,7 +10,9 @@
  * d'Express.
  */
 
-import { ERROR_CODES } from '@spa/shared';
+import { ERROR_CODES, type Locale } from '@spa/shared';
+
+import { planningWords, CALENDAR_FALLBACK_LOCALE } from './calendar-messages';
 
 /**
  * Le message du 404, et pourquoi il est nommé à part.
@@ -20,9 +22,17 @@ import { ERROR_CODES } from '@spa/shared';
  * rendez-vous introuvable à ce niveau —, si bien qu'un message générique
  * masquerait un manque parfaitement identifié derrière une phrase qui n'aide
  * personne.
+ *
+ * Il vient du catalogue `admin-planning` depuis #848 — `failure.routeMissing` —,
+ * et non plus d'un littéral : c'est le même texte que celui qu'`useTranslations`
+ * sert aux composants, lu ici sans crochet parce que ce module est fait de
+ * fonctions pures.
  */
-export const CALENDAR_ROUTE_MISSING_MESSAGE =
-  'L’agenda du back-office n’est pas encore servi par l’API : la grille s’affiche, les rendez-vous suivront.';
+export function calendarRouteMissingMessage(
+  locale: Locale = CALENDAR_FALLBACK_LOCALE,
+): string {
+  return planningWords(locale).failure.routeMissing;
+}
 
 /**
  * `HTTP_404` est le repli du client d'API quand le corps d'erreur ne suit pas le
@@ -32,6 +42,10 @@ export const CALENDAR_ROUTE_MISSING_MESSAGE =
 const MISSING_ROUTE_CODES: readonly string[] = [ERROR_CODES.NOT_FOUND, 'HTTP_404'];
 
 /** Le message à afficher, à partir du code et du message rendus par l'API. */
-export function calendarFailureMessage(code: string, message: string): string {
-  return MISSING_ROUTE_CODES.includes(code) ? CALENDAR_ROUTE_MISSING_MESSAGE : message;
+export function calendarFailureMessage(
+  code: string,
+  message: string,
+  locale: Locale = CALENDAR_FALLBACK_LOCALE,
+): string {
+  return MISSING_ROUTE_CODES.includes(code) ? calendarRouteMissingMessage(locale) : message;
 }

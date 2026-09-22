@@ -7,6 +7,7 @@ import {
   type StaffSchedule,
   type StaffTimeOff,
 } from '@spa/shared';
+import { getLocale, getTranslations } from 'next-intl/server';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 
@@ -14,6 +15,7 @@ import {
   ApiClientError,
   fetchAdminAvailability,
   fetchOwnProfile,
+  fetchPublicTenant,
   fetchServiceStaff,
   fetchServices,
   fetchStaffMembers,
@@ -24,7 +26,7 @@ import { todayInTimeZone } from '@/lib/admin/calendar-range';
 import { staffInitials } from '@/lib/admin/staff-directory';
 import { timeOffWindow } from '@/lib/admin/staff-time-off';
 import { addCalendarDays } from '@/lib/booking/calendar';
-import { formatCalendarDate, formatTimeInTimeZone } from '@/lib/format';
+import { formatCalendarDate, formatTimeInTimeZone, type DisplayLocale } from '@/lib/format';
 import { isRenewalReturn, RENEWAL_PARAM } from '@/lib/session-refresh';
 
 import { adminLoadFailure, requireAdminAccessToken } from '../../guard';
@@ -111,6 +113,8 @@ interface StaffMemberPageProps {
 
 export default async function StaffMemberPage({ params, searchParams }: StaffMemberPageProps) {
   const { tenantSlug, staffId } = await params;
+  const t = await getTranslations('admin-staff');
+  const locale = await getLocale();
   const query = (await searchParams) ?? {};
   const here = adminStaffMemberPath(tenantSlug, staffId);
 
@@ -257,10 +261,9 @@ export default async function StaffMemberPage({ params, searchParams }: StaffMem
 
   if (loadError !== null) {
     return adminLoadFailure(loadError, tenantSlug, {
-      deniedTitle: 'Accès réservé',
-      deniedHint:
-        'Les horaires du personnel sont réservés aux comptes du salon. Demandez l’accès à l’administrateur.',
-      failedTitle: 'Fiche indisponible',
+      deniedTitle: t('denied.title'),
+      deniedHint: t('denied.scheduleHint'),
+      failedTitle: t('failure.member'),
       renewal,
     });
   }
@@ -290,12 +293,26 @@ export default async function StaffMemberPage({ params, searchParams }: StaffMem
    * rien : la seule garde qui compte est celle de l'API.
    */
   const canManage = hasAtLeastRole(profile.role, 'manager');
+  /*
+   * La région de l'établissement (#848) : elle décide de l'écriture des dates et
+   * du **jour qui ouvre la semaine** de travail — jamais du fuseau, qui reste
+   * `schedule.timezone` et décide seul de l'heure qu'il est au salon.
+   *
+   * Elle vient de l'adresse publiée sur la vitrine, `GET /public/{slug}` — la
+   * même réponse que le gabarit du back-office lit déjà, et que Next mémoïse sur
+   * la durée du rendu. Un échec ne coûte que l'ordre des colonnes de la semaine,
+   * jamais la fiche.
+   */
+  const countryCode = await fetchPublicTenant(tenantSlug)
+    .then((tenant) => tenant.address?.country ?? null)
+    .catch(() => null);
+  const display: DisplayLocale = { locale, countryCode };
 
   return (
     <section aria-labelledby="praticien-titre">
       <div className="spa-admin-toolbar">
         <Link className="spa-button spa-button--quiet" href={adminStaffPath(tenantSlug)}>
-          ← Personnel
+          {t('backLink')}
         </Link>
       </div>
 
@@ -306,16 +323,13 @@ export default async function StaffMemberPage({ params, searchParams }: StaffMem
           — il ne dépend pas de la fonte et vaut celui de la liste. */}
       <h1 className="spa-admin__title spa-admin-staff__heading" id="praticien-titre">
         <span aria-hidden="true" className="spa-admin-staff__initials">
-          {staffInitials(member.displayName)}
+          {staffInitials(member.displayName, display)}
         </span>
         {member.displayName}
       </h1>
 
       {member.isActive ? null : (
-        <p className="spa-admin-toolbar__hint">
-          Cette fiche est suspendue&nbsp;: aucun créneau n’est proposé pour ce praticien, quels que
-          soient les horaires ci-dessous.
-        </p>
+        <p className="spa-admin-toolbar__hint">{t('profile.suspendedNotice')}</p>
       )}
 
       {/* La fiche elle-même avant son agenda : on corrige qui est cette
@@ -331,6 +345,7 @@ export default async function StaffMemberPage({ params, searchParams }: StaffMem
           où on les remplit : les horaires, puis ce qu'ils produisent. */}
       <StaffScheduleEditor
         canManage={canManage}
+        countryCode={countryCode}
         schedule={schedule}
         staffId={member.id}
         tenantSlug={tenantSlug}
@@ -338,21 +353,18 @@ export default async function StaffMemberPage({ params, searchParams }: StaffMem
 
       <section className="spa-admin__section" aria-labelledby="creneaux-titre">
         <h2 className="spa-admin__section-title" id="creneaux-titre">
-          Créneaux proposés
+          {t('availability.title')}
         </h2>
         <p className="spa-admin-toolbar__hint">
           {previewService === undefined
-            ? 'Affectez une prestation active pour voir ce que le moteur propose.'
-            : `Prochains créneaux libres pour « ${previewService.name} », tels que la page de réservation les calcule.`}
+            ? t('availability.noServiceHint')
+            : t('availability.hint', { service: previewService.name })}
         </p>
 
         {availability === null || availability.days.every((day) => day.slots.length === 0) ? (
           <div className="spa-empty-state">
-            <p className="spa-empty-state__title">Aucun créneau sur les sept prochains jours</p>
-            <p className="spa-empty-state__description">
-              Une semaine de travail vide, une fiche suspendue, une prestation non affectée ou un
-              congé couvrant la période produisent tous ce résultat.
-            </p>
+            <p className="spa-empty-state__title">{t('availability.emptyTitle')}</p>
+            <p className="spa-empty-state__description">{t('availability.emptyDescription')}</p>
           </div>
         ) : (
           <ul className="spa-admin-schedule__exceptions">
@@ -361,14 +373,18 @@ export default async function StaffMemberPage({ params, searchParams }: StaffMem
               .map((day) => (
                 <li className="spa-admin-schedule__exception" key={day.date}>
                   <span className="spa-admin-schedule__exception-date">
-                    {formatCalendarDate(day.date)}
+                    {formatCalendarDate(day.date, display)}
                   </span>
                   <span className="spa-admin-schedule__exception-label">
                     {day.slots
                       .slice(0, 6)
-                      .map((slot) => formatTimeInTimeZone(slot.startsAt, availability.timezone))
+                      .map((slot) =>
+                        formatTimeInTimeZone(slot.startsAt, availability.timezone, display),
+                      )
                       .join(' · ')}
-                    {day.slots.length > 6 ? ` … ${String(day.slots.length)} au total` : ''}
+                    {day.slots.length > 6
+                      ? t('availability.more', { count: String(day.slots.length) })
+                      : ''}
                   </span>
                 </li>
               ))}
@@ -378,11 +394,15 @@ export default async function StaffMemberPage({ params, searchParams }: StaffMem
 
       <StaffTimeOffPanel
         canManage={canManage}
+        countryCode={countryCode}
         staffId={member.id}
         tenantSlug={tenantSlug}
         timeOff={timeOff}
         timeZone={timezone}
-        windowLabel={`Absences du ${formatCalendarDate(today)} au ${formatCalendarDate(lastDay)}.`}
+        windowLabel={t('timeOff.window', {
+          from: formatCalendarDate(today, display),
+          to: formatCalendarDate(lastDay, display),
+        })}
       />
 
       <StaffServicesPanel

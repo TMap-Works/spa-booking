@@ -1,10 +1,12 @@
 'use client';
 
 import type { TimeZone } from '@spa/shared';
+import { useTranslations } from 'next-intl';
 import { useEffect, useId } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { deskMoment, type DeskMove } from '@/lib/admin/appointment-desk';
+import type { DisplayLocale } from '@/lib/format';
 
 /**
  * La confirmation d'un report qui change de praticien — quatrième critère de #51.
@@ -40,6 +42,15 @@ interface CalendarMoveConfirmProps {
   readonly move: DeskMove;
   /** Fuseau de l'établissement — l'heure annoncée est celle du salon. */
   readonly timeZone: TimeZone;
+  /**
+   * Langue de la session et région de l'établissement — #848.
+   *
+   * La date est **insérée dans la question traduite** : sans elle, « Change
+   * practitioner? … on mercredi 26 août » mêlerait les deux langues dans la
+   * même phrase. Le fuseau reste `timeZone` : il décide de l'heure, jamais de
+   * son écriture.
+   */
+  readonly display?: DisplayLocale;
   readonly onConfirm: () => void;
   readonly onCancel: () => void;
 }
@@ -47,10 +58,12 @@ interface CalendarMoveConfirmProps {
 export function CalendarMoveConfirm({
   move,
   timeZone,
+  display,
   onConfirm,
   onCancel,
 }: CalendarMoveConfirmProps) {
   const titleId = useId();
+  const t = useTranslations('admin-planning');
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent): void => {
@@ -71,13 +84,16 @@ export function CalendarMoveConfirm({
   return (
     <div aria-labelledby={titleId} className="spa-admin-calendar__confirm" role="alertdialog">
       <p className="spa-admin-calendar__confirm-text" id={titleId}>
-        Changer de praticien&nbsp;? Le rendez-vous de {client} passerait de{' '}
-        {move.previous.staff.displayName} à {move.optimistic.staff.displayName}, le{' '}
-        {deskMoment(move.optimistic.startsAt, timeZone)}.
+        {t('move.question', {
+          client,
+          from: move.previous.staff.displayName,
+          to: move.optimistic.staff.displayName,
+          moment: deskMoment(move.optimistic.startsAt, timeZone, display),
+        })}
       </p>
       <div className="spa-admin-calendar__confirm-actions">
         <Button onClick={onCancel} variant="neutral">
-          Annuler
+          {t('move.cancel')}
         </Button>
         {/* Le focus part sur la réponse attendue : sans lui, la question posée
             après un lâcher à la souris resterait injoignable au clavier, et
@@ -85,7 +101,7 @@ export function CalendarMoveConfirm({
             prendre. `autoFocus` traverse le bouton du design system par ses
             attributs HTML — il n'expose pas de `ref`. */}
         <Button autoFocus onClick={onConfirm} variant="accent">
-          Confirmer le changement
+          {t('move.confirm')}
         </Button>
       </div>
     </div>

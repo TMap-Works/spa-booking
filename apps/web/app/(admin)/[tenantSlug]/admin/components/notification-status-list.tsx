@@ -1,6 +1,7 @@
 import type { Notification as NotificationTrace, TimeZone } from '@spa/shared';
+import { useLocale, useTranslations } from 'next-intl';
 
-import { formatDateTimeInTimeZone } from '@/lib/format';
+import { formatDateTimeInTimeZone, type DisplayLocale } from '@/lib/format';
 
 /**
  * Le statut d'envoi des messages d'un rendez-vous — cinquième critère
@@ -43,6 +44,13 @@ interface NotificationStatusListProps {
   readonly loading?: boolean;
   /** Le message d'échec de la lecture, s'il y en a eu un. */
   readonly failure?: string | null;
+  /**
+   * Le pays de l'établissement (#848) — la **région** des dates affichées.
+   *
+   * Facultatif : sans lui, le repli documenté de `lib/format.ts` s'applique. Il
+   * ne touche jamais au fuseau, qui reste celui du salon.
+   */
+  readonly countryCode?: string | null;
 }
 
 /**
@@ -59,30 +67,15 @@ interface NotificationStatusListProps {
  * mais il passe par la même chaîne et laisse donc une ligne dans ce journal —
  * c'est ce que l'écran doit savoir nommer.
  *
- * L'objet est exhaustif par son type, et il se refuse à inventer une clé :
- * `Record<NotificationTrace['type'], string>` est ce qui a fait échouer la
- * compilation ici à l'instant où `password_reset` est entré dans
- * `NOTIFICATION_TYPES`, plutôt que d'afficher une cellule vide au comptoir.
+ * Les libellés vivent depuis #848 dans `admin-planning.notifications.types`, et
+ * la **clé** du catalogue est le type de la trace. L'exhaustivité tenue ici par
+ * `Record<NotificationTrace['type'], …>` ne s'y perd pas : le typage du
+ * catalogue la rejoue, et un type de notification ajouté au contrat sans sa clé
+ * fait échouer `tsc` plutôt que d'afficher une cellule vide au comptoir.
  */
-const TYPE_LABELS: Readonly<Record<NotificationTrace['type'], string>> = {
-  booking_confirmation: 'Réservation enregistrée',
-  reminder_24h: 'Rappel J-1',
-  cancellation: 'Avis d’annulation',
-  password_reset: 'Mot de passe oublié',
-  appointment_confirmed: 'Rendez-vous confirmé',
-  appointment_rescheduled: 'Rendez-vous déplacé',
-};
-
-const CHANNEL_LABELS: Readonly<Record<NotificationTrace['channel'], string>> = {
-  email: 'E-mail',
-  sms: 'SMS',
-};
-
-const STATUS_LABELS: Readonly<Record<NotificationTrace['status'], string>> = {
-  pending: 'En attente',
-  sent: 'Envoyé',
-  failed: 'Échec',
-};
+type TraceLabelKey = `types.${NotificationTrace['type']}`;
+type ChannelLabelKey = `channels.${NotificationTrace['channel']}`;
+type StatusLabelKey = `statuses.${NotificationTrace['status']}`;
 
 /**
  * Le modificateur de badge, repris des teintes existantes.
@@ -104,14 +97,21 @@ export function NotificationStatusList({
   timeZone,
   loading = false,
   failure = null,
+  countryCode = null,
 }: NotificationStatusListProps) {
+  const t = useTranslations('admin-planning');
+  const display: DisplayLocale = { locale: useLocale(), countryCode };
+
   return (
     <section className="spa-admin-notifications">
-      <h3 className="spa-admin-notifications__title">Messages envoyés</h3>
-      {body({ notifications, timeZone, loading, failure })}
+      <h3 className="spa-admin-notifications__title">{t('notifications.title')}</h3>
+      {body({ notifications, timeZone, loading, failure, display, t })}
     </section>
   );
 }
+
+/** Le traducteur du namespace, tel que `body` le reçoit. */
+type PlanningTranslator = ReturnType<typeof useTranslations<'admin-planning'>>;
 
 /**
  * Les quatre états que ce composant sait rendre — chargement, échec, vide,
@@ -122,11 +122,25 @@ export function NotificationStatusList({
  * ressemblent beaucoup à l'écran, et ne veulent pas du tout dire la même chose
  * pour la personne qui a la cliente au téléphone.
  */
-function body({ notifications, timeZone, loading, failure }: Required<NotificationStatusListProps>) {
+function body({
+  notifications,
+  timeZone,
+  loading,
+  failure,
+  display,
+  t,
+}: {
+  readonly notifications: readonly NotificationTrace[] | null;
+  readonly timeZone: TimeZone;
+  readonly loading: boolean;
+  readonly failure: string | null;
+  readonly display: DisplayLocale;
+  readonly t: PlanningTranslator;
+}) {
   if (loading) {
     return (
       <p className="spa-admin-notifications__empty" aria-live="polite">
-        Lecture du journal d’envois…
+        {t('notifications.loading')}
       </p>
     );
   }
@@ -136,11 +150,7 @@ function body({ notifications, timeZone, loading, failure }: Required<Notificati
   }
 
   if (notifications === null || notifications.length === 0) {
-    return (
-      <p className="spa-admin-notifications__empty">
-        Aucun message n’a encore été émis pour ce rendez-vous.
-      </p>
-    );
+    return <p className="spa-admin-notifications__empty">{t('notifications.empty')}</p>;
   }
 
   return (
@@ -148,12 +158,19 @@ function body({ notifications, timeZone, loading, failure }: Required<Notificati
       {notifications.map((trace) => (
         <li key={trace.id} className="spa-admin-notifications__item">
           <span className="spa-admin-notifications__label">
-            {TYPE_LABELS[trace.type]} · {CHANNEL_LABELS[trace.channel]}
+            {t(`notifications.types.${trace.type}` satisfies `notifications.${TraceLabelKey}`)} ·{' '}
+            {t(
+              `notifications.channels.${trace.channel}` satisfies `notifications.${ChannelLabelKey}`,
+            )}
           </span>
           <span className={`spa-admin-badge spa-admin-badge--${STATUS_MODIFIERS[trace.status]}`}>
-            {STATUS_LABELS[trace.status]}
+            {t(
+              `notifications.statuses.${trace.status}` satisfies `notifications.${StatusLabelKey}`,
+            )}
           </span>
-          <span className="spa-admin-notifications__moment">{moment(trace, timeZone)}</span>
+          <span className="spa-admin-notifications__moment">
+            {moment(trace, timeZone, display, t)}
+          </span>
           {trace.failureReason === undefined ? null : (
             <span className="spa-admin-notifications__reason">{trace.failureReason}</span>
           )}
@@ -177,10 +194,19 @@ function body({ notifications, timeZone, loading, failure }: Required<Notificati
  * affiche, en le disant. Mentir sur la nature de l'instant serait pire que de
  * n'en montrer aucun.
  */
-function moment(trace: NotificationTrace, timeZone: TimeZone): string {
+function moment(
+  trace: NotificationTrace,
+  timeZone: TimeZone,
+  display: DisplayLocale,
+  t: PlanningTranslator,
+): string {
   if (trace.sentAt !== undefined) {
-    return `Envoyé le ${formatDateTimeInTimeZone(trace.sentAt, timeZone)}`;
+    return t('notifications.sentAt', {
+      moment: formatDateTimeInTimeZone(trace.sentAt, timeZone, display),
+    });
   }
 
-  return `Inscrit le ${formatDateTimeInTimeZone(trace.createdAt, timeZone)}`;
+  return t('notifications.createdAt', {
+    moment: formatDateTimeInTimeZone(trace.createdAt, timeZone, display),
+  });
 }

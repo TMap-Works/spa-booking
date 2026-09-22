@@ -1,21 +1,23 @@
 'use client';
 
 import { type IsoWeekday, type StaffSchedule } from '@spa/shared';
+import { useLocale, useTranslations } from 'next-intl';
 import { useRouter } from 'next/navigation';
-import { useState, useTransition } from 'react';
+import { useMemo, useState, useTransition } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { Notification } from '@/components/ui/notification';
 import {
-  ISO_WEEKDAYS,
   SCHEDULE_END_OF_DAY,
   newScheduleRow,
   rowsFromEntries,
   validateScheduleRows,
   weekdayLabel,
+  weekdayLabelInSentence,
+  weekdaysForRegion,
   type ScheduleRow,
 } from '@/lib/admin/staff-schedule';
-import { formatDuration } from '@/lib/format';
+import { formatDuration, type DisplayLocale } from '@/lib/format';
 
 import { setStaffScheduleAction } from '../actions';
 import { useAdminSessionRenewal } from '../../components/use-admin-session-renewal';
@@ -101,10 +103,20 @@ export function StaffScheduleEditor({
   staffId,
   schedule,
   canManage = true,
+  countryCode = null,
 }: {
   readonly tenantSlug: string;
   readonly staffId: string;
   readonly schedule: StaffSchedule;
+  /**
+   * Le pays de l'établissement (#848) — il décide du **jour qui ouvre la
+   * semaine** de saisie, et de la région des durées affichées.
+   *
+   * Les numéros ISO des plages ne bougent pas pour autant : seule la grille est
+   * pivotée, si bien qu'une plage saisie le dimanche reste `weekday: 7` des deux
+   * côtés du comptoir.
+   */
+  readonly countryCode?: string | null;
   /**
    * `false` au rang praticien : `PUT /v1/staff/:id/schedule` est
    * `@AuthAtLeast('MANAGER')`, et la grille n'est plus qu'une lecture. Les
@@ -113,6 +125,10 @@ export function StaffScheduleEditor({
    */
   readonly canManage?: boolean;
 }) {
+  const t = useTranslations('admin-staff');
+  const locale = useLocale();
+  const display: DisplayLocale = useMemo(() => ({ locale, countryCode }), [locale, countryCode]);
+  const weekdays = useMemo(() => weekdaysForRegion(countryCode), [countryCode]);
   const router = useRouter();
   const { renewIfExpired } = useAdminSessionRenewal(tenantSlug);
   const [rows, setRows] = useState<readonly ScheduleRow[]>(() => rowsFromEntries(schedule.entries));
@@ -153,7 +169,7 @@ export function StaffScheduleEditor({
   }
 
   async function save(): Promise<void> {
-    const validation = validateScheduleRows(rows);
+    const validation = validateScheduleRows(rows, locale);
 
     if (!validation.ok) {
       setError({ rowId: validation.rowId, message: validation.message });
@@ -192,33 +208,37 @@ export function StaffScheduleEditor({
   return (
     <section className="spa-admin__section" aria-labelledby="horaires-titre">
       <h2 className="spa-admin__section-title" id="horaires-titre">
-        Horaires hebdomadaires
+        {t('schedule.title')}
       </h2>
       <p className="spa-admin-toolbar__hint">
-        Heures écrites dans le fuseau du salon ({schedule.timezone}), stockées en UTC. Total
-        saisi&nbsp;: {formatDuration(total)} par semaine.
+        {t('schedule.hint', {
+          timeZone: schedule.timezone,
+          total: formatDuration(total, display),
+        })}
       </p>
 
       {error !== null && error.rowId === null ? (
-        <Notification tone="danger" title="Semaine non enregistrée">
+        <Notification tone="danger" title={t('schedule.failureTitle')}>
           <p>{error.message}</p>
         </Notification>
       ) : null}
 
       {saved ? (
-        <Notification tone="success" title="Horaires enregistrés">
-          <p>Les créneaux proposés à la clientèle tiennent compte de cette semaine.</p>
+        <Notification tone="success" title={t('schedule.savedTitle')}>
+          <p>{t('schedule.savedBody')}</p>
         </Notification>
       ) : null}
 
       <div className="spa-admin-schedule">
-        {ISO_WEEKDAYS.map((weekday) => {
+        {weekdays.map((weekday) => {
           const dayRows = rowsOf(rows, weekday);
           const toggleId = `jour-${String(weekday)}`;
 
           return (
             <div className="spa-admin-schedule__day" key={weekday}>
-              <span className="spa-admin-schedule__day-label">{weekdayLabel(weekday)}</span>
+              <span className="spa-admin-schedule__day-label">
+                {weekdayLabel(weekday, locale)}
+              </span>
               <span className="spa-admin-schedule__toggle">
                 <input
                   checked={dayRows.length > 0}
@@ -227,11 +247,11 @@ export function StaffScheduleEditor({
                   onChange={(event) => toggleDay(weekday, event.target.checked)}
                   type="checkbox"
                 />
-                <label htmlFor={toggleId}>Ouvert</label>
+                <label htmlFor={toggleId}>{t('schedule.open')}</label>
               </span>
               <div className="spa-admin-schedule__ranges">
                 {dayRows.length === 0 ? (
-                  <span className="spa-admin-schedule__closed">Fermé — aucun créneau proposé</span>
+                  <span className="spa-admin-schedule__closed">{t('schedule.closed')}</span>
                 ) : (
                   dayRows.map((row) => {
                     const closesAtMidnight = row.endsAt === SCHEDULE_END_OF_DAY;
@@ -239,7 +259,9 @@ export function StaffScheduleEditor({
                     return (
                       <span className="spa-admin-schedule__range" key={row.id}>
                         <label className="spa-visually-hidden" htmlFor={`${row.id}-debut`}>
-                          Début de la plage du {weekdayLabel(weekday).toLowerCase()}
+                          {t('schedule.rangeStart', {
+                            day: weekdayLabelInSentence(weekday, locale),
+                          })}
                         </label>
                         <input
                           disabled={locked}
@@ -250,7 +272,9 @@ export function StaffScheduleEditor({
                         />
                         <span aria-hidden="true">–</span>
                         <label className="spa-visually-hidden" htmlFor={`${row.id}-fin`}>
-                          Fin de la plage du {weekdayLabel(weekday).toLowerCase()}
+                          {t('schedule.rangeEnd', {
+                            day: weekdayLabelInSentence(weekday, locale),
+                          })}
                         </label>
                         <input
                           disabled={locked || closesAtMidnight}
@@ -271,17 +295,18 @@ export function StaffScheduleEditor({
                             }
                             type="checkbox"
                           />{' '}
-                          minuit
+                          {t('schedule.midnight')}
                         </label>
                         <Button
                           disabled={locked}
                           onClick={() => removeRow(row.id)}
                           variant="quiet"
                         >
-                          Retirer
+                          {t('schedule.remove')}
                           <span className="spa-visually-hidden">
-                            {' '}
-                            la plage du {weekdayLabel(weekday).toLowerCase()}
+                            {t('schedule.removeFor', {
+                              day: weekdayLabelInSentence(weekday, locale),
+                            })}
                           </span>
                         </Button>
                         {error !== null && error.rowId === row.id ? (
@@ -294,10 +319,9 @@ export function StaffScheduleEditor({
                   })
                 )}
                 <Button disabled={locked} onClick={() => addRow(weekday)} variant="quiet">
-                  Ajouter une plage
+                  {t('schedule.add')}
                   <span className="spa-visually-hidden">
-                    {' '}
-                    le {weekdayLabel(weekday).toLowerCase()}
+                    {t('schedule.addFor', { day: weekdayLabelInSentence(weekday, locale) })}
                   </span>
                 </Button>
               </div>
@@ -312,16 +336,14 @@ export function StaffScheduleEditor({
           <Button
             disabled={refreshing}
             loading={saving}
-            loadingLabel="Enregistrement…"
+            loadingLabel={t('schedule.saving')}
             onClick={() => void save()}
             variant="accent"
           >
-            Enregistrer la semaine
+            {t('schedule.save')}
           </Button>
         ) : (
-          <span className="spa-admin-toolbar__hint">
-            La modification des horaires est réservée au rang gérant.
-          </span>
+          <span className="spa-admin-toolbar__hint">{t('schedule.restricted')}</span>
         )}
       </div>
     </section>

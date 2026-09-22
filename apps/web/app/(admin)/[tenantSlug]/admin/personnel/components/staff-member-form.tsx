@@ -1,6 +1,7 @@
 'use client';
 
 import { createStaffMemberRequestSchema } from '@spa/shared';
+import { useLocale, useTranslations } from 'next-intl';
 import { useRouter } from 'next/navigation';
 import { useState, useTransition } from 'react';
 import type { ZodIssue } from 'zod';
@@ -115,6 +116,8 @@ interface StaffMemberFormProps {
 }
 
 export function StaffMemberForm({ tenantSlug, accounts }: StaffMemberFormProps) {
+  const t = useTranslations('admin-staff');
+  const locale = useLocale();
   const router = useRouter();
   const { renewIfExpired } = useAdminSessionRenewal(tenantSlug);
   const [userId, setUserId] = useState('');
@@ -169,7 +172,7 @@ export function StaffMemberForm({ tenantSlug, accounts }: StaffMemberFormProps) 
     });
 
     if (!parsed.success) {
-      const { fields, form } = collectMemberErrors(parsed.error.issues);
+      const { fields } = collectMemberErrors(parsed.error.issues);
 
       // La confirmation de la fiche précédente ne survit pas au refus de la
       // suivante : deux bandeaux contradictoires — « Fiche créée » en vert et
@@ -183,12 +186,11 @@ export function StaffMemberForm({ tenantSlug, accounts }: StaffMemberFormProps) 
         // sait pas qu'à l'écran ce champ est un sélecteur, et que la valeur
         // vide y est le choix par défaut. Afficher ce message sous une liste
         // déroulante ne s'adresse à personne.
-        ...(userId === '' ? { userId: 'Choisissez le compte à rendre réservable.' } : {}),
+        ...(userId === '' ? { userId: t('member.accountRequired') } : {}),
       });
-      setFormError(
-        form ??
-          (Object.keys(fields).length === 0 ? 'Les informations saisies sont invalides.' : null),
-      );
+      // Le message du contrat partagé est un littéral français : depuis #848 il
+      // ne remonte plus à l'écran, seul le champ fautif en vient.
+      setFormError(Object.keys(fields).length === 0 ? t('member.invalid') : null);
       return;
     }
 
@@ -227,23 +229,17 @@ export function StaffMemberForm({ tenantSlug, accounts }: StaffMemberFormProps) 
   // seule chose, ce que /catalogue/nouveau ne fait pas non plus.
   return (
     <section className="spa-admin__section spa-admin-form">
-      <p className="spa-admin-toolbar__hint">
-        Rattachez un compte du personnel à un agenda. Tant qu’une personne n’a pas sa fiche, aucune
-        prestation ne peut lui être affectée et le parcours de réservation ne propose aucun créneau.
-      </p>
+      <p className="spa-admin-toolbar__hint">{t('member.hint')}</p>
 
       {formError === null ? null : (
-        <Notification tone="danger" title="Création impossible">
+        <Notification tone="danger" title={t('member.failureTitle')}>
           <p>{formError}</p>
         </Notification>
       )}
 
       {created === null ? null : (
-        <Notification tone="success" title="Fiche créée">
-          <p>
-            {created} apparaît désormais dans les praticiens. Ouvrez sa fiche pour saisir ses
-            horaires, ses congés et les prestations qu’elle pratique.
-          </p>
+        <Notification tone="success" title={t('member.createdTitle')}>
+          <p>{t('member.createdBody', { name: created })}</p>
         </Notification>
       )}
 
@@ -256,19 +252,23 @@ export function StaffMemberForm({ tenantSlug, accounts }: StaffMemberFormProps) 
               // administrateur — sur cet écran comme sur la liste —, si bien
               // qu'y renvoyer une gérante la laisserait chercher un bouton que
               // son rang ne fait pas apparaître (#619).
-              'Aucun compte du personnel à rattacher. Un administrateur du salon doit d’abord inviter la personne.'
+              t('member.accountEmpty')
             : undefined
         }
-        hint="Le compte porte l’accès au back-office ; la fiche porte l’agenda."
+        hint={t('member.accountHint')}
         id="fiche-praticien-compte"
-        label="Compte à rendre réservable"
+        label={t('member.accountLabel')}
         onChange={(event) => chooseAccount(event.target.value)}
         value={userId}
       >
-        <option value="">Choisissez un compte…</option>
+        <option value="">{t('member.accountPlaceholder')}</option>
         {accounts.map((account) => (
           <option key={account.id} value={account.id}>
-            {account.firstName} {account.lastName} — {roleLabel(account.role)}
+            {t('member.accountOption', {
+              firstName: account.firstName,
+              lastName: account.lastName,
+              role: roleLabel(account.role, locale),
+            })}
           </option>
         ))}
       </Select>
@@ -276,9 +276,9 @@ export function StaffMemberForm({ tenantSlug, accounts }: StaffMemberFormProps) 
       <Field
         disabled={accounts.length === 0}
         error={fieldErrors.displayName}
-        hint="C’est ce nom que la cliente lit au moment de choisir son praticien."
+        hint={t('member.displayNameHint')}
         id="fiche-praticien-nom"
-        label="Nom d’affichage"
+        label={t('member.displayName')}
         onChange={(event) => {
           setNameEdited(true);
           setDisplayName(event.target.value);
@@ -294,9 +294,9 @@ export function StaffMemberForm({ tenantSlug, accounts }: StaffMemberFormProps) 
         // Même formulation que sur la fiche (#771) : aucune surface publique ne
         // rend `bio` aujourd'hui, et deux écrans du même parcours ne peuvent pas
         // dire deux choses différentes du même champ.
-        hint="Facultatif — quelques lignes qui présentent cette praticienne."
+        hint={t('member.bioHint')}
         id="fiche-praticien-presentation"
-        label="Présentation"
+        label={t('member.bio')}
         onChange={(event) => {
           setBio(event.target.value);
           clearMark('bio');
@@ -307,11 +307,11 @@ export function StaffMemberForm({ tenantSlug, accounts }: StaffMemberFormProps) 
       <Button
         disabled={accounts.length === 0}
         loading={saving}
-        loadingLabel="Création…"
+        loadingLabel={t('member.creating')}
         onClick={() => void create()}
         variant="accent"
       >
-        Créer la fiche
+        {t('member.submit')}
       </Button>
     </section>
   );
