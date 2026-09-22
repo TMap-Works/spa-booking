@@ -4,7 +4,8 @@ import { describe, expect, it } from 'vitest';
 import type { HistoryEntry } from '@/components/account/appointment-history';
 import {
   groupHistoryByMonth,
-  HISTORY_FILTERS,
+  historyFilters,
+  HISTORY_FILTER_IDS,
   matchesHistoryFilter,
 } from '@/components/account/appointment-history';
 import { rebookHref } from '@/components/account/rebook';
@@ -63,7 +64,25 @@ function entry(startsAt: string, id = startsAt): HistoryEntry {
 
 describe('le filtre de l’historique (#1054)', () => {
   it('n’offre que « Tous », « Honorés » et « Annulés »', () => {
-    expect(HISTORY_FILTERS.map((item) => item.id)).toEqual(['tous', 'honores', 'annules']);
+    expect([...HISTORY_FILTER_IDS]).toEqual(['tous', 'honores', 'annules']);
+  });
+
+  it('nomme ses trois filtres dans la langue demandée (#847)', () => {
+    // Les identifiants ne bougent pas — ils servent de valeur d'onglet et de clé
+    // d'`aria-controls` —, les mots suivent la langue. C'est cette séparation
+    // qui permet au test précédent d'éprouver l'ordre sans dépendre d'un
+    // libellé.
+    expect(historyFilters('fr').map((item) => item.label)).toEqual([
+      'Tous',
+      'Honorés',
+      'Annulés',
+    ]);
+    expect(historyFilters('en').map((item) => item.label)).toEqual([
+      'All',
+      'Completed',
+      'Cancelled',
+    ]);
+    expect(historyFilters('en').map((item) => item.id)).toEqual([...HISTORY_FILTER_IDS]);
   });
 
   it('ne masque rien sous « Tous » — un rendez-vous honoré reste consultable (BM-HISTO-01)', () => {
@@ -128,6 +147,31 @@ describe('le regroupement par mois (#1054)', () => {
 
   it('rend une liste vide sans inventer de mois', () => {
     expect(groupHistoryByMonth([], 'Europe/Paris')).toEqual([]);
+  });
+
+  it('nomme le mois dans la langue de l’écran, sans changer de découpage (#847)', () => {
+    const lignes = [entry('2026-09-21T08:00:00.000Z')];
+
+    expect(groupHistoryByMonth(lignes, 'Europe/Paris', { locale: 'fr' })[0]?.label).toBe(
+      'Septembre 2026',
+    );
+    expect(groupHistoryByMonth(lignes, 'Europe/Paris', { locale: 'en' })[0]?.label).toBe(
+      'September 2026',
+    );
+  });
+
+  it('garde une clé de mois indépendante de la langue', () => {
+    // La clé sert d'`id` de section HTML et d'ancre d'`aria-labelledby` : elle
+    // ne doit dépendre ni de la langue ni de la ponctuation qu'elle choisit.
+    // Le **fuseau**, lui, continue de décider du mois, dans les deux langues.
+    const minuit = [entry('2026-09-30T21:30:00.000Z')];
+
+    for (const locale of ['fr', 'en'] as const) {
+      expect(groupHistoryByMonth(minuit, 'Europe/London', { locale })[0]?.key).toBe('2026-09');
+      expect(groupHistoryByMonth(minuit, 'Indian/Antananarivo', { locale })[0]?.key).toBe(
+        '2026-10',
+      );
+    }
   });
 });
 

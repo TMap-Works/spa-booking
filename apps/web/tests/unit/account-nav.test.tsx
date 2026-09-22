@@ -49,6 +49,17 @@ vi.mock('@/app/(account)/[tenantSlug]/compte/session', () => ({
   readRefreshToken: () => readRefreshToken(),
 }));
 
+/*
+ * Le gabarit lit les deux cookies de langue pour les confier à l'îlot de
+ * synchronisation (#847). `cookies()` de Next exige un contexte de requête, que
+ * cette suite n'a pas : elle appelle le gabarit comme une fonction. Le magasin
+ * est donc vide — aucun choix explicite, aucune préférence enregistrée —, ce qui
+ * est exactement l'état d'un navigateur neuf et laisse l'îlot inerte.
+ */
+vi.mock('next/headers', () => ({
+  cookies: () => Promise.resolve({ get: () => undefined }),
+}));
+
 vi.mock('@/app/(account)/[tenantSlug]/compte/tenant', () => ({
   accountTenant: (...args: unknown[]) => accountTenant(...args),
 }));

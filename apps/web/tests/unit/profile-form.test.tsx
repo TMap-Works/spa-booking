@@ -160,6 +160,71 @@ describe('coordonnées — validation', () => {
       firstName: 'Camille',
       lastName: 'Rakoto',
       phone: null,
+      // Le compte de la fixture n'a aucune préférence de langue : `null` est ce
+      // par quoi le contrat l'exprime, et c'est aussi ce que le `<select>`
+      // renvoie sur « Langue du salon » (#847, #844).
+      locale: null,
+    });
+  });
+});
+
+describe('coordonnées — la langue préférée (#847)', () => {
+  it('propose les deux langues et « Langue du salon », dans cet ordre', () => {
+    renderForm();
+
+    const options = [
+      ...(screen.getByLabelText(/Langue préférée/) as HTMLSelectElement).options,
+    ].map((option) => [option.value, option.textContent]);
+
+    // « Langue du salon » d'abord : c'est la valeur d'un compte qui n'a jamais
+    // choisi, et le contrat la distingue d'une langue (`locale: null`, #844).
+    // Chaque langue est nommée dans sa propre langue, comme dans le sélecteur.
+    expect(options).toEqual([
+      ['', 'Langue du salon'],
+      ['fr', 'Français'],
+      ['en', 'English'],
+    ]);
+  });
+
+  it('pré-remplit la préférence enregistrée sur le compte', () => {
+    render(<ProfileForm tenantSlug="salon-des-lilas" profile={{ ...profile, locale: 'en' }} />);
+
+    expect((screen.getByLabelText(/Langue préférée/) as HTMLSelectElement).value).toBe('en');
+    // Rien n'a changé : le bouton reste inactif, comme pour les autres champs.
+    expect(screen.getByRole('button', { name: /Enregistrer/ }).hasAttribute('disabled')).toBe(true);
+  });
+
+  it('envoie la langue choisie avec les coordonnées', async () => {
+    updateProfileAction.mockResolvedValue({ ok: true, data: { ...profile, locale: 'en' } });
+    const user = userEvent.setup();
+    renderForm();
+
+    await user.selectOptions(screen.getByLabelText(/Langue préférée/), 'en');
+    await user.click(screen.getByRole('button', { name: /Enregistrer/ }));
+
+    expect(updateProfileAction).toHaveBeenCalledWith('salon-des-lilas', {
+      firstName: 'Camille',
+      lastName: 'Rakoto',
+      phone: '+261341234567',
+      locale: 'en',
+    });
+  });
+
+  it('retire la préférence — et ne l’envoie pas en chaîne vide', async () => {
+    // `null` **efface** et rend la main à la langue de l'établissement ; la
+    // chaîne vide n'est pas une valeur du contrat (#844).
+    updateProfileAction.mockResolvedValue({ ok: true, data: profile });
+    const user = userEvent.setup();
+    render(<ProfileForm tenantSlug="salon-des-lilas" profile={{ ...profile, locale: 'fr' }} />);
+
+    await user.selectOptions(screen.getByLabelText(/Langue préférée/), '');
+    await user.click(screen.getByRole('button', { name: /Enregistrer/ }));
+
+    expect(updateProfileAction).toHaveBeenCalledWith('salon-des-lilas', {
+      firstName: 'Camille',
+      lastName: 'Rakoto',
+      phone: '+261341234567',
+      locale: null,
     });
   });
 });

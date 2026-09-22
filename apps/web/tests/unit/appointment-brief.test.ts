@@ -9,6 +9,9 @@ import {
   appointmentIcsHref,
   appointmentTimeRange,
   directionsUrl,
+  pendingHoldNote,
+  rescheduledNote,
+  serviceFallback,
 } from '@/components/account/appointment-brief';
 
 import { service, tenant } from './fixtures';
@@ -184,5 +187,69 @@ describe('appointmentIcs — le rendez-vous dans l’agenda du téléphone (BM-R
 
     expect(href.startsWith('data:text/calendar;charset=utf-8,')).toBe(true);
     expect(decodeURIComponent(href)).toContain('BEGIN:VEVENT');
+  });
+
+  it('se dit en anglais quand l’écran est en anglais (#847)', () => {
+    // Le fichier finit dans l'agenda du téléphone, où il sera relu des mois
+    // après : son résumé et sa description sont du texte d'interface comme les
+    // autres. Le protocole de la RFC 5545, lui, ne se traduit pas — mêmes
+    // `DTSTART`, même `UID`, même pliage.
+    const english = appointmentIcs({
+      brief: appointmentBrief(APPOINTMENT, [service]),
+      tenant: SALON,
+      locale: 'en',
+    });
+
+    expect(english).toContain('DESCRIPTION:With Hery');
+    expect(english).toContain('DTSTART:20260921T080000Z');
+    expect(appointmentIcsFilename(APPOINTMENT, 'en')).toBe('appointment-RDV-8F3K-27.ics');
+  });
+});
+
+describe('les phrases de statut de l’espace client (#847)', () => {
+  it('se disent dans les deux langues, et le français reste le défaut', () => {
+    // Le défaut est français parce que les suites de ce dépôt sont écrites en
+    // français (`tests/support/next-intl.ts`) — pas parce que le produit l'est :
+    // `DEFAULT_LOCALE` du contrat vaut `en`.
+    expect(pendingHoldNote()).toBe('Votre créneau est retenu ; rien à faire de votre côté.');
+    expect(pendingHoldNote('en')).toBe('Your slot is held; there is nothing for you to do.');
+    expect(rescheduledNote('fr')).toBe('Ce créneau a été libéré au profit d’un autre rendez-vous.');
+    expect(rescheduledNote('en')).toBe(
+      'This slot was released in favour of another appointment.',
+    );
+  });
+
+  it('nomme une prestation disparue du catalogue dans la langue de l’écran', () => {
+    expect(serviceFallback('fr')).toBe('Prestation');
+    expect(serviceFallback('en')).toBe('Service');
+  });
+});
+
+describe('appointmentTimeRange — la plage suit la langue, jamais le fuseau (#847)', () => {
+  it('écrit la même heure de salon de deux façons', () => {
+    const range = { startsAt: APPOINTMENT.startsAt, endsAt: APPOINTMENT.endsAt };
+    /**
+     * Toute espace ramenée à l'espace ordinaire.
+     *
+     * `Intl` en insère deux sortes d'insécables — U+00A0 autour du tiret de la
+     * plage, U+202F avant « AM » en `en-US` —, et une suite qui comparerait les
+     * codets bruts échouerait sur un caractère que personne ne voit. C'est la
+     * **mise en forme** qu'on éprouve ici, pas la typographie d'ICU.
+     *
+     * `\s` et non une classe de deux codets : la classe aurait porté ces
+     * caractères en clair dans la source, ce que `no-irregular-whitespace`
+     * refuse — à raison, une espace insécable écrite à la main dans du code ne
+     * se distingue d'une espace ordinaire par rien.
+     */
+    const lisible = (text: string): string => text.replace(/\s/g, ' ');
+
+    // 08:00 UTC à Antananarivo (UTC+3) est 11:00 dans les deux langues : c'est
+    // l'écriture qui change, pas l'instant ni le fuseau.
+    expect(lisible(appointmentTimeRange(range, 'Indian/Antananarivo', { locale: 'fr' }))).toBe(
+      '11:00 – 12:10',
+    );
+    expect(lisible(appointmentTimeRange(range, 'Indian/Antananarivo', { locale: 'en' }))).toBe(
+      '11:00 AM – 12:10 PM',
+    );
   });
 });
