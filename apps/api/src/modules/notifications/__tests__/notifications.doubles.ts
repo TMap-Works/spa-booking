@@ -1,3 +1,5 @@
+import { DEFAULT_LOCALE, type Locale } from '@spa/shared';
+
 import { getTenantId } from '../../../common/tenant';
 import type { StructuredLogger } from '../../../common/logging/structured-logger';
 import type { NotificationRenderer } from '../notification-renderer';
@@ -89,6 +91,14 @@ interface FakeRow {
   type: NotificationRecord['type'];
   channel: NotificationRecord['channel'];
   status: NotificationStatus;
+  /**
+   * La langue dans laquelle le message est parti — #854.
+   *
+   * Portée par la ligne, et non déduite : le double doit pouvoir montrer qu'une
+   * reprise `FAILED → PENDING` réécrit la langue plutôt que de garder celle de
+   * la tentative précédente, ce qu'un champ calculé aurait masqué.
+   */
+  locale: Locale;
   dedupeKey: string;
   providerMessageId: string | null;
   attemptCount: number;
@@ -165,6 +175,23 @@ export interface FakeNotificationsRepository {
    * seul.
    */
   staffLookupError: Error | null;
+  /**
+   * La langue que `resolveRecipientLocale` rend — #854.
+   *
+   * Une valeur, et non une fonction du compte : les suites qui éprouvent la
+   * langue d'un envoi la posent avant l'appel, là où la **règle** de résolution
+   * elle-même — préférence du compte, sinon établissement — se prouve en
+   * intégration, contre une vraie base.
+   */
+  recipientLocale: Locale;
+  /**
+   * Les comptes sur lesquels la langue a été résolue, dans l'ordre.
+   *
+   * En lecture seule : c'est un constat du double, pas un réglage. C'est lui qui
+   * prouve le sixième critère — une résolution a bien lieu à chaque expédition,
+   * y compris sur un rappel J-1 dont l'enveloppe ne porte aucune langue.
+   */
+  readonly localeLookups: readonly string[];
 }
 
 function toRecord(row: FakeRow): NotificationRecord {
@@ -175,6 +202,7 @@ function toRecord(row: FakeRow): NotificationRecord {
     type: row.type,
     channel: row.channel,
     status: row.status,
+    locale: row.locale,
     dedupeKey: row.dedupeKey,
     providerMessageId: row.providerMessageId,
     attemptCount: row.attemptCount,
@@ -204,7 +232,7 @@ export function fakeNotificationsRepository(): FakeNotificationsRepository {
         LIVE.has(row.status),
     );
 
-  const claim = (message: NotificationMessage): Promise<NotificationClaim> => {
+  const claim = (message: NotificationMessage, locale: Locale): Promise<NotificationClaim> => {
     const live = liveFor(message);
     if (live !== undefined) {
       return Promise.resolve({ outcome: 'already-live', notificationId: live.id });
@@ -221,6 +249,11 @@ export function fakeNotificationsRepository(): FakeNotificationsRepository {
       previous.status = 'PENDING';
       previous.attemptCount += 1;
       previous.failureReason = null;
+      // La reprise réécrit la langue, comme le fait l'`update` de la vraie
+      // requête : la décision se prend à l'envoi, et une seconde tentative est
+      // un second envoi. Garder celle de la tentative ratée aurait figé une
+      // préférence que la cliente a pu changer entre les deux.
+      previous.locale = locale;
       return Promise.resolve({ outcome: 'claimed', notification: toRecord(previous) });
     }
 
@@ -232,6 +265,7 @@ export function fakeNotificationsRepository(): FakeNotificationsRepository {
       type: message.type,
       channel: message.channel,
       status: 'PENDING',
+      locale,
       dedupeKey: message.dedupeKey,
       providerMessageId: null,
       attemptCount: 1,
@@ -271,8 +305,16 @@ export function fakeNotificationsRepository(): FakeNotificationsRepository {
     emailSuppressed: boolean;
     staffUserId: string | null;
     staffLookupError: Error | null;
+    recipientLocale: Locale;
+    localeLookups: string[];
   } = {
     contact: { hasEmail: true, hasSms: true },
+    // La langue que la résolution rend, et la trace des comptes sur lesquels on
+    // l'a interrogée — #854. La trace est ce qui permet à une suite de prouver
+    // que la langue est lue **à l'envoi** : un rappel J-1 dont l'enveloppe ne
+    // porte rien doit s'y présenter, et une reprise doit s'y présenter deux fois.
+    recipientLocale: DEFAULT_LOCALE,
+    localeLookups: [],
     // Une adresse et un numéro composable, cohérents avec le `contact` par
     // défaut : les suites qui ne parlent pas de coordonnées n'ont rien à régler.
     address: { email: 'cliente@example.test', phone: '+261341234567' },
@@ -303,6 +345,11 @@ export function fakeNotificationsRepository(): FakeNotificationsRepository {
       ? Promise.resolve(state.staffUserId)
       : Promise.reject(state.staffLookupError);
 
+  const resolveRecipientLocale = (userId: string): Promise<Locale> => {
+    state.localeLookups.push(userId);
+    return Promise.resolve(state.recipientLocale);
+  };
+
   const repository = {
     claim,
     markSent,
@@ -312,6 +359,7 @@ export function fakeNotificationsRepository(): FakeNotificationsRepository {
     findReminderEligibility,
     isEmailSuppressed,
     findStaffRecipient,
+    resolveRecipientLocale,
   } as unknown as NotificationsRepository;
 
   return {
@@ -353,6 +401,15 @@ export function fakeNotificationsRepository(): FakeNotificationsRepository {
     set staffLookupError(value) {
       state.staffLookupError = value;
     },
+    get recipientLocale() {
+      return state.recipientLocale;
+    },
+    set recipientLocale(value) {
+      state.recipientLocale = value;
+    },
+    get localeLookups() {
+      return state.localeLookups;
+    },
   };
 }
 
@@ -378,17 +435,29 @@ export const RENDERED: RenderedNotification = {
 export function stubRenderer(outcome: RenderedNotification | Error = RENDERED): {
   readonly renderer: NotificationRenderer;
   readonly calls: NotificationMessage[];
+  /**
+   * Les langues demandées au rendu, dans l'ordre des appels — #854.
+   *
+   * Séparée de `calls` plutôt qu'ajoutée dedans : `calls` est typée
+   * `NotificationMessage`, et c'est précisément ce que ce ticket ne doit pas
+   * changer — l'enveloppe ne porte aucune langue, faute de quoi le rappel J-1 la
+   * figerait à la planification. La langue est un **argument** du rendu, et le
+   * double la relève comme tel.
+   */
+  readonly locales: Locale[];
 } {
   const calls: NotificationMessage[] = [];
+  const locales: Locale[] = [];
 
   const renderer: NotificationRenderer = {
-    render(message: NotificationMessage): Promise<RenderedNotification> {
+    render(message: NotificationMessage, locale: Locale): Promise<RenderedNotification> {
       calls.push(message);
+      locales.push(locale);
       return outcome instanceof Error ? Promise.reject(outcome) : Promise.resolve(outcome);
     },
   };
 
-  return { renderer, calls };
+  return { renderer, calls, locales };
 }
 
 /** Une trace semée dans le double du journal, tenant compris. */
@@ -400,6 +469,16 @@ export interface StoredNotification {
   readonly type: NotificationType;
   readonly channel: NotificationChannel;
   readonly status: NotificationStatus;
+  /**
+   * La langue de l'envoi — facultative dans la graine, obligatoire dans la trace
+   * rendue (#854).
+   *
+   * Facultative ici parce qu'aucune des suites antérieures à ce ticket n'a
+   * d'opinion dessus : les faire toutes déclarer une langue pour lire un statut
+   * aurait été du bruit. Absente, c'est `DEFAULT_LOCALE` — le même parti que la
+   * colonne, qui est `NOT NULL`.
+   */
+  readonly locale?: Locale;
   readonly sentAt?: Date | null;
   readonly failureReason?: string | null;
   readonly createdAt: Date;
@@ -462,6 +541,7 @@ export class FakeNotificationsJournal {
           type: row.type,
           channel: row.channel,
           status: row.status,
+          locale: row.locale ?? DEFAULT_LOCALE,
           scheduledFor: null,
           sentAt: row.sentAt ?? null,
           attemptCount: 1,
@@ -526,6 +606,21 @@ export interface StoredTemplateRow {
   readonly tenantId: string;
   readonly type: NotificationType;
   readonly channel: NotificationChannel;
+  /**
+   * La langue de la personnalisation — #854.
+   *
+   * **Obligatoire**, et la facultativité a été essayée avant d'être écartée :
+   * une graine sans langue retombait sur `DEFAULT_LOCALE`, c'est-à-dire `'en'`
+   * (#844), pendant que les suites antérieures au ticket rendaient en `'fr'`.
+   * Le double servait alors un modèle de plateforme là où la suite croyait
+   * éprouver la personnalisation du salon — un test vert qui ne vérifie plus
+   * rien, ce qui est pire qu'un test rouge.
+   *
+   * La langue étant désormais le quatrième membre de l'unique, une graine qui ne
+   * la nomme pas ne désigne aucune ligne : l'exiger n'ajoute pas de cérémonie,
+   * elle rend visible une coordonnée qui l'était déjà en base.
+   */
+  readonly locale: Locale;
   readonly source: NotificationTemplateSource;
   readonly updatedAt?: Date;
 }
@@ -542,9 +637,11 @@ export interface StoredTemplateRow {
  *   Prisma consulte, et **échoue** s'il n'y en a aucun. Un double qui lirait tout
  *   hors portée ferait passer au vert une garde défaillante — c'est le même
  *   défaut fermé que `FakeNotificationsJournal` ;
- * - l'**unicité** `(tenant_id, type, channel)` : `save` remplace la ligne du
- *   couple au lieu d'en empiler une seconde, ce qui est la conduite que
- *   l'`updateMany`-puis-`create` du vrai dépôt produit.
+ * - l'**unicité** `(tenant_id, type, channel, locale)` : `save` remplace la ligne
+ *   du quadruplet au lieu d'en empiler une seconde, ce qui est la conduite que
+ *   l'`updateMany`-puis-`create` du vrai dépôt produit. La langue y est entrée
+ *   avec #854, et c'est ce qui fait qu'écrire l'anglais d'un message ne touche
+ *   pas son français.
  *
  * Ce qu'il ne prouve pas — que l'unique existe réellement en base — appartient à
  * `notifications.migration.spec.ts`, qui relit le SQL, et à la CI, qui l'applique.
@@ -564,7 +661,9 @@ export class FakeNotificationTemplates {
         .filter((row) => row.tenantId === tenantId)
         .sort(
           (left, right) =>
-            left.type.localeCompare(right.type) || left.channel.localeCompare(right.channel),
+            left.type.localeCompare(right.type) ||
+            left.channel.localeCompare(right.channel) ||
+            left.locale.localeCompare(right.locale),
         )
         .map((row) => toStoredTemplate(row)),
     );
@@ -573,9 +672,10 @@ export class FakeNotificationTemplates {
   public find(
     type: NotificationType,
     channel: NotificationChannel,
+    locale: Locale,
   ): Promise<StoredNotificationTemplate | null> {
     const tenantId = this.requireScope('notificationTemplate.findFirst');
-    const found = this.rowFor(tenantId, type, channel);
+    const found = this.rowFor(tenantId, type, channel, locale);
 
     return Promise.resolve(found === undefined ? null : toStoredTemplate(found));
   }
@@ -583,24 +683,36 @@ export class FakeNotificationTemplates {
   public save(
     type: NotificationType,
     channel: NotificationChannel,
+    locale: Locale,
     source: NotificationTemplateSource,
   ): Promise<StoredNotificationTemplate> {
     const tenantId = this.requireScope('notificationTemplate.save');
-    const existing = this.rowFor(tenantId, type, channel);
+    const existing = this.rowFor(tenantId, type, channel, locale);
 
     if (existing !== undefined) {
       this.stored.splice(this.stored.indexOf(existing), 1);
     }
 
-    const row: StoredTemplateRow = { tenantId, type, channel, source, updatedAt: new Date() };
+    const row: StoredTemplateRow = {
+      tenantId,
+      type,
+      channel,
+      locale,
+      source,
+      updatedAt: new Date(),
+    };
     this.stored.push(row);
 
     return Promise.resolve(toStoredTemplate(row));
   }
 
-  public remove(type: NotificationType, channel: NotificationChannel): Promise<boolean> {
+  public remove(
+    type: NotificationType,
+    channel: NotificationChannel,
+    locale: Locale,
+  ): Promise<boolean> {
     const tenantId = this.requireScope('notificationTemplate.deleteMany');
-    const existing = this.rowFor(tenantId, type, channel);
+    const existing = this.rowFor(tenantId, type, channel, locale);
 
     if (existing === undefined) {
       return Promise.resolve(false);
@@ -620,9 +732,14 @@ export class FakeNotificationTemplates {
     tenantId: string,
     type: NotificationType,
     channel: NotificationChannel,
+    locale: Locale,
   ): StoredTemplateRow | undefined {
     return this.stored.find(
-      (row) => row.tenantId === tenantId && row.type === type && row.channel === channel,
+      (row) =>
+        row.tenantId === tenantId &&
+        row.type === type &&
+        row.channel === channel &&
+        row.locale === locale,
     );
   }
 
@@ -642,6 +759,7 @@ function toStoredTemplate(row: StoredTemplateRow): StoredNotificationTemplate {
   return {
     type: row.type,
     channel: row.channel,
+    locale: row.locale,
     source: row.source,
     updatedAt: row.updatedAt ?? new Date('2026-09-07T10:00:00Z'),
   };

@@ -1,5 +1,10 @@
-import { buildTemplateVariables, renderNotification } from '../notification-content';
-import { defaultTemplateFor } from '../notification-default-templates';
+import type { Locale } from '@spa/shared';
+
+import {
+  buildTemplateVariables,
+  measureSmsTemplate,
+  renderNotification,
+} from '../notification-content';
 import {
   SMS_MAX_SEGMENTS,
   SMS_SINGLE_SEGMENT_UCS2,
@@ -8,7 +13,6 @@ import {
   escapeHtml,
   keepAsIs,
   measureSms,
-  measureSmsTemplate,
   renderTemplateSource,
   unbalancedSections,
   unknownPlaceholders,
@@ -25,7 +29,21 @@ import type { AppointmentMessageContext } from '../notifications.types';
  *
  * La suite n'ouvre ni base, ni module Nest, et n'appelle aucune horloge : ce sont
  * des fonctions de `(modèle, valeurs) → texte`.
+ *
+ * ## Ce que #854 y change, et ce qu'il n'y change pas
+ *
+ * La composition des valeurs prend une **langue** : c'est elle qui met en forme
+ * la date et le montant. Les assertions de cette suite citent des mots français
+ * — « à la demande du client », « septembre » —, et la langue y reste donc fixée
+ * au français : ce qu'elles éprouvent est le moteur, pas la traduction.
+ *
+ * La **couverture** des deux langues, elle, est éprouvée là où elle se prouve —
+ * `notification-default-templates.spec.ts`, qui parcourt `LOCALES` et refuse
+ * qu'un message ait un modèle dans l'une et pas dans l'autre.
  */
+
+/** La langue de cette suite — celle de ses assertions. */
+const FR: Locale = 'fr';
 
 const VALUES: TemplateVariables = {
   client: 'Amina Rakoto',
@@ -246,133 +264,13 @@ describe('modèles — le coût d’un SMS', () => {
     // `formatMoney` sépare les milliers par U+202F et la devise par U+00A0 :
     // aucune des deux n'est dans GSM-7. Une référence écrite avec des espaces
     // ordinaires aurait annoncé un segment GSM-7 pour un SMS qui part en UCS-2.
-    expect(measureSmsTemplate('Prix : {{prix}}').encoding).toBe('UCS_2');
+    expect(measureSmsTemplate('Prix : {{prix}}', FR).encoding).toBe('UCS_2');
   });
 
   it('mesure un modèle sur son rendu, jamais sur ses balises', () => {
     // `{{date}}` fait huit caractères et en rendra trente-quatre : mesurer la
     // chaîne brute dirait n'importe quoi.
-    expect(measureSmsTemplate('{{date}}').units).toBeGreaterThan('{{date}}'.length);
-  });
-});
-
-/**
- * Les modèles par défaut de la plateforme, mesurés.
- *
- * Ce n'est pas une vérification de style : ce sont eux qui partent pour tout
- * salon qui n'a rien personnalisé, c'est-à-dire pour la quasi-totalité des
- * messages. Un défaut à deux segments doublerait la facture SMS du produit
- * entier, sans que personne ne s'en aperçoive avant le relevé.
- */
-/**
- * Les messages qui annoncent un rendez-vous, et qui ont donc un défaut sur les
- * deux canaux : les trois du CDC §1.4, et « votre rendez-vous est confirmé »
- * (#800), qui est la seconde moitié de la confirmation. `PASSWORD_RESET` n'y
- * est pas — il n'a de défaut que sur l'e-mail (#809).
- */
-const APPOINTMENT_MESSAGES = [
-  'BOOKING_CONFIRMATION',
-  'REMINDER_24H',
-  'CANCELLATION',
-  'APPOINTMENT_CONFIRMED',
-  'APPOINTMENT_RESCHEDULED',
-] as const;
-
-describe('modèles — les défauts de la plateforme', () => {
-  it('tiennent en un seul segment SMS, et en GSM-7', () => {
-    for (const type of APPOINTMENT_MESSAGES) {
-      const source = defaultTemplateFor(type, 'SMS');
-      expect(source).not.toBeNull();
-
-      const cost = measureSmsTemplate(source?.text ?? '');
-
-      expect({ type, encoding: cost.encoding, segments: cost.segments }).toEqual({
-        type,
-        encoding: 'GSM_7',
-        segments: 1,
-      });
-      expect(cost.segments).toBeLessThanOrEqual(SMS_MAX_SEGMENTS);
-    }
-  });
-
-  it('n’emploient que des variables du vocabulaire', () => {
-    for (const type of APPOINTMENT_MESSAGES) {
-      for (const channel of ['EMAIL', 'SMS'] as const) {
-        const source = defaultTemplateFor(type, channel);
-        const whole = [source?.subject, source?.html, source?.text].join('\n');
-
-        expect({ type, channel, unknown: unknownPlaceholders(whole) }).toEqual({
-          type,
-          channel,
-          unknown: [],
-        });
-        expect(unbalancedSections(whole)).toEqual([]);
-      }
-    }
-  });
-
-  it('fournissent toujours une version texte à côté du HTML', () => {
-    // Quatrième critère d'acceptation : un e-mail qui n'a que du HTML est
-    // pénalisé par les filtres anti-spam, et le rappel J-1 perd son intérêt s'il
-    // finit en indésirables.
-    for (const type of APPOINTMENT_MESSAGES) {
-      const email = defaultTemplateFor(type, 'EMAIL');
-
-      expect(email?.html.length ?? 0).toBeGreaterThan(0);
-      expect(email?.text.length ?? 0).toBeGreaterThan(0);
-      expect(email?.text).not.toContain('<');
-    }
-  });
-
-  it('servent les messages de rendez-vous, sur les deux canaux', () => {
-    // #72 pose le dernier. Un couple sans modèle laisserait le renderer lever
-    // `UnrenderableNotificationError`, donc la ligne en `FAILED` — ce qui était
-    // le sort de l'avis d'annulation jusqu'ici.
-    for (const type of APPOINTMENT_MESSAGES) {
-      for (const channel of ['EMAIL', 'SMS'] as const) {
-        expect({ type, channel, servi: defaultTemplateFor(type, channel) !== null }).toEqual({
-          type,
-          channel,
-          servi: true,
-        });
-      }
-    }
-  });
-
-  it('n’annoncent pas un rendez-vous à qui vient de l’annuler', () => {
-    // La raison pour laquelle #69 avait laissé `CANCELLATION` sans défaut plutôt
-    // que de lui servir le modèle du rappel. Le modèle livré par #72 dit
-    // l'inverse, et cette suite est ce qui empêche une recopie distraite du
-    // rappel de repasser en douce.
-    const email = defaultTemplateFor('CANCELLATION', 'EMAIL');
-    const sms = defaultTemplateFor('CANCELLATION', 'SMS');
-
-    for (const body of [email?.subject, email?.html, email?.text, sms?.text]) {
-      // « Annulation » dans l'objet, « annulé » dans les corps : c'est la racine
-      // qui compte, et elle doit être dans chacun des quatre.
-      expect(body ?? '').toMatch(/annul/i);
-      expect(body ?? '').not.toContain('attendons');
-    }
-  });
-
-  it('nomment l’origine de l’annulation, sous section', () => {
-    // Troisième critère d'acceptation de #72. La section est ce qui garantit
-    // qu'un rendez-vous sans origine ne produit pas « a été annulé . ».
-    for (const channel of ['EMAIL', 'SMS'] as const) {
-      const source = defaultTemplateFor('CANCELLATION', channel);
-      const whole = [source?.subject, source?.html, source?.text].join('\n');
-
-      expect(whole).toContain('{{#origine}}');
-      expect(whole).toContain('{{/origine}}');
-    }
-  });
-
-  it('ne nomment jamais le motif d’annulation — il n’a pas de variable', () => {
-    // `cancellation_reason` est un texte libre écrit par un humain : il peut
-    // porter un état de santé ou le nom d'un tiers (CDC §5.1). Aucune variable
-    // ne l'expose, et le relevé de conformité refuserait un modèle qui essaierait.
-    expect(unknownPlaceholders('{{motif}}')).toEqual(['motif']);
-    expect(unknownPlaceholders('{{cancellation_reason}}')).toEqual(['cancellation_reason']);
+    expect(measureSmsTemplate('{{date}}', FR).units).toBeGreaterThan('{{date}}'.length);
   });
 });
 
@@ -410,7 +308,7 @@ const PARIS: AppointmentMessageContext = {
 
 describe('modèles — les valeurs que le rendu compose', () => {
   it('donne l’heure dans le fuseau du salon, jamais en UTC', () => {
-    const values = buildTemplateVariables(PARIS, 'https://x.test', 'EMAIL', CLIENT);
+    const values = buildTemplateVariables(PARIS, 'https://x.test', 'EMAIL', CLIENT, FR);
 
     expect(values.heure).toBe('14:30');
     expect(values.date).toContain('14:30');
@@ -425,6 +323,7 @@ describe('modèles — les valeurs que le rendu compose', () => {
       'https://x.test',
       'EMAIL',
       CLIENT,
+      FR,
     );
 
     expect(values.heure).toBe('15:30');
@@ -436,6 +335,7 @@ describe('modèles — les valeurs que le rendu compose', () => {
       'https://x.test',
       'EMAIL',
       CLIENT,
+      FR,
     );
 
     expect(values.adresse).toBe('');
@@ -445,16 +345,16 @@ describe('modèles — les valeurs que le rendu compose', () => {
   it('écourte le nom du salon sur le canal SMS, et lui seul', () => {
     const long = { ...PARIS, tenantName: 'Le '.repeat(60) };
 
-    expect(buildTemplateVariables(long, '', 'SMS', CLIENT).salon.length).toBe(SMS_TENANT_NAME_MAX);
-    expect(buildTemplateVariables(long, '', 'EMAIL', CLIENT).salon).toBe(long.tenantName);
+    expect(buildTemplateVariables(long, '', 'SMS', CLIENT, FR).salon.length).toBe(SMS_TENANT_NAME_MAX);
+    expect(buildTemplateVariables(long, '', 'EMAIL', CLIENT, FR).salon).toBe(long.tenantName);
   });
 
   it('dit si le message part vers la cliente du rendez-vous — #534', () => {
     // La variable qui permet à un modèle unique de servir deux destinataires :
     // vide pour le praticien, elle referme sur lui les sections qui ne
     // s'adressent qu'à la cliente.
-    expect(buildTemplateVariables(PARIS, '', 'EMAIL', CLIENT).destinataire_client).toBe('oui');
-    expect(buildTemplateVariables(PARIS, '', 'EMAIL', PRATICIEN).destinataire_client).toBe('');
+    expect(buildTemplateVariables(PARIS, '', 'EMAIL', CLIENT, FR).destinataire_client).toBe('oui');
+    expect(buildTemplateVariables(PARIS, '', 'EMAIL', PRATICIEN, FR).destinataire_client).toBe('');
   });
 
   it('compare le compte, jamais le rôle', () => {
@@ -463,20 +363,20 @@ describe('modèles — les valeurs que le rendu compose', () => {
     // « quel est ton rôle dans le salon ».
     const soi = { ...PARIS, clientId: PRATICIEN };
 
-    expect(buildTemplateVariables(soi, '', 'EMAIL', PRATICIEN).destinataire_client).toBe('oui');
+    expect(buildTemplateVariables(soi, '', 'EMAIL', PRATICIEN, FR).destinataire_client).toBe('oui');
   });
 
   it('laisse `origine` vide sur un rendez-vous qui n’est pas annulé', () => {
     // C'est ce qui rend la variable utilisable en section : un modèle qui la
     // nomme dans une confirmation n'écrit rien plutôt qu'une phrase fausse.
-    expect(buildTemplateVariables(PARIS, '', 'EMAIL', CLIENT).origine).toBe('');
+    expect(buildTemplateVariables(PARIS, '', 'EMAIL', CLIENT, FR).origine).toBe('');
   });
 
   it('dit d’où vient l’annulation, sans s’adresser à personne', () => {
     // Le même modèle sert la cliente et le praticien : « à votre demande » aurait
     // été faux pour l'un des deux à chaque envoi.
     const dit = (cancelledBy: AppointmentMessageContext['cancelledBy']): string =>
-      buildTemplateVariables({ ...PARIS, cancelledBy }, '', 'EMAIL', CLIENT).origine;
+      buildTemplateVariables({ ...PARIS, cancelledBy }, '', 'EMAIL', CLIENT, FR).origine;
 
     expect(dit('CLIENT')).toBe('à la demande du client');
     expect(dit('STAFF')).toBe("à l'initiative du salon");
@@ -491,7 +391,7 @@ describe('modèles — les valeurs que le rendu compose', () => {
     // `ê`, `ô` et `ç` minuscule n'y sont pas, et un seul d'entre eux ferait
     // passer l'avis d'annulation de 160 à 70 caractères (notifications §5).
     for (const cancelledBy of ['CLIENT', 'STAFF', 'SYSTEM'] as const) {
-      const phrase = buildTemplateVariables({ ...PARIS, cancelledBy }, '', 'SMS', CLIENT).origine;
+      const phrase = buildTemplateVariables({ ...PARIS, cancelledBy }, '', 'SMS', CLIENT, FR).origine;
 
       expect({ cancelledBy, encoding: measureSms(phrase).encoding }).toEqual({
         cancelledBy,
@@ -508,7 +408,7 @@ describe('modèles — le rendu d’un message', () => {
 
     const rendered = renderNotification(
       source,
-      buildTemplateVariables(hostile, 'https://x.test', 'EMAIL', CLIENT),
+      buildTemplateVariables(hostile, 'https://x.test', 'EMAIL', CLIENT, FR),
       'EMAIL',
     );
 
@@ -520,7 +420,7 @@ describe('modèles — le rendu d’un message', () => {
     const source = { subject: "L'atelier & vous", html: '', text: 'x' };
 
     expect(
-      renderNotification(source, buildTemplateVariables(PARIS, '', 'EMAIL', CLIENT), 'EMAIL').subject,
+      renderNotification(source, buildTemplateVariables(PARIS, '', 'EMAIL', CLIENT, FR), 'EMAIL').subject,
     ).toBe("L'atelier & vous");
   });
 
@@ -529,7 +429,7 @@ describe('modèles — le rendu d’un message', () => {
     // porte à une passerelle mal branchée qui l'enverrait tel quel.
     const source = { subject: 'objet', html: '<p>corps</p>', text: 'avis' };
 
-    expect(renderNotification(source, buildTemplateVariables(PARIS, '', 'SMS', CLIENT), 'SMS')).toEqual({
+    expect(renderNotification(source, buildTemplateVariables(PARIS, '', 'SMS', CLIENT, FR), 'SMS')).toEqual({
       subject: '',
       html: '',
       text: 'avis',
@@ -544,7 +444,7 @@ describe('modèles — le rendu d’un message', () => {
 
     const { text } = renderNotification(
       source,
-      buildTemplateVariables(bavard, '', 'SMS', CLIENT),
+      buildTemplateVariables(bavard, '', 'SMS', CLIENT, FR),
       'SMS',
     );
 
@@ -564,7 +464,7 @@ describe('modèles — le rendu d’un message', () => {
     const source = { subject: '', html: '', text: '{{client}}' };
     const bavard = { ...PARIS, clientFirstName: 'ê'.repeat(200), clientLastName: 'ê'.repeat(200) };
 
-    const { text } = renderNotification(source, buildTemplateVariables(bavard, '', 'SMS', CLIENT), 'SMS');
+    const { text } = renderNotification(source, buildTemplateVariables(bavard, '', 'SMS', CLIENT, FR), 'SMS');
 
     expect(measureSms(text).segments).toBe(SMS_MAX_SEGMENTS);
     // 67 unités par segment concaténé, et non 70 : l'en-tête de segmentation en

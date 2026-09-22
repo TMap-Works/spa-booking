@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client';
+import type { Locale } from '@spa/shared';
 
 import type { ScopedPrismaClient } from '../../../infrastructure/database/prisma-clients';
 import { NotificationsRepository } from '../notifications.repository';
@@ -33,6 +34,16 @@ const APPOINTMENT_ID = 'appointment-1';
 const RECIPIENT_ID = 'user-1';
 const LIVE: ReadonlySet<string> = new Set(LIVE_NOTIFICATION_STATUSES);
 
+/**
+ * La langue que l'expédition a résolue, et qu'elle **passe** au dépôt — #854.
+ *
+ * Un argument et non une lecture : `NotificationDispatchService` la résout une
+ * fois, juste avant la prise de droit, et la même valeur sert à inscrire la
+ * ligne et à choisir le modèle. Ces suites la posent donc comme l'appelant réel
+ * le fait.
+ */
+const LANGUE: Locale = 'en';
+
 interface Row {
   id: string;
   appointmentId: string | null;
@@ -40,6 +51,7 @@ interface Row {
   type: string;
   channel: string;
   status: string;
+  locale: string;
   dedupeKey: string;
   providerMessageId: string | null;
   attemptCount: number;
@@ -91,6 +103,10 @@ function fakeEngine(seed: readonly Partial<Row>[] = [], options: FakeEngineOptio
       type: 'REMINDER_24H',
       channel: 'SMS',
       status: 'PENDING',
+      // La langue de la tentative précédente — délibérément **l'autre** que
+      // celle que les suites passent à `claim()`, pour que la réécriture d'une
+      // reprise se voie (#854).
+      locale: 'fr',
       dedupeKey: 'seed-key',
       providerMessageId: null,
       attemptCount: 1,
@@ -232,11 +248,24 @@ describe('NotificationsRepository.claim — l’insertion est le verrou', () => 
   it('inscrit la ligne en `PENDING`, à sa première tentative', async () => {
     const { repository, rows } = fakeEngine();
 
-    const claim = await repository.claim(message());
+    const claim = await repository.claim(message(), LANGUE);
 
     expect(claim.outcome).toBe('claimed');
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({ status: 'PENDING', attemptCount: 1 });
+  });
+
+  it('inscrit la langue que l’expédition vient de résoudre — #854', async () => {
+    // Le deuxième critère d'acceptation : « la langue retenue est enregistrée
+    // sur la notification émise ». Elle est **passée** et non relue ici, si bien
+    // que la ligne porte exactement ce qui choisira le modèle — deux résolutions
+    // séparées auraient pu se contredire.
+    const { repository, rows } = fakeEngine();
+
+    const claim = await repository.claim(message(), 'fr');
+
+    expect(rows[0]).toMatchObject({ locale: 'fr' });
+    expect(claim).toMatchObject({ notification: { locale: 'fr' } });
   });
 
   it('relève une erreur qui n’est pas une violation d’unicité', async () => {
@@ -247,7 +276,7 @@ describe('NotificationsRepository.claim — l’insertion est le verrou', () => 
       notification: { create: () => Promise.reject(panne) },
     } as unknown as ScopedPrismaClient);
 
-    await expect(repository.claim(message())).rejects.toThrow(panne);
+    await expect(repository.claim(message(), LANGUE)).rejects.toThrow(panne);
   });
 });
 
@@ -255,7 +284,7 @@ describe('NotificationsRepository.claim — la traduction d’un refus', () => {
   it('rend `already-live` quand une ligne vivante occupe la place', async () => {
     const { repository } = fakeEngine([{ status: 'SENT', dedupeKey: 'autre-cle' }]);
 
-    await expect(repository.claim(message())).resolves.toEqual({
+    await expect(repository.claim(message(), LANGUE)).resolves.toEqual({
       outcome: 'already-live',
       notificationId: 'seeded-1',
     });
@@ -286,6 +315,7 @@ describe('NotificationsRepository.claim — la traduction d’un refus', () => {
         recipientUserId: praticien,
         dedupeKey: `appointment:${APPOINTMENT_ID}:CANCELLATION:EMAIL:${praticien}`,
       }),
+      LANGUE,
     );
 
     expect(claim.outcome).toBe('claimed');
@@ -309,6 +339,7 @@ describe('NotificationsRepository.claim — la traduction d’un refus', () => {
     await expect(
       repository.claim(
         message({ type: 'CANCELLATION', channel: 'EMAIL', recipientUserId: praticien }),
+        LANGUE,
       ),
     ).resolves.toEqual({ outcome: 'already-live', notificationId: 'seeded-1' });
   });
@@ -319,7 +350,7 @@ describe('NotificationsRepository.claim — la traduction d’un refus', () => {
       { status: 'FAILED', dedupeKey: sqsMessage.dedupeKey, attemptCount: 2, failureReason: 'SES' },
     ]);
 
-    const claim = await repository.claim(sqsMessage);
+    const claim = await repository.claim(sqsMessage, LANGUE);
 
     expect(claim).toEqual({
       outcome: 'claimed',
@@ -327,6 +358,23 @@ describe('NotificationsRepository.claim — la traduction d’un refus', () => {
     });
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({ status: 'PENDING', attemptCount: 3, failureReason: null });
+  });
+
+  it('réécrit la langue en ranimant, plutôt que de garder celle de l’échec — #854', async () => {
+    // Une reprise est un **second envoi**, séparé du premier par une file, un
+    // backoff et parfois plusieurs heures. La graine porte `fr` ; l'expédition
+    // vient de résoudre `en`. Garder `fr` ferait dire au journal du back-office
+    // une langue qui n'est pas celle du message effectivement parti — et le
+    // modèle, lui, serait bien choisi en `en`.
+    const sqsMessage = message();
+    const { repository, rows } = fakeEngine([
+      { status: 'FAILED', locale: 'fr', dedupeKey: sqsMessage.dedupeKey },
+    ]);
+
+    const claim = await repository.claim(sqsMessage, 'en');
+
+    expect(rows[0]).toMatchObject({ locale: 'en' });
+    expect(claim).toMatchObject({ notification: { locale: 'en' } });
   });
 
   it('ranime la ligne échouée que `notifications_live_once` désignait, même sous une autre clé', async () => {
@@ -343,7 +391,7 @@ describe('NotificationsRepository.claim — la traduction d’un refus', () => {
       { createAlwaysConflicts: true },
     );
 
-    const claim = await repository.claim(message());
+    const claim = await repository.claim(message(), LANGUE);
 
     expect(claim.outcome).toBe('claimed');
     expect(rows).toHaveLength(1);
@@ -355,7 +403,7 @@ describe('NotificationsRepository.claim — la traduction d’un refus', () => {
     // concurrente est passée. Il n'y a rien à envoyer.
     const { repository } = fakeEngine([], { createAlwaysConflicts: true });
 
-    await expect(repository.claim(message())).resolves.toEqual({
+    await expect(repository.claim(message(), LANGUE)).resolves.toEqual({
       outcome: 'already-live',
       notificationId: null,
     });
@@ -370,8 +418,8 @@ describe('NotificationsRepository.claim — la traduction d’un refus', () => {
     ]);
 
     const [first, second] = await Promise.all([
-      repository.claim(sqsMessage),
-      repository.claim(sqsMessage),
+      repository.claim(sqsMessage, LANGUE),
+      repository.claim(sqsMessage, LANGUE),
     ]);
 
     expect([first.outcome, second.outcome].sort()).toEqual(['already-live', 'claimed']);
@@ -387,7 +435,7 @@ describe('NotificationsRepository.claim — la traduction d’un refus', () => {
       { status: 'PENDING', dedupeKey: 'sweep:2026-09-06T10:00Z:sms' },
     ]);
 
-    await expect(repository.claim(sqsMessage)).resolves.toEqual({
+    await expect(repository.claim(sqsMessage, LANGUE)).resolves.toEqual({
       outcome: 'already-live',
       notificationId: 'seeded-2',
     });
@@ -407,6 +455,7 @@ describe('NotificationsRepository.claim — la traduction d’un refus', () => {
       type: 'REMINDER_24H',
       channel: 'SMS',
       status: 'FAILED',
+      locale: 'fr',
       dedupeKey: sqsMessage.dedupeKey,
       providerMessageId: null,
       attemptCount: 1,
@@ -425,7 +474,7 @@ describe('NotificationsRepository.claim — la traduction d’un refus', () => {
       },
     } as unknown as ScopedPrismaClient);
 
-    await expect(repository.claim(sqsMessage)).resolves.toEqual({
+    await expect(repository.claim(sqsMessage, LANGUE)).resolves.toEqual({
       outcome: 'already-live',
       notificationId: null,
     });
