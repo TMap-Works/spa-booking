@@ -46,14 +46,20 @@ describe('notifications — vocabulaire et colonnes', () => {
     // salon ; `BOOKING_CONFIRMATION` le dit à la réservation, celui-ci part
     // quand le salon a confirmé. En queue parce qu'`ADD VALUE` ajoute à la fin.
     //
-    // Un **sixième** type serait à instruire de la même façon : c'est toujours
-    // une issue, et jamais une ligne (CLAUDE.md, contrainte 1).
+    // `APPOINTMENT_RESCHEDULED` est le sixième, demandé par le PO le 21/09 :
+    // « votre rendez-vous a été déplacé ». Un report crée un rendez-vous neuf
+    // sans passer par la réservation, et la cliente dont le salon déplaçait le
+    // rendez-vous n'en savait rien.
+    //
+    // Un **septième** type serait à instruire de la même façon : c'est toujours
+    // une demande explicite, et jamais une ligne (CLAUDE.md, contrainte 1).
     expect(NOTIFICATION_TYPES).toEqual([
       'BOOKING_CONFIRMATION',
       'REMINDER_24H',
       'CANCELLATION',
       'PASSWORD_RESET',
       'APPOINTMENT_CONFIRMED',
+      'APPOINTMENT_RESCHEDULED',
     ]);
   });
 

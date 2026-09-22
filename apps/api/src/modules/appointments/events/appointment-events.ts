@@ -16,11 +16,15 @@ import {
   APPOINTMENT_RESCHEDULED,
   type AppointmentRescheduledEvent,
 } from './appointment-rescheduled.event';
+import {
+  APPOINTMENT_STATUS_CHANGED,
+  type AppointmentStatusChangedEvent,
+} from './appointment-status-changed.event';
 
 /**
  * Tout ce que ce bus publie.
  *
- * Une union plutôt qu'une interface commune : les quatre événements ne partagent
+ * Une union plutôt qu'une interface commune : les cinq événements ne partagent
  * que leur enveloppe — nom, tenant, rendez-vous, instant d'émission — et une
  * classe de base les ferait diverger par héritage plutôt que par contrat. Ce que
  * la publication a besoin de savoir tient dans ces quatre champs, et c'est
@@ -30,7 +34,8 @@ export type AppointmentDomainEvent =
   | AppointmentCreatedEvent
   | AppointmentConfirmedEvent
   | AppointmentRescheduledEvent
-  | AppointmentCancelledEvent;
+  | AppointmentCancelledEvent
+  | AppointmentStatusChangedEvent;
 
 /**
  * Le bus d'événements du module `appointments` — publication en mémoire, dans le
@@ -141,6 +146,23 @@ export class AppointmentEvents {
   }
 
   /**
+   * Publie `appointment.status_changed` — honoré ou non présenté.
+   *
+   * Appelé **après** l'écriture conditionnelle, comme la confirmation : une
+   * transition perdue dans une course n'a rien changé, et les écrans n'ont rien
+   * à relire.
+   */
+  public appointmentStatusChanged(
+    event: Omit<AppointmentStatusChangedEvent, 'name' | 'occurredAt'>,
+  ): void {
+    this.publish({
+      ...event,
+      name: APPOINTMENT_STATUS_CHANGED,
+      occurredAt: new Date().toISOString(),
+    });
+  }
+
+  /**
    * Abonne un écouteur à `appointment.created`.
    *
    * Rend la fonction de désabonnement plutôt que rien : un module qui s'abonne
@@ -175,6 +197,16 @@ export class AppointmentEvents {
    */
   public onAppointmentCancelled(listener: (event: AppointmentCancelledEvent) => void): () => void {
     return this.subscribe(APPOINTMENT_CANCELLED, listener);
+  }
+
+  /**
+   * Abonne un écouteur à `appointment.status_changed` — même contrat, même
+   * enveloppe.
+   */
+  public onAppointmentStatusChanged(
+    listener: (event: AppointmentStatusChangedEvent) => void,
+  ): () => void {
+    return this.subscribe(APPOINTMENT_STATUS_CHANGED, listener);
   }
 
   /**

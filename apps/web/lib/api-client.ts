@@ -2323,3 +2323,55 @@ export async function openBillingPortal(accessToken: string): Promise<BillingRed
 
   return payload;
 }
+
+/**
+ * Ouvre le flux temps réel des rendez-vous — `GET /appointments/stream`.
+ *
+ * Rend la réponse **brute** : son corps est un `text/event-stream` que la route
+ * du front relaie tel quel au navigateur (`lib/appointment-feed-relay.ts`), sans
+ * le lire. Hors d'`authorizedRequest` pour la raison du ticket PDF — ce corps
+ * n'est pas du JSON, et seul un refus en porte.
+ *
+ * `signal` est celui de la requête du navigateur : quand l'onglet se ferme, la
+ * connexion vers l'API tombe avec lui, et l'API cesse de servir un écran qui
+ * n'existe plus.
+ */
+export async function openAppointmentFeed(
+  accessToken: string,
+  signal: AbortSignal,
+): Promise<Response> {
+  let response: Response;
+  try {
+    response = await fetch(`${apiBaseUrl()}/appointments/stream`, {
+      headers: { accept: 'text/event-stream', authorization: `Bearer ${accessToken}` },
+      cache: 'no-store',
+      signal,
+    });
+  } catch (cause) {
+    throw new ApiClientError(
+      ERROR_CODES.SERVICE_UNAVAILABLE,
+      'Le service est momentanément injoignable. Merci de réessayer dans un instant.',
+      503,
+      { cause: cause instanceof Error ? cause.message : String(cause) },
+    );
+  }
+
+  if (!response.ok) {
+    const failure = apiErrorSchema.safeParse(await response.json().catch(() => null));
+
+    throw failure.success
+      ? new ApiClientError(
+          failure.data.code,
+          failure.data.message,
+          response.status,
+          failure.data.details,
+        )
+      : new ApiClientError(
+          `HTTP_${String(response.status)}`,
+          'Une erreur inattendue est survenue. Merci de réessayer dans un instant.',
+          response.status,
+        );
+  }
+
+  return response;
+}

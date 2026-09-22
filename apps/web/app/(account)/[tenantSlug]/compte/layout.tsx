@@ -3,6 +3,7 @@ import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
 import type { ReactNode } from 'react';
 
+import { AppointmentFeedProvider } from '@/components/live/appointment-feed';
 import { SalonShell } from '@/components/salon/salon-shell';
 import { readAccountPresence } from '@/lib/account-presence';
 import { ApiClientError } from '@/lib/api-client';
@@ -11,9 +12,10 @@ import {
   AccountAnnouncementProvider,
   AccountAnnouncementRegion,
 } from './components/account-announcement';
+import { AccountLiveAnnouncements } from './components/account-live-announcements';
 import { AccountTabs } from './components/account-tabs';
 import { LogoutButton } from './components/logout-button';
-import { bookingPath } from './paths';
+import { accountFeedPath, bookingPath } from './paths';
 import { readAccessToken, readRefreshToken } from './session';
 import { accountTenant } from './tenant';
 
@@ -154,6 +156,16 @@ export default async function AccountLayout({ children, params }: AccountLayoutP
 
   return (
     <AccountAnnouncementProvider>
+      {/*
+        Le temps réel de la cliente : ses rendez-vous se tiennent à jour quand
+        le salon les confirme, les déplace ou les annule — la page se relit à
+        chaque changement, et le bandeau d'annonce dit lequel. Seulement avec
+        une session : il n'y a rien à suivre sur l'écran de connexion. Voir
+        `components/live/appointment-feed.tsx`.
+      */}
+      <AppointmentFeedProvider feedPath={accountFeedPath(tenantSlug)}>
+        <AccountLiveAnnouncements tenantSlug={tenantSlug} timeZone={tenant.timezone} />
+      </AppointmentFeedProvider>
       <SalonShell
         tenantSlug={tenantSlug}
         tenant={tenant}

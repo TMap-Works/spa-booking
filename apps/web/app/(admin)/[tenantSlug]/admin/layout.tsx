@@ -10,13 +10,17 @@ import {
   fetchPublicTenant,
 } from '@/lib/api-client';
 
+import { AppointmentFeedProvider } from '@/components/live/appointment-feed';
+
 import {
   AdminAnnouncementProvider,
   AdminAnnouncementRegion,
 } from './components/admin-announcement';
+import { AdminLiveAnnouncements } from './components/admin-live-announcements';
 import { AdminRail } from './components/admin-rail';
 import { AdminTopbar } from './components/admin-topbar';
 import type { AdminEstablishment } from './components/establishment-switcher';
+import { adminFeedPath } from './paths';
 import { readAdminAccessToken } from './session';
 
 import '../../../../styles/admin/index.css';
@@ -366,16 +370,29 @@ export default async function AdminLayout({ children, params }: AdminLayoutProps
         userName={shell.userName}
       />
       <AdminAnnouncementProvider>
-        <div className="spa-admin__main">
-          <AdminTopbar
-          billing={shell.billing}
-          role={shell.role}
-          salonName={salonName}
-          tenantSlug={tenantSlug}
-          timeZone={shell.timeZone}
-        />
-          {content}
-        </div>
+        {/*
+          Le planning temps réel : une seule connexion au flux pour tout le
+          back-office, ouverte seulement quand il y a une session — l'écran de
+          connexion n'a rien à suivre. Les écrans s'y abonnent ; la page se
+          relit à chaque changement. Voir `components/live/appointment-feed.tsx`.
+        */}
+        <AppointmentFeedProvider feedPath={adminFeedPath(tenantSlug)}>
+          <AdminLiveAnnouncements
+            readsEstablishmentAgenda={shell.permissions?.includes('agenda:read:all') ?? false}
+            tenantSlug={tenantSlug}
+            timeZone={shell.timeZone}
+          />
+          <div className="spa-admin__main">
+            <AdminTopbar
+            billing={shell.billing}
+            role={shell.role}
+            salonName={salonName}
+            tenantSlug={tenantSlug}
+            timeZone={shell.timeZone}
+          />
+            {content}
+          </div>
+        </AppointmentFeedProvider>
       </AdminAnnouncementProvider>
     </div>
   );

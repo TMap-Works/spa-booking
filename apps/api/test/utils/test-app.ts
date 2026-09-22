@@ -4,6 +4,7 @@ import { Test } from '@nestjs/testing';
 import { AppModule } from '../../src/app.module';
 import { configureApp, setupOpenApi } from '../../src/bootstrap';
 import { AppConfigService } from '../../src/config/app-config.service';
+import { CacheBroadcast } from '../../src/infrastructure/cache/cache.broadcast';
 import { CacheConnection } from '../../src/infrastructure/cache/cache.connection';
 import { DatabaseConnection } from '../../src/infrastructure/database/database.connection';
 
@@ -51,6 +52,39 @@ export class ProbeDouble {
   }
 }
 
+/**
+ * La diffusion Redis entre instances (`CacheBroadcast`), en mémoire.
+ *
+ * Même raison que `ProbeDouble` : une suite d'intégration n'a pas à ouvrir de
+ * connexion Redis pour chaque réservation qu'elle pose. Le double garde la
+ * sémantique qui compte — un message publié sur un canal atteint les abonnés de
+ * ce canal, et d'aucun autre.
+ */
+export class InMemoryBroadcast {
+  private readonly handlers = new Map<string, Set<(message: string) => void>>();
+
+  public publish(channel: string, message: string): Promise<boolean> {
+    for (const handler of this.handlers.get(channel) ?? []) {
+      handler(message);
+    }
+    return Promise.resolve(true);
+  }
+
+  public subscribe(channel: string, handler: (message: string) => void): () => void {
+    const registered = this.handlers.get(channel) ?? new Set();
+    registered.add(handler);
+    this.handlers.set(channel, registered);
+
+    return () => {
+      registered.delete(handler);
+    };
+  }
+
+  public async onModuleDestroy(): Promise<void> {
+    this.handlers.clear();
+  }
+}
+
 /** Logger muet — l'échec de démarrage *attendu* par un test n'est pas un incident. */
 export const SILENT_LOGGER: LoggerService = {
   log: () => undefined,
@@ -93,6 +127,8 @@ export async function createTestApp(options: CreateTestAppOptions = {}): Promise
     .useValue(database)
     .overrideProvider(CacheConnection)
     .useValue(cache)
+    .overrideProvider(CacheBroadcast)
+    .useValue(new InMemoryBroadcast())
     .compile();
 
   const app = moduleRef.createNestApplication({ logger: false });

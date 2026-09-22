@@ -633,7 +633,9 @@ export class AppointmentsService {
    * `PENDING → CONFIRMED` publie `appointment.confirmed`. C'est le salon qui
    * confirme, pas le système : la cliente a reçu à la réservation « à confirmer
    * par le salon », et c'est cet événement qui lui fait savoir que c'est fait.
-   * Les autres transitions n'annoncent rien de plus qu'avant.
+   * `COMPLETED` et `NO_SHOW` publient `appointment.status_changed` : aucun
+   * message ne part pour elles, mais les écrans ouverts ailleurs — planning du
+   * comptoir, espace de la cliente — doivent se relire.
    *
    * @throws {NotFoundError} rendez-vous inconnu ou d'un autre établissement.
    * @throws {InvalidStateTransitionError} le cycle de vie n'autorise pas ce
@@ -704,6 +706,17 @@ export class AppointmentsService {
         appointmentId: previous.id,
         clientId: previous.clientId,
         staffId: previous.staffId,
+      });
+    } else if (input.status === 'COMPLETED' || input.status === 'NO_SHOW') {
+      // Aucun message ne part pour ces deux issues ; l'événement sert aux écrans
+      // tenus ouverts ailleurs — le planning du comptoir, l'espace de la
+      // cliente —, qui le relisent dès qu'il passe.
+      this.events.appointmentStatusChanged({
+        tenantId: requireTenantId('Appointment', 'appointment.status_changed'),
+        appointmentId: previous.id,
+        clientId: previous.clientId,
+        staffId: previous.staffId,
+        status: input.status,
       });
     }
 

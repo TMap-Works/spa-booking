@@ -9,6 +9,8 @@ import { AvailabilityModule } from '../availability/availability.module';
 import { CatalogModule } from '../catalog/catalog.module';
 import { CrmModule } from '../crm/crm.module';
 import { IdentityModule } from '../identity/identity.module';
+import { AppointmentFeedController } from './appointment-feed.controller';
+import { AppointmentFeed } from './appointment-feed.service';
 import { AppointmentLifecycleService } from './appointment-lifecycle.service';
 import { AppointmentsController } from './appointments.controller';
 import { AppointmentsRepository } from './appointments.repository';
@@ -144,11 +146,17 @@ const tenantCountryProvider: TenantCountryProviderRegistration = {
  */
 @Module({
   imports: [CatalogModule, AvailabilityModule, IdentityModule, CrmModule],
-  controllers: [PublicAppointmentsController, AppointmentsController, MyStaffController],
+  controllers: [
+    PublicAppointmentsController,
+    AppointmentsController,
+    MyStaffController,
+    AppointmentFeedController,
+  ],
   providers: [
     AppointmentsService,
     AppointmentsRepository,
     AppointmentEvents,
+    AppointmentFeed,
     AppointmentLifecycleService,
     SlotLockService,
     MyStaffService,

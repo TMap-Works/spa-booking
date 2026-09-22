@@ -66,7 +66,13 @@ import { Notification, type NotificationTone } from '@/components/ui/notificatio
  */
 
 /** Le geste dont on annonce l'aboutissement. */
-export type AccountAnnouncementKind = 'appointment-cancelled' | 'appointment-rescheduled';
+export type AccountAnnouncementKind =
+  | 'appointment-cancelled'
+  | 'appointment-rescheduled'
+  // Les deux gestes du salon que le flux temps réel signale à la cliente
+  // (`account-live-announcements.tsx`) : ils arrivent sans qu'elle ait rien fait.
+  | 'salon-confirmed'
+  | 'salon-cancelled';
 
 export interface AccountAnnouncementRequest {
   readonly kind: AccountAnnouncementKind;
@@ -121,6 +127,19 @@ const WORDING: Record<AccountAnnouncementKind, AnnouncementWording> = {
     tone: 'success',
     title: 'Votre rendez-vous est déplacé',
     body: (when) => `Il est désormais fixé au ${when}, sous « Rendez-vous à venir ».`,
+  },
+  'salon-confirmed': {
+    tone: 'success',
+    title: 'Le salon a confirmé votre rendez-vous',
+    // L'événement de confirmation ne porte pas l'heure — le bandeau n'en a pas
+    // besoin : le rendez-vous vient de changer de pastille juste en dessous.
+    body: () => 'Il apparaît désormais comme confirmé sous « Rendez-vous à venir ».',
+  },
+  'salon-cancelled': {
+    tone: 'warning',
+    title: 'Le salon a annulé votre rendez-vous',
+    body: (when) =>
+      `Celui du ${when} ne figure plus à l’agenda du salon : vous le retrouvez dans l’onglet « Historique ».`,
   },
 };
 

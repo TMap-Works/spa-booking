@@ -20,6 +20,7 @@ réservation, est tenu.
 | #444 | L'agenda du back-office — `GET /appointments`, une plage de jours et les trois *summaries* imbriquées |
 | #461 | **Les trois écritures de comptoir** — poser, déplacer et solder un rendez-vous depuis le planning (#50) |
 | #465 | **Le `clientId` du comptoir est jugé sur son rôle** — la porte `crm` refuse un compte du personnel, dans la transaction d'insertion |
+| temps réel | **Le flux des rendez-vous** — `GET /appointments/stream` (SSE), relayé entre instances par Redis, et `appointment.status_changed` pour « honoré » / « non présenté » (demande du PO du 21/09) |
 
 ## Les routes
 
@@ -34,6 +35,7 @@ réservation, est tenu.
 | `POST` | `/api/v1/appointments/:id/reschedule` | `STAFF` | `appointmentSchema` |
 | `POST` | `/api/v1/appointments/:id/status` | `STAFF` | `appointmentSchema` |
 | `POST` | `/api/v1/appointments/:id/cancel` | `STAFF` | `bookedAppointmentSchema` |
+| `GET` | `/api/v1/appointments/stream` | toute identité vérifiée | `text/event-stream` de `appointmentFeedEventSchema` |
 
 Les trois routes publiques ne sont pas gardées, et c'est le quatrième critère de
 #37 : on réserve sans compte. Ce qui les tient est le `ValidationPipe` global, le
@@ -53,6 +55,37 @@ l'encadrement la seconde, jamais la conduite de la journée : exiger un manager
 rendrait l'écran principal du back-office inutilisable par ceux qui l'utilisent
 toute la journée, et laisserait des créneaux fantômes bloqués jusqu'à ce que
 quelqu'un d'autre soit disponible.
+
+## Le flux temps réel (`GET /appointments/stream`)
+
+Un écran ouvert — planning du comptoir, « Mon planning », espace de la cliente —
+se tient à jour sans rafraîchissement : chaque événement du bus
+(`appointment.created`, `.confirmed`, `.rescheduled`, `.cancelled`,
+`.status_changed`) devient un message Server-Sent Events sur les connexions
+qu'il concerne. Le CDC §1.4 et §2.3 demandent un calendrier « temps réel », des
+« créneaux en direct ».
+
+- **Un signal, pas une donnée.** Le message dit quel rendez-vous a changé et
+  comment, rien d'autre : l'écran relit par ses routes habituelles, qui gardent
+  chacune leur contrôle d'accès. Voir
+  `packages/shared/src/schemas/appointment-feed.ts`.
+- **Le périmètre vient du jeton** (`AppointmentFeed.audienceOf`) :
+  `agenda:read:all` suit tout l'établissement, un praticien sa fiche — les deux
+  après un report qui change de praticien —, une cliente ses rendez-vous. Aucun
+  paramètre ne le change.
+- **Entre instances**, par `CacheBroadcast` (Redis `PUBLISH` / `SUBSCRIBE`), sur
+  un canal par établissement. Redis tombé, le flux se réduit à l'instance
+  d'origine ; il ne casse rien d'autre.
+- **Une connexion vit dix minutes**, puis le navigateur se reconnecte avec un
+  jeton neuf : le jeton n'est vérifié qu'à l'ouverture. Un battement de cœur
+  toutes les 25 s la garde ouverte à travers le répartiteur de charge.
+
+Le navigateur ne s'y connecte pas directement — le jeton est dans un cookie
+`httpOnly` du front. Les routes `/{salon}/admin/flux` et `/{salon}/compte/flux`
+de `apps/web` le relaient (`lib/appointment-feed-relay.ts`).
+
+L'isolation est éprouvée par `test/appointments-stream.isolation-spec.ts` : de
+vraies connexions, une réservation chez A, et rien chez B.
 
 ## Les écritures de comptoir (#461)
 

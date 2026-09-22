@@ -18,6 +18,10 @@
  * confirmer par le salon ; `booking_confirmation` le dit à la réservation, et
  * `appointment_confirmed` part quand le salon a confirmé.
  *
+ * La sixième, `appointment_rescheduled`, dit à la cliente que son rendez-vous a
+ * été déplacé : un report crée un rendez-vous neuf sans passer par la
+ * réservation, et rien ne la prévenait quand le salon le faisait.
+ *
  * L'ordre compte : les trois messages du CDC §1.4 restent en tête, et c'est
  * l'ordre de déclaration de l'énumération PostgreSQL. Insérer une valeur au
  * milieu désaccorderait les deux.
@@ -33,6 +37,7 @@ export const NOTIFICATION_TYPES = [
   'cancellation',
   'password_reset',
   'appointment_confirmed',
+  'appointment_rescheduled',
 ] as const;
 
 export type NotificationType = (typeof NOTIFICATION_TYPES)[number];

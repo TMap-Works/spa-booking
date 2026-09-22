@@ -67,7 +67,8 @@ describe('Modèles de messages — routes du back-office', () => {
       // `password_reset/sms` n'a pas de modèle de plateforme et n'apparaît donc
       // pas : la liste répond à « que reçoit ma cliente ? ». **Neuf depuis
       // #800** : « votre rendez-vous est confirmé », sur les deux canaux, que le
-      // salon peut réécrire comme les autres.
+      // salon peut réécrire comme les autres. **Onze** avec « votre rendez-vous
+      // a été déplacé », sur les deux canaux.
       expect(body.items.map((item) => `${item.type}/${item.channel}`)).toEqual([
         'booking_confirmation/email',
         'booking_confirmation/sms',
@@ -78,6 +79,8 @@ describe('Modèles de messages — routes du back-office', () => {
         'password_reset/email',
         'appointment_confirmed/email',
         'appointment_confirmed/sms',
+        'appointment_rescheduled/email',
+        'appointment_rescheduled/sms',
       ]);
       expect(body.items.every((item) => item.origin === 'platform')).toBe(true);
       expect(body.variables).toEqual([...TEMPLATE_VARIABLES]);

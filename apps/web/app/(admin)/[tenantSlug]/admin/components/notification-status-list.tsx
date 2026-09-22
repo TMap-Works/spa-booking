@@ -70,6 +70,7 @@ const TYPE_LABELS: Readonly<Record<NotificationTrace['type'], string>> = {
   cancellation: 'Avis d’annulation',
   password_reset: 'Mot de passe oublié',
   appointment_confirmed: 'Rendez-vous confirmé',
+  appointment_rescheduled: 'Rendez-vous déplacé',
 };
 
 const CHANNEL_LABELS: Readonly<Record<NotificationTrace['channel'], string>> = {

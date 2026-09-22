@@ -12,6 +12,7 @@ import { AppointmentsService } from '../appointments.service';
 import type { AppointmentActor } from '../appointments.types';
 import type { AppointmentConfirmedEvent } from '../events/appointment-confirmed.event';
 import { AppointmentEvents } from '../events/appointment-events';
+import type { AppointmentStatusChangedEvent } from '../events/appointment-status-changed.event';
 import { FakeAppointmentsRepository, FakeCacheLocks } from './appointments.doubles';
 
 /**
@@ -83,7 +84,7 @@ function createHarness() {
       status,
     }).id;
 
-  return { service, received, seed };
+  return { service, received, seed, events };
 }
 
 describe('appointment.confirmed — la confirmation du salon est annoncée', () => {
@@ -158,5 +159,55 @@ describe('appointment.confirmed — la confirmation du salon est annoncée', () 
 
     expect(outcomes.filter((outcome) => outcome.status === 'fulfilled')).toHaveLength(1);
     expect(received).toHaveLength(1);
+  });
+});
+
+/**
+ * `appointment.status_changed` — les deux issues d'un rendez-vous.
+ *
+ * Aucun message ne part pour elles, mais le planning temps réel en a besoin :
+ * « honoré » posé sur un téléphone doit se voir sur l'écran du comptoir et dans
+ * l'espace de la cliente.
+ */
+describe('appointment.status_changed — honoré et non présenté sont annoncés', () => {
+  it.each([['COMPLETED'], ['NO_SHOW']] as const)(
+    'est émis quand le rendez-vous passe %s, sans confirmation annoncée',
+    async (status) => {
+      const { service, received, seed, events } = createHarness();
+      const changed: AppointmentStatusChangedEvent[] = [];
+      events.onAppointmentStatusChanged((event) => changed.push(event));
+      const id = seed('CONFIRMED');
+
+      await runWithTenant(TENANT, () =>
+        service.changeStatus({ appointmentId: id, status, reason: null, actor: GERANTE }, NOW),
+      );
+
+      expect(changed).toHaveLength(1);
+      expect(changed[0]).toMatchObject({
+        name: 'appointment.status_changed',
+        tenantId: TENANT,
+        appointmentId: id,
+        clientId: CLIENT,
+        staffId: CLAIRE_STAFF,
+        status,
+      });
+      expect(received).toEqual([]);
+    },
+  );
+
+  it('ne l’est pas pour une confirmation, qui a son propre événement', async () => {
+    const { service, seed, events } = createHarness();
+    const changed: AppointmentStatusChangedEvent[] = [];
+    events.onAppointmentStatusChanged((event) => changed.push(event));
+    const id = seed('PENDING');
+
+    await runWithTenant(TENANT, () =>
+      service.changeStatus(
+        { appointmentId: id, status: 'CONFIRMED', reason: null, actor: GERANTE },
+        NOW,
+      ),
+    );
+
+    expect(changed).toEqual([]);
   });
 });

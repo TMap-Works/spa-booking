@@ -17,6 +17,7 @@ canaux, rien de plus — le marketing et les campagnes sont hors périmètre MVP
 | #493 | La preuve **comportementale** de l'idempotence — huit `claim()` parallèles contre un vrai PostgreSQL, jouées par `npm run test:concurrency` |
 | #799 | Les **passerelles SES et SNS** — l'expéditeur réel derrière `NOTIFICATION_SENDER`, la publication des abonnés du bus sur SQS au lieu d'une expédition en processus, et `POST /api/v1/interne/notifications/dispatch`, la route que la Lambda d'envoi appelle |
 | #800 | **« Votre rendez-vous est confirmé »** — tout rendez-vous naît à confirmer par le salon, et le message de la réservation le dit. Celui-ci part quand le salon confirme : abonnement à `appointment.confirmed` (émis par `PENDING → CONFIRMED`), type `APPOINTMENT_CONFIRMED`, modèles e-mail et SMS, et revérification au moment de l'envoi — encore confirmé, pas encore commencé |
+| temps réel | **« Votre rendez-vous a été déplacé »** — un report crée un rendez-vous neuf sans passer par la réservation, et la cliente dont le salon déplaçait le rendez-vous n'en apprenait rien. Abonnement à `appointment.rescheduled`, type `APPOINTMENT_RESCHEDULED`, modèles e-mail et SMS, et revérification à l'envoi — le rendez-vous neuf occupe encore son créneau et n'a pas commencé (demande du PO du 21/09) |
 
 ## La chaîne complète, depuis #799
 
@@ -704,7 +705,7 @@ la relecture et l'écriture, et c'est `notifications_live_once` qui l'arrête.
 | `notification-templates.repository.ts` | Les personnalisations en base, toujours par le client scopé |
 | `notification-templates.service.ts` | La résolution du modèle effectif et la validation d'un modèle soumis |
 | `notification-templates.controller.ts` | Les quatre routes de personnalisation |
-| `booking-confirmation.listener.ts` | L'abonné à `appointment.created` (« enregistré, à confirmer par le salon ») et à `appointment.confirmed` (« confirmé », #800) |
+| `booking-confirmation.listener.ts` | L'abonné à `appointment.created` (« enregistré, à confirmer par le salon »), à `appointment.confirmed` (« confirmé », #800) et à `appointment.rescheduled` (« déplacé ») |
 | `cancellation-notice.listener.ts` | L'abonné à `appointment.cancelled`, et le choix du destinataire |
 | `notifications.service.ts` | La lecture du journal, et son plafond |
 | `notifications.controller.ts` | `GET /notifications` et la route interne de balayage |

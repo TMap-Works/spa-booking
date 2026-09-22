@@ -254,12 +254,20 @@ enum NotificationChannel {
 /// premier message dit « enregistré, à confirmer par le salon » ; celui-ci part
 /// quand le salon a confirmé. Il est en queue parce qu'`ADD VALUE` ajoute à la
 /// fin, pas parce qu'il serait accessoire.
+///
+/// `APPOINTMENT_RESCHEDULED` est le sixième : « votre rendez-vous a été
+/// déplacé ». Un report annule l'ancien rendez-vous et en crée un nouveau, sans
+/// passer ni par la réservation ni par l'annulation — la cliente dont le salon
+/// déplaçait le rendez-vous depuis le planning n'en apprenait rien. Demande du
+/// PO du 21/09 : tout changement fait au back-office sur un rendez-vous prévient
+/// la cliente.
 enum NotificationType {
   BOOKING_CONFIRMATION
   REMINDER_24H
   CANCELLATION
   PASSWORD_RESET
   APPOINTMENT_CONFIRMED
+  APPOINTMENT_RESCHEDULED
 }
 
 enum NotificationStatus {

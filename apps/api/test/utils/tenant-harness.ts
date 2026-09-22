@@ -6,6 +6,7 @@ import { Test } from '@nestjs/testing';
 import { AppModule } from '../../src/app.module';
 import { configureApp } from '../../src/bootstrap';
 import { AppConfigService } from '../../src/config/app-config.service';
+import { CacheBroadcast } from '../../src/infrastructure/cache/cache.broadcast';
 import { CacheConnection } from '../../src/infrastructure/cache/cache.connection';
 import { DatabaseConnection } from '../../src/infrastructure/database/database.connection';
 import { IdentityRepository } from '../../src/modules/identity/identity.repository';
@@ -13,7 +14,7 @@ import { PasswordHasher } from '../../src/modules/identity/password.hasher';
 import type { UserRole } from '../../src/modules/identity/roles';
 import { TokenService } from '../../src/modules/identity/token.service';
 import { FakeIdentityRepository } from '../../src/modules/identity/__tests__/identity.doubles';
-import { ProbeDouble } from './test-app';
+import { InMemoryBroadcast, ProbeDouble } from './test-app';
 
 /**
  * Harnais des tests de fuite inter-tenant — **deux établissements, une seule
@@ -167,6 +168,8 @@ export async function createTenantHarness(
     .useValue(new ProbeDouble())
     .overrideProvider(CacheConnection)
     .useValue(new ProbeDouble())
+    .overrideProvider(CacheBroadcast)
+    .useValue(new InMemoryBroadcast())
     .overrideProvider(IdentityRepository)
     .useValue(identity);
 

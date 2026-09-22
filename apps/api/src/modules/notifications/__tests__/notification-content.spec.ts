@@ -297,6 +297,37 @@ ${text}`.toLowerCase()).not.toContain('à confirmer');
   });
 });
 
+/**
+ * « Votre rendez-vous a été déplacé » — ce que la cliente doit y lire : que le
+ * rendez-vous a bougé, et sa **nouvelle** heure dans le fuseau du salon.
+ */
+describe('notifications — le rendez-vous a été déplacé', () => {
+  it('dit le déplacement et la nouvelle heure, dans le fuseau du salon', () => {
+    const { subject, html, text } = renderDefault(
+      'APPOINTMENT_RESCHEDULED',
+      'EMAIL',
+      PARIS,
+      CANCEL_URL,
+    );
+
+    expect(subject).toContain('Rendez-vous déplacé');
+    expect(subject).toContain('14:30');
+    expect(text).toContain('Votre rendez-vous chez Maison Lotus a été déplacé');
+    expect(html).toContain('Votre rendez-vous chez Maison Lotus a été déplacé');
+    expect(text).toContain('RDV-8F3K-27');
+    expect(text).toContain(CANCEL_URL);
+    expect(text).not.toContain('<');
+  });
+
+  it('a son SMS, qui dit la même chose en une phrase', () => {
+    const { text } = renderDefault('APPOINTMENT_RESCHEDULED', 'SMS', PARIS, '');
+
+    expect(text).toContain('Maison Lotus');
+    expect(text).toContain('14:30');
+    expect(text).toContain('déplacé');
+  });
+});
+
 describe('notifications — le lien d’annulation', () => {
   it('figure dans l’e-mail, en HTML comme en texte', () => {
     const { html, text } = renderBookingConfirmationEmail(PARIS, CANCEL_URL);

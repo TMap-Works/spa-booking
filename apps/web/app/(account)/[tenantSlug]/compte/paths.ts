@@ -20,6 +20,15 @@ export function accountPath(tenantSlug: string, suffix = ''): string {
 }
 
 /**
+ * Le flux temps réel des rendez-vous de la cliente — la route qui relaie celui
+ * de l'API (`flux/route.ts`). Sous `accountPath` pour que le cookie de session,
+ * posé sur ce chemin, l'accompagne.
+ */
+export function accountFeedPath(tenantSlug: string): string {
+  return accountPath(tenantSlug, '/flux');
+}
+
+/**
  * La vitrine publique de l'établissement — son catalogue et ses tarifs.
  *
  * ## Pourquoi l'espace client construit ces deux chemins lui-même
