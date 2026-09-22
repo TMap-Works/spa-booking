@@ -11,6 +11,7 @@ import { ERROR_CODES } from '@spa/shared';
 import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
+import { useAppointmentFeed } from '@/components/live/appointment-feed';
 import { Button } from '@/components/ui/button';
 import { Notification } from '@/components/ui/notification';
 import {
@@ -743,6 +744,59 @@ export function CalendarBoard({
   // s'annonceraient comme des cibles — `--drop`, « déplacer ici le rendez-vous
   // de X » — pour un lâcher dont on sait déjà qu'il ne fera rien.
   const busy = moving !== null || confirming !== null;
+
+  // Un changement signalé pendant un report en vol ou une question en attente,
+  // que `refreshLive` a mis de côté — voir ci-dessous.
+  const liveStale = useRef(false);
+  const busyRef = useRef(busy);
+  busyRef.current = busy;
+
+  /**
+   * Le planning temps réel : un rendez-vous vient de changer ailleurs — une
+   * réservation en ligne, une collègue qui déplace ou solde, une cliente qui
+   * annule. Le flux ne dit pas quoi (`components/live/appointment-feed.tsx`) :
+   * la période affichée est relue.
+   *
+   * Pas `reloadPeriods`, qui vide l'écran le temps de l'aller-retour : sur un
+   * planning ouvert toute la journée, chaque réservation ferait clignoter la
+   * grille. La période affichée **reste** à l'écran et se remplace à l'arrivée
+   * de la réponse ; les autres sont oubliées, et le préchargement relit les
+   * voisines en arrière-plan.
+   *
+   * Et pas pendant un report en vol ou une question en attente : l'état
+   * optimiste serait écrasé par un agenda qui ne le contient pas encore, et le
+   * bloc qu'on vient de lâcher sauterait en arrière. Le changement est mis de
+   * côté, et relu dès que le geste est tranché.
+   */
+  const refreshLive = useCallback((): void => {
+    if (busyRef.current) {
+      liveStale.current = true;
+      return;
+    }
+
+    liveStale.current = false;
+    cacheAge.current += 1;
+    inFlight.current.clear();
+
+    const key = currentKeyRef.current;
+
+    setPeriods((known) => {
+      const shown = known.get(key);
+
+      return shown === undefined ? new Map() : new Map([[key, shown]]);
+    });
+    void load(view, date, true);
+  }, [load, view, date]);
+
+  useAppointmentFeed(() => {
+    refreshLive();
+  });
+
+  useEffect(() => {
+    if (!busy && liveStale.current) {
+      refreshLive();
+    }
+  }, [busy, refreshLive]);
 
   const drag: CalendarDragState = useMemo(
     () => ({

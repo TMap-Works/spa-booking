@@ -69,8 +69,12 @@ import { Notification, type NotificationTone } from '@/components/ui/notificatio
  * chaque retour sur la fiche, longtemps après le geste.
  */
 
-/** Le geste dont on annonce l'aboutissement. */
-export type AdminAnnouncementKind = 'service-created';
+/**
+ * Ce qu'on annonce : un geste mené à son terme, ou — depuis le planning temps
+ * réel — un rendez-vous arrivé ou annulé d'ailleurs, que le flux vient de
+ * signaler (`admin-live-announcements.tsx`).
+ */
+export type AdminAnnouncementKind = 'service-created' | 'appointment-booked' | 'appointment-cancelled';
 
 export interface AdminAnnouncementRequest {
   readonly kind: AdminAnnouncementKind;
@@ -88,6 +92,11 @@ export interface AdminAnnouncementRequest {
   readonly subject: string;
   /** L'écran où l'annonce se lit — celui d'arrivée, jamais celui d'où part le geste. */
   readonly path: string;
+  /**
+   * Où mène le lien du bandeau, quand il dépend de ce qui est annoncé — le jour
+   * du planning où tombe un rendez-vous. À défaut, l'ancre de la formulation.
+   */
+  readonly href?: string;
 }
 
 interface AnnouncementWording {
@@ -101,7 +110,7 @@ interface AnnouncementWording {
    * section visée, et l'y amener ne coûte aucun aller-retour. Le lien du design
    * system reste un `<Link>` — c'est lui qui gère le défilement et le focus.
    */
-  readonly next: { readonly label: string; readonly hash: string };
+  readonly next: { readonly label: string; readonly hash?: string };
 }
 
 /**
@@ -125,6 +134,21 @@ const WORDING: Record<AdminAnnouncementKind, AnnouncementWording> = {
     title: (subject) => `Prestation « ${subject} » créée`,
     body: 'Elle ne sera proposée à la réservation qu’une fois un praticien affecté.',
     next: { label: 'Affecter un praticien', hash: '#prestation-praticiens' },
+  },
+  // Les deux annonces du temps réel : ce qui arrive au planning sans que la
+  // gérante l'ait fait. `info` et non `success` — ce n'est pas l'issue d'un de
+  // ses gestes. Le sujet est le jour et l'heure, dans le fuseau du salon.
+  'appointment-booked': {
+    tone: 'info',
+    title: (subject) => `Nouveau rendez-vous : ${subject}`,
+    body: 'Il vient d’arriver au planning.',
+    next: { label: 'Voir le planning du jour' },
+  },
+  'appointment-cancelled': {
+    tone: 'warning',
+    title: (subject) => `Rendez-vous du ${subject} annulé par la cliente`,
+    body: 'Le créneau est de nouveau proposé à la réservation.',
+    next: { label: 'Voir le planning du jour' },
   },
 };
 
@@ -231,6 +255,7 @@ export function AdminAnnouncementProvider({ children }: AdminAnnouncementProvide
 export function AdminAnnouncementRegion() {
   const message = useContext(MessageContext);
   const wording = message === null ? null : WORDING[message.kind];
+  const href = message?.href ?? wording?.next.hash;
 
   return (
     <div
@@ -241,7 +266,8 @@ export function AdminAnnouncementRegion() {
       {message === null || wording === null ? null : (
         <Notification tone={wording.tone} title={wording.title(message.subject)}>
           <p>
-            {wording.body} <Link href={wording.next.hash}>{wording.next.label}</Link>
+            {wording.body}{' '}
+            {href === undefined ? null : <Link href={href}>{wording.next.label}</Link>}
           </p>
         </Notification>
       )}

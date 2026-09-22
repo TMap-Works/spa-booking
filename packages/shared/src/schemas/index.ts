@@ -39,6 +39,15 @@ export type {
 } from './appointment';
 
 export {
+  APPOINTMENT_FEED_CHANGES,
+  APPOINTMENT_FEED_EVENT,
+  APPOINTMENT_FEED_HEARTBEAT,
+  appointmentFeedChangeSchema,
+  appointmentFeedEventSchema,
+} from './appointment-feed';
+export type { AppointmentFeedChange, AppointmentFeedEvent } from './appointment-feed';
+
+export {
   availabilityQuerySchema,
   availabilityResponseSchema,
   availabilitySlotSchema,

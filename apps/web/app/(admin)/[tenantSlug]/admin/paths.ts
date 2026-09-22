@@ -20,6 +20,15 @@ export function adminPath(tenantSlug: string): string {
 }
 
 /**
+ * Le flux temps réel des rendez-vous du back-office — la route qui relaie celui
+ * de l'API (`flux/route.ts`). Sous `adminPath` pour que le cookie de session,
+ * posé sur ce chemin, l'accompagne.
+ */
+export function adminFeedPath(tenantSlug: string): string {
+  return `${adminPath(tenantSlug)}/flux`;
+}
+
+/**
  * Écran de connexion du back-office, éventuellement avec le motif qui y renvoie.
  *
  * Le back-office n'en portait aucun (#860) : un renouvellement refusé par le

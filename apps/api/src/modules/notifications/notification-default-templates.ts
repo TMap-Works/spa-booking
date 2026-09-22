@@ -294,6 +294,74 @@ const APPOINTMENT_CONFIRMED_SMS: NotificationTemplateSource = {
 };
 
 /**
+ * « Votre rendez-vous a été déplacé » — part sur `appointment.rescheduled`.
+ *
+ * Un report annule l'ancien rendez-vous et en crée un nouveau (booking-engine
+ * §5) : ni la réservation ni l'annulation ne partent, et la cliente dont le salon
+ * déplaçait le rendez-vous depuis le planning n'en apprenait rien — elle se
+ * présentait à l'ancienne heure. Demande du PO du 21/09.
+ *
+ * ## Il ne dit pas qui a déplacé
+ *
+ * Le report part des deux côtés du comptoir — l'espace de la cliente, le
+ * planning du salon —, et l'événement ne distingue pas l'un de l'autre. Le
+ * passif « a été déplacé » est juste dans les deux cas : c'est une
+ * confirmation pour celle qui vient de le faire, une information pour celle
+ * dont le salon l'a fait.
+ *
+ * ## Il porte le récapitulatif entier
+ *
+ * Pour la raison du message de confirmation : c'est celui-ci que la cliente
+ * gardera, parce que c'est le seul qui porte la **nouvelle** heure. Le
+ * récapitulatif est celui du rendez-vous neuf — référence comprise, qui change
+ * avec lui.
+ *
+ * ## Il est relu avant de partir
+ *
+ * `NotificationDispatchService` ne l'expédie que si le rendez-vous neuf occupe
+ * encore son créneau et n'a pas commencé : deux reports enchaînés ne font pas
+ * arriver l'heure intermédiaire après la dernière.
+ */
+const APPOINTMENT_RESCHEDULED_EMAIL: NotificationTemplateSource = {
+  subject: 'Rendez-vous déplacé au {{date}} — {{salon}}',
+  html: [
+    '<!DOCTYPE html>',
+    '<html lang="fr"><body>',
+    '<p>Bonjour {{client}},</p>',
+    '<p>Votre rendez-vous chez {{salon}} a été déplacé. Nous vous attendons désormais le {{date}}.</p>',
+    `<table role="presentation">${HTML_SUMMARY}</table>`,
+    '<p>Les horaires sont donnés à l’heure de {{fuseau}}.</p>',
+    '<p><a href="{{lien_annulation}}">Modifier ou annuler mon rendez-vous</a></p>',
+    '<p>À bientôt,<br />{{salon}}</p>',
+    '</body></html>',
+  ].join(''),
+  text: [
+    'Bonjour {{client}},',
+    '',
+    'Votre rendez-vous chez {{salon}} a été déplacé. Nous vous attendons désormais le {{date}}.',
+    '',
+    TEXT_SUMMARY,
+    'Les horaires sont donnés à l’heure de {{fuseau}}.',
+    '',
+    'Modifier ou annuler mon rendez-vous : {{lien_annulation}}',
+    '',
+    'À bientôt,',
+    '{{salon}}',
+  ].join('\n'),
+};
+
+/**
+ * Le SMS de report — l'avis, et rien d'autre : la nouvelle heure. Tout y est en
+ * GSM-7 — les `é` compris —, et `notification-template.spec.ts` le mesure à un
+ * segment plutôt que de l'espérer.
+ */
+const APPOINTMENT_RESCHEDULED_SMS: NotificationTemplateSource = {
+  subject: '',
+  html: '',
+  text: '{{salon}} : votre rendez-vous est déplacé au {{date}} ({{fuseau}}).',
+};
+
+/**
  * Le rappel J-1 — #71.
  *
  * Il partage le récapitulatif de la confirmation, et affirme autre chose : la
@@ -567,6 +635,10 @@ export const DEFAULT_TEMPLATES: Readonly<
   // la mesure de coût le refuse s'il dépasse trois segments.
   PASSWORD_RESET: { EMAIL: PASSWORD_RESET_EMAIL },
   APPOINTMENT_CONFIRMED: { EMAIL: APPOINTMENT_CONFIRMED_EMAIL, SMS: APPOINTMENT_CONFIRMED_SMS },
+  APPOINTMENT_RESCHEDULED: {
+    EMAIL: APPOINTMENT_RESCHEDULED_EMAIL,
+    SMS: APPOINTMENT_RESCHEDULED_SMS,
+  },
 };
 
 /** Le modèle de plateforme pour ce message, s'il en existe un. */

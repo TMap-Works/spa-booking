@@ -63,6 +63,8 @@ export const NOTIFICATION_TYPES = new Set([
   'PASSWORD_RESET',
   // #800 — « votre rendez-vous est confirmé », publié sur `appointment.confirmed`.
   'APPOINTMENT_CONFIRMED',
+  // « Votre rendez-vous a été déplacé », publié sur `appointment.rescheduled`.
+  'APPOINTMENT_RESCHEDULED',
 ]);
 const NOTIFICATION_CHANNELS = new Set(['EMAIL', 'SMS']);
 
@@ -84,6 +86,7 @@ const APPOINTMENT_NOTIFICATION_TYPES = new Set([
   'REMINDER_24H',
   'CANCELLATION',
   'APPOINTMENT_CONFIRMED',
+  'APPOINTMENT_RESCHEDULED',
 ]);
 
 // --- Configuration ------------------------------------------------------------

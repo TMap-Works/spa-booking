@@ -481,6 +481,66 @@ describe('notifications — la confirmation du salon se revérifie au moment de 
 });
 
 /**
+ * « Votre rendez-vous a été déplacé » se revérifie aussi à l'envoi.
+ *
+ * Il annonce une **heure** : deux reports enchaînés, ou un report suivi d'une
+ * annulation, ne doivent pas faire arriver une heure qui n'est plus la bonne.
+ */
+describe('notifications — l’avis de report se revérifie au moment de l’envoi', () => {
+  const NOW = new Date('2026-09-07T09:00:00.000Z');
+  const tomorrow = new Date(NOW.getTime() + 24 * 3_600_000);
+
+  it.each([['PENDING'], ['CONFIRMED']])(
+    'envoie quand le rendez-vous neuf est %s et à venir',
+    async (status) => {
+      const { service, sender, repository } = build();
+      repository.reminder = { status, startsAt: tomorrow };
+
+      await expect(service.dispatch(message('APPOINTMENT_RESCHEDULED'), NOW)).resolves.toBe(
+        'sent',
+      );
+
+      expect(sender.calls).toHaveLength(1);
+    },
+  );
+
+  it.each([['CANCELLED'], ['NO_SHOW'], ['COMPLETED']])(
+    'n’envoie rien quand le rendez-vous neuf est %s au moment de l’envoi',
+    async (status) => {
+      const { service, sender, repository } = build();
+      repository.reminder = { status, startsAt: tomorrow };
+
+      await expect(service.dispatch(message('APPOINTMENT_RESCHEDULED'), NOW)).resolves.toBe(
+        'skipped',
+      );
+
+      expect(sender.calls).toEqual([]);
+      expect(repository.rows).toEqual([]);
+    },
+  );
+
+  it('n’envoie rien pour un rendez-vous déjà commencé, ni pour un rendez-vous disparu', async () => {
+    const started = build();
+    started.repository.reminder = {
+      status: 'CONFIRMED',
+      startsAt: new Date(NOW.getTime() - 60_000),
+    };
+    const vanished = build();
+    vanished.repository.reminder = null;
+
+    await expect(
+      started.service.dispatch(message('APPOINTMENT_RESCHEDULED'), NOW),
+    ).resolves.toBe('skipped');
+    await expect(
+      vanished.service.dispatch(message('APPOINTMENT_RESCHEDULED'), NOW),
+    ).resolves.toBe('skipped');
+
+    expect(started.sender.calls).toEqual([]);
+    expect(vanished.sender.calls).toEqual([]);
+  });
+});
+
+/**
  * La suppression relue **au moment de l'envoi** — #73, deuxième critère
  * d'acceptation : « une adresse en hard bounce passe en supprimé et n'est plus
  * jamais sollicitée ».

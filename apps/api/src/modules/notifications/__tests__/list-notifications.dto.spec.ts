@@ -65,6 +65,9 @@ describe('notifications — les deux vocabulaires se correspondent terme à term
       // « Votre rendez-vous est confirmé » (#800) : le comptoir doit pouvoir
       // vérifier que la cliente a bien été prévenue de sa confirmation.
       'appointment_confirmed',
+      // « Votre rendez-vous a été déplacé » : le comptoir doit pouvoir vérifier
+      // que la cliente a bien appris la nouvelle heure.
+      'appointment_rescheduled',
     ]);
     expect(NOTIFICATION_CHANNEL_FILTERS).toEqual(['email', 'sms']);
     expect(NOTIFICATION_STATUS_FILTERS).toEqual(['pending', 'sent', 'failed']);

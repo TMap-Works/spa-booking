@@ -5,6 +5,7 @@ import { TenantContextService } from '../../common/tenant/tenant-context.service
 import type { AppointmentConfirmedEvent } from '../appointments/events/appointment-confirmed.event';
 import type { AppointmentCreatedEvent } from '../appointments/events/appointment-created.event';
 import { AppointmentEvents } from '../appointments/events/appointment-events';
+import type { AppointmentRescheduledEvent } from '../appointments/events/appointment-rescheduled.event';
 import { NOTIFICATION_PUBLISHER, type NotificationPublisher } from './notification-publisher';
 import { NotificationsRepository } from './notifications.repository';
 import {
@@ -87,6 +88,15 @@ import {
  * mêmes canaux, même enveloppe, même absorption des échecs. Seuls l'événement
  * écouté et le type publié diffèrent. Deux abonnés recopiés auraient divergé à
  * la première correction.
+ *
+ * ## Un troisième : le report
+ *
+ * `appointment.rescheduled` publie `APPOINTMENT_RESCHEDULED`, « votre
+ * rendez-vous a été déplacé », pour la même raison et selon la même conduite :
+ * un report crée un rendez-vous neuf sans passer par la réservation, et la
+ * cliente dont le salon déplaçait le rendez-vous depuis le planning ne
+ * l'apprenait pas. Le message vise le rendez-vous **neuf** — `appointmentId` de
+ * l'événement —, celui dont la référence et l'heure sont désormais les bonnes.
  */
 @Injectable()
 export class BookingConfirmationListener implements OnModuleInit, OnModuleDestroy {
@@ -111,12 +121,18 @@ export class BookingConfirmationListener implements OnModuleInit, OnModuleDestro
   /** Le désabonnement de `appointment.confirmed` — même raison que le précédent. */
   private unsubscribeConfirmed: (() => void) | null = null;
 
+  /** Le désabonnement de `appointment.rescheduled` — même raison encore. */
+  private unsubscribeRescheduled: (() => void) | null = null;
+
   public onModuleInit(): void {
     this.unsubscribe = this.events.onAppointmentCreated((event) => {
       void this.handle(event);
     });
     this.unsubscribeConfirmed = this.events.onAppointmentConfirmed((event) => {
       void this.handleConfirmed(event);
+    });
+    this.unsubscribeRescheduled = this.events.onAppointmentRescheduled((event) => {
+      void this.handleRescheduled(event);
     });
   }
 
@@ -125,6 +141,8 @@ export class BookingConfirmationListener implements OnModuleInit, OnModuleDestro
     this.unsubscribe = null;
     this.unsubscribeConfirmed?.();
     this.unsubscribeConfirmed = null;
+    this.unsubscribeRescheduled?.();
+    this.unsubscribeRescheduled = null;
   }
 
   /**
@@ -149,7 +167,18 @@ export class BookingConfirmationListener implements OnModuleInit, OnModuleDestro
     await this.announce(event, 'APPOINTMENT_CONFIRMED');
   }
 
-  /** Ce que les deux événements déclenchent — voir l'en-tête. */
+  /**
+   * Traite un `appointment.rescheduled` : « votre rendez-vous a été déplacé »,
+   * un message par canal retenu, sur le rendez-vous **neuf**.
+   *
+   * Ne lève jamais, pour la même raison que les deux autres : le report est
+   * écrit en base quand cet événement part.
+   */
+  public async handleRescheduled(event: AppointmentRescheduledEvent): Promise<void> {
+    await this.announce(event, 'APPOINTMENT_RESCHEDULED');
+  }
+
+  /** Ce que les trois événements déclenchent — voir l'en-tête. */
   private async announce(event: AnnouncedAppointment, type: AnnouncementType): Promise<void> {
     try {
       await this.tenants.runWithTenant(event.tenantId, async () => {
@@ -259,11 +288,14 @@ export class BookingConfirmationListener implements OnModuleInit, OnModuleDestro
   }
 }
 
-/** Les deux messages que cet abonné publie — voir l'en-tête. */
-type AnnouncementType = Extract<NotificationType, 'BOOKING_CONFIRMATION' | 'APPOINTMENT_CONFIRMED'>;
+/** Les trois messages que cet abonné publie — voir l’en-tête. */
+type AnnouncementType = Extract<
+  NotificationType,
+  'BOOKING_CONFIRMATION' | 'APPOINTMENT_CONFIRMED' | 'APPOINTMENT_RESCHEDULED'
+>;
 
-/** Ce que les deux événements ont en commun, et tout ce dont l'annonce a besoin. */
+/** Ce que les trois événements ont en commun, et tout ce dont l'annonce a besoin. */
 type AnnouncedAppointment = Pick<
-  AppointmentCreatedEvent | AppointmentConfirmedEvent,
+  AppointmentCreatedEvent | AppointmentConfirmedEvent | AppointmentRescheduledEvent,
   'tenantId' | 'appointmentId' | 'clientId'
 >;

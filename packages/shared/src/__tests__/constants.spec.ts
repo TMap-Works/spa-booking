@@ -151,6 +151,8 @@ describe('notifications et paiements', () => {
       'password_reset',
       // « Votre rendez-vous est confirmé », quand le salon confirme (#800).
       'appointment_confirmed',
+      // « Votre rendez-vous a été déplacé », sur `appointment.rescheduled`.
+      'appointment_rescheduled',
     ]);
     expect(isNotificationChannel('email')).toBe(true);
     expect(isNotificationChannel('push')).toBe(false);

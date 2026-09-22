@@ -9,6 +9,10 @@ import {
   type AppointmentCreatedEvent,
 } from '../../appointments/events/appointment-created.event';
 import { AppointmentEvents } from '../../appointments/events/appointment-events';
+import {
+  APPOINTMENT_RESCHEDULED,
+  type AppointmentRescheduledEvent,
+} from '../../appointments/events/appointment-rescheduled.event';
 import { BookingConfirmationListener } from '../booking-confirmation.listener';
 import { NotificationDispatchService } from '../notification-dispatch.service';
 import { InProcessNotificationPublisher } from '../notification-publisher';
@@ -331,6 +335,86 @@ describe('notifications — la confirmation du salon naît de `appointment.confi
       .mockRejectedValue(new Error('base indisponible'));
 
     await expect(listener.handleConfirmed(confirmedEvent())).resolves.toBeUndefined();
+  });
+});
+
+/**
+ * « Votre rendez-vous a été déplacé » — demande du PO du 21/09.
+ *
+ * Même abonné, même conduite : un report crée un rendez-vous neuf sans passer par
+ * la réservation, et c'est `appointment.rescheduled` qui le fait savoir à la
+ * cliente — sur le rendez-vous **neuf**.
+ */
+describe('notifications — le report naît de `appointment.rescheduled`', () => {
+  const MOVED = '66666666-6666-4666-8666-666666666666';
+
+  function rescheduledEvent(
+    overrides: Partial<AppointmentRescheduledEvent> = {},
+  ): AppointmentRescheduledEvent {
+    return {
+      name: APPOINTMENT_RESCHEDULED,
+      tenantId: TENANT,
+      appointmentId: MOVED,
+      previousAppointmentId: APPOINTMENT,
+      clientId: CLIENT,
+      serviceId: '55555555-5555-4555-8555-555555555555',
+      staffId: '44444444-4444-4444-8444-444444444444',
+      previousStaffId: '44444444-4444-4444-8444-444444444444',
+      startsAt: '2026-09-09T12:30:00.000Z',
+      endsAt: '2026-09-09T13:30:00.000Z',
+      previousStartsAt: '2026-09-08T12:30:00.000Z',
+      previousEndsAt: '2026-09-08T13:30:00.000Z',
+      occurredAt: '2026-09-06T11:00:00.000Z',
+      ...overrides,
+    };
+  }
+
+  it('publie `APPOINTMENT_RESCHEDULED` sur chaque canal joignable, pour le rendez-vous neuf', async () => {
+    const { listener, repository, sender } = build();
+
+    await listener.handleRescheduled(rescheduledEvent());
+
+    expect(sender.calls.map((call) => `${call.type}/${call.channel}`)).toEqual([
+      'APPOINTMENT_RESCHEDULED/EMAIL',
+      'APPOINTMENT_RESCHEDULED/SMS',
+    ]);
+    expect(repository.rows.map((row) => row.dedupeKey)).toEqual([
+      `appointment:${MOVED}:APPOINTMENT_RESCHEDULED:EMAIL`,
+      `appointment:${MOVED}:APPOINTMENT_RESCHEDULED:SMS`,
+    ]);
+  });
+
+  it('reçoit bien ce que le bus publie', async () => {
+    const { events, sender } = build();
+
+    const { name: _name, occurredAt: _occurredAt, ...payload } = rescheduledEvent();
+    events.appointmentRescheduled(payload);
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(sender.calls.map((call) => call.type)).toEqual([
+      'APPOINTMENT_RESCHEDULED',
+      'APPOINTMENT_RESCHEDULED',
+    ]);
+  });
+
+  it('se retire du bus à l’arrêt du module', async () => {
+    const { listener, events, sender } = build();
+
+    listener.onModuleDestroy();
+    const { name: _name, occurredAt: _occurredAt, ...payload } = rescheduledEvent();
+    events.appointmentRescheduled(payload);
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(sender.calls).toHaveLength(0);
+  });
+
+  it('ne lève pas quand l’expédition échoue', async () => {
+    const { listener, repository } = build();
+    jest
+      .spyOn(repository.repository, 'findRecipientContact')
+      .mockRejectedValue(new Error('base indisponible'));
+
+    await expect(listener.handleRescheduled(rescheduledEvent())).resolves.toBeUndefined();
   });
 });
 

@@ -1,0 +1,27 @@
+-- # `NotificationType.APPOINTMENT_RESCHEDULED` — « votre rendez-vous a été déplacé »
+--
+-- ## Le constat qu'elle referme
+--
+-- Un report n'est ni une réservation ni une annulation : c'est une transaction
+-- qui annule l'ancien rendez-vous et en crée un nouveau (booking-engine §5), et
+-- elle ne publie que `appointment.rescheduled`. Aucun message n'y était abonné.
+-- Quand le salon déplaçait un rendez-vous depuis le planning — un glisser-déposer
+-- suffit —, la cliente n'en apprenait rien et se présentait à l'ancienne heure.
+-- Demande du PO du 21/09 : tout changement fait au back-office sur un rendez-vous
+-- prévient la cliente, par e-mail et par SMS.
+--
+-- ## Une valeur de plus, pour la raison de `APPOINTMENT_CONFIRMED`
+--
+-- `notifications_live_once` n'admet qu'une ligne vivante par
+-- `(tenant_id, appointment_id, type, channel)`. Le report crée un rendez-vous
+-- **neuf** : réemployer `BOOKING_CONFIRMATION` sur lui dirait « à confirmer par
+-- le salon » d'un rendez-vous que le salon vient lui-même de placer. Deux faits
+-- distincts, deux types.
+--
+-- ## En queue
+--
+-- `ALTER TYPE … ADD VALUE` ajoute à la fin, après `APPOINTMENT_CONFIRMED` ; c'est
+-- l'ordre que `notifications.types.spec.ts` compare à `NOTIFICATION_TYPES`.
+
+-- AlterEnum
+ALTER TYPE "NotificationType" ADD VALUE 'APPOINTMENT_RESCHEDULED';

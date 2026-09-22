@@ -60,6 +60,10 @@ export const NOTIFICATION_TYPES = [
   // dit « à confirmer par le salon » ; celui-ci part quand le salon confirme. En
   // queue, comme dans l'énumération PostgreSQL, qui n'ajoute qu'à la fin.
   'APPOINTMENT_CONFIRMED',
+  // « Votre rendez-vous a été déplacé » — publié sur `appointment.rescheduled`.
+  // Un report crée un rendez-vous neuf sans passer par la réservation : sans ce
+  // message, la cliente dont le salon déplaçait le rendez-vous n'en savait rien.
+  'APPOINTMENT_RESCHEDULED',
 ] as const;
 
 export type NotificationType = (typeof NOTIFICATION_TYPES)[number];

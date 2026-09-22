@@ -96,6 +96,10 @@ import type {
  * même raison et avec une autre question : il **affirme** un statut, et un
  * statut peut changer entre la publication et l'envoi.
  *
+ * `APPOINTMENT_RESCHEDULED` a la sienne aussi, `rescheduleStillTrue` : il
+ * annonce une **heure**, et un second report — ou une annulation — peut la
+ * rendre fausse avant l'envoi.
+ *
  * Le rendu, lui, ne juge toujours pas du statut : il lit le rendez-vous pour son
  * heure et sa prestation, c'est une lecture d'affichage.
  *
@@ -150,6 +154,17 @@ export class NotificationDispatchService {
       if (
         message.appointmentId === null ||
         !(await this.confirmationStillTrue(message.appointmentId, message.channel, now))
+      ) {
+        return 'skipped';
+      }
+    }
+
+    // « Votre rendez-vous a été déplacé » : le rendez-vous neuf tient-il encore
+    // son créneau, et est-il encore à venir ?
+    if (message.type === 'APPOINTMENT_RESCHEDULED') {
+      if (
+        message.appointmentId === null ||
+        !(await this.rescheduleStillTrue(message.appointmentId, message.channel, now))
       ) {
         return 'skipped';
       }
@@ -392,6 +407,57 @@ export class NotificationDispatchService {
 
     if (eligibility.startsAt.getTime() <= now.getTime()) {
       this.logger.log('confirmation supprimée, le rendez-vous a déjà commencé', {
+        appointmentId,
+        channel,
+      });
+      return false;
+    }
+
+    return true;
+  }
+
+  /**
+   * « Votre rendez-vous a été déplacé » est-il encore vrai — **au moment de
+   * l'envoi** ?
+   *
+   * Le message annonce la nouvelle heure du rendez-vous neuf. Deux reports
+   * enchaînés annulent le premier rendez-vous neuf : son message ne doit pas
+   * arriver après celui du second, ni une annulation être suivie d'un « nous vous
+   * attendons désormais ». Même lecture que le rappel J-1 et la confirmation —
+   * statut et début.
+   *
+   * | Ce que la relecture trouve | Pourquoi rien ne part |
+   * |---|---|
+   * | plus de rendez-vous | supprimé ou anonymisé |
+   * | un statut qui n'occupe plus le créneau | annulé ou déplacé de nouveau entre-temps, ou déjà soldé |
+   * | un début déjà passé | l'heure annoncée n'a plus d'objet |
+   */
+  private async rescheduleStillTrue(
+    appointmentId: string,
+    channel: NotificationChannel,
+    now: Date,
+  ): Promise<boolean> {
+    const eligibility = await this.repository.findReminderEligibility(appointmentId);
+
+    if (eligibility === null) {
+      this.logger.log('avis de report sans objet, rendez-vous introuvable', {
+        appointmentId,
+        channel,
+      });
+      return false;
+    }
+
+    if (eligibility.status !== 'PENDING' && eligibility.status !== 'CONFIRMED') {
+      this.logger.log("avis de report supprimé, le rendez-vous n'occupe plus son créneau", {
+        appointmentId,
+        channel,
+        status: eligibility.status,
+      });
+      return false;
+    }
+
+    if (eligibility.startsAt.getTime() <= now.getTime()) {
+      this.logger.log('avis de report supprimé, le rendez-vous a déjà commencé', {
         appointmentId,
         channel,
       });

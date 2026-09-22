@@ -275,6 +275,7 @@ const APPOINTMENT_MESSAGES = [
   'REMINDER_24H',
   'CANCELLATION',
   'APPOINTMENT_CONFIRMED',
+  'APPOINTMENT_RESCHEDULED',
 ] as const;
 
 describe('modèles — les défauts de la plateforme', () => {
