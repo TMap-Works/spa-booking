@@ -47,7 +47,11 @@ import { CurrentUser } from './jwt-auth.guard';
 import type { AuthenticatedUser } from './identity.types';
 import { permissionsOf } from './permissions';
 import { clearRefreshCookie, readRefreshCookie, setRefreshCookie } from './refresh-cookie';
-import { SessionThrottlerGuard, ThrottleBySession } from './session-throttler.guard';
+import {
+  IdentityThrottlerGuard,
+  ThrottleBySession,
+  ThrottleByTarget,
+} from './identity-throttler.guard';
 import { TenantBillingGate } from './tenant-billing.gate';
 import { AllowUnpaidTenant } from './tenant-billing.guard';
 
@@ -57,39 +61,59 @@ import { AllowUnpaidTenant } from './tenant-billing.guard';
  *
  * ## Limitation de débit
  *
- * `SessionThrottlerGuard` couvre tout le contrôleur, et les quotas sont resserrés
- * là où ils comptent. Sans elle, un formulaire de connexion est un oracle qu'on
- * interroge à la vitesse du réseau : bcrypt coût 12 rend le forçage *hors ligne*
- * coûteux, il ne fait rien contre le forçage *en ligne*, où c'est notre propre
- * serveur qui paie le hachage.
+ * `IdentityThrottlerGuard` couvre tout le contrôleur, et les quotas sont
+ * resserrés là où ils comptent. Sans elle, un formulaire de connexion est un
+ * oracle qu'on interroge à la vitesse du réseau : bcrypt coût 12 rend le forçage
+ * *hors ligne* coûteux, il ne fait rien contre le forçage *en ligne*, où c'est
+ * notre propre serveur qui paie le hachage.
  *
- * Le compteur est par adresse IP — ce que `@nestjs/throttler` sait faire sans
- * état partagé. Ce n'est pas une protection complète : un attaquant distribué la
- * contourne. Elle arrête ce qu'elle doit arrêter à ce stade — le forçage depuis
- * une seule origine — et le durcissement par compte, avec compteur en Redis,
- * demandera le stockage partagé que le MVP n'a pas encore câblé.
+ * **Aucune de ces routes n'est appelée depuis un navigateur** : le front les
+ * atteint par des actions serveur (`apps/web/lib/api-client.ts` lit `API_URL`,
+ * non préfixée `NEXT_PUBLIC_`), si bien que leur `req.ip` est celui de la tâche
+ * ECS du front — le même pour tous les établissements et tous les visiteurs. Un
+ * quota compté par adresse y vaut donc pour le **produit entier**, et c'est le
+ * défaut que #860 a d'abord corrigé sur `refresh`, puis #1127 sur les routes qui
+ * jugent un mot de passe.
  *
- * **Une route fait exception, et elle le dit** : `refresh`, où l'adresse IP ne
- * désigne plus personne parce qu'aucun navigateur ne l'appelle. Elle porte
- * `@ThrottleBySession()`, et son compteur suit la session
- * (`session-throttler.guard.ts`, #860).
+ * Chaque route dit donc ce qu'elle compte, et le compteur suit ce qu'elle
+ * protège (`identity-throttler.guard.ts`) :
  *
- * **Le même angle mort vaut pour les autres routes, et il reste ouvert.**
- * `login`, `register`, `invitations/accept` et `logout` ne sont pas davantage
- * appelées depuis un navigateur : le front les atteint par des actions serveur
- * (`apps/web/lib/api-client.ts` lit `API_URL`, non préfixée `NEXT_PUBLIC_`), si
- * bien que leur `req.ip` est lui aussi celui de la tâche ECS du front. Leurs
- * quotas — dix connexions, cinq inscriptions par minute — valent donc pour le
- * **produit entier** et non par visiteur. `@ThrottleBySession()` ne peut pas les
- * couvrir, et pas par oubli : un compteur par session y rendrait le forçage
- * amplifiable (voir `session-throttler.guard.ts`). Les fermer demande soit le
- * compteur par compte en Redis évoqué ci-dessus, soit la propagation de
- * l'adresse réelle du visiteur par le serveur Next — deux chantiers que le MVP
- * n'a pas câblés.
+ * | Route | Compteur | Quota |
+ * |---|---|---|
+ * | `refresh` | la **session** prouvée par le cookie (`@ThrottleBySession()`) | 30 / min |
+ * | `login` | la **cible** : établissement + adresse (`@ThrottleByTarget()`) | 10 / min |
+ * | `register` | l'**établissement** visé (`@ThrottleByTarget()`) | 5 / min |
+ * | `invitations/accept`, `password-reset*` | l'adresse IP | 5 / min |
+ *
+ * `logout` et `me` n'y figurent pas : elles ne portent pas de `@Throttle` et
+ * retombent sur le défaut du module, soixante par minute et par adresse.
+ *
+ * ## Ce que ce ticket n'a **pas** fermé, et qu'il ne faut pas lire comme réglé
+ *
+ * #1127 n'a repris que les trois routes qui jugent un mot de passe. Les autres
+ * gardent un compteur d'adresse, donc un plafond de plateforme, et **c'est un
+ * défaut ouvert, pas un arbitrage** — il est suivi en #1128 :
+ *
+ * - `me` est appelée à chaque rendu d'écran du back-office (`loadAdminShell`) :
+ *   soixante par minute pour tout le produit s'atteint avec une poignée de
+ *   salons ouverts en même temps ;
+ * - `password-reset` nomme pourtant une cible. Sa limite par adresse e-mail en
+ *   base (`users.password_reset_requested_at`) borne les **envois**, pas les
+ *   appels, et cinq demandes par minute pour toute la plateforme reste un
+ *   rationnement. Le compteur par cible ne ferait pas d'oracle d'existence, lui :
+ *   il compte une cible, qu'elle existe ou non ;
+ * - `invitations/accept` et `password-reset/confirm` ne nomment aucune cible —
+ *   elles portent un jeton signé de 256 bits — mais cinq par minute pour le
+ *   produit entier borne malgré tout six personnes qui acceptent leur invitation
+ *   dans la même minute.
+ *
+ * Elles ne sont pas reprises ici parce que les critères de #1127 ne les couvrent
+ * pas et qu'aucune n'est la cause du rouge de `develop` ; les y ajouter aurait
+ * élargi un correctif dont treize tickets attendaient la fusion.
  */
 @ApiTags('auth')
 @Controller({ path: 'auth', version: '1' })
-@UseGuards(SessionThrottlerGuard)
+@UseGuards(IdentityThrottlerGuard)
 export class AuthController {
   public constructor(
     private readonly auth: AuthService,
@@ -100,10 +124,18 @@ export class AuthController {
   /**
    * Inscription client.
    *
-   * Plus serré que la connexion : cinq comptes par minute et par IP suffisent
-   * largement à un usage réel, et bornent la création de comptes en masse.
+   * Plus serré que la connexion : cinq comptes par minute **et par
+   * établissement**, ce qui suffit largement à un usage réel et borne la
+   * création de comptes en masse là où elle se paie — dans le salon qu'on
+   * inonde.
+   *
+   * Le compteur est l'établissement seul, et non l'établissement plus l'adresse
+   * : qui crée des comptes en masse varie l'adresse à chaque essai, et un
+   * compteur par adresse n'aurait borné que la seule chose qui échouait déjà,
+   * l'unique `(tenant_id, email)`. Voir `identity-throttler.guard.ts`, #1127.
    */
   @Post('register')
+  @ThrottleByTarget({ tenant: 'tenantSlug' })
   @Throttle({ default: { limit: 5, ttl: 60_000 } })
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({ summary: 'Inscrire un client et ouvrir sa session' })
@@ -143,10 +175,32 @@ export class AuthController {
   /**
    * Connexion — clients, staff et administrateurs.
    *
-   * Dix tentatives par minute et par IP : au-delà, ce n'est plus quelqu'un qui se
-   * trompe de mot de passe.
+   * ## Dix tentatives par minute, **et par compte visé** (#1127)
+   *
+   * Au-delà de dix essais sur une même cible — le couple établissement +
+   * adresse e-mail —, ce n'est plus quelqu'un qui se trompe de mot de passe.
+   *
+   * Le quota était compté par adresse IP jusqu'ici, et il ne bornait donc rien
+   * de ce qu'il prétendait borner : aucun navigateur n'appelle cette route, tous
+   * les salons y arrivent depuis la tâche ECS du front, et dix connexions par
+   * minute valaient pour la plateforme entière. Onze gérants qui ouvrent leur
+   * back-office à 9 h, et le onzième lisait « Trop de tentatives » ; la suite
+   * E2E, qui enchaîne les connexions sur un worker unique, s'y heurtait de façon
+   * déterministe.
+   *
+   * La cible est **normalisée puis hachée** avant de servir de clé : voir
+   * `identity-throttler.guard.ts` pour ce que cela empêche — un compteur neuf à
+   * chaque variation de casse, et une adresse e-mail lisible dans le stockage du
+   * limiteur.
+   *
+   * Dix reste dix, et ce n'était pas le nombre qui était faux. La suite E2E
+   * ouvre neuf sessions du même compte en cinquante secondes, ce qui passe mais
+   * ne laisse qu'un essai de marge : c'est la suite qui se reconnecte comme
+   * personne ne se reconnecte, et c'est elle qui est reprise (#1129) — pas ce
+   * plafond, qui borne le forçage d'un mot de passe.
    */
   @Post('login')
+  @ThrottleByTarget({ tenant: 'tenantSlug', account: 'email' })
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Ouvrir une session' })
@@ -173,9 +227,11 @@ export class AuthController {
    * l'invitation elle-même — un jeton signé, à usage unique, qui ne vaut que pour
    * poser le **premier** mot de passe du compte qu'il désigne.
    *
-   * Cinq tentatives par minute et par IP, comme l'inscription : le jeton porte
-   * 256 bits de signature, il ne se devine pas, et cette limite borne surtout le
-   * coût du bcrypt qu'un corps valide nous ferait payer.
+   * Cinq tentatives par minute et par IP — la seule de ces routes, avec la
+   * réinitialisation, à rester comptée par l'adresse, et l'en-tête dit pourquoi :
+   * le corps ne nomme aucune cible, il porte un jeton de 256 bits qui ne se
+   * devine pas, et cette limite borne surtout le coût du bcrypt qu'un corps
+   * valide nous ferait payer.
    *
    * **200** et non 201 : rien n'est créé — le compte existait déjà, il est
    * activé. La réponse est celle d'une connexion, cookie de rafraîchissement
@@ -224,12 +280,11 @@ export class AuthController {
    *
    * ## Cinq par minute et par IP, plus une limite par adresse en base
    *
-   * Le quota d'IP est celui de l'inscription, et pour la même raison : cinq
-   * demandes par minute suffisent largement à un usage réel. Il ne suffit pas à
-   * lui seul — il est en mémoire de tâche, et l'adresse qu'il compte est celle
-   * du serveur Next pour tous les visiteurs (voir l'en-tête de ce contrôleur,
-   * « le même angle mort vaut pour les autres routes »). La moitié « par
-   * adresse » que le critère exige est donc en base
+   * Cinq demandes par minute suffisent largement à un usage réel. Ce quota-là ne
+   * suffit pas à lui seul — il est en mémoire de tâche, et l'adresse qu'il
+   * compte est celle du serveur Next pour tous les visiteurs (voir l'en-tête de
+   * ce contrôleur, « aucune de ces routes n'est appelée depuis un
+   * navigateur »). La moitié « par adresse » que le critère exige est donc en base
    * (`users.password_reset_requested_at`, `PASSWORD_RESET_COOLDOWN_MS`) :
    * partagée par toutes les tâches, et durable à travers leurs redémarrages.
    *
@@ -338,7 +393,7 @@ export class AuthController {
    * compteur, et trente renouvellements par minute valaient pour le produit
    * entier. `@ThrottleBySession()` rattache le compteur au `sid` du jeton
    * vérifié ; le repli reste l'adresse pour une requête qui ne prouve aucune
-   * session. Voir `session-throttler.guard.ts`.
+   * session. Voir `identity-throttler.guard.ts`.
    *
    * Trente par minute et par session restent larges : une session renouvelle
    * toutes les quinze minutes, et la marge couvre les onglets multiples d'un

@@ -108,9 +108,13 @@ interface FailureCopy {
 /**
  * Le quota de la route d'authentification est atteint.
  *
- * Dix tentatives par minute et par IP sur `POST /auth/login`
- * (`auth.controller.ts`) : passé ce quota, ce sont les essais qui sont refusés,
- * pas le mot de passe — et le réécrire n'y changerait rien.
+ * Dix tentatives par minute **sur ce compte** — l'établissement et l'adresse
+ * saisie — sur `POST /auth/login` (`auth.controller.ts`, #1127) : passé ce
+ * quota, ce sont les essais qui sont refusés, pas le mot de passe — et le
+ * réécrire n'y changerait rien. Le texte reste juste maintenant que le compteur
+ * a changé, et il l'est même davantage : jusqu'à #1127 le quota était celui de
+ * la plateforme entière, et cet encart pouvait s'afficher sur un premier essai,
+ * parce qu'un autre salon venait de consommer les dix.
  *
  * Le texte vient d'ici et non de l'API : `ThrottlerGuard` répond
  * « ThrottlerException: Too Many Requests », une phrase anglaise qui nomme une
