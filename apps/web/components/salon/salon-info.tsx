@@ -1,6 +1,8 @@
 import type { PublicTenant } from '@spa/shared';
+import { useLocale, useTranslations } from 'next-intl';
 
 import { Icon } from '@/components/ui/icon';
+import type { DisplayLocale } from '@/lib/format';
 import { formatPhoneForDisplay } from '@/lib/phone';
 
 import { formatOpeningRange, salonClock, weekSchedule } from './opening-hours';
@@ -60,6 +62,19 @@ export const PLACE_HEADING_ID = 'nous-trouver';
  * en toutes circonstances. Sur la vitrine d'un salon qui n'a **ni** coordonnées
  * **ni** prestation, c'était faux : le tunnel refusait de démarrer deux clics
  * plus loin. La phrase n'est donc plus dite que quand elle est vraie.
+ *
+ * ## La langue (#846)
+ *
+ * Les titres des deux cartes, « Fermé », « (aujourd'hui) », la mention du fuseau
+ * et l'état vide viennent du catalogue, sous `salon.info` et `salon.hours`. Ce
+ * qui n'en vient pas : l'**adresse**, le **numéro** et l'**adresse e-mail**, qui
+ * sont du contenu de salon, et les **heures d'ouverture**, qui sont des heures
+ * murales telles que la gérante les a saisies.
+ *
+ * Les **noms de jours** sont calculés par `opening-hours.ts` à partir d'`Intl`,
+ * dans la langue résolue et avec la région de l'établissement : la carte écrit
+ * « Lundi » ou « Monday » sans qu'aucune table de noms n'existe nulle part. Le
+ * **fuseau** ne bouge pas — c'est toujours celui du salon.
  */
 interface SalonInfoProps {
   readonly tenant: PublicTenant;
@@ -78,7 +93,10 @@ interface SalonInfoProps {
 }
 
 export function SalonInfo({ tenant, bookable, now = new Date() }: SalonInfoProps) {
-  const week = weekSchedule(tenant.openingHours ?? []);
+  const t = useTranslations('booking');
+  const locale = useLocale();
+  const display: DisplayLocale = { locale, countryCode: tenant.address?.country ?? null };
+  const week = weekSchedule(tenant.openingHours ?? [], display);
   const today = salonClock(tenant.timezone, now)?.weekday ?? null;
   const hasPlace =
     tenant.address !== undefined ||
@@ -88,11 +106,9 @@ export function SalonInfo({ tenant, bookable, now = new Date() }: SalonInfoProps
   if (week.length === 0 && !hasPlace) {
     return (
       <div className="spa-card spa-card--empty">
-        <p className="spa-empty-state__title">Informations non communiquées</p>
+        <p className="spa-empty-state__title">{t('salon.info.emptyTitle')}</p>
         <p className="spa-empty-state__description">
-          {bookable
-            ? 'Ce salon n’a pas encore publié ses coordonnées, son adresse ni ses horaires. La réservation en ligne reste ouverte.'
-            : 'Ce salon n’a pas encore publié ses coordonnées, son adresse ni ses horaires.'}
+          {bookable ? t('salon.info.emptyBookable') : t('salon.info.emptyUnavailable')}
         </p>
       </div>
     );
@@ -104,7 +120,7 @@ export function SalonInfo({ tenant, bookable, now = new Date() }: SalonInfoProps
         <section className="spa-salon-card" aria-labelledby={HOURS_HEADING_ID}>
           <h2 className="spa-salon-card__title" id={HOURS_HEADING_ID}>
             <Icon name="clock" />
-            Horaires
+            {t('salon.info.hoursTitle')}
           </h2>
 
           <ul className="spa-salon-hours">
@@ -117,12 +133,12 @@ export function SalonInfo({ tenant, bookable, now = new Date() }: SalonInfoProps
                 <span className="spa-salon-hours__day">
                   {day.label}
                   {day.weekday === today ? (
-                    <span className="spa-visually-hidden"> (aujourd’hui)</span>
+                    <span className="spa-visually-hidden"> {t('salon.info.today')}</span>
                   ) : null}
                 </span>
                 <span className="spa-salon-hours__ranges">
                   {day.ranges.length === 0
-                    ? 'Fermé'
+                    ? t('salon.hours.closed')
                     : day.ranges.map((range) => formatOpeningRange(range)).join(', ')}
                 </span>
               </li>
@@ -130,7 +146,7 @@ export function SalonInfo({ tenant, bookable, now = new Date() }: SalonInfoProps
           </ul>
 
           <p className="spa-salon-card__hint">
-            Heures données dans le fuseau du salon ({humanTimeZone(tenant.timezone)}).
+            {t('salon.info.timeZoneHint', { timeZone: humanTimeZone(tenant.timezone) })}
           </p>
         </section>
       )}
@@ -139,7 +155,7 @@ export function SalonInfo({ tenant, bookable, now = new Date() }: SalonInfoProps
         <section className="spa-salon-card" aria-labelledby={PLACE_HEADING_ID}>
           <h2 className="spa-salon-card__title" id={PLACE_HEADING_ID}>
             <Icon name="pin" />
-            Nous trouver
+            {t('salon.info.placeTitle')}
           </h2>
 
           {tenant.address === undefined ? null : (
@@ -150,7 +166,7 @@ export function SalonInfo({ tenant, bookable, now = new Date() }: SalonInfoProps
                     reprend la voie —, et React n'admet pas deux clés identiques
                     entre frères. La liste est de longueur fixe et sans
                     réordonnancement, l'index y est stable. */}
-                {addressLines(tenant.address).map((line, index) => (
+                {addressLines(tenant.address, display).map((line, index) => (
                   <span key={index}>{line}</span>
                 ))}
               </address>
@@ -161,8 +177,8 @@ export function SalonInfo({ tenant, bookable, now = new Date() }: SalonInfoProps
                 target="_blank"
               >
                 <Icon name="external" />
-                Itinéraire
-                <span className="spa-visually-hidden"> (nouvel onglet)</span>
+                {t('salon.info.directions')}
+                <span className="spa-visually-hidden"> {t('salon.info.newTab')}</span>
               </a>
             </>
           )}

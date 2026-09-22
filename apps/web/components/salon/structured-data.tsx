@@ -1,8 +1,10 @@
 import type { OpeningHoursEntry, PostalAddress, PublicService, PublicTenant } from '@spa/shared';
+import { useTranslations } from 'next-intl';
 
 import { formatAmountMachine } from '@/lib/format';
+import fr from '@/messages/fr/booking.json';
 
-import { groupServicesByCategory } from './group-services';
+import { groupServicesByCategory, UNCLASSIFIED_TITLE } from './group-services';
 import { SCHEMA_ORG_WEEKDAYS } from './opening-hours';
 
 /**
@@ -44,6 +46,25 @@ import { SCHEMA_ORG_WEEKDAYS } from './opening-hours';
  * - la durée des prestations — `schema.org/Service` n'a aucune propriété de
  *   durée, et la loger dans une propriété voisine produirait un graphe invalide.
  *   Elle reste dans le HTML, où elle est lisible.
+ *
+ * ## La langue (#846)
+ *
+ * Presque rien n'est à traduire ici, et c'est le fond du sujet : un graphe
+ * schema.org est fait de **données** et d'**identifiants**. Les `@type`, les
+ * énumérations (`https://schema.org/Monday`), le code pays ISO, les heures
+ * murales, la devise et les prix en forme machine ne changent pas d'une langue à
+ * l'autre — les traduire rendrait le graphe illisible pour l'analyseur qui le
+ * lit.
+ *
+ * Restent **deux noms de catalogue** que le graphe fabrique lui-même : celui de
+ * l'`OfferCatalog` de tête — « Prestations — Maison Lotus » — et le titre de la
+ * rubrique fictive des prestations non classées. Ceux-là s'affichent dans un
+ * résultat de recherche, et ils suivent donc la langue de la page.
+ *
+ * `buildSalonGraph` reste une fonction **pure**, exportée pour être vérifiée
+ * comme un objet : elle reçoit ces deux mots en dernier paramètre, facultatif,
+ * plutôt que de lire un crochet qu'un test sans DOM ne saurait fournir. Le
+ * composant, lui, les prend au catalogue.
  */
 
 /** Valeur JSON, écrite sans `any` — le graphe n'est qu'une structure de données. */
@@ -105,14 +126,42 @@ function toOpeningHoursGraph(entries: readonly OpeningHoursEntry[]): readonly Js
   }));
 }
 
+/**
+ * Les deux seuls mots que le graphe fabrique, et qu'un humain lira (#846).
+ *
+ * Ni les `@type`, ni les énumérations, ni les noms saisis par le salon : voir le
+ * bloc de tête.
+ */
+export interface SalonGraphLabels {
+  /** Le nom de l'`OfferCatalog` de tête — « Prestations — {nom du salon} ». */
+  readonly catalogName: string;
+  /** Le titre de la rubrique qui recueille les prestations non classées. */
+  readonly unclassified: string;
+}
+
+/**
+ * Les deux mots en français, pour un appelant qui ne résout pas encore la
+ * langue — les suites de tests, aujourd'hui.
+ *
+ * Lus dans le catalogue et non réécrits : c'est ce qui garantit que le graphe et
+ * la page annoncent le même nom de rubrique.
+ */
+function fallbackLabels(tenantName: string): SalonGraphLabels {
+  return {
+    catalogName: fr.salon.structuredData.catalogName.replace('{name}', tenantName),
+    unclassified: UNCLASSIFIED_TITLE,
+  };
+}
+
 /** Le graphe schema.org de la page — exporté pour être vérifié en test. */
 export function buildSalonGraph(
   tenant: PublicTenant,
   services: readonly PublicService[],
   url: string,
   reservationUrl: string,
+  labels: SalonGraphLabels = fallbackLabels(tenant.name),
 ): JsonValue {
-  const sections = groupServicesByCategory(services);
+  const sections = groupServicesByCategory(services, labels.unclassified);
 
   return {
     '@context': 'https://schema.org',
@@ -132,7 +181,7 @@ export function buildSalonGraph(
       : {
           hasOfferCatalog: {
             '@type': 'OfferCatalog',
-            name: `Prestations — ${tenant.name}`,
+            name: labels.catalogName,
             itemListElement: sections.map((section) => ({
               '@type': 'OfferCatalog',
               name: section.title,
@@ -188,13 +237,19 @@ export function SalonStructuredData({
   url,
   reservationUrl,
 }: SalonStructuredDataProps) {
+  const t = useTranslations('booking');
+  const labels: SalonGraphLabels = {
+    catalogName: t('salon.structuredData.catalogName', { name: tenant.name }),
+    unclassified: t('salon.catalog.unclassified'),
+  };
+
   return (
     <script
       type="application/ld+json"
       // Le contenu d'un `<script>` n'est pas du texte React : il n'y a pas
       // d'autre moyen de l'écrire, et il est échappé juste au-dessus.
       dangerouslySetInnerHTML={{
-        __html: serializeJsonLd(buildSalonGraph(tenant, services, url, reservationUrl)),
+        __html: serializeJsonLd(buildSalonGraph(tenant, services, url, reservationUrl, labels)),
       }}
     />
   );

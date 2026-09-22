@@ -1,5 +1,7 @@
 import type { PostalAddress } from '@spa/shared';
 
+import { formattingLocale, type DisplayLocale } from '@/lib/format';
+
 /**
  * L'adresse postale d'un salon, telle que le parcours public l'écrit (#343,
  * complété par #1046).
@@ -11,7 +13,26 @@ import type { PostalAddress } from '@spa/shared';
  *
  * Aucun JSX ici : la présentation d'une adresse est de la logique pure, et elle
  * se teste comme telle.
+ *
+ * ## La langue (#846)
+ *
+ * Une adresse est du contenu de salon : la voie, le complément, le code postal
+ * et la ville s'affichent tels quels, dans la langue où la gérante les a saisis.
+ * **Un seul élément se traduit** — le nom du pays, qu'`Intl.DisplayNames` sait
+ * écrire dans n'importe quelle langue à partir du code ISO du contrat.
+ *
+ * Le contexte d'affichage arrive donc en dernier paramètre, facultatif, comme
+ * dans `lib/format.ts`, dont `formattingLocale` construit l'étiquette : la
+ * région vient du pays de l'établissement, et un repli figé quand il est vide.
+ * Le défaut français garde le comportement d'avant le ticket pour les cinq
+ * appelants qui vivent hors de l'empreinte de #846 — le pied du gabarit, la
+ * carte du salon de l'espace client, la fiche d'un rendez-vous, le cadre
+ * d'accueil de la connexion et le récapitulatif du tunnel — et tombera avec le
+ * dernier ticket d'écran de l'épique #843.
  */
+
+/** Le contexte d'affichage employé quand l'appelant n'en passe pas encore. */
+const FALLBACK_DISPLAY: DisplayLocale = { locale: 'fr' };
 
 /**
  * L'adresse en lignes d'affichage.
@@ -21,24 +42,32 @@ import type { PostalAddress } from '@spa/shared';
  * la leur, comme sur une enveloppe ; le pays reste à part.
  *
  * Le pays est rendu **en toutes lettres** quand l'environnement sait le
- * traduire, et en code sinon. `Intl.DisplayNames` fait partie d'ECMA-402 et est
- * disponible dans Node comme dans tous les navigateurs visés ; le repli existe
- * pour ne jamais rendre une chaîne vide si un code inconnu passait.
+ * traduire, et en code sinon — « France » ou « Frankreich » selon qui lit
+ * (#846). `Intl.DisplayNames` fait partie d'ECMA-402 et est disponible dans Node
+ * comme dans tous les navigateurs visés ; le repli existe pour ne jamais rendre
+ * une chaîne vide si un code inconnu passait.
  */
-export function addressLines(address: PostalAddress): readonly string[] {
+export function addressLines(
+  address: PostalAddress,
+  display: DisplayLocale = FALLBACK_DISPLAY,
+): readonly string[] {
   const locality = [address.postalCode, address.city].filter((part) => part !== undefined);
 
   return [
     address.line1,
     ...(address.line2 === undefined ? [] : [address.line2]),
     locality.join(' '),
-    countryName(address.country),
+    countryName(address.country, display),
   ];
 }
 
-function countryName(code: string): string {
+function countryName(code: string, display: DisplayLocale): string {
   try {
-    return new Intl.DisplayNames(['fr'], { type: 'region' }).of(code) ?? code;
+    return (
+      new Intl.DisplayNames([formattingLocale(display.locale, display.countryCode)], {
+        type: 'region',
+      }).of(code) ?? code
+    );
   } catch {
     return code;
   }

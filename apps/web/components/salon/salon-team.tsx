@@ -1,4 +1,5 @@
 import type { PublicService } from '@spa/shared';
+import { useTranslations } from 'next-intl';
 
 import { Avatar } from '@/components/ui/avatar';
 
@@ -38,12 +39,20 @@ export interface TeamMember {
  * L'ordre est celui du catalogue, pour la même raison que le groupement des
  * rubriques : le classement appartient au salon, et un tri alphabétique posé
  * ici remonterait un praticien devant un autre sans qu'il l'ait demandé.
+ *
+ * `unclassifiedTitle` est, ici aussi, le seul mot que l'appelant fournit (#846) :
+ * les rubriques qualifiant un praticien sont celles du salon. Facultatif, il
+ * retombe sur le français — voir {@link UNCLASSIFIED_TITLE}. Cette fonction est
+ * pure et exportée pour être testée seule : elle n'appelle aucun crochet.
  */
-export function teamFromServices(services: readonly PublicService[]): readonly TeamMember[] {
+export function teamFromServices(
+  services: readonly PublicService[],
+  unclassifiedTitle: string = UNCLASSIFIED_TITLE,
+): readonly TeamMember[] {
   const members = new Map<string, { displayName: string; practices: string[] }>();
 
   for (const service of services) {
-    const practice = service.category?.name ?? UNCLASSIFIED_TITLE;
+    const practice = service.category?.name ?? unclassifiedTitle;
 
     for (const member of service.staff) {
       const existing = members.get(member.id);
@@ -83,9 +92,19 @@ interface SalonTeamProps {
  * d'équipe à montrer, et un « L'équipe » suivi d'un état vide dirait à la
  * cliente qu'il n'y a personne — ce que la mention de chaque ligne du catalogue
  * dit déjà, à sa place et sans généraliser.
+ *
+ * ## La langue (#846)
+ *
+ * Deux mots seulement sont à traduire : le titre de la section et le nom de la
+ * rubrique fictive qui recueille les prestations non classées. Le **nom d'un
+ * praticien** et celui de ses rubriques viennent du salon et s'affichent tels
+ * quels. `useTranslations` : le composant n'est pas asynchrone.
  */
 export function SalonTeam({ services }: SalonTeamProps) {
-  const members = teamFromServices(services);
+  // Appelé avant le retour anticipé : un crochet de React ne se saute pas
+  // (`react-hooks/rules-of-hooks`), et `useTranslations` en est un.
+  const t = useTranslations('booking');
+  const members = teamFromServices(services, t('salon.catalog.unclassified'));
 
   if (members.length === 0) {
     return null;
@@ -94,7 +113,7 @@ export function SalonTeam({ services }: SalonTeamProps) {
   return (
     <section className="spa-salon__section" aria-labelledby={TEAM_HEADING_ID}>
       <h2 className="spa-salon__section-title" id={TEAM_HEADING_ID}>
-        L’équipe
+        {t('salon.team.title')}
       </h2>
 
       <ul className="spa-salon-team">

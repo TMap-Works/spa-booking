@@ -1,7 +1,9 @@
 import type { PublicService } from '@spa/shared';
+import { useLocale, useTranslations } from 'next-intl';
 import Link from 'next/link';
 
-import { formatDuration, formatMoney } from '@/lib/format';
+import { formatDuration, formatMoney, type DisplayLocale } from '@/lib/format';
+import fr from '@/messages/fr/booking.json';
 
 import { serviceBookingHref } from './booking-link';
 import { CatalogCategories } from './catalog-categories';
@@ -16,13 +18,21 @@ const CATEGORY_TABS_PREFIX = 'rubrique';
 
 /**
  * Ce que la ligne affiche à la place des noms de praticiens quand il n'y en a
- * aucun (#765).
+ * aucun (#765), en français.
  *
  * Écrit une fois et exporté : l'aperçu du back-office réemploie ce composant et
  * annonce la mention à la gérante avant qu'elle ne la cherche dans la grille. Un
  * second écran qui la recopierait serait un second libellé à faire diverger.
+ *
+ * @deprecated Transitoire (#846). Le catalogue le tient désormais, et la ligne
+ * du catalogue public le lit par `t('salon.catalog.unstaffed')` : cette
+ * constante n'est plus là que pour les deux surfaces du back-office qui la
+ * nomment — `admin/components/service-bookability-badge.tsx` et
+ * `admin/catalogue/apercu/page.tsx` —, hors de l'empreinte de ce ticket. Elle
+ * disparaît avec leur propre ticket de l'épique #843. Lue dans le catalogue
+ * plutôt que réécrite ici : il n'y a qu'une écriture de ce libellé.
  */
-export const UNSTAFFED_SERVICE_LABEL = 'Aucun praticien — pas de créneau en ligne';
+export const UNSTAFFED_SERVICE_LABEL: string = fr.salon.catalog.unstaffed;
 
 /**
  * Catalogue public d'un salon, groupé par rubrique (#43, refondu par #1046).
@@ -95,6 +105,23 @@ export const UNSTAFFED_SERVICE_LABEL = 'Aucun praticien — pas de créneau en l
  * un vrai `tel:` ou `mailto:` (`salon-contact.ts`), comme le dessine
  * `docs/design/appointments/states.md` pour l'étape service. Sinon il se borne
  * au constat.
+ *
+ * ## La langue (#846)
+ *
+ * Les mots de l'interface — le titre de section, les préfixes de lecture
+ * d'écran, l'état vide, « Choisir » — viennent du catalogue, sous
+ * `salon.catalog`. **Rien de ce que le salon a saisi n'y passe** : le nom d'une
+ * prestation, sa description, le nom d'une rubrique et celui d'un praticien
+ * s'affichent tels quels.
+ *
+ * `useTranslations` et non `getTranslations` : ce composant n'est pas
+ * asynchrone, et le crochet fonctionne dans un Server Component.
+ *
+ * Les durées et les prix passent par `lib/format.ts` avec la langue résolue. Le
+ * `countryCode` y est `null`, et **ce n'est pas un oubli** : ce composant ne
+ * reçoit pas l'établissement — l'aperçu du back-office le monte sur un catalogue
+ * seul —, et le brief de l'épique interdit d'inventer un pays qu'on n'a pas sous
+ * la main. La région tombe alors sur le repli figé de `lib/format.ts`.
  */
 interface ServiceCatalogProps {
   readonly services: readonly PublicService[];
@@ -122,13 +149,14 @@ export function ServiceCatalog({
   contact = null,
   reservationPath = null,
 }: ServiceCatalogProps) {
-  const sections = groupServicesByCategory(services);
+  const t = useTranslations('booking');
+  const sections = groupServicesByCategory(services, t('salon.catalog.unclassified'));
   const onlySection = sections.length === 1 ? sections[0] : undefined;
 
   return (
     <section className="spa-salon__section" aria-labelledby={CATALOG_HEADING_ID}>
       <h2 className="spa-salon__section-title" id={CATALOG_HEADING_ID}>
-        Nos prestations
+        {t('salon.catalog.title')}
       </h2>
 
       {sections.length === 0 ? (
@@ -136,11 +164,11 @@ export function ServiceCatalog({
         // s'inscrire existe, et sa page doit le dire plutôt que de rester
         // blanche (skill web-frontend §6).
         <div className="spa-card spa-card--empty">
-          <p className="spa-empty-state__title">Catalogue en cours de préparation</p>
+          <p className="spa-empty-state__title">{t('salon.catalog.emptyTitle')}</p>
           <p className="spa-empty-state__description">
             {contact === null
-              ? 'Ce salon n’a pas encore publié ses prestations en ligne.'
-              : 'Ce salon n’a pas encore publié ses prestations en ligne. Contactez-le directement pour connaître son offre.'}
+              ? t('salon.catalog.emptyDescription')
+              : t('salon.catalog.emptyDescriptionWithContact')}
           </p>
           {contact === null ? null : (
             // Un `<a>` et non un `<button>` : `tel:` et `mailto:` sont des
@@ -191,6 +219,12 @@ interface ServiceListProps {
 }
 
 function ServiceList({ services, reservationPath }: ServiceListProps) {
+  const t = useTranslations('booking');
+  const locale = useLocale();
+  // Voir le bloc de tête : la vitrine ne passe pas l'établissement à ce
+  // composant, et un pays deviné serait pire qu'un pays absent.
+  const display: DisplayLocale = { locale, countryCode: null };
+
   return (
     <ul className="spa-salon__services">
       {services.map((service) => {
@@ -211,17 +245,17 @@ function ServiceList({ services, reservationPath }: ServiceListProps) {
 
               <p className="spa-salon-service__meta">
                 <span>
-                  <span className="spa-visually-hidden">Durée : </span>
-                  {formatDuration(service.durationMinutes)}
+                  <span className="spa-visually-hidden">{t('salon.catalog.durationLabel')} </span>
+                  {formatDuration(service.durationMinutes, display)}
                 </span>
                 {service.staff.length === 0 ? (
                   // Pas de préfixe « Praticiens : » ici : la mention se suffit,
                   // et le lecteur d'écran entendrait sinon « Praticiens : aucun
                   // praticien ».
-                  <span>{UNSTAFFED_SERVICE_LABEL}</span>
+                  <span>{t('salon.catalog.unstaffed')}</span>
                 ) : (
                   <span>
-                    <span className="spa-visually-hidden">Praticiens : </span>
+                    <span className="spa-visually-hidden">{t('salon.catalog.staffLabel')} </span>
                     {service.staff.map((member) => member.displayName).join(', ')}
                   </span>
                 )}
@@ -234,16 +268,18 @@ function ServiceList({ services, reservationPath }: ServiceListProps) {
 
             <div className="spa-salon-service__aside">
               <p className="spa-salon-service__price">
-                <span className="spa-visually-hidden">Tarif : </span>
-                {formatMoney(service.price)}
+                <span className="spa-visually-hidden">{t('salon.catalog.priceLabel')} </span>
+                {formatMoney(service.price, display)}
               </p>
 
               {bookingHref === null ? null : (
                 // Le nom accessible porte la prestation : une page de vingt
                 // liens tous nommés « Choisir » ne se navigue pas au clavier
-                // ni au lecteur d'écran (WCAG 2.4.4).
+                // ni au lecteur d'écran (WCAG 2.4.4). Le nom de la prestation
+                // est du contenu de salon — il ne traverse pas le catalogue, et
+                // le tiret qui l'introduit n'est que de la ponctuation (#846).
                 <Link className="spa-button spa-button--neutral spa-salon-service__action" href={bookingHref}>
-                  Choisir
+                  {t('salon.catalog.choose')}
                   <span className="spa-visually-hidden"> — {service.name}</span>
                 </Link>
               )}

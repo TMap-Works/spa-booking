@@ -11,9 +11,23 @@
  * renvoie. Le front ne le retrie pas : le classement du catalogue appartient au
  * salon, et un tri alphabétique posé côté client remonterait « Balayage » avant
  * « Coupe » sur une carte que le salon a rangée autrement.
+ *
+ * ## La langue (#846)
+ *
+ * Un seul mot de ce module s'affiche : le titre de la rubrique fictive qui
+ * recueille les prestations non classées. Tous les autres titres sont ceux que
+ * le salon a saisis, et ils ne se traduisent pas.
+ *
+ * Ce module est pur et sans React : il ne peut appeler aucun crochet. Le titre
+ * traduit lui est donc **passé en dernier paramètre, facultatif** — c'est la
+ * forme que le brief de l'épique #843 prescrit pour un helper — et le défaut
+ * reste le français, pour le seul appelant qui ne le résout pas : le squelette
+ * de l'étape « prestation », qui ne rend aucun titre.
  */
 
 import type { PublicService, ServiceCategorySummary } from '@spa/shared';
+
+import fr from '@/messages/fr/booking.json';
 
 /**
  * Clé de la rubrique fictive qui recueille les prestations non classées.
@@ -29,8 +43,19 @@ import type { PublicService, ServiceCategorySummary } from '@spa/shared';
  */
 export const UNCLASSIFIED_KEY = 'sans-rubrique';
 
-/** Titre affiché pour ces prestations-là. */
-export const UNCLASSIFIED_TITLE = 'Autres prestations';
+/**
+ * Titre affiché pour ces prestations-là, en français.
+ *
+ * @deprecated Transitoire (#846). Lu dans le catalogue plutôt que réécrit ici,
+ * pour qu'il n'y ait qu'une écriture de ce libellé ; les appelants qui résolvent
+ * la langue passent le leur en paramètre de `groupServicesByCategory`. Le seul
+ * à ne pas le faire est `components/booking/step-skeleton.tsx`, et c'est sans
+ * conséquence : son dessin ne rend aucun titre — il ne se sert du groupement que
+ * pour compter les lignes à réserver. Même arbitrage que `PUBLIC_EXIT_LABELS` :
+ * garder le français évite de basculer en anglais des écrans dont la traduction
+ * n'a pas encore été relue.
+ */
+export const UNCLASSIFIED_TITLE: string = fr.salon.catalog.unclassified;
 
 /** Une rubrique du catalogue et les prestations qu'elle porte. */
 export interface CatalogSection {
@@ -53,9 +78,14 @@ export interface CatalogSection {
  * - **les prestations non classées ferment la marche**, quelle que soit leur
  *   position dans la réponse : une section « Autres prestations » au milieu du
  *   catalogue se lit comme une rubrique du salon, ce qu'elle n'est pas.
+ *
+ * `unclassifiedTitle` est le seul mot que l'appelant a à fournir (#846) : les
+ * autres titres sont ceux du salon. Facultatif, il retombe sur le français —
+ * voir {@link UNCLASSIFIED_TITLE}.
  */
 export function groupServicesByCategory(
   services: readonly PublicService[],
+  unclassifiedTitle: string = UNCLASSIFIED_TITLE,
 ): readonly CatalogSection[] {
   const sections = new Map<string, { category: ServiceCategorySummary | null; services: PublicService[] }>();
 
@@ -72,7 +102,7 @@ export function groupServicesByCategory(
 
   const grouped = [...sections.entries()].map(([key, section]) => ({
     key,
-    title: section.category?.name ?? UNCLASSIFIED_TITLE,
+    title: section.category?.name ?? unclassifiedTitle,
     category: section.category,
     services: section.services,
   }));

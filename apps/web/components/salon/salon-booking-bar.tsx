@@ -1,8 +1,9 @@
+import { useLocale, useTranslations } from 'next-intl';
 import Link from 'next/link';
 
 import { LinkPending } from '@/components/ui/link-pending';
 
-import { PUBLIC_EXIT_LABELS } from './public-exits';
+import { publicExitLabels } from './public-exits';
 
 interface SalonBookingBarProps {
   /** Chemin du tunnel — `null` quand rien n'est réservable, la barre disparaît. */
@@ -46,8 +47,22 @@ interface SalonBookingBarProps {
  *
  * Server Component : un lien et un compte. Seul `LinkPending` est un îlot, et il
  * ne peint rien avant le clic (#830).
+ *
+ * ## La langue (#846)
+ *
+ * Le compte de prestations est une **forme plurielle**, et c'est ICU qui
+ * l'accorde : le français et l'anglais ne rangent pas les mêmes nombres dans les
+ * mêmes catégories, et un ternaire `=== 1` écrit ici aurait figé la règle
+ * française dans les deux langues. L'appel à l'action, lui, vient du registre
+ * des sorties publiques, dans la langue résolue — la même chaîne que l'en-tête
+ * du gabarit et que le bandeau d'identité.
  */
 export function SalonBookingBar({ href, serviceCount }: SalonBookingBarProps) {
+  // Appelés avant le retour anticipé : un crochet de React ne se saute pas
+  // (`react-hooks/rules-of-hooks`), et ces deux-là en sont.
+  const t = useTranslations('booking');
+  const locale = useLocale();
+
   if (href === null || serviceCount === 0) {
     return null;
   }
@@ -55,11 +70,11 @@ export function SalonBookingBar({ href, serviceCount }: SalonBookingBarProps) {
   return (
     <div className="spa-salon-bookbar">
       <p aria-hidden="true" className="spa-salon-bookbar__count">
-        {serviceCount === 1 ? '1 prestation' : `${String(serviceCount)} prestations`}
+        {t('salon.bookingBar.serviceCount', { count: serviceCount })}
       </p>
 
       <Link className="spa-button spa-button--accent spa-salon-bookbar__action" href={href}>
-        <span className="spa-button__label">{PUBLIC_EXIT_LABELS.reservation}</span>
+        <span className="spa-button__label">{publicExitLabels(locale).reservation}</span>
         <LinkPending />
       </Link>
     </div>
