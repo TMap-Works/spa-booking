@@ -2466,6 +2466,26 @@ model Notification {
   channel NotificationChannel
   status  NotificationStatus  @default(PENDING)
 
+  /// La langue dans laquelle le message est **réellement** parti — #854.
+  ///
+  /// Un constat, pas une préférence : la langue du destinataire si son compte en
+  /// porte une, celle de l'établissement (`tenants.default_locale`) sinon,
+  /// résolue **au moment de l'expédition** et non à la planification. C'est le
+  /// deuxième critère d'acceptation de #854, et c'est ce qui permet à un salon de
+  /// savoir en quelle langue une cliente a reçu son rappel.
+  ///
+  /// Même vocabulaire et même régime que `tenants.default_locale` : une chaîne en
+  /// minuscules (`LOCALES` de `@spa/shared`), bornée par
+  /// `notifications_locale_check` plutôt que par un type énuméré — voir la
+  /// migration `20260919140000_add_locale_preferences` pour le raisonnement, qui
+  /// ne change pas d'une colonne à l'autre.
+  ///
+  /// `NOT NULL` **sans valeur par défaut** : la ligne est inscrite par la prise
+  /// de droit de l'expédition, qui a résolu la langue juste avant. Un `DEFAULT`
+  /// aurait fabriqué une langue le jour où un chemin d'écriture oublierait de la
+  /// poser, et c'est précisément ce qu'on veut voir échouer.
+  locale String @db.VarChar(5)
+
   /// Clé d'idempotence : « ce message-là, pour ce rendez-vous-là, une fois ».
   dedupeKey String @map("dedupe_key") @db.VarChar(255)
 
@@ -2531,6 +2551,25 @@ model NotificationTemplate {
   type    NotificationType
   channel NotificationChannel
 
+  /// La langue de cette personnalisation — #854, quatrième critère.
+  ///
+  /// « Les personnalisations se font par langue » : un salon écrit sa
+  /// confirmation en français **et** en anglais, et ce sont deux lignes. Sans
+  /// cette colonne, personnaliser revenait à imposer une langue unique à toute
+  /// une clientèle.
+  ///
+  /// ## Le repli reste **dans la même langue**
+  ///
+  /// C'est l'autre moitié du critère, et elle se joue dans le service, pas ici :
+  /// une langue sans personnalisation retombe sur le modèle de plateforme **de
+  /// cette langue-là**, jamais sur la personnalisation de l'autre langue. Un
+  /// salon qui n'a écrit que son français ne fait donc pas partir du français à
+  /// une cliente anglophone.
+  ///
+  /// Même vocabulaire et même régime que `tenants.default_locale` : minuscules,
+  /// bornée par `notification_templates_locale_check`.
+  locale String @db.VarChar(5)
+
   /// Objet de l'e-mail. Chaîne **vide** sur le canal SMS, qui n'en a pas.
   ///
   /// Vide plutôt que nullable : la distinction entre « pas d'objet » et « objet
@@ -2559,14 +2598,34 @@ model NotificationTemplate {
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  /// Un message, un canal, un modèle — et l'unicité est composite avec le
-  /// tenant, comme tout unique métier : deux salons personnalisent chacun leur
-  /// confirmation par e-mail.
+  /// Un message, un canal, **une langue**, un modèle — et l'unicité est
+  /// composite avec le tenant, comme tout unique métier : deux salons
+  /// personnalisent chacun leur confirmation par e-mail.
+  ///
+  /// La langue est entrée dans l'unique avec #854. Avant elle, un salon n'avait
+  /// qu'un modèle par `(type, canal)` et le servait à toute sa clientèle ; la
+  /// quatrième dimension est ce qui permet d'en écrire un par langue.
   ///
   /// C'est aussi l'index de lecture : la résolution du modèle effectif interroge
-  /// exactement `(tenant_id, type, channel)` avant chaque envoi, et l'unique la
-  /// sert sans qu'un second index soit nécessaire.
-  @@unique([tenantId, type, channel])
+  /// exactement `(tenant_id, type, channel, locale)` avant chaque envoi, et
+  /// l'unique la sert sans qu'un second index soit nécessaire. L'ordre des
+  /// colonnes suit celui de la question posée — quel message, sur quel canal,
+  /// dans quelle langue — et `tenant_id` reste en tête, comme sur tout index de
+  /// table métier (tenant-isolation §1).
+  ///
+  /// ## Le `map:` n'est pas cosmétique
+  ///
+  /// Il fige le nom **d'avant** #854, qui ne cite pas `locale`. La migration
+  /// remplace l'index en le supprimant puis en le recréant sous ce nom-là, parce
+  /// que c'est la seule forme de remplacement que `prisma-schema.spec.ts`
+  /// reconnaît : un `DROP INDEX` n'y est autorisé que si le même fichier recrée
+  /// un index du **même nom** (assouplissement de #534). Sans ce `map:`, Prisma
+  /// nommerait l'index `…_type_channel_locale_key`, et la prochaine migration
+  /// générée reposerait un `DROP` orphelin que le garde refuserait.
+  ///
+  /// Le nom est donc historique, pas descriptif. Les colonnes font foi, et elles
+  /// sont ici.
+  @@unique([tenantId, type, channel, locale], map: "notification_templates_tenant_id_type_channel_key")
   @@map("notification_templates")
 }
 
