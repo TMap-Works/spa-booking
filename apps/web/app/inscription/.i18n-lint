@@ -1,0 +1,4 @@
+# Marqueur de lint i18n — voir eslint-rules/i18n-markers.mjs.
+# L'inscription d'un salon en libre-service, traduite par #1105 : la page, son
+# formulaire et son action serveur. Le répertoire entier est sous la règle — il
+# n'appartient qu'à cet écran.

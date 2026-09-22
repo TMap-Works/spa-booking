@@ -1,0 +1,8 @@
+# Marqueur de lint i18n — voir eslint-rules/i18n-markers.mjs.
+# Les briques du back-office, traduites écran par écran par l'épique #843.
+# Énuméré et non laissé au sous-arbre : ce répertoire mêle des composants
+# traduits et d'autres qui ne le sont pas encore. Chaque ticket d'écran ajoute
+# ici la ligne des composants qu'il vient de traduire.
+#
+# L'abonnement du salon — #1105.
+billing-panel.tsx

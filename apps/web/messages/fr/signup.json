@@ -1,0 +1,74 @@
+{
+  "metadata": {
+    "title": "Ouvrir mon salon — {platform}",
+    "description": "Créez votre page de réservation en ligne en quelques minutes : {promise}, sans engagement."
+  },
+  "plan": {
+    "promise": "{days} jours gratuits, puis {price} par mois"
+  },
+  "intro": {
+    "headline": "Ouvrez votre salon en ligne",
+    "lead": "Quelques minutes suffisent : votre page de réservation, votre planning et votre caisse, au même endroit.",
+    "highlights": {
+      "booking": "Vos clientes réservent en ligne, 24 h/24",
+      "reminders": "Confirmations et rappels envoyés pour vous",
+      "team": "Planning, équipe et fiches clientes",
+      "trial": "{promise} — sans engagement"
+    },
+    "home": "Accueil {platform}"
+  },
+  "form": {
+    "title": "Créer mon salon",
+    "salonLegend": "Votre salon",
+    "ownerLegend": "Vous",
+    "name": "Nom du salon",
+    "slug": "Adresse de votre page",
+    "slugHint": "Vos clientes réserveront sur /votre-adresse. Minuscules, chiffres et tirets.",
+    "addressLine1": "Adresse",
+    "postalCode": "Code postal",
+    "city": "Ville",
+    "country": "Pays",
+    "timezone": "Fuseau horaire",
+    "currency": "Devise de vos prix",
+    "language": "Langue du salon",
+    "languageHint": "La langue dans laquelle votre page de réservation s’ouvre. Vous pourrez la changer dans vos réglages.",
+    "firstName": "Prénom",
+    "lastName": "Nom",
+    "email": "Adresse e-mail",
+    "password": "Mot de passe",
+    "passwordHint": "Douze caractères au minimum.",
+    "confirmation": "Confirmez le mot de passe",
+    "confirmationMismatch": "les deux mots de passe ne correspondent pas",
+    "consent": "J’accepte que mes données et celles de mon salon soient traitées pour créer et faire fonctionner mon espace.",
+    "consentRequired": "Cochez cette case pour créer votre salon.",
+    "submit": "Continuer vers le paiement sécurisé",
+    "submitting": "Création de votre salon…",
+    "fineprint": "{promise}. Votre carte est enregistrée par Stripe et n’est débitée qu’à la fin de l’essai. Résiliable à tout moment."
+  },
+  "fieldErrors": {
+    "name": "Indiquez le nom de votre salon.",
+    "slug": "Minuscules, chiffres et tirets uniquement — 63 caractères au plus.",
+    "slugReserved": "Ce nom est réservé par la plateforme — choisissez-en un autre.",
+    "addressLine1": "Indiquez votre adresse.",
+    "postalCode": "Ce code postal est trop long.",
+    "city": "Indiquez votre ville.",
+    "countryCode": "Choisissez votre pays.",
+    "timezone": "Choisissez votre fuseau horaire.",
+    "defaultCurrency": "Choisissez la devise de vos prix.",
+    "defaultLocale": "Choisissez la langue d’ouverture de votre salon.",
+    "firstName": "Indiquez votre prénom.",
+    "lastName": "Indiquez votre nom.",
+    "email": "Indiquez une adresse e-mail valide.",
+    "password": "Votre mot de passe doit faire au moins douze caractères."
+  },
+  "errors": {
+    "title": "L’inscription n’a pas abouti",
+    "slugTaken": "Cette adresse est déjà prise — choisissez-en une autre.",
+    "emailTaken": "Un compte existe déjà avec cette adresse e-mail. Connectez-vous, ou utilisez une autre adresse.",
+    "invalidLink": "Ce lien n’est plus valable. Demandez-en un nouveau.",
+    "validation": "Le formulaire contient une erreur.",
+    "tooManyRequests": "Trop de tentatives. Patientez un instant avant de réessayer.",
+    "unavailable": "Le service est momentanément indisponible. Réessayez dans quelques secondes.",
+    "unexpected": "Une erreur inattendue est survenue. Merci de réessayer."
+  }
+}
