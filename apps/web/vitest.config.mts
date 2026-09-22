@@ -29,6 +29,11 @@ export default defineConfig({
     include: ['tests/unit/**/*.test.{ts,tsx}'],
     globals: false,
     restoreMocks: true,
+    // La langue des suites est fixée à `fr` — celle dans laquelle elles ont été
+    // écrites (#845). Voir `tests/support/next-intl.ts` : sans elle, toute suite
+    // qui rend une brique partagée se heurte au contexte absent de
+    // `NextIntlClientProvider`.
+    setupFiles: ['./tests/support/next-intl.ts'],
   },
   resolve: {
     alias: {

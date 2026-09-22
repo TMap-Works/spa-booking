@@ -3,7 +3,11 @@ import type {
   AppointmentStatus,
   BookedAppointment,
   CancellationActor,
+  Locale,
 } from '@spa/shared';
+
+import en from '@/messages/en/appointment-status.json';
+import fr from '@/messages/fr/appointment-status.json';
 
 /**
  * Le vocabulaire du cycle de vie d'un rendez-vous — **le seul endroit du front
@@ -46,7 +50,41 @@ import type {
  * `customerVisitSchema` (`null`, #917). Les confondre ferait lire « rendez-vous
  * annulé » là où la cliente vient précisément de le conserver en le déplaçant, et
  * ferait compter au salon un créneau perdu là où il n'a rien perdu du tout.
+ *
+ * ## Les mots viennent du catalogue, pas de ce fichier (#845)
+ *
+ * Les tables ci-dessous sont lues dans `messages/<langue>/appointment-status.json`,
+ * comme n'importe quel autre namespace — c'est la même écriture que celle des
+ * composants, et non une seconde. Elles y sont lues par **import direct des deux
+ * fichiers JSON**, et non par `useTranslations` : ce module est fait de fonctions
+ * pures, appelées depuis des Server Components, des Client Components et des
+ * tests sans DOM. Un crochet de React l'aurait rendu inappelable dans les deux
+ * derniers.
+ *
+ * ## Pourquoi `locale` a une valeur par défaut, et laquelle
+ *
+ * `'fr'`, et c'est **transitoire**. Les six surfaces qui appellent ces fonctions
+ * sont hors de l'empreinte de #845 : chacune passera la langue résolue dans son
+ * propre ticket de l'épique #843. D'ici là, le défaut garde le comportement
+ * d'avant le ticket — les libellés français — plutôt que de faire basculer en
+ * anglais six écrans dont personne n'a encore relu la traduction. Le jour où le
+ * onzième ticket d'écran est livré, le défaut tombe et le paramètre devient
+ * obligatoire ; `tsc` nommera alors ce qui reste à brancher.
  */
+
+/** Les catalogues, dans les deux langues — la même source que les composants. */
+const CATALOG = { fr, en } as const;
+
+/**
+ * La langue employée quand l'appelant n'en passe pas — voir l'en-tête.
+ *
+ * Ce n'est **pas** `DEFAULT_LOCALE` du contrat, et c'est délibéré : celui-ci dit
+ * la langue par défaut du *système* (`en`), celui-là dit ce que ce module rend à
+ * un appelant qui n'a pas encore été branché sur la langue résolue. Les
+ * confondre ferait basculer en anglais, du jour au lendemain, six écrans dont
+ * aucun ticket n'a encore relu la traduction.
+ */
+const FALLBACK_LOCALE: Locale = 'fr';
 
 /**
  * À qui le libellé s'adresse.
@@ -70,13 +108,22 @@ export type AppointmentAudience = 'client' | 'desk';
  * l'espace client montrait déjà à la cliente, et une même absence ne peut pas
  * porter deux noms selon qui la regarde.
  */
-export const APPOINTMENT_STATUS_LABELS: Readonly<Record<AppointmentStatus, string>> = {
-  pending: 'À confirmer',
-  confirmed: 'Confirmé',
-  completed: 'Honoré',
-  cancelled: 'Annulé',
-  no_show: 'Non honoré',
-};
+export function appointmentStatusLabels(
+  locale: Locale = FALLBACK_LOCALE,
+): Readonly<Record<AppointmentStatus, string>> {
+  return CATALOG[locale].singular;
+}
+
+/**
+ * La même table, figée en français.
+ *
+ * @deprecated Transitoire (#845). Les six surfaces qui la lisent passeront à
+ * `appointmentStatusLabels(locale)` dans leur propre ticket de l'épique #843 ;
+ * elle disparaît avec la dernière. La garder évite de basculer en anglais des
+ * écrans dont la traduction n'a pas encore été relue.
+ */
+export const APPOINTMENT_STATUS_LABELS: Readonly<Record<AppointmentStatus, string>> =
+  CATALOG[FALLBACK_LOCALE].singular;
 
 /**
  * Les mêmes mots, **accordés au pluriel** — le reporting compte des rendez-vous,
@@ -87,13 +134,19 @@ export const APPOINTMENT_STATUS_LABELS: Readonly<Record<AppointmentStatus, strin
  * tromperait sur le premier. Les deux tables restent dans le même fichier, sous
  * les mêmes yeux — c'est ce qui les empêche de diverger.
  */
-export const APPOINTMENT_STATUS_PLURAL_LABELS: Readonly<Record<AppointmentStatus, string>> = {
-  pending: 'À confirmer',
-  confirmed: 'Confirmés',
-  completed: 'Honorés',
-  cancelled: 'Annulés',
-  no_show: 'Non honorés',
-};
+export function appointmentStatusPluralLabels(
+  locale: Locale = FALLBACK_LOCALE,
+): Readonly<Record<AppointmentStatus, string>> {
+  return CATALOG[locale].plural;
+}
+
+/**
+ * La même table, figée en français.
+ *
+ * @deprecated Transitoire (#845) — voir {@link APPOINTMENT_STATUS_LABELS}.
+ */
+export const APPOINTMENT_STATUS_PLURAL_LABELS: Readonly<Record<AppointmentStatus, string>> =
+  CATALOG[FALLBACK_LOCALE].plural;
 
 /**
  * Ce qu'est devenue la ligne d'origine d'un report.
@@ -102,7 +155,12 @@ export const APPOINTMENT_STATUS_PLURAL_LABELS: Readonly<Record<AppointmentStatus
  * rendez-vous, lui, n'a pas été abandonné : il a changé d'heure. C'est le seul
  * mot de cette table qui ne corresponde à aucun statut.
  */
-export const RESCHEDULED_LABEL = 'Déplacé';
+export function rescheduledLabel(locale: Locale = FALLBACK_LOCALE): string {
+  return CATALOG[locale].rescheduled;
+}
+
+/** @deprecated Transitoire (#845) — voir {@link APPOINTMENT_STATUS_LABELS}. */
+export const RESCHEDULED_LABEL: string = CATALOG[FALLBACK_LOCALE].rescheduled;
 
 /**
  * Le seul endroit du front où s'écrit l'état d'un rendez-vous pris mais que le
@@ -128,7 +186,12 @@ export const RESCHEDULED_LABEL = 'Déplacé';
  * Deux littéraux dans deux fichiers, c'est exactement la façon dont ces deux
  * surfaces ont divergé ; il n'y en a donc plus qu'un.
  */
-export const PENDING_CONFIRMATION_LABEL = 'À confirmer par le salon';
+export function pendingConfirmationLabel(locale: Locale = FALLBACK_LOCALE): string {
+  return CATALOG[locale].pendingConfirmation;
+}
+
+/** @deprecated Transitoire (#845) — voir {@link APPOINTMENT_STATUS_LABELS}. */
+export const PENDING_CONFIRMATION_LABEL: string = CATALOG[FALLBACK_LOCALE].pendingConfirmation;
 
 /**
  * Ce qu'affiche un rendez-vous resté `pending` dont l'heure est passée.
@@ -136,7 +199,12 @@ export const PENDING_CONFIRMATION_LABEL = 'À confirmer par le salon';
  * Il n'y a plus rien à attendre de celui-là : lui promettre une confirmation à
  * venir serait faux, la pastille se borne donc à constater (#743).
  */
-export const UNCONFIRMED_PAST_LABEL = 'Non confirmé';
+export function unconfirmedPastLabel(locale: Locale = FALLBACK_LOCALE): string {
+  return CATALOG[locale].unconfirmedPast;
+}
+
+/** @deprecated Transitoire (#845) — voir {@link APPOINTMENT_STATUS_LABELS}. */
+export const UNCONFIRMED_PAST_LABEL: string = CATALOG[FALLBACK_LOCALE].unconfirmedPast;
 
 /** Le ton d'une pastille, tel que les feuilles de style le nomment. */
 export type AppointmentTone = 'pending' | 'confirmed' | 'completed' | 'cancelled' | 'no-show';
@@ -188,22 +256,25 @@ export function appointmentOutcomeLabel(
     readonly cancelledBy?: CancellationActor | null | undefined;
   },
   audience: AppointmentAudience = 'desk',
+  locale: Locale = FALLBACK_LOCALE,
 ): string {
+  const catalog = CATALOG[locale];
+
   if (appointment.status !== 'cancelled') {
-    return APPOINTMENT_STATUS_LABELS[appointment.status];
+    return catalog.singular[appointment.status];
   }
 
   const author = appointment.cancelledBy ?? null;
 
   if (author === null) {
-    return RESCHEDULED_LABEL;
+    return catalog.rescheduled;
   }
 
   if (author === 'client') {
-    return audience === 'client' ? 'Annulé par vous' : 'Annulé par la cliente';
+    return audience === 'client' ? catalog.cancelledBy.you : catalog.cancelledBy.client;
   }
 
-  return 'Annulé par le salon';
+  return catalog.cancelledBy.salon;
 }
 
 /**
@@ -213,8 +284,11 @@ export function appointmentOutcomeLabel(
  * « Marquer non honoré » et non « Marquer Non honoré ». Une capitale au milieu
  * d'une phrase se lit comme un nom propre, et un bouton d'action n'en est pas un.
  */
-export function appointmentStatusLabelInSentence(status: AppointmentStatus): string {
-  return inSentence(APPOINTMENT_STATUS_LABELS[status]);
+export function appointmentStatusLabelInSentence(
+  status: AppointmentStatus,
+  locale: Locale = FALLBACK_LOCALE,
+): string {
+  return inSentence(CATALOG[locale].singular[status], locale);
 }
 
 /**
@@ -226,13 +300,23 @@ export function appointmentStatusLabelInSentence(status: AppointmentStatus): str
  * chose, et l'écran qui les montre côte à côte ne peut pas les nommer
  * autrement l'une de l'autre (#917).
  */
-export function appointmentStatusPluralLabelInSentence(status: AppointmentStatus): string {
-  return inSentence(APPOINTMENT_STATUS_PLURAL_LABELS[status]);
+export function appointmentStatusPluralLabelInSentence(
+  status: AppointmentStatus,
+  locale: Locale = FALLBACK_LOCALE,
+): string {
+  return inSentence(CATALOG[locale].plural[status], locale);
 }
 
-/** L'initiale d'un libellé ramenée en bas de casse, sans toucher au reste. */
-function inSentence(label: string): string {
-  return label.charAt(0).toLocaleLowerCase('fr-FR') + label.slice(1);
+/**
+ * L'initiale d'un libellé ramenée en bas de casse, sans toucher au reste.
+ *
+ * La langue est passée à `toLocaleLowerCase` : la mise en casse dépend de
+ * l'alphabet, et un jour où le produit servira le turc, `I` y deviendra `ı` et
+ * non `i`. Elle ne coûte rien à écrire maintenant, et se remarquerait mal plus
+ * tard.
+ */
+function inSentence(label: string, locale: Locale): string {
+  return label.charAt(0).toLocaleLowerCase(locale) + label.slice(1);
 }
 
 /**
@@ -248,16 +332,18 @@ function inSentence(label: string): string {
 export function appointmentBadge(
   appointment: BookedAppointment,
   scope: AppointmentScope,
+  locale: Locale = FALLBACK_LOCALE,
 ): AppointmentBadge {
   if (appointment.status === 'pending') {
     return {
-      label: scope === 'upcoming' ? PENDING_CONFIRMATION_LABEL : UNCONFIRMED_PAST_LABEL,
+      label:
+        scope === 'upcoming' ? pendingConfirmationLabel(locale) : unconfirmedPastLabel(locale),
       tone: 'pending',
     };
   }
 
   return {
-    label: appointmentOutcomeLabel(appointment, 'client'),
+    label: appointmentOutcomeLabel(appointment, 'client', locale),
     tone: appointmentTone(appointment.status),
   };
 }

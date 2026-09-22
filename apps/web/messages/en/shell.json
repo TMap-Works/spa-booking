@@ -1,0 +1,68 @@
+{
+  "metadata": {
+    "title": "Book online",
+    "description": "Book an appointment at your salon in a few minutes."
+  },
+  "notFound": {
+    "title": "Page not found",
+    "description": "This address does not match any booking page. Check the link your salon gave you."
+  },
+  "skipToContent": "Skip to content",
+  "salon": {
+    "home": "Salon home",
+    "contactTitle": "Contact us",
+    "pagesLabel": "Salon pages",
+    "pagesTitle": "The salon",
+    "services": "Services and prices",
+    "dataPolicy": "Data policy",
+    "poweredBy": "Online booking powered by <platform>{name}</platform>"
+  },
+  "account": {
+    "metadataTitle": "My account",
+    "title": "My account",
+    "greeting": "Hello {firstName}"
+  },
+  "admin": {
+    "metadataTitle": "Back office",
+    "topbar": {
+      "storefront": "View my storefront",
+      "newTab": " (new tab)",
+      "trialLastDay": "Free trial · last day",
+      "trialDaysLeft": "Free trial · {days} days left",
+      "subscriptionPending": "Subscription to activate",
+      "subscriptionCanceled": "Subscription inactive",
+      "subscriptionPastDue": "Payment to settle"
+    },
+    "rail": {
+      "label": "Back office sections",
+      "caption": "Back office",
+      "groups": {
+        "daily": "Day to day",
+        "management": "Management",
+        "steering": "Steering"
+      },
+      "entries": {
+        "tableau-de-bord": "Dashboard",
+        "mon-planning": "My schedule",
+        "planning": "Schedule",
+        "clients": "Clients",
+        "prestations": "Services",
+        "personnel": "Staff",
+        "encaissement": "Checkout",
+        "reporting": "Reporting",
+        "reglages": "Settings",
+        "abonnement": "Subscription"
+      },
+      "roles": {
+        "client": "client account",
+        "staff": "practitioner",
+        "manager": "manager",
+        "admin": "administrator"
+      },
+      "upcoming": "screen coming soon",
+      "timeZone": "Salon time zone: {timeZone}",
+      "accountUnverified": "Account not verified — the salon server cannot be reached.",
+      "signedInAs": "Signed in as:"
+    }
+  }
+}

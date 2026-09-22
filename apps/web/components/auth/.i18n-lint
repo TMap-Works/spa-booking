@@ -1,0 +1,3 @@
+# Marqueur de lint i18n — voir eslint-rules/i18n-markers.mjs.
+# Les deux cadres d'identification sont traduits par #845 : le répertoire entier
+# est sous la règle, et les sept écrans qui les emploient n'ont rien à y faire.

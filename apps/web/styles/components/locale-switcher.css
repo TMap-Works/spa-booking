@@ -1,0 +1,56 @@
+/*
+ * Composant — Sélecteur de langue (#845)
+ * =============================================================================
+ *
+ * Un `<form>` et un bouton par langue, posé dans les trois coquilles : le pied
+ * du gabarit de salon (vitrine et espace client) et le pied du rail du
+ * back-office.
+ *
+ * Il n'introduit aucune variante de bouton : les deux boutons sont ceux du
+ * design system — `--neutral` pour la langue affichée, `--quiet` pour l'autre.
+ * Seule leur mise en ligne se décrit ici.
+ *
+ * ## Pourquoi `flex-wrap`
+ *
+ * « Français » et « English » tiennent côte à côte dès 360 px dans le pied du
+ * salon. Ce n'est pas garanti pour une troisième langue, ni dans une colonne
+ * plus étroite : le retour à la ligne est la seule façon qu'un libellé ne
+ * déborde jamais de son bloc — ce que le ticket exige explicitement à 360 px.
+ */
+
+.spa-locale-switcher {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  /*
+   * Les deux coquilles qui le portent sont des colonnes flex — le bloc du pied
+   * de salon et le pied du rail admin —, dont les enfants s'étirent par défaut.
+   * Sans cela, le sélecteur occuperait toute la largeur et ses deux boutons
+   * flotteraient à gauche d'un bloc vide.
+   */
+  align-self: flex-start;
+  gap: var(--spa-space-2);
+  margin: 0;
+}
+
+/*
+ * Un sélecteur de langue est une commande secondaire : les boutons pleine
+ * taille du design system y prendraient la place d'un appel à l'action. La
+ * hauteur minimale de cible tactile, elle, reste celle du design system — elle
+ * n'est pas négociable (WCAG 2.5.8).
+ */
+.spa-locale-switcher .spa-button {
+  padding-inline: var(--spa-space-3);
+  font-size: var(--spa-font-size-sm);
+}
+
+/*
+ * La langue affichée reste **soumissible** — c'est ce qui permet de réaffirmer
+ * un choix que seul l'`Accept-Language` avait dicté, et donc de poser le cookie
+ * qui le gardera. `aria-current` le dit aux technologies d'assistance ; ce
+ * liseré le dit à l'œil, en plus du contraste de la variante `--neutral`
+ * (WCAG 1.4.1 : jamais la couleur seule).
+ */
+.spa-locale-switcher .spa-button[aria-current] {
+  font-weight: var(--spa-font-weight-bold);
+}

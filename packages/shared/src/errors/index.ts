@@ -26,3 +26,10 @@ export {
   isKnownErrorCode,
 } from './error-codes';
 export type { ErrorCode } from './error-codes';
+
+// Les phrases affichables de ces codes, et celles des refus de validation —
+// #845. Elles vivent auprès des codes plutôt que dans un catalogue du front :
+// c'est l'annotation `Record<ErrorCode, string>` qui garantit qu'aucun code ne
+// reste sans message dans l'une des deux langues.
+export { ERROR_MESSAGES, errorMessage } from './error-messages';
+export { validationPhrases, zodErrorMap } from './zod-messages';

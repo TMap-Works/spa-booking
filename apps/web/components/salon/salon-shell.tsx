@@ -1,10 +1,12 @@
 import type { PublicTenant } from '@spa/shared';
+import { useTranslations } from 'next-intl';
 import Link from 'next/link';
 import type { ReactNode } from 'react';
 
 import { AccountEntry } from '@/components/account/account-entry';
 import { Avatar } from '@/components/ui/avatar';
 import { Icon } from '@/components/ui/icon';
+import { LocaleSwitcher } from '@/components/ui/locale-switcher';
 import { ThemeToggle } from '@/components/ui/theme-toggle';
 import type { AccountName, AccountPresence } from '@/lib/account-presence';
 import { formatPhoneForDisplay } from '@/lib/phone';
@@ -104,6 +106,21 @@ function nameOnly(presence: AccountPresence | null): AccountName | null {
  * thème sont les seuls îlots client — et ce qui franchit cette frontière est
  * réduit au nom (`nameOnly`, #1088), parce que tout ce qui la franchit est écrit
  * dans le HTML servi. Le sélecteur, lui, ne reçoit rien.
+ *
+ * ## La langue (#845)
+ *
+ * Ce gabarit est la coquille de **deux** des trois espaces du produit — la
+ * vitrine publique et l'espace client —, et c'est à ce titre qu'il porte le
+ * sélecteur de langue : le poser ici le rend présent sur tout écran de salon,
+ * sans qu'aucun ticket d'écran de l'épique #843 ait à s'en charger. Sa place est
+ * le **pied de page**, auprès des autres réglages d'affichage — le même endroit
+ * que le sélecteur de thème au pouce (#1114) : c'est là que les plateformes de
+ * réservation les rangent, et un sélecteur en tête disputerait la place à
+ * l'appel à l'action qui fait vivre le salon.
+ *
+ * Ses libellés viennent du namespace `shell`, comme ceux des deux autres
+ * coquilles. `useTranslations` et non `getTranslations` : ce composant n'est pas
+ * asynchrone, et le crochet fonctionne dans un Server Component.
  */
 export function SalonShell({
   tenantSlug,
@@ -114,19 +131,20 @@ export function SalonShell({
   accountMenuExtra,
   children,
 }: SalonShellProps) {
+  const t = useTranslations('shell');
   const name = tenant?.name ?? null;
 
   return (
     <div className="spa-shell">
       <a className="spa-shell__skip" href="#contenu">
-        Aller au contenu
+        {t('skipToContent')}
       </a>
 
       <header className="spa-shell__header">
         <div className="spa-shell__bar">
           <Link className="spa-shell__brand" href={salonHref(tenantSlug)}>
             {name === null ? null : <Avatar name={name} shape="square" tone="brand" size="sm" />}
-            <span className="spa-shell__salon">{name ?? 'Accueil du salon'}</span>
+            <span className="spa-shell__salon">{name ?? t('salon.home')}</span>
           </Link>
 
           <div className="spa-shell__actions">
@@ -157,6 +175,7 @@ interface SalonFooterProps {
 }
 
 function SalonFooter({ tenantSlug, tenant, bookingHref }: SalonFooterProps) {
+  const t = useTranslations('shell');
   const phone = tenant?.contactPhone;
   const email = tenant?.contactEmail;
 
@@ -181,7 +200,7 @@ function SalonFooter({ tenantSlug, tenant, bookingHref }: SalonFooterProps) {
 
         {phone === undefined && email === undefined ? null : (
           <div className="spa-shell__footer-block">
-            <p className="spa-shell__footer-title">Nous contacter</p>
+            <p className="spa-shell__footer-title">{t('salon.contactTitle')}</p>
             <ul className="spa-shell__footer-list">
               {phone === undefined ? null : (
                 <li>
@@ -203,12 +222,12 @@ function SalonFooter({ tenantSlug, tenant, bookingHref }: SalonFooterProps) {
           </div>
         )}
 
-        <nav className="spa-shell__footer-block" aria-label="Pages du salon">
-          <p className="spa-shell__footer-title">Le salon</p>
+        <nav className="spa-shell__footer-block" aria-label={t('salon.pagesLabel')}>
+          <p className="spa-shell__footer-title">{t('salon.pagesTitle')}</p>
           <ul className="spa-shell__footer-list">
             <li>
               <Link className="spa-shell__footer-link" href={salonHref(tenantSlug)}>
-                Prestations et tarifs
+                {t('salon.services')}
               </Link>
             </li>
             {bookingHref === null ? null : (
@@ -220,7 +239,7 @@ function SalonFooter({ tenantSlug, tenant, bookingHref }: SalonFooterProps) {
             )}
             <li>
               <Link className="spa-shell__footer-link" href={salonHref(tenantSlug, '/politique-donnees')}>
-                Politique de données
+                {t('salon.dataPolicy')}
               </Link>
             </li>
           </ul>
@@ -228,11 +247,22 @@ function SalonFooter({ tenantSlug, tenant, bookingHref }: SalonFooterProps) {
 
         {/* Au pouce seulement : au-delà de 48 rem, l'en-tête le porte. */}
         <ThemeToggle className="spa-shell__footer-theme" />
+
+        {/*
+          Le sélecteur de langue ferme la grille du pied, et non l'en-tête :
+          c'est un réglage d'affichage, du même ordre que le thème, et il ne
+          dispute donc pas la place à « Prendre rendez-vous » (#845).
+        */}
+        <div className="spa-shell__footer-block">
+          <LocaleSwitcher />
+        </div>
       </div>
 
       <p className="spa-shell__legal">
-        Réservation en ligne propulsée par{' '}
-        <Link href={PLATFORM_HOME_PATH}>{PLATFORM_NAME}</Link>
+        {t.rich('salon.poweredBy', {
+          name: PLATFORM_NAME,
+          platform: (chunks) => <Link href={PLATFORM_HOME_PATH}>{chunks}</Link>,
+        })}
       </p>
     </footer>
   );

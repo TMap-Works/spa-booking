@@ -45,5 +45,6 @@
 @import './components/auth.css';
 @import './components/home.css';
 @import './components/theme-toggle.css';
+@import './components/locale-switcher.css';
 @import './components/platform.css';
 @import './components/billing.css';

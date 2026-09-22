@@ -1,0 +1,6 @@
+{
+  "timeZoneMention": "heure de {timeZone}",
+  "durationMinutes": "{minutes} min",
+  "durationHours": "{hours} h",
+  "durationHoursMinutes": "{hours} h {minutes}"
+}

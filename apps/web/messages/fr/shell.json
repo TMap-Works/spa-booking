@@ -1,0 +1,68 @@
+{
+  "metadata": {
+    "title": "Réservation en ligne",
+    "description": "Prenez rendez-vous dans votre salon en quelques minutes."
+  },
+  "notFound": {
+    "title": "Page introuvable",
+    "description": "Cette adresse ne correspond à aucune page de réservation. Vérifiez le lien que le salon vous a communiqué."
+  },
+  "skipToContent": "Aller au contenu",
+  "salon": {
+    "home": "Accueil du salon",
+    "contactTitle": "Nous contacter",
+    "pagesLabel": "Pages du salon",
+    "pagesTitle": "Le salon",
+    "services": "Prestations et tarifs",
+    "dataPolicy": "Politique de données",
+    "poweredBy": "Réservation en ligne propulsée par <platform>{name}</platform>"
+  },
+  "account": {
+    "metadataTitle": "Mon compte",
+    "title": "Mon compte",
+    "greeting": "Bonjour {firstName}"
+  },
+  "admin": {
+    "metadataTitle": "Back-office",
+    "topbar": {
+      "storefront": "Voir ma vitrine",
+      "newTab": " (nouvel onglet)",
+      "trialLastDay": "Essai gratuit · dernier jour",
+      "trialDaysLeft": "Essai gratuit · {days} jours restants",
+      "subscriptionPending": "Abonnement à activer",
+      "subscriptionCanceled": "Abonnement inactif",
+      "subscriptionPastDue": "Paiement à régulariser"
+    },
+    "rail": {
+      "label": "Sections du tableau de bord",
+      "caption": "Back-office",
+      "groups": {
+        "daily": "Au quotidien",
+        "management": "Gestion",
+        "steering": "Pilotage"
+      },
+      "entries": {
+        "tableau-de-bord": "Tableau de bord",
+        "mon-planning": "Mon planning",
+        "planning": "Planning",
+        "clients": "Clients",
+        "prestations": "Prestations",
+        "personnel": "Personnel",
+        "encaissement": "Encaissement",
+        "reporting": "Reporting",
+        "reglages": "Réglages",
+        "abonnement": "Abonnement"
+      },
+      "roles": {
+        "client": "compte client",
+        "staff": "praticien·ne",
+        "manager": "gérant·e",
+        "admin": "administrateur·rice"
+      },
+      "upcoming": "écran à venir",
+      "timeZone": "Fuseau du salon : {timeZone}",
+      "accountUnverified": "Compte non vérifié — le serveur du salon est injoignable.",
+      "signedInAs": "Connecté·e :"
+    }
+  }
+}

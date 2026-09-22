@@ -1,0 +1,8 @@
+{
+  "exits": {
+    "vitrine": "Voir toutes les prestations",
+    "reservation": "Prendre rendez-vous",
+    "compte": "Mon compte"
+  },
+  "navLabel": "Espace client"
+}

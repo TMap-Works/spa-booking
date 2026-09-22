@@ -1,12 +1,14 @@
 'use client';
 
-import type { Permission, UserRole } from '@spa/shared';
+import type { Locale, Permission, UserRole } from '@spa/shared';
+import { useLocale, useTranslations } from 'next-intl';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import type { FocusEvent } from 'react';
 
 import { Icon, type IconName } from '@/components/ui/icon';
 import { LinkPending } from '@/components/ui/link-pending';
+import { LocaleSwitcher } from '@/components/ui/locale-switcher';
 import { initialsOf } from '@/lib/initials';
 
 import { AdminLogoutButton } from './admin-logout-button';
@@ -28,29 +30,36 @@ const NAV_ICONS: Readonly<Record<string, IconName>> = {
   abonnement: 'card',
 };
 
+/** Les groupes du sommaire — `id` est la clé du catalogue et la clé de rendu. */
+type NavGroupId = 'daily' | 'management' | 'steering';
+
 /**
  * Les sections rangées par usage : ce qui sert toute la journée d'abord, la
  * gestion du salon ensuite, le pilotage enfin. Une entrée qu'aucun groupe ne
  * nomme rejoint le dernier plutôt que de disparaître.
+ *
+ * Les groupes portent un **identifiant** et non leur libellé depuis #845 : le
+ * libellé est désormais lu dans le catalogue (`shell.admin.rail.groups`), et une
+ * chaîne traduite ne peut être ni une clé de rendu ni une clé de regroupement.
  */
-const NAV_GROUPS: readonly { readonly label: string; readonly keys: readonly string[] }[] = [
+const NAV_GROUPS: readonly { readonly id: NavGroupId; readonly keys: readonly string[] }[] = [
   {
-    label: 'Au quotidien',
+    id: 'daily',
     keys: ['tableau-de-bord', 'mon-planning', 'planning', 'encaissement', 'clients'],
   },
-  { label: 'Gestion', keys: ['prestations', 'personnel'] },
-  { label: 'Pilotage', keys: ['reporting', 'reglages', 'abonnement'] },
+  { id: 'management', keys: ['prestations', 'personnel'] },
+  { id: 'steering', keys: ['reporting', 'reglages', 'abonnement'] },
 ];
 
 interface NavGroup {
-  readonly label: string;
+  readonly id: NavGroupId;
   readonly entries: readonly AdminNavEntry[];
 }
 
 function groupEntries(entries: readonly AdminNavEntry[]): readonly NavGroup[] {
   const known = new Set(NAV_GROUPS.flatMap((group) => group.keys));
-  const groups = NAV_GROUPS.map((group) => ({
-    label: group.label,
+  const groups: NavGroup[] = NAV_GROUPS.map((group) => ({
+    id: group.id,
     entries: group.keys
       .map((key) => entries.find((entry) => entry.key === key))
       .filter((entry): entry is AdminNavEntry => entry !== undefined),
@@ -59,7 +68,7 @@ function groupEntries(entries: readonly AdminNavEntry[]): readonly NavGroup[] {
   if (orphans.length > 0) {
     const last = groups[groups.length - 1];
     if (last !== undefined) {
-      groups[groups.length - 1] = { label: last.label, entries: [...last.entries, ...orphans] };
+      groups[groups.length - 1] = { id: last.id, entries: [...last.entries, ...orphans] };
     }
   }
   return groups.filter((group) => group.entries.length > 0);
@@ -222,11 +231,13 @@ export function AdminRail({
   hasStaffProfile = null,
 }: AdminRailProps) {
   const pathname = usePathname();
+  const t = useTranslations('shell.admin.rail');
+  const locale = useLocale() as Locale;
   // Deux filtres, et ils ne disent pas la même chose : le rang écarte ce qui est
   // au-dessus de l'appelant, les permissions écartent ce que le rang ne sait pas
   // exprimer — un praticien est bien au rang `staff`, et n'a pourtant ni le
   // planning du salon ni l'encaissement (#812).
-  const entries = entriesAllowedBy(adminNavigation(tenantSlug, role), permissions).filter(
+  const entries = entriesAllowedBy(adminNavigation(tenantSlug, role, locale), permissions).filter(
     (entry) =>
       entry.key !== 'mon-planning' ||
       (hasStaffProfile === null ? role === 'staff' : hasStaffProfile),
@@ -248,7 +259,7 @@ export function AdminRail({
               <Icon className="spa-admin__nav-icon" name={NAV_ICONS[entry.key] ?? 'sparkle'} />
               {entry.label}
               <span className="spa-visually-hidden">
-                {` — ${entry.upcoming ?? 'écran à venir'}`}
+                {` — ${entry.upcoming ?? t('upcoming')}`}
               </span>
             </span>
           ) : (
@@ -271,22 +282,22 @@ export function AdminRail({
           );
 
   return (
-    <nav className="spa-admin__rail" aria-label="Sections du tableau de bord">
+    <nav className="spa-admin__rail" aria-label={t('label')}>
       <div className="spa-admin__brand-block">
         <span aria-hidden="true" className="spa-admin__logo">
           {initialsOf(brand)}
         </span>
         <span className="spa-admin__brand-text">
           <span className="spa-admin__brand">{brand}</span>
-          <span className="spa-admin__brand-caption">Back-office</span>
+          <span className="spa-admin__brand-caption">{t('caption')}</span>
         </span>
       </div>
 
       <div className="spa-admin__nav">
         {groups.map((group) => (
-          <div className="spa-admin__nav-group" key={group.label}>
+          <div className="spa-admin__nav-group" key={group.id}>
             <span aria-hidden="true" className="spa-admin__nav-group-label">
-              {group.label}
+              {t(`groups.${group.id}`)}
             </span>
             {group.entries.map(renderEntry)}
           </div>
@@ -308,7 +319,7 @@ export function AdminRail({
         {timeZone === null ? null : (
           <span className="spa-admin__rail-meta">
             <Icon name="clock" />
-            <span>Fuseau du salon : {timeZone}</span>
+            <span>{t('timeZone', { timeZone })}</span>
           </span>
         )}
         {/*
@@ -319,22 +330,28 @@ export function AdminRail({
          * session a changé.
          */}
         {userName === null ? (
-          <span className="spa-admin__rail-meta">
-            Compte non vérifié — le serveur du salon est injoignable.
-          </span>
+          <span className="spa-admin__rail-meta">{t('accountUnverified')}</span>
         ) : (
           <div className="spa-admin__user">
             <span aria-hidden="true" className="spa-admin__avatar">
               {initialsOf(userName)}
             </span>
             <span className="spa-admin__user-text">
-              <span className="spa-visually-hidden">Connecté·e : </span>
+              <span className="spa-visually-hidden">{`${t('signedInAs')} `}</span>
               <span className="spa-admin__user-name">{userName}</span>
-              <span className="spa-admin__user-role">{roleLabel(role)}</span>
+              <span className="spa-admin__user-role">{roleLabel(role, locale)}</span>
             </span>
           </div>
         )}
         <AdminLogoutButton tenantSlug={tenantSlug} />
+        {/*
+          Le sélecteur de langue ferme le pied du rail, auprès du changement
+          d'établissement et du fuseau : ce sont les réglages du poste, et non
+          une section du sommaire (#845). Troisième et dernière coquille du
+          ticket, après le gabarit du salon qui sert la vitrine et l'espace
+          client.
+        */}
+        <LocaleSwitcher />
       </div>
     </nav>
   );

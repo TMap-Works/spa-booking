@@ -1,0 +1,5 @@
+# Marqueur de lint i18n — voir eslint-rules/i18n-markers.mjs.
+# La coquille de l'espace client, traduite par #845. Ses écrans — liste des
+# rendez-vous, coordonnées, report, connexion, inscription — relèvent de leurs
+# propres tickets de l'épique #843, qui ajouteront leur ligne ici.
+layout.tsx

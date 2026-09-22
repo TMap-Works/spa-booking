@@ -1,4 +1,9 @@
+import type { Locale } from '@spa/shared';
+import { useTranslations } from 'next-intl';
 import Link from 'next/link';
+
+import en from '@/messages/en/public-exits.json';
+import fr from '@/messages/fr/public-exits.json';
 
 /**
  * Les **sorties** d'un écran du parcours public (#739).
@@ -30,10 +35,37 @@ import Link from 'next/link';
  * Rien ici n'a d'état ni d'écouteur : ce sont des `<Link>`. Sur la vitrine, ce
  * bandeau précède le LCP — un `"use client"` le ferait rendre deux fois pour
  * deux ancres (skill web-frontend §1).
+ *
+ * ## Les mots viennent du catalogue (#845)
+ *
+ * Le namespace `public-exits` les tient, dans les deux langues. Il est lu de
+ * deux façons, pour la même raison que `lib/appointment-status.ts` : le
+ * composant passe par `useTranslations`, et `publicExitLabels(locale)` par un
+ * **import direct des deux fichiers JSON** — ce registre est lu depuis
+ * `app/salon-doors.ts`, un module sans React qu'un crochet rendrait
+ * inappelable. Les deux lectures visent les mêmes fichiers : il n'y a qu'une
+ * écriture de ces libellés.
  */
 
 /** Les destinations que le parcours public sait nommer. */
 export type PublicExitKey = 'vitrine' | 'reservation' | 'compte';
+
+/** Les catalogues, dans les deux langues — la même source que le composant. */
+const CATALOG = { fr, en } as const;
+
+/**
+ * La langue employée quand l'appelant n'en passe pas.
+ *
+ * `'fr'`, et c'est **transitoire** — même arbitrage que `FALLBACK_LOCALE` de
+ * `lib/appointment-status.ts`, et pour les mêmes raisons : les six surfaces qui
+ * lisent ce registre (vitrine, tunnel, accueil de la plateforme, connexion et
+ * invitation du back-office, page d'erreur de l'espace client) sont hors de
+ * l'empreinte de #845 et passeront la langue résolue dans leur propre ticket de
+ * l'épique #843. Ce n'est pas `DEFAULT_LOCALE` du contrat, qui vaut `en` : le
+ * défaut d'ici garde le comportement d'avant le ticket plutôt que de basculer
+ * en anglais des écrans dont personne n'a encore relu la traduction.
+ */
+const FALLBACK_LOCALE: Locale = 'fr';
 
 /**
  * Le libellé de chaque destination — **source unique**.
@@ -63,11 +95,23 @@ export type PublicExitKey = 'vitrine' | 'reservation' | 'compte';
  * mais désignent les mêmes pages. Les laisser réécrire la chaîne, c'est
  * exactement ce que ce registre existe pour empêcher.
  */
-export const PUBLIC_EXIT_LABELS: Readonly<Record<PublicExitKey, string>> = {
-  vitrine: 'Voir toutes les prestations',
-  reservation: 'Prendre rendez-vous',
-  compte: 'Mon compte',
-};
+export function publicExitLabels(
+  locale: Locale = FALLBACK_LOCALE,
+): Readonly<Record<PublicExitKey, string>> {
+  return CATALOG[locale].exits;
+}
+
+/**
+ * La même table, figée en français.
+ *
+ * @deprecated Transitoire (#845). Les six surfaces qui la lisent passeront à
+ * `publicExitLabels(locale)` dans leur propre ticket de l'épique #843 ; elle
+ * disparaît avec la dernière. La garder évite de basculer en anglais des écrans
+ * dont la traduction n'a pas encore été relue, et surtout de sortir de
+ * l'empreinte de ce ticket pour aller les réécrire.
+ */
+export const PUBLIC_EXIT_LABELS: Readonly<Record<PublicExitKey, string>> =
+  CATALOG[FALLBACK_LOCALE].exits;
 
 export interface PublicExit {
   readonly key: PublicExitKey;
@@ -88,6 +132,10 @@ interface PublicExitsProps {
 }
 
 export function PublicExits({ exits, variant }: PublicExitsProps) {
+  // Appelé avant le retour anticipé : un crochet de React ne se saute pas
+  // (`react-hooks/rules-of-hooks`), et `useTranslations` en est un.
+  const t = useTranslations('public-exits');
+
   if (exits.length === 0) {
     return null;
   }
@@ -95,7 +143,7 @@ export function PublicExits({ exits, variant }: PublicExitsProps) {
   const className = `spa-public-exits spa-public-exits--${variant}`;
   const links = exits.map((exit) => (
     <Link className="spa-public-exits__link" key={exit.key} href={exit.href}>
-      {PUBLIC_EXIT_LABELS[exit.key]}
+      {t(`exits.${exit.key}`)}
     </Link>
   ));
 
@@ -104,7 +152,7 @@ export function PublicExits({ exits, variant }: PublicExitsProps) {
   }
 
   return (
-    <nav className={className} aria-label="Espace client">
+    <nav className={className} aria-label={t('navLabel')}>
       {links}
     </nav>
   );

@@ -1,5 +1,6 @@
 import type { Permission, TenantBillingStatus, UserRole } from '@spa/shared';
 import type { Metadata } from 'next';
+import { getTranslations } from 'next-intl/server';
 import { Inter } from 'next/font/google';
 import { cache, type ReactNode } from 'react';
 
@@ -115,13 +116,18 @@ const adminFont = Inter({
  * du repli garde le `return main` nu dont #760 fait une prémisse vérifiable.
  */
 
-export const metadata: Metadata = {
-  title: 'Back-office',
-  // Le back-office n'a rien à faire dans un index de recherche : ses pages ne
-  // rendent rien sans session, et une URL indexée n'apporte que du trafic qui
-  // rebondit sur un écran de connexion.
-  robots: { index: false, follow: false },
-};
+/** Le titre de l'onglet, dans la langue résolue (#845). */
+export async function generateMetadata(): Promise<Metadata> {
+  const t = await getTranslations('shell.admin');
+
+  return {
+    title: t('metadataTitle'),
+    // Le back-office n'a rien à faire dans un index de recherche : ses pages ne
+    // rendent rien sans session, et une URL indexée n'apporte que du trafic qui
+    // rebondit sur un écran de connexion.
+    robots: { index: false, follow: false },
+  };
+}
 
 /**
  * Le layout lit un cookie de session : le mettre en cache servirait le rail du

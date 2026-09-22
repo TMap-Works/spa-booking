@@ -1,4 +1,5 @@
 import type { PublicTenant } from '@spa/shared';
+import { useTranslations } from 'next-intl';
 import type { CSSProperties, ReactNode } from 'react';
 
 import { openingStatus } from '@/components/salon/opening-hours';
@@ -52,48 +53,25 @@ import { PHOTOS, type Photo } from '@/lib/photos';
 
 export type SalonAuthIntent = 'connexion' | 'inscription';
 
-interface SalonAuthCopy {
-  /** Le titre, salon nommé — et son repli quand la fiche n'a pas pu être lue. */
-  readonly headline: (salonName: string) => string;
-  readonly fallbackHeadline: string;
-  readonly lead: string;
-  /**
-   * La photographie d'ambiance du volet, décorative (voir `lib/photos.ts`).
-   *
-   * Elle est attachée à l'intention plutôt que passée par la page, pour la même
-   * raison que les deux titres le sont : les deux écrans se lisent l'un à côté
-   * de l'autre, et deux pages libres de choisir auraient fini par poser la même
-   * image des deux côtés — ou deux images sans rapport.
-   *
-   * Aucune ne montre de visage. Le volet nomme le salon juste à côté, et un
-   * portrait y aurait été pris pour une personne de l'établissement : ces deux
-   * écrans sont posés sur la vitrine d'un salon réel, pas sur une page
-   * d'éditeur.
-   */
-  readonly photo: Photo;
-}
-
 /**
- * Ce que chaque écran annonce.
+ * La photographie d'ambiance du volet, décorative (voir `lib/photos.ts`).
  *
- * Écrit ici et non dans les pages : les deux titres ne se lisent bien que l'un
- * à côté de l'autre — « Bienvenue chez … » accueille qui revient, « Créez votre
- * compte … » s'adresse à qui arrive —, et deux fichiers les auraient laissés
- * diverger de ton au premier remaniement.
+ * Elle est attachée à l'intention plutôt que passée par la page, pour la même
+ * raison que les deux titres le sont : les deux écrans se lisent l'un à côté
+ * de l'autre, et deux pages libres de choisir auraient fini par poser la même
+ * image des deux côtés — ou deux images sans rapport.
+ *
+ * Aucune ne montre de visage. Le volet nomme le salon juste à côté, et un
+ * portrait y aurait été pris pour une personne de l'établissement : ces deux
+ * écrans sont posés sur la vitrine d'un salon réel, pas sur une page
+ * d'éditeur.
+ *
+ * Elle reste ici, et non dans le catalogue de messages : une URL d'image n'est
+ * pas du texte à traduire, et les deux langues montrent la même photographie.
  */
-const COPY: Readonly<Record<SalonAuthIntent, SalonAuthCopy>> = {
-  connexion: {
-    headline: (salonName) => `Bienvenue chez ${salonName}`,
-    fallbackHeadline: 'Bienvenue',
-    lead: 'Retrouvez vos rendez-vous, votre historique et vos coordonnées.',
-    photo: PHOTOS.massageDos,
-  },
-  inscription: {
-    headline: (salonName) => `Créez votre compte ${salonName}`,
-    fallbackHeadline: 'Créez votre compte',
-    lead: 'Réservez plus vite, reportez ou annulez en ligne, gardez vos rappels à jour.',
-    photo: PHOTOS.natureMorteSpa,
-  },
+const PHOTO: Readonly<Record<SalonAuthIntent, Photo>> = {
+  connexion: PHOTOS.massageDos,
+  inscription: PHOTOS.natureMorteSpa,
 };
 
 /** Un fait porté par le volet d'accueil — où est le salon, et s'il est ouvert. */
@@ -166,9 +144,27 @@ export function SalonAuthScreen({
   now = new Date(),
   children,
 }: SalonAuthScreenProps) {
-  const copy = COPY[intent];
+  /*
+   * Ce que chaque écran annonce vit dans le catalogue `auth`, sous
+   * `salon.<intention>` — #845.
+   *
+   * Les deux titres ne se lisent bien que l'un à côté de l'autre — « Bienvenue
+   * chez … » accueille qui revient, « Créez votre compte … » s'adresse à qui
+   * arrive : ils sont donc voisins dans le catalogue, comme ils l'étaient dans
+   * la table qui vivait ici, et non dispersés entre les deux pages.
+   *
+   * Le nom du salon est un **paramètre du message** (`{salonName}`) et non une
+   * concaténation : l'ordre des mots d'une phrase d'accueil ne survit pas à une
+   * traduction, et « Create your Maison Lotus account » ne place pas le nom où
+   * le français le met.
+   */
+  const t = useTranslations('auth.salon');
   const salonName = tenant?.name ?? null;
-  const headline = salonName === null ? copy.fallbackHeadline : copy.headline(salonName);
+  const headline =
+    salonName === null
+      ? t(`${intent}.fallbackHeadline` as 'connexion.fallbackHeadline')
+      : t(`${intent}.headline` as 'connexion.headline', { salonName });
+  const lead = t(`${intent}.lead` as 'connexion.lead');
   const facts = tenant === null ? [] : salonFacts(tenant, now);
 
   return (
@@ -179,7 +175,7 @@ export function SalonAuthScreen({
             ajoutée, pour une valeur qui n'est pas une décision de style. */}
         <div
           className="spa-auth__intro spa-auth__intro--photo"
-          style={{ backgroundImage: `url(${copy.photo.src})` } satisfies CSSProperties}
+          style={{ backgroundImage: `url(${PHOTO[intent].src})` } satisfies CSSProperties}
         >
           {/*
             Rien plutôt qu'un paragraphe vide quand la fiche n'a pas pu être
@@ -200,11 +196,11 @@ export function SalonAuthScreen({
 
           <div className="spa-auth__welcome">
             <Headline className="spa-auth__headline">{headline}</Headline>
-            <p className="spa-auth__lead">{copy.lead}</p>
+            <p className="spa-auth__lead">{lead}</p>
           </div>
 
           {facts.length === 0 ? null : (
-            <ul className="spa-auth__facts" aria-label="Le salon en bref">
+            <ul className="spa-auth__facts" aria-label={t('facts')}>
               {facts.map((fact) => (
                 <li className="spa-auth__fact" key={fact.icon}>
                   <span className="spa-auth__fact-badge">

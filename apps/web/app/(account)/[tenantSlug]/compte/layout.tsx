@@ -1,5 +1,6 @@
 import type { PublicTenant } from '@spa/shared';
 import type { Metadata } from 'next';
+import { getTranslations } from 'next-intl/server';
 import { notFound } from 'next/navigation';
 import type { ReactNode } from 'react';
 
@@ -88,13 +89,23 @@ import { accountTenant } from './tenant';
  * même layout.
  */
 
-export const metadata: Metadata = {
-  title: 'Mon compte',
-  // L'espace client n'a rien à faire dans un index de recherche : ses pages ne
-  // rendent rien sans session, et une URL de compte indexée n'apporte que du
-  // trafic qui rebondit sur un écran de connexion.
-  robots: { index: false, follow: false },
-};
+/**
+ * Le titre de l'onglet, dans la langue résolue (#845).
+ *
+ * `generateMetadata` et non un objet constant : un littéral ne peut pas lire la
+ * requête, et le titre d'un espace doit se dire dans la langue de qui l'ouvre.
+ */
+export async function generateMetadata(): Promise<Metadata> {
+  const t = await getTranslations('shell.account');
+
+  return {
+    title: t('metadataTitle'),
+    // L'espace client n'a rien à faire dans un index de recherche : ses pages ne
+    // rendent rien sans session, et une URL de compte indexée n'apporte que du
+    // trafic qui rebondit sur un écran de connexion.
+    robots: { index: false, follow: false },
+  };
+}
 
 /**
  * Ce gabarit lit un cookie de session pour savoir quoi peindre : le mettre en
@@ -110,6 +121,7 @@ interface AccountLayoutProps {
 
 export default async function AccountLayout({ children, params }: AccountLayoutProps) {
   const { tenantSlug } = await params;
+  const t = await getTranslations('shell.account');
 
   // L'établissement est résolu ici plutôt que dans chaque page : c'est ce qui
   // fait qu'un slug inconnu rend 404 avant tout écran de connexion, et non un
@@ -181,7 +193,7 @@ export default async function AccountLayout({ children, params }: AccountLayoutP
         <div className="spa-account">
           <header className="spa-account__header">
             <h1 className="spa-account__title">
-              {presence === null ? 'Mon compte' : `Bonjour ${presence.firstName}`}
+              {presence === null ? t('title') : t('greeting', { firstName: presence.firstName })}
             </h1>
             <AccountTabs tenantSlug={tenantSlug} />
           </header>
