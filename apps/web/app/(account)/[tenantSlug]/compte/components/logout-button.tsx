@@ -1,5 +1,6 @@
 'use client';
 
+import { useTranslations } from 'next-intl';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 
@@ -24,6 +25,7 @@ interface LogoutButtonProps {
 }
 
 export function LogoutButton({ tenantSlug }: LogoutButtonProps) {
+  const t = useTranslations('account.nav');
   const router = useRouter();
   const [leaving, setLeaving] = useState(false);
 
@@ -44,10 +46,10 @@ export function LogoutButton({ tenantSlug }: LogoutButtonProps) {
     <Button
       variant="quiet"
       loading={leaving}
-      loadingLabel="Déconnexion en cours…"
+      loadingLabel={t('signingOut')}
       onClick={() => void logout()}
     >
-      Se déconnecter
+      {t('signOut')}
     </Button>
   );
 }

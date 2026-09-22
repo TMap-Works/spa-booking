@@ -1,5 +1,6 @@
 'use client';
 
+import { useTranslations } from 'next-intl';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 
@@ -54,12 +55,13 @@ import { accountPath } from '../../../paths';
  * quand même.
  */
 export default function ReportAppointmentNotFound() {
+  const t = useTranslations('account.notFound');
   const tenantSlug = tenantSlugFromPathname(usePathname());
 
   return (
     <section className="spa-account__panel" aria-labelledby="report-introuvable-titre">
       <h2 className="spa-account__section-title" id="report-introuvable-titre">
-        Ce rendez-vous n’est plus disponible
+        {t('title')}
       </h2>
 
       {/*
@@ -67,10 +69,7 @@ export default function ReportAppointmentNotFound() {
        * distinguer confirmerait à qui essaie des identifiants au hasard qu'un
        * rendez-vous existe, et chez qui (tenant-isolation §4).
        */}
-      <p className="spa-account__lead">
-        Il a pu être annulé, déjà déplacé, ou avoir eu lieu depuis. Vos rendez-vous à venir sont
-        toujours dans votre compte, et ceux-là peuvent encore être reportés.
-      </p>
+      <p className="spa-account__lead">{t('lead')}</p>
 
       {/*
        * Sans slug lisible, le lien est tu plutôt que fabriqué : le pied de page de
@@ -79,7 +78,7 @@ export default function ReportAppointmentNotFound() {
       {tenantSlug === null ? null : (
         <div className="spa-account__actions">
           <Link className="spa-button spa-button--accent" href={accountPath(tenantSlug)}>
-            Revenir à mes rendez-vous
+            {t('back')}
           </Link>
         </div>
       )}

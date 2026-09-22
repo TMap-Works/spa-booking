@@ -7,6 +7,7 @@ import {
   type TimeZone,
   type UtcInstant,
 } from '@spa/shared';
+import { useTranslations } from 'next-intl';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useRef, useState, useTransition } from 'react';
@@ -26,6 +27,7 @@ import { formatDateTimeInTimeZone, timeZoneMention } from '@/lib/format';
 import { rescheduleOwnAppointmentAction } from '../actions';
 import { accountPath } from '../paths';
 import { useAccountAnnouncement } from './account-announcement';
+import { useAccountDisplay } from './account-display-locale';
 import { useAccountSessionRenewal } from './use-account-session-renewal';
 
 /**
@@ -153,6 +155,8 @@ export function RescheduleForm({
   openingHours,
   monthHref,
 }: RescheduleFormProps) {
+  const t = useTranslations('account.reschedule');
+  const display = useAccountDisplay();
   const router = useRouter();
   const announce = useAccountAnnouncement();
   const { renewIfExpired } = useAccountSessionRenewal(tenantSlug);
@@ -209,7 +213,7 @@ export function RescheduleForm({
     setMounted(true);
   }, []);
 
-  const mention = mounted ? timeZoneMention(timeZone) : null;
+  const mention = mounted ? timeZoneMention(timeZone, display) : null;
 
   /**
    * Le focus rattrapé quand « Voir le mois suivant » s'est effacé.
@@ -271,8 +275,8 @@ export function RescheduleForm({
   const currentInstant = Date.parse(currentStartsAt);
   const currentSlotNote = useCallback(
     (startsAt: UtcInstant): string | null =>
-      Date.parse(startsAt) === currentInstant ? 'actuel' : null,
-    [currentInstant],
+      Date.parse(startsAt) === currentInstant ? t('currentSlot') : null,
+    [currentInstant, t],
   );
 
   const confirm = async (): Promise<void> => {
@@ -299,11 +303,7 @@ export function RescheduleForm({
       }
 
       if (result.code === ERROR_CODES.SLOT_NO_LONGER_AVAILABLE) {
-        setFailure({
-          title: 'Ce créneau vient d’être pris',
-          message:
-            'Votre rendez-vous n’a pas bougé. Choisissez un autre créneau dans la liste remise à jour.',
-        });
+        setFailure({ title: t('slotTakenTitle'), message: t('slotTakenBody') });
         setChosen(null);
         setSubmitting(false);
         // Recharger la page serveur : c'est elle qui lit les créneaux.
@@ -311,7 +311,7 @@ export function RescheduleForm({
         return;
       }
 
-      setFailure({ title: 'Le report n’a pas abouti', message: result.message });
+      setFailure({ title: t('failureTitle'), message: result.message });
       setSubmitting(false);
       return;
     }
@@ -322,7 +322,7 @@ export function RescheduleForm({
     // « Reporter mon rendez-vous » se lirait comme un second déplacement.
     announce({
       kind: 'appointment-rescheduled',
-      when: formatDateTimeInTimeZone(chosen, timeZone),
+      when: formatDateTimeInTimeZone(chosen, timeZone, display),
       path: accountPath(tenantSlug),
     });
     router.replace(accountPath(tenantSlug));
@@ -332,12 +332,19 @@ export function RescheduleForm({
   return (
     <section className="spa-account__panel" aria-labelledby="report-titre">
       <h2 className="spa-account__section-title" id="report-titre">
-        Reporter mon rendez-vous
+        {t('title')}
       </h2>
 
       <p className="spa-account__lead">
-        {serviceName ?? 'Votre prestation'} — actuellement le{' '}
-        <strong>{formatDateTimeInTimeZone(currentStartsAt, timeZone)}</strong>
+        {/* La prestation et l'heure sont des **paramètres du message** : l'ordre
+            des mots d'une phrase ne survit pas à une traduction. La mention du
+            fuseau et le point final restent en JSX — le premier n'existe que sur
+            le client (#654), le second est de la ponctuation. */}
+        {t.rich('lead', {
+          service: serviceName ?? t('serviceFallback'),
+          when: formatDateTimeInTimeZone(currentStartsAt, timeZone, display),
+          strong: (parts) => <strong>{parts}</strong>,
+        })}
         {mention === null ? null : <span className="spa-appointment__timezone"> ({mention})</span>}.
       </p>
 
@@ -362,11 +369,8 @@ export function RescheduleForm({
         onChoose={setChosen}
         emptyState={
           <div className="spa-empty-state">
-            <p className="spa-empty-state__title">{`Aucun créneau en ${formatMonth(month)}`}</p>
-            <p className="spa-empty-state__description">
-              Le calendrier ne propose rien pour cette prestation ce mois-ci. Essayez un autre
-              mois, ou contactez le salon pour convenir d’une autre date.
-            </p>
+            <p className="spa-empty-state__title">{t('emptyTitle', { month: formatMonth(month) })}</p>
+            <p className="spa-empty-state__description">{t('emptyBody')}</p>
             {/*
               La sortie est **aussi** ici, et pas seulement sur les chevrons du
               calendrier : `states.md` étape 3 — *« Vide (aucune dispo sur toute
@@ -375,7 +379,7 @@ export function RescheduleForm({
             */}
             {canSeeNextMonth ? (
               <Button variant="neutral" onClick={showNextMonth}>
-                Voir le mois suivant
+                {t('nextMonth')}
               </Button>
             ) : null}
           </div>
@@ -387,15 +391,15 @@ export function RescheduleForm({
           variant="accent"
           disabled={chosen === null}
           loading={submitting}
-          loadingLabel="Report en cours…"
+          loadingLabel={t('submitting')}
           onClick={() => void confirm()}
         >
           {chosen === null
-            ? 'Choisissez un créneau'
-            : `Reporter au ${formatDateTimeInTimeZone(chosen, timeZone)}`}
+            ? t('chooseSlot')
+            : t('submit', { when: formatDateTimeInTimeZone(chosen, timeZone, display) })}
         </Button>
         <Link className="spa-account__nav-link" href={accountPath(tenantSlug)}>
-          Renoncer au report
+          {t('giveUp')}
         </Link>
       </div>
     </section>

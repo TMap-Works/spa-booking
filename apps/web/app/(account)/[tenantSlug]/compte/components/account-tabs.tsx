@@ -1,5 +1,6 @@
 'use client';
 
+import { useTranslations } from 'next-intl';
 import { usePathname } from 'next/navigation';
 
 import { NavTabs } from '@/components/ui/nav-tabs';
@@ -31,6 +32,7 @@ interface AccountTabsProps {
  * rendez-vous, seuls l'historique et les coordonnées ont leur propre onglet.
  */
 export function AccountTabs({ tenantSlug }: AccountTabsProps) {
+  const t = useTranslations('account.nav');
   const pathname = usePathname();
   const history = accountPath(tenantSlug, '/historique');
   const profile = accountPath(tenantSlug, '/coordonnees');
@@ -40,15 +42,15 @@ export function AccountTabs({ tenantSlug }: AccountTabsProps) {
 
   return (
     <NavTabs
-      label="Mon compte"
+      label={t('label')}
       items={[
         {
           href: accountPath(tenantSlug),
-          label: 'Mes rendez-vous',
+          label: t('appointments'),
           current: !onHistory && !onProfile,
         },
-        { href: history, label: 'Historique', current: onHistory },
-        { href: profile, label: 'Mes coordonnées', current: onProfile },
+        { href: history, label: t('history'), current: onHistory },
+        { href: profile, label: t('profile'), current: onProfile },
       ]}
     />
   );

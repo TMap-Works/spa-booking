@@ -1,5 +1,6 @@
 'use client';
 
+import { useTranslations } from 'next-intl';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
@@ -42,6 +43,7 @@ interface AccountEntryProps {
  * ailleurs, quand le focus le quitte, et à chaque changement de page.
  */
 export function AccountEntry({ tenantSlug, signedIn, presence, children }: AccountEntryProps) {
+  const t = useTranslations('account.nav');
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
   const container = useRef<HTMLDivElement>(null);
@@ -76,7 +78,7 @@ export function AccountEntry({ tenantSlug, signedIn, presence, children }: Accou
     return (
       <Link className="spa-account-entry" href={login}>
         <Icon name="user" />
-        Se connecter
+        {t('signIn')}
       </Link>
     );
   }
@@ -114,8 +116,10 @@ export function AccountEntry({ tenantSlug, signedIn, presence, children }: Accou
         ) : (
           <Avatar name={fullName} size="sm" />
         )}
-        {presence === null ? null : <span className="spa-visually-hidden">Mon compte : </span>}
-        <span className="spa-account-menu__name">{presence?.firstName ?? 'Mon compte'}</span>
+        {presence === null ? null : (
+          <span className="spa-visually-hidden">{t('myAccountPrefix')}</span>
+        )}
+        <span className="spa-account-menu__name">{presence?.firstName ?? t('myAccount')}</span>
         <Icon name="chevron-down" className="spa-account-menu__chevron" />
       </button>
 
@@ -123,7 +127,7 @@ export function AccountEntry({ tenantSlug, signedIn, presence, children }: Accou
         {fullName === null ? null : (
           <p className="spa-account-menu__who">
             <span className="spa-account-menu__who-name">{fullName}</span>
-            <span className="spa-account-menu__who-hint">Compte client</span>
+            <span className="spa-account-menu__who-hint">{t('clientAccount')}</span>
           </p>
         )}
         <ul className="spa-account-menu__list">
@@ -134,7 +138,7 @@ export function AccountEntry({ tenantSlug, signedIn, presence, children }: Accou
               aria-current={pathname === account ? 'page' : undefined}
             >
               <Icon name="calendar" />
-              Mes rendez-vous
+              {t('appointments')}
             </Link>
           </li>
           <li>
@@ -144,7 +148,7 @@ export function AccountEntry({ tenantSlug, signedIn, presence, children }: Accou
               aria-current={pathname === profile ? 'page' : undefined}
             >
               <Icon name="user" />
-              Mes coordonnées
+              {t('profile')}
             </Link>
           </li>
         </ul>

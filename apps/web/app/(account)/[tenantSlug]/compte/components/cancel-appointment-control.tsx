@@ -1,6 +1,7 @@
 'use client';
 
 import type { BookedAppointment, TimeZone } from '@spa/shared';
+import { useTranslations } from 'next-intl';
 import { useState } from 'react';
 
 import { Button } from '@/components/ui/button';
@@ -10,6 +11,7 @@ import { formatDateTimeInTimeZone } from '@/lib/format';
 import { cancelOwnAppointmentAction } from '../actions';
 import { accountPath } from '../paths';
 import { useAccountAnnouncement } from './account-announcement';
+import { useAccountDisplay } from './account-display-locale';
 import { useAccountSessionRenewal } from './use-account-session-renewal';
 
 /**
@@ -59,6 +61,8 @@ export function CancelAppointmentControl({
   tone = 'quiet',
   onCancelled,
 }: CancelAppointmentControlProps) {
+  const t = useTranslations('account.cancel');
+  const display = useAccountDisplay();
   const announce = useAccountAnnouncement();
   const { renewIfExpired } = useAccountSessionRenewal(tenantSlug);
   const [cancelling, setCancelling] = useState(false);
@@ -92,7 +96,7 @@ export function CancelAppointmentControl({
     // qu'elle porterait.
     announce({
       kind: 'appointment-cancelled',
-      when: formatDateTimeInTimeZone(appointment.startsAt, timeZone),
+      when: formatDateTimeInTimeZone(appointment.startsAt, timeZone, display),
       path: accountPath(tenantSlug),
     });
     onCancelled();
@@ -101,7 +105,7 @@ export function CancelAppointmentControl({
   return (
     <>
       {error === null ? null : (
-        <Notification tone="danger" title="L’annulation n’a pas abouti">
+        <Notification tone="danger" title={t('failureTitle')}>
           <p>{error}</p>
         </Notification>
       )}
@@ -109,24 +113,24 @@ export function CancelAppointmentControl({
       {confirming ? (
         <>
           <p className="spa-appointment__confirm" role="alert">
-            Annuler ce rendez-vous ? Le créneau repart immédiatement à la réservation.
+            {t('confirm')}
           </p>
           <Button
             variant="danger"
             loading={cancelling}
-            loadingLabel="Annulation en cours…"
+            loadingLabel={t('loading')}
             onClick={() => void cancel()}
           >
-            Confirmer l’annulation
+            {t('confirmAction')}
           </Button>
           <Button variant="quiet" disabled={cancelling} onClick={() => setConfirming(false)}>
-            Garder ce rendez-vous
+            {t('keep')}
           </Button>
         </>
       ) : (
         <span className={tone === 'link' ? 'spa-appointment__cancel' : undefined}>
           <Button variant="quiet" onClick={() => setConfirming(true)}>
-            Annuler
+            {t('action')}
           </Button>
         </span>
       )}

@@ -1,27 +1,24 @@
 'use client';
 
-import type { AppointmentScope, TimeZone } from '@spa/shared';
+import type { AppointmentScope, BookedAppointment, Locale, TimeZone } from '@spa/shared';
+import { useTranslations } from 'next-intl';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 
 import {
   appointmentTimeRange,
-  PENDING_HOLD_NOTE,
-  RESCHEDULED_NOTE,
+  pendingHoldNote,
+  rescheduledNote,
   type AppointmentBrief,
 } from '@/components/account/appointment-brief';
 import { Badge } from '@/components/ui/badge';
 import { DateBlock } from '@/components/ui/date-block';
-import {
-  appointmentBadge,
-  isStillActionable,
-  PENDING_CONFIRMATION_LABEL,
-  RESCHEDULED_LABEL,
-} from '@/lib/appointment-status';
+import { appointmentBadge, isStillActionable } from '@/lib/appointment-status';
 import { formatDuration, formatMoney, timeZoneMention } from '@/lib/format';
 
 import { accountPath } from '../paths';
+import { useAccountDisplay } from './account-display-locale';
 import { CancelAppointmentControl } from './cancel-appointment-control';
 
 /**
@@ -80,6 +77,8 @@ interface AppointmentCardProps {
 }
 
 export function AppointmentCard({ tenantSlug, brief, timeZone, scope }: AppointmentCardProps) {
+  const t = useTranslations('account.appointments');
+  const display = useAccountDisplay();
   const router = useRouter();
   const { appointment, serviceName, practitioner, durationMinutes } = brief;
 
@@ -95,22 +94,22 @@ export function AppointmentCard({ tenantSlug, brief, timeZone, scope }: Appointm
     setMounted(true);
   }, []);
 
-  const badge = appointmentBadge(appointment, scope);
+  const badge = appointmentBadge(appointment, scope, display.locale);
   const actionable = scope === 'upcoming' && isStillActionable(appointment);
-  const mention = mounted ? timeZoneMention(timeZone) : null;
-  const note = statusNote(badge.label, scope);
+  const mention = mounted ? timeZoneMention(timeZone, display) : null;
+  const note = statusNote(appointment, scope, display.locale);
 
   return (
     <li className="spa-appointment">
       <div className="spa-appointment__summary">
-        <DateBlock instant={appointment.startsAt} timeZone={timeZone} />
+        <DateBlock instant={appointment.startsAt} timeZone={timeZone} display={display} />
 
         <div className="spa-appointment__body">
-          <p className="spa-appointment__service">{serviceName ?? 'Prestation'}</p>
+          <p className="spa-appointment__service">{serviceName ?? t('serviceFallback')}</p>
           <p className="spa-appointment__meta">
-            {appointmentTimeRange(appointment, timeZone)}
+            {appointmentTimeRange(appointment, timeZone, display)}
             <span className="spa-appointment__dot"> · </span>
-            {formatDuration(durationMinutes)}
+            {formatDuration(durationMinutes, display)}
             {practitioner === null ? null : (
               <>
                 <span className="spa-appointment__dot"> · </span>
@@ -125,7 +124,7 @@ export function AppointmentCard({ tenantSlug, brief, timeZone, scope }: Appointm
 
         <div className="spa-appointment__status">
           <Badge tone={badge.tone}>{badge.label}</Badge>
-          <p className="spa-appointment__price">{formatMoney(appointment.price)}</p>
+          <p className="spa-appointment__price">{formatMoney(appointment.price, display)}</p>
         </div>
       </div>
 
@@ -141,7 +140,7 @@ export function AppointmentCard({ tenantSlug, brief, timeZone, scope }: Appointm
             className="spa-button spa-button--neutral"
             href={accountPath(tenantSlug, `/rendez-vous/${appointment.id}/report`)}
           >
-            <span className="spa-button__label">Reporter</span>
+            <span className="spa-button__label">{t('reschedule')}</span>
           </Link>
 
           <CancelAppointmentControl
@@ -163,23 +162,33 @@ export function AppointmentCard({ tenantSlug, brief, timeZone, scope }: Appointm
 /**
  * La ligne qui suit la pastille, quand celle-ci laisse une question ouverte.
  *
- * Elle est déduite du **libellé** déjà calculé et non du statut brut : c'est
- * `appointmentBadge` qui tranche ce que la carte annonce, et déduire deux fois
- * la même chose de deux façons est exactement comment les libellés de statut
- * avaient divergé sur trois écrans (#917).
+ * Elle se déduisait du **libellé** déjà calculé — une comparaison de chaînes
+ * contre `PENDING_CONFIRMATION_LABEL` et `RESCHEDULED_LABEL`. C'était juste tant
+ * qu'il n'y avait qu'une langue ; avec deux, la comparaison devenait fausse dès
+ * que l'écran n'était pas en français, et la ligne disparaissait en silence
+ * (#847).
+ *
+ * Elle se déduit donc du **fait**, et des deux mêmes conditions que
+ * `appointmentBadge` : un `pending` à venir est en attente du salon, un
+ * `cancelled` **sans auteur** est la ligne d'origine d'un report — la seule
+ * chose qui distingue « Déplacé » d'une vraie annulation
+ * (`lib/appointment-status.ts`). Une seule source reste en jeu, et elle est
+ * indépendante de la langue.
  */
-function statusNote(label: string, scope: AppointmentScope): string | null {
-  if (label === PENDING_CONFIRMATION_LABEL) {
-    return PENDING_HOLD_NOTE;
+function statusNote(
+  appointment: Pick<BookedAppointment, 'status' | 'cancelledBy'>,
+  scope: AppointmentScope,
+  locale: Locale,
+): string | null {
+  if (appointment.status === 'pending' && scope === 'upcoming') {
+    return pendingHoldNote(locale);
   }
 
   if (scope === 'upcoming') {
     return null;
   }
 
-  if (label === RESCHEDULED_LABEL) {
-    return RESCHEDULED_NOTE;
-  }
-
-  return null;
+  return appointment.status === 'cancelled' && (appointment.cancelledBy ?? null) === null
+    ? rescheduledNote(locale)
+    : null;
 }

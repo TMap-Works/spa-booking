@@ -1,4 +1,5 @@
 import type { PublicTenant } from '@spa/shared';
+import { useTranslations } from 'next-intl';
 
 import { directionsUrl } from '@/components/account/appointment-brief';
 import { formatOpeningRange, groupOpeningHoursByDay } from '@/components/salon/opening-hours';
@@ -64,6 +65,7 @@ export function todayWeekday(timeZone: string, now: Date = new Date()): number |
 }
 
 export function SalonAside({ tenant }: SalonAsideProps) {
+  const t = useTranslations('account');
   const directions = directionsUrl(tenant);
   const phone = tenant.contactPhone;
   const weekday = todayWeekday(tenant.timezone);
@@ -115,7 +117,7 @@ export function SalonAside({ tenant }: SalonAsideProps) {
                   target="_blank"
                   rel="noreferrer"
                 >
-                  Itinéraire
+                  {t('appointments.directions')}
                   <Icon name="external" />
                 </a>
               )}
@@ -136,9 +138,9 @@ export function SalonAside({ tenant }: SalonAsideProps) {
           <div className="spa-account__card-row">
             <Icon name="clock" className="spa-account__card-icon" />
             <p className="spa-account__card-hours">
-              <span className="spa-account__card-day">Aujourd’hui</span>
+              <span className="spa-account__card-day">{t('salonCard.today')}</span>
               {today === null ? (
-                <span>Fermé</span>
+                <span>{t('salonCard.closed')}</span>
               ) : (
                 today.ranges.map((range, index) => (
                   <span key={index}>{formatOpeningRange(range)}</span>

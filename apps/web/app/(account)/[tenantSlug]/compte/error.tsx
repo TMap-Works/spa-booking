@@ -1,5 +1,7 @@
 'use client';
 
+import { useTranslations } from 'next-intl';
+
 import { RouteError } from '@/components/ui/route-error';
 
 interface AccountErrorProps {
@@ -17,11 +19,7 @@ interface AccountErrorProps {
  * Le gabarit porte déjà le titre de niveau 1 ; l'encart n'en ajoute pas.
  */
 export default function AccountError({ reset }: AccountErrorProps) {
-  return (
-    <RouteError
-      message="Une erreur inattendue a interrompu l’affichage de cette page. Merci de réessayer dans un instant."
-      reset={reset}
-      title="Cette page de votre compte n’a pas pu s’afficher"
-    />
-  );
+  const t = useTranslations('account.pageError');
+
+  return <RouteError message={t('message')} reset={reset} title={t('title')} />;
 }

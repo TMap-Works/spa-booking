@@ -1,3 +1,5 @@
+import { useTranslations } from 'next-intl';
+
 import { ProgressBar } from '@/components/ui/progress-bar';
 
 /**
@@ -34,10 +36,12 @@ export function AppointmentSkeleton({
   cards = 2,
   shape = 'cards',
 }: AppointmentSkeletonProps) {
+  const t = useTranslations('account.loading');
+
   return (
     <div aria-busy="true" className="spa-account__section spa-account-loading">
       <ProgressBar />
-      <p className="spa-visually-hidden">Chargement de votre espace…</p>
+      <p className="spa-visually-hidden">{t('label')}</p>
 
       {hero ? (
         <div className="spa-rdv-hero spa-account-loading__hero">

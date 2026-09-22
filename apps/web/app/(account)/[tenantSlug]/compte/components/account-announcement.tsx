@@ -1,5 +1,6 @@
 'use client';
 
+import { useTranslations } from 'next-intl';
 import { usePathname } from 'next/navigation';
 import {
   createContext,
@@ -94,53 +95,26 @@ export interface AccountAnnouncementRequest {
   readonly path: string;
 }
 
-interface AnnouncementWording {
-  readonly tone: NotificationTone;
-  readonly title: string;
-  readonly body: (when: string) => string;
-}
-
 /**
- * Les mots, tenus ici plutôt que chez les appelants — deux écrans qui annoncent
- * la même chose doivent l'annoncer de la même façon.
+ * Le **ton** de chaque annonce — la seule part des mots qui ne se traduise pas.
  *
- * Les tons reprennent ceux du tunnel : une réservation obtenue est un `success`,
- * une annulation obtenue un `info` (`confirmation-step.tsx` — « Votre rendez-vous
+ * Il reprend celui du tunnel : une réservation obtenue est un `success`, une
+ * annulation obtenue un `info` (`confirmation-step.tsx` — « Votre rendez-vous
  * est annulé »). Annuler réussit sans être une bonne nouvelle.
  *
- * Chaque phrase dit **où la ligne est passée**. C'est le constat de l'audit :
- * la carte quitte la liste sous les yeux de la cliente — le message qui se
- * contenterait de dire « c'est fait » laisserait chercher.
- *
- * Depuis #1053, l'historique est un **onglet** et non plus la moitié basse du
- * même écran : « plus bas » désignait un bloc qui n'y est plus, et renvoyait vers
- * un endroit où il n'y a rien. La phrase nomme donc l'onglet.
+ * Les phrases, elles, vivent dans le catalogue `account.announcements` (#847).
+ * Chacune dit **où la ligne est passée** : c'est le constat de l'audit — la
+ * carte quitte la liste sous les yeux de la cliente, et le message qui se
+ * contenterait de dire « c'est fait » laisserait chercher. Depuis #1053
+ * l'historique est un **onglet** et non plus la moitié basse du même écran, si
+ * bien que la phrase nomme l'onglet plutôt qu'un « plus bas » qui ne désigne
+ * plus rien.
  */
-const WORDING: Record<AccountAnnouncementKind, AnnouncementWording> = {
-  'appointment-cancelled': {
-    tone: 'info',
-    title: 'Votre rendez-vous est annulé',
-    body: (when) =>
-      `Celui du ${when} ne figure plus à l’agenda du salon : vous le retrouvez dans l’onglet « Historique ».`,
-  },
-  'appointment-rescheduled': {
-    tone: 'success',
-    title: 'Votre rendez-vous est déplacé',
-    body: (when) => `Il est désormais fixé au ${when}, sous « Rendez-vous à venir ».`,
-  },
-  'salon-confirmed': {
-    tone: 'success',
-    title: 'Le salon a confirmé votre rendez-vous',
-    // L'événement de confirmation ne porte pas l'heure — le bandeau n'en a pas
-    // besoin : le rendez-vous vient de changer de pastille juste en dessous.
-    body: () => 'Il apparaît désormais comme confirmé sous « Rendez-vous à venir ».',
-  },
-  'salon-cancelled': {
-    tone: 'warning',
-    title: 'Le salon a annulé votre rendez-vous',
-    body: (when) =>
-      `Celui du ${when} ne figure plus à l’agenda du salon : vous le retrouvez dans l’onglet « Historique ».`,
-  },
+const TONES: Record<AccountAnnouncementKind, NotificationTone> = {
+  'appointment-cancelled': 'info',
+  'appointment-rescheduled': 'success',
+  'salon-confirmed': 'success',
+  'salon-cancelled': 'warning',
 };
 
 type Announce = (request: AccountAnnouncementRequest) => void;
@@ -241,8 +215,8 @@ export function AccountAnnouncementProvider({ children }: AccountAnnouncementPro
  * deux fois.
  */
 export function AccountAnnouncementRegion() {
+  const t = useTranslations('account.announcements');
   const message = useContext(MessageContext);
-  const wording = message === null ? null : WORDING[message.kind];
 
   return (
     <div
@@ -250,9 +224,16 @@ export function AccountAnnouncementRegion() {
       aria-live="polite"
       aria-atomic="true"
     >
-      {message === null || wording === null ? null : (
-        <Notification tone={wording.tone} title={wording.title}>
-          <p>{wording.body(message.when)}</p>
+      {message === null ? null : (
+        <Notification
+          tone={TONES[message.kind]}
+          title={t(`${message.kind}.title` as 'appointment-cancelled.title')}
+        >
+          {/* `when` est déjà mis en forme par l'appelant, dans le fuseau du
+              salon et la langue de la requête — voir `AccountAnnouncementRequest`.
+              La confirmation du salon ne porte pas d'heure : son message n'a pas
+              de paramètre, et un paramètre non employé n'est pas une erreur. */}
+          <p>{t(`${message.kind}.body` as 'appointment-cancelled.body', { when: message.when })}</p>
         </Notification>
       )}
     </div>

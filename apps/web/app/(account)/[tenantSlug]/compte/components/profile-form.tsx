@@ -1,7 +1,8 @@
 'use client';
 
 import { zodResolver } from '@hookform/resolvers/zod';
-import { e164PhoneSchema, nameSchema, type SessionUser } from '@spa/shared';
+import { e164PhoneSchema, localeSchema, nameSchema, type SessionUser } from '@spa/shared';
+import { useTranslations } from 'next-intl';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 import { Controller, useForm } from 'react-hook-form';
@@ -12,6 +13,8 @@ import { Field } from '@/components/ui/field';
 import { Icon } from '@/components/ui/icon';
 import { Notification } from '@/components/ui/notification';
 import { PhoneField } from '@/components/ui/phone-field';
+import { Select } from '@/components/ui/select';
+import { SUPPORTED_LOCALES } from '@/i18n/resolve';
 
 import { updateProfileAction } from '../actions';
 import { useAccountSessionRenewal } from './use-account-session-renewal';
@@ -64,11 +67,31 @@ import { useAccountSessionRenewal } from './use-account-session-renewal';
  * compléter, avec la même bibliothèque que l'API. Le numéro enregistré revient
  * derrière son drapeau, au format national — et `isDirty` reste faux tant
  * qu'on n'y touche pas, le champ ne réécrivant pas la valeur qu'il reçoit.
+ *
+ * ## La langue préférée, depuis #847
+ *
+ * Troisième critère d'acceptation : *« la page des coordonnées propose la langue
+ * préférée (champ livré par #844) »*. Le champ est celui du contrat —
+ * `updateProfileRequestSchema.locale`, `SessionUser.locale` — et il n'est ni
+ * redéclaré ni étendu ici : le schéma du formulaire réutilise `localeSchema`.
+ *
+ * Trois valeurs et non deux, parce que le contrat en porte trois :
+ * `fr`, `en`, et **`null`**, qui se lit « aucune préférence » et laisse la
+ * langue de l'établissement trancher (`Tenant.defaultLocale`). La chaîne vide
+ * est la façon dont un `<select>` transporte ce `null` — un `<option value="">`
+ * étant le seul moyen d'offrir « rien » dans un contrôle natif —, et la
+ * conversion se fait à l'envoi, comme pour le téléphone.
+ *
+ * Le choix s'applique **tout de suite** : l'action pose les cookies de langue
+ * (`account-locale.ts`) et le `router.refresh()` qui suit rend l'espace dans la
+ * langue enregistrée. Une préférence qui n'aurait d'effet qu'à la visite
+ * suivante se lirait comme un réglage qui n'a pas pris.
  */
 const profileFormSchema = z.object({
   firstName: nameSchema,
   lastName: nameSchema,
   phone: z.union([z.literal(''), e164PhoneSchema]),
+  locale: z.union([z.literal(''), localeSchema]),
 });
 
 type ProfileFormValues = z.input<typeof profileFormSchema>;
@@ -79,6 +102,11 @@ interface ProfileFormProps {
 }
 
 export function ProfileForm({ tenantSlug, profile }: ProfileFormProps) {
+  const t = useTranslations('account.profile');
+  // Les noms de langues sont ceux du sélecteur : « Français » et « English »,
+  // chacun dans sa propre langue, et identiques dans les deux catalogues (#845).
+  // Les redire ici en aurait fait une seconde écriture, qui aurait pu diverger.
+  const languages = useTranslations('locale');
   const router = useRouter();
   const { renewIfExpired } = useAccountSessionRenewal(tenantSlug);
   const [saved, setSaved] = useState(false);
@@ -96,6 +124,7 @@ export function ProfileForm({ tenantSlug, profile }: ProfileFormProps) {
       firstName: profile.firstName,
       lastName: profile.lastName,
       phone: profile.phone ?? '',
+      locale: profile.locale ?? '',
     },
     mode: 'onTouched',
   });
@@ -109,6 +138,9 @@ export function ProfileForm({ tenantSlug, profile }: ProfileFormProps) {
       lastName: values.lastName,
       // `null` efface, la chaîne vide n'est pas une valeur du contrat.
       phone: values.phone === '' ? null : values.phone,
+      // Même règle pour la langue : `null` **retire** la préférence et rend la
+      // main à l'établissement (#844).
+      locale: values.locale === '' ? null : values.locale,
     });
 
     if (!result.ok) {
@@ -133,27 +165,27 @@ export function ProfileForm({ tenantSlug, profile }: ProfileFormProps) {
   return (
     <section className="spa-account__panel" aria-labelledby="coordonnees-titre">
       <h2 className="spa-account__section-title" id="coordonnees-titre">
-        Mes coordonnées
+        {t('title')}
       </h2>
 
       {saved ? (
-        <Notification tone="success" title="Coordonnées enregistrées">
-          <p>Vos prochaines confirmations de rendez-vous utiliseront ces informations.</p>
+        <Notification tone="success" title={t('savedTitle')}>
+          <p>{t('savedBody')}</p>
         </Notification>
       ) : null}
 
       {failure === null ? null : (
-        <Notification tone="danger" title="L’enregistrement a échoué">
+        <Notification tone="danger" title={t('failureTitle')}>
           <p>{failure}</p>
         </Notification>
       )}
 
       <form className="spa-account__form" onSubmit={(event) => void submit(event)} noValidate>
         <fieldset className="spa-account__fieldset">
-          <legend className="spa-account__legend">Identité</legend>
+          <legend className="spa-account__legend">{t('identityLegend')}</legend>
           <Field
             id="profile-first-name"
-            label="Prénom"
+            label={t('firstName')}
             autoComplete="given-name"
             required
             error={errors.firstName?.message}
@@ -161,7 +193,7 @@ export function ProfileForm({ tenantSlug, profile }: ProfileFormProps) {
           />
           <Field
             id="profile-last-name"
-            label="Nom"
+            label={t('lastName')}
             autoComplete="family-name"
             required
             error={errors.lastName?.message}
@@ -170,15 +202,15 @@ export function ProfileForm({ tenantSlug, profile }: ProfileFormProps) {
         </fieldset>
 
         <fieldset className="spa-account__fieldset">
-          <legend className="spa-account__legend">Contact</legend>
+          <legend className="spa-account__legend">{t('contactLegend')}</legend>
           <Controller
             control={control}
             name="phone"
             render={({ field, fieldState }) => (
               <PhoneField
                 id="profile-phone"
-                label="Téléphone"
-                hint="Laissez vide pour ne plus recevoir de rappel par SMS."
+                label={t('phone')}
+                hint={t('phoneHint')}
                 invalid={fieldState.invalid}
                 value={field.value}
                 onChange={field.onChange}
@@ -191,13 +223,36 @@ export function ProfileForm({ tenantSlug, profile }: ProfileFormProps) {
           <p className="spa-account__readonly">
             <Icon name="lock" className="spa-account__readonly-icon" />
             <span>
-              <span className="spa-account__readonly-label">Adresse e-mail</span>
+              <span className="spa-account__readonly-label">{t('emailLabel')}</span>
               <span className="spa-account__readonly-value">{profile.email}</span>
-              <span className="spa-account__readonly-hint">
-                Votre identifiant de connexion. Contactez le salon pour en changer.
-              </span>
+              <span className="spa-account__readonly-hint">{t('emailHint')}</span>
             </span>
           </p>
+        </fieldset>
+
+        {/* La langue préférée — #847, et le champ de #844. Un groupe à elle : ce
+            n'est ni une identité ni un moyen de contact, et la ranger sous
+            « Contact » aurait laissé croire qu'elle ne vaut que pour les
+            messages — elle vaut aussi pour cet écran. */}
+        <fieldset className="spa-account__fieldset">
+          <legend className="spa-account__legend">{t('languageLegend')}</legend>
+          <Select
+            id="profile-locale"
+            label={t('localeLabel')}
+            hint={t('localeHint')}
+            error={errors.locale?.message}
+            {...register('locale')}
+          >
+            {/* « Langue du salon » d'abord : c'est la valeur d'un compte qui n'a
+                jamais choisi, et le contrat la distingue d'une langue
+                (`locale: null`). */}
+            <option value="">{t('localeSalon')}</option>
+            {SUPPORTED_LOCALES.map((supported) => (
+              <option key={supported} value={supported} lang={supported}>
+                {languages(`names.${supported}` as 'names.en')}
+              </option>
+            ))}
+          </Select>
         </fieldset>
 
         <Button
@@ -206,9 +261,9 @@ export function ProfileForm({ tenantSlug, profile }: ProfileFormProps) {
           block
           disabled={!isDirty}
           loading={isSubmitting}
-          loadingLabel="Enregistrement…"
+          loadingLabel={t('submitting')}
         >
-          Enregistrer
+          {t('submit')}
         </Button>
       </form>
     </section>
