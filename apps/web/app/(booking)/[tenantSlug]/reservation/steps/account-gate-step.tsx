@@ -1,18 +1,23 @@
 'use client';
 
+import { useTranslations } from 'next-intl';
 import Link from 'next/link';
 
 import { BookingActionBar, type BookingSummary } from '@/components/booking/summary-bar';
 import { Button } from '@/components/ui/button';
 
-/**
- * Le titre de l'étape quand elle barre la route (voir `AccountGateStep`).
+/*
+ * Le titre de l'étape quand elle barre la route — « Identifiez-vous » — vit
+ * désormais dans le catalogue, sous `tunnel.gateStep.title`, et c'est
+ * `booking-tunnel.tsx` qui le lit : une constante de module ne peut pas lire le
+ * catalogue (#846), et la progression du tunnel est de toute façon le seul
+ * endroit où ce titre s'affiche.
  *
- * Il remplace « Comment vous joindre ? », qui poserait une question à laquelle
- * l'écran ne permet pas de répondre. Court par nécessité, comme les autres
- * titres du tunnel : il tient sur une ligne à 360 px (`tunnel-progress.tsx`).
+ * Ce qu'il dit n'a pas changé : il remplace « Comment vous joindre ? », qui
+ * poserait une question à laquelle l'écran ne permet pas de répondre, et il
+ * reste court par nécessité — il tient sur une ligne à 360 px
+ * (`tunnel-progress.tsx`), dans les deux langues.
  */
-export const ACCOUNT_GATE_TITLE = 'Identifiez-vous';
 
 interface AccountGateStepProps {
   /** Le nom du salon — c'est chez lui que le compte s'ouvre, pas chez nous. */
@@ -58,12 +63,15 @@ export function AccountGateStep({
   registerHref,
   onBack,
 }: AccountGateStepProps) {
+  const t = useTranslations('booking');
+
   return (
-    <section className="spa-booking__step" aria-label="Connexion requise pour réserver">
-      <p className="spa-booking__gate-lead">
-        Un compte {tenantName} est nécessaire pour réserver. Votre prestation et votre horaire sont
-        conservés : vous reviendrez ici juste après.
-      </p>
+    <section className="spa-booking__step" aria-label={t('tunnel.gateStep.label')}>
+      {/* Le nom du salon est un paramètre de la phrase et non un morceau
+          concaténé : « Un compte {salon} est nécessaire » et « A {salon}
+          account is needed » ne le placent pas au même endroit. Il ne se
+          traduit pas — c'est le contenu de l'établissement. */}
+      <p className="spa-booking__gate-lead">{t('tunnel.gateStep.lead', { salon: tenantName })}</p>
 
       {/* Des liens et non des boutons : ce sont des navigations, vers deux écrans
           de l'espace client. Ils prennent la forme des boutons du design
@@ -71,16 +79,19 @@ export function AccountGateStep({
           se lirait comme une alternative, alors qu'il n'y en a pas d'autre. */}
       <div className="spa-booking__gate">
         <Link className="spa-button spa-button--accent spa-button--block" href={loginHref}>
-          <span className="spa-button__label">Se connecter</span>
+          <span className="spa-button__label">{t('tunnel.gateStep.signIn')}</span>
         </Link>
         <Link className="spa-button spa-button--neutral spa-button--block" href={registerHref}>
-          <span className="spa-button__label">Créer un compte</span>
+          <span className="spa-button__label">{t('tunnel.gateStep.register')}</span>
         </Link>
       </div>
 
       <div className="spa-booking__actions">
         <Button variant="quiet" onClick={onBack}>
-          Changer de créneau
+          {/* Le même libellé qu'à l'étape « Coordonnées », donc la même clé :
+              deux littéraux pour un seul geste sont la façon dont un parcours
+              finit par nommer la même chose de deux façons (`ds:libelles`). */}
+          {t('tunnel.actions.changeSlot')}
         </Button>
       </div>
 

@@ -24,9 +24,20 @@
  * chaînes : sur un `YYYY-MM-DD` zéro-complété, l'ordre lexicographique **est**
  * l'ordre chronologique, et cela évite d'ouvrir un `Date` — donc un fuseau —
  * pour savoir laquelle des deux précède l'autre.
+ *
+ * ## La langue (#846)
+ *
+ * Ce module ne lit pas le catalogue : c'est une règle de l'épique, et elle a sa
+ * raison d'être ici — il n'importe pas React, et le faire dépendre d'un contexte
+ * de requête le rendrait inéprouvable sans DOM. Les sept colonnes de l'en-tête
+ * sont donc des **clés** (`WEEKDAY_KEYS`) que le calendrier traduit, et le seul
+ * texte que ce fichier produit encore — le nom du mois — vient d'`Intl`, à qui
+ * l'on passe le `DisplayLocale` reçu.
  */
 
 import { MAX_AVAILABILITY_RANGE_DAYS, isoWeekdayOf, type CalendarDate } from '@spa/shared';
+
+import type { DisplayLocale } from '@/lib/format';
 
 import { addCalendarDays, formatCalendarMonth } from './calendar';
 
@@ -45,34 +56,38 @@ export type CalendarMonth = string;
 export const DAYS_IN_WEEK = 7;
 
 /**
- * Les initiales de l'en-tête, du lundi au dimanche, et les noms qu'elles
- * abrègent.
+ * Les sept colonnes de l'en-tête, du lundi au dimanche — **des clés**, jamais
+ * des mots (#846).
  *
- * La semaine commence le **lundi** : c'est la numérotation ISO 8601 que le
- * contrat a déjà retenue (`ISO_WEEKDAYS`, « la semaine du calendrier public
- * commence le lundi »), et celle du wireframe — `L M M J V S D`.
+ * La semaine commence le **lundi**, et la langue n'y touche pas : c'est la
+ * numérotation ISO 8601 que le contrat a déjà retenue (`ISO_WEEKDAYS`, « la
+ * semaine du calendrier public commence le lundi »), celle du wireframe —
+ * `L M M J V S D` —, et un repère de l'établissement plutôt que du lecteur.
  *
- * Écrites en dur plutôt que demandées à `Intl` pour la raison qu'expose
- * `spokenTime` dans le sélecteur de créneau : la forme abrégée d'une locale
- * dépend de la version d'ICU du moteur — « lun. », « lu », « L » selon les
- * versions —, si bien que l'en-tête différerait entre la CI et le poste, et avec
- * lui les requêtes par nom accessible. Sept mots français ne changent pas.
+ * Le calendrier en tire **deux** libellés par colonne : l'initiale, visible, et
+ * le nom complet, porté par le `columnheader` accessible — trois colonnes
+ * s'appellent « M » ou « S » à l'écran, et un lecteur d'écran qui les énonce
+ * ainsi ne dit rien.
  *
- * Les deux listes sont parallèles : l'initiale est visible, le nom porte le
- * `columnheader` accessible — trois colonnes s'appellent « M » ou « S » à
- * l'écran, et un lecteur d'écran qui les énonce ainsi ne dit rien.
+ * Ces quatorze libellés vivent dans le catalogue et non dans `Intl`, pour la
+ * raison qu'expose `spokenTime` dans le sélecteur de créneau : la forme abrégée
+ * d'une locale dépend de la version d'ICU du moteur — « lun. », « lu », « L »
+ * selon les versions —, si bien que l'en-tête différerait entre la CI et le
+ * poste, et avec lui les requêtes par nom accessible. Sept mots par langue ne
+ * changent pas.
  */
-export const WEEKDAY_INITIALS = ['L', 'M', 'M', 'J', 'V', 'S', 'D'] as const;
-
-export const WEEKDAY_NAMES = [
-  'lundi',
-  'mardi',
-  'mercredi',
-  'jeudi',
-  'vendredi',
-  'samedi',
-  'dimanche',
+export const WEEKDAY_KEYS = [
+  'monday',
+  'tuesday',
+  'wednesday',
+  'thursday',
+  'friday',
+  'saturday',
+  'sunday',
 ] as const;
+
+/** Une colonne de l'en-tête, telle que le catalogue la nomme. */
+export type WeekdayKey = (typeof WEEKDAY_KEYS)[number];
 
 /** Le mois auquel une date appartient. */
 export function monthOf(date: CalendarDate): CalendarMonth {
@@ -117,8 +132,8 @@ export function dayOfMonth(date: CalendarDate): number {
  * l'année y est portée parce qu'un calendrier ouvert en décembre navigue vers
  * janvier, et que « janvier » seul ne dirait pas lequel.
  */
-export function formatMonth(month: CalendarMonth): string {
-  return formatCalendarMonth(firstDayOfMonth(month));
+export function formatMonth(month: CalendarMonth, display?: DisplayLocale): string {
+  return formatCalendarMonth(firstDayOfMonth(month), display);
 }
 
 /**

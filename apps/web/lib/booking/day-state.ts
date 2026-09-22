@@ -22,6 +22,19 @@
  * journée dont le moteur a déjà dit qu'elle n'avait aucun créneau — voir
  * [`opening-days.ts`](opening-days.ts), dont l'avertissement vaut mot pour mot
  * ici.
+ *
+ * ## La langue (#846)
+ *
+ * Et rien des **mots**, non plus. Ce module n'importe pas React : il décide de
+ * l'état d'une journée et rend la **clé** de ce qui se dit à son sujet, le
+ * catalogue tenant les phrases (`tunnel.calendar.*`). C'est ce qui le laisse
+ * s'éprouver sans contexte de requête, et ce qui garde la promesse écrite
+ * ci-dessus — bande et calendrier disent toujours la même chose d'une même
+ * journée, puisqu'ils lisent la même clé.
+ *
+ * `dayStateSaid` reçoit donc les mots en paramètre (`DayStateWords`), composés
+ * une seule fois par `useDayStateWords`
+ * (`components/booking/availability-calendar.tsx`).
  */
 
 import type { CalendarDate, IsoWeekday } from '@spa/shared';
@@ -40,17 +53,38 @@ import { isWithinWindow, monthOf, type BookingWindow, type CalendarMonth } from 
  */
 export type DayState = 'chargement' | 'hors-fenetre' | 'ferme' | 'complet' | 'libre';
 
-/** Ce que le nom accessible d'une case ajoute à sa date, hors journée libre. */
-export const DAY_STATE_LABEL: Record<Exclude<DayState, 'libre'>, string> = {
-  chargement: 'disponibilités en cours de chargement',
-  'hors-fenetre': 'hors de la période de réservation',
-  ferme: 'fermé',
-  complet: 'complet',
+/**
+ * La clé de ce que le nom accessible d'une case ajoute à sa date, hors journée
+ * libre — sous `tunnel.calendar` dans le catalogue.
+ */
+export const DAY_STATE_KEY: Record<Exclude<DayState, 'libre'>, DayStateKey> = {
+  chargement: 'loading',
+  'hors-fenetre': 'outsideWindow',
+  ferme: 'closed',
+  complet: 'full',
 };
 
-/** « 3 créneaux », « 1 créneau » — le pluriel se voit à l'écran. */
-export function slotCountLabel(count: number): string {
-  return count === 1 ? '1 créneau' : `${String(count)} créneaux`;
+/** Les quatre mots d'une journée qu'on ne peut pas retenir. */
+export type DayStateKey = 'loading' | 'outsideWindow' | 'closed' | 'full';
+
+/**
+ * Les mots d'une journée, tels que l'écran les a déjà traduits.
+ *
+ * Un objet et non un traducteur : ce module reste sans React, et une table de
+ * chaînes se fabrique aussi bien depuis `useTranslations` que depuis un test
+ * qui n'a qu'à écrire ce qu'il attend.
+ *
+ * `slotCount` est une fonction parce que c'est un **pluriel** — « 1 créneau »,
+ * « 3 créneaux », « No slot » —, et que la catégorie de pluriel appartient à la
+ * langue : c'est ICU qui la tranche, dans le catalogue, pas une comparaison à
+ * `1` écrite ici.
+ */
+export interface DayStateWords {
+  readonly slotCount: (count: number) => string;
+  readonly loading: string;
+  readonly outsideWindow: string;
+  readonly closed: string;
+  readonly full: string;
 }
 
 /** Ce qu'il faut savoir du mois affiché pour qualifier l'une de ses journées. */
@@ -116,8 +150,14 @@ export function dayStateOf(date: CalendarDate, context: DayStateContext): DaySta
  * `slotCount` ne peut pas manquer sur une journée libre — l'état en dérive —,
  * mais le compilateur ne le sait pas depuis deux valeurs indépendantes.
  */
-export function dayStateSaid(state: DayState, slotCount: number | null): string {
-  return state === 'libre' ? slotCountLabel(slotCount ?? 0) : DAY_STATE_LABEL[state];
+export function dayStateSaid(
+  state: DayState,
+  slotCount: number | null,
+  words: DayStateWords,
+): string {
+  return state === 'libre'
+    ? words.slotCount(slotCount ?? 0)
+    : words[DAY_STATE_KEY[state]];
 }
 
 /** Une journée se retient quand elle a — ou peut encore avoir — quelque chose à montrer. */

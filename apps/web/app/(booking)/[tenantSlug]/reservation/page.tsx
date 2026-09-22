@@ -1,3 +1,5 @@
+import type { Metadata } from 'next';
+import { getTranslations } from 'next-intl/server';
 import { notFound } from 'next/navigation';
 
 import { readAccountPresence } from '@/lib/account-presence';
@@ -30,6 +32,14 @@ import { initialBookingDraft } from './initial-draft';
  * le front en soit averti — et surtout parce qu'une prérendu au build
  * appellerait l'API depuis le runner de CI ou l'étape `build` de l'image
  * Docker, où elle n'existe pas.
+ *
+ * ## La langue (#846)
+ *
+ * Cette page n'affiche par elle-même que son encart de panne — le reste des
+ * mots appartient au tunnel, qui est un Client Component. Elle est
+ * **asynchrone** : ses deux phrases viennent donc de `getTranslations`
+ * (`next-intl/server`) et non du crochet, qu'un composant asynchrone ne peut
+ * pas appeler.
  */
 export const dynamic = 'force-dynamic';
 
@@ -45,6 +55,40 @@ interface PageProps {
    * qu'elle n'avait pas.
    */
   readonly searchParams: Promise<Record<string, string | string[] | undefined>>;
+}
+
+/**
+ * Le titre et la description de l'onglet du tunnel, dans la langue résolue
+ * (#846).
+ *
+ * `generateMetadata` et non un objet `metadata` constant : un littéral ne peut
+ * lire ni la langue de la requête ni l'établissement qu'elle vise. C'est le
+ * même choix qu'au layout racine, pour la même raison.
+ *
+ * Le **nom du salon** entre en paramètre et n'est pas traduit — c'est du
+ * contenu saisi par l'établissement. Seule la phrase qui l'accueille vient du
+ * catalogue.
+ *
+ * L'établissement est lu par le loader mémoïsé de `salon-data.ts` : la page,
+ * le layout et cette fonction n'en font qu'un seul `GET /public/{slug}`. Et
+ * elle ne relance jamais l'erreur — Next rendrait une panne serveur là où la
+ * page et le layout savent déjà répondre 404 ; un titre sans nom de salon vaut
+ * mieux que cela.
+ */
+export async function generateMetadata({ params }: PageProps): Promise<Metadata> {
+  const { tenantSlug } = await params;
+  const t = await getTranslations('booking');
+
+  try {
+    const tenant = await loadSalonTenant(tenantSlug);
+
+    return {
+      title: t('tunnel.page.metadataTitle', { salon: tenant.name }),
+      description: t('tunnel.page.metadataDescription', { salon: tenant.name }),
+    };
+  } catch {
+    return { title: t('tunnel.page.title') };
+  }
 }
 
 export default async function BookingPage({ params, searchParams }: PageProps) {
@@ -138,14 +182,17 @@ export default async function BookingPage({ params, searchParams }: PageProps) {
     // (#1047), c'est-à-dire pour un tunnel qui n'est justement pas rendu ici. Le
     // titre de l'encart d'erreur est un `<p>` (`components/ui/notification.tsx`) :
     // sans cette ligne, la page n'aurait aucun titre, et aucun de niveau 1.
+    //
+    // Les deux phrases viennent du catalogue ; celle de l'encart, non — c'est
+    // le message de l'erreur elle-même, écrit par `api-client.ts` ou par
+    // l'API, et `BookingErrorNotice` le tient déjà pour une phrase complète.
+    const t = await getTranslations('booking');
+
     return (
       <main className="spa-booking__main" id="contenu">
         <div className="spa-booking__frame spa-booking__content">
-          <h1 className="spa-booking__title">Prendre rendez-vous</h1>
-          <BookingErrorNotice
-            title="La page de réservation n’a pas pu être chargée"
-            error={error}
-          />
+          <h1 className="spa-booking__title">{t('tunnel.page.title')}</h1>
+          <BookingErrorNotice title={t('tunnel.page.errorTitle')} error={error} />
         </div>
       </main>
     );

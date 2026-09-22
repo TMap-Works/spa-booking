@@ -27,6 +27,20 @@
  * Elle **normalise** au passage : ce qui part vers l'API est la sortie
  * transformée du schéma — instant ramené en UTC, adresse canonisée, téléphone
  * en E.164 — et non le corps reçu du navigateur.
+ *
+ * ## La langue (#846)
+ *
+ * Les messages de refus **écrits ici** s'affichent tels quels dans le tunnel :
+ * ils viennent donc du catalogue, par `getTranslations` — une action serveur
+ * est asynchrone, et le crochet n'y a pas cours.
+ *
+ * Le message d'une `ApiClientError`, lui, reste celui de l'API : il traverse
+ * cette frontière sans être réécrit, comme avant. Ce n'est pas un oubli mais la
+ * frontière du ticket — la langue des réponses de l'API relève de l'API. Rien
+ * de ce que le tunnel **décide** ne s'appuie dessus : le tri se fait sur le
+ * `code`, et les trois codes qui deviennent une phrase à l'écran ont chacun la
+ * leur (`SLOT_NO_LONGER_AVAILABLE`, `UNAUTHORIZED`,
+ * `CLIENT_EMAIL_NOT_BOOKABLE` — voir `booking-tunnel.tsx` et `summary-step.tsx`).
  */
 
 import {
@@ -39,6 +53,7 @@ import {
   type AvailabilityResponse,
   type BookedAppointment,
 } from '@spa/shared';
+import { getTranslations } from 'next-intl/server';
 
 import { readAccountPresence } from '@/lib/account-presence';
 import {
@@ -54,7 +69,16 @@ export type ActionResult<TData> =
   | { readonly ok: true; readonly data: TData }
   | { readonly ok: false; readonly code: string; readonly message: string };
 
-function failure(error: unknown): { ok: false; code: string; message: string } {
+/**
+ * Le refus, tel que l'écran le recevra.
+ *
+ * `fallback` est la phrase à servir quand l'erreur n'en porte pas d'affichable
+ * — elle est traduite par l'appelant, qui a le traducteur de la requête sous la
+ * main (#846). La passer plutôt que de la lire ici garde cette fonction
+ * synchrone, et l'appel à `getTranslations` au seul endroit où la requête est
+ * déjà attendue.
+ */
+function failure(error: unknown, fallback: string): { ok: false; code: string; message: string } {
   if (error instanceof ApiClientError) {
     return { ok: false, code: error.code, message: error.message };
   }
@@ -62,7 +86,7 @@ function failure(error: unknown): { ok: false; code: string; message: string } {
   return {
     ok: false,
     code: ERROR_CODES.INTERNAL_ERROR,
-    message: 'Une erreur inattendue est survenue. Merci de réessayer.',
+    message: fallback,
   };
 }
 
@@ -75,17 +99,18 @@ export async function loadAvailabilityAction(
   tenantSlug: string,
   query: unknown,
 ): Promise<ActionResult<AvailabilityResponse>> {
+  const t = await getTranslations('booking');
   const slug = slugSchema.safeParse(tenantSlug);
   const parsed = availabilityQuerySchema.safeParse(query);
 
   if (!slug.success || !parsed.success) {
-    return invalid('La demande de disponibilités est incomplète.');
+    return invalid(t('tunnel.actions.availabilityIncomplete'));
   }
 
   try {
     return { ok: true, data: await fetchAvailability(slug.data, parsed.data) };
   } catch (error) {
-    return failure(error);
+    return failure(error, t('tunnel.actions.unexpectedError'));
   }
 }
 
@@ -131,17 +156,18 @@ export async function bookAppointmentAction(
   tenantSlug: string,
   request: unknown,
 ): Promise<ActionResult<BookedAppointment>> {
+  const t = await getTranslations('booking');
   const slug = slugSchema.safeParse(tenantSlug);
 
   if (!slug.success) {
-    return invalid('Les informations de réservation sont incomplètes.');
+    return invalid(t('tunnel.actions.bookingIncomplete'));
   }
 
   if ((await readAccountPresence()) === null) {
     return {
       ok: false,
       code: ERROR_CODES.UNAUTHORIZED,
-      message: 'Connectez-vous pour réserver.',
+      message: t('tunnel.actions.signInRequired'),
     };
   }
 
@@ -152,12 +178,12 @@ export async function bookAppointmentAction(
     );
 
     if (!parsed.success) {
-      return invalid('Les informations de réservation sont incomplètes.');
+      return invalid(t('tunnel.actions.bookingIncomplete'));
     }
 
     return { ok: true, data: await bookGuestAppointment(slug.data, parsed.data) };
   } catch (error) {
-    return failure(error);
+    return failure(error, t('tunnel.actions.unexpectedError'));
   }
 }
 
@@ -166,6 +192,7 @@ export async function cancelAppointmentAction(
   appointmentId: string,
   reason?: string,
 ): Promise<ActionResult<BookedAppointment>> {
+  const t = await getTranslations('booking');
   const slug = slugSchema.safeParse(tenantSlug);
   const id = uuidSchema.safeParse(appointmentId);
   const body = cancelAppointmentRequestSchema.safeParse(
@@ -173,12 +200,12 @@ export async function cancelAppointmentAction(
   );
 
   if (!slug.success || !id.success || !body.success) {
-    return invalid('La demande d’annulation est incomplète.');
+    return invalid(t('tunnel.actions.cancelIncomplete'));
   }
 
   try {
     return { ok: true, data: await cancelAppointment(slug.data, id.data, body.data) };
   } catch (error) {
-    return failure(error);
+    return failure(error, t('tunnel.actions.unexpectedError'));
   }
 }

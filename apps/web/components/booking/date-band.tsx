@@ -1,6 +1,7 @@
 'use client';
 
 import type { CalendarDate, OpeningHoursEntry } from '@spa/shared';
+import { useLocale, useTranslations } from 'next-intl';
 import {
   useCallback,
   useEffect,
@@ -11,6 +12,7 @@ import {
   type RefObject,
 } from 'react';
 
+import { useDayLabel } from '@/components/booking/availability-calendar';
 import { Button } from '@/components/ui/button';
 import { DateBlock } from '@/components/ui/date-block';
 import { Icon } from '@/components/ui/icon';
@@ -25,14 +27,13 @@ import {
 } from '@/lib/booking/day-band';
 import {
   dayStateOf,
-  dayStateSaid,
   isSelectableState,
   type DayState,
   type DayStateContext,
 } from '@/lib/booking/day-state';
 import { addMonths, formatMonth, isNavigableMonth, type BookingWindow, type CalendarMonth } from '@/lib/booking/month-grid';
 import { publishedOpenWeekdays } from '@/lib/booking/opening-days';
-import { formatCalendarDate } from '@/lib/format';
+import type { DisplayLocale } from '@/lib/format';
 
 /**
  * La bande de jours du sélecteur de créneau (#1049).
@@ -76,6 +77,18 @@ import { formatCalendarDate } from '@/lib/format';
  * que le document place juste avant et juste après la bande dans l'ordre de
  * tabulation, qui portent ce geste-là — ils avancent d'une semaine, puis d'un
  * mois quand la plage s'arrête.
+ *
+ * ## La langue (#846)
+ *
+ * Les mots propres à la bande — ses deux chevrons, le bouton de période, le nom
+ * de sa grille — viennent du catalogue sous `tunnel.dateBand`. Le nom accessible
+ * d'une journée, lui, est demandé à `useDayLabel`
+ * ([`availability-calendar.tsx`](availability-calendar.tsx)), pour la raison
+ * qu'écrit [`day-state.ts`](../../lib/booking/day-state.ts) : les deux contrôles
+ * peignent les mêmes journées et doivent en dire exactement la même chose.
+ *
+ * Le **bloc de date** visible vient de `components/ui/date-block.tsx`, hors de
+ * ce ticket : il met encore ses abréviations en forme en `fr-FR`.
  */
 interface DateBandProps {
   /**
@@ -103,6 +116,11 @@ interface DateBandProps {
   readonly selectedDate: CalendarDate | null;
   /** Une action est en vol : plus rien ne se retient tant qu'elle n'a pas rendu. */
   readonly busy?: boolean;
+  /**
+   * Le pays de l'établissement, pour la **région** des dates (#846) — le repère
+   * de la semaine et le fuseau, eux, restent ceux du salon.
+   */
+  readonly countryCode?: string | null | undefined;
   /** Le conteneur de la bande, quand l'appelant doit y poser le focus. */
   readonly bandRef?: RefObject<HTMLDivElement | null> | undefined;
   /**
@@ -137,12 +155,16 @@ export function DateBand({
   openingHours,
   selectedDate,
   busy = false,
+  countryCode,
   bandRef,
   onFromChange,
   onMonthChange,
   onSelect,
   onOpenMonth,
 }: DateBandProps) {
+  const t = useTranslations('booking');
+  const display: DisplayLocale = { locale: useLocale(), countryCode: countryCode ?? null };
+  const dayLabel = useDayLabel(display);
   const { dates, start, visible } = band;
   const openWeekdays = useMemo(() => publishedOpenWeekdays(openingHours), [openingHours]);
   const context = useMemo<DayStateContext>(
@@ -358,7 +380,7 @@ export function DateBand({
     onMonthChange(target, bandEntryDate(target, bounds, delta));
   };
 
-  const monthLabel = formatMonth(month);
+  const monthLabel = formatMonth(month, display);
 
   return (
     <div className="spa-date-band">
@@ -383,13 +405,13 @@ export function DateBand({
           }}
         >
           <span aria-hidden="true">‹</span>
-          <span className="spa-visually-hidden">Jours précédents</span>
+          <span className="spa-visually-hidden">{t('tunnel.dateBand.previousDays')}</span>
         </Button>
 
         <Button
           variant="quiet"
           aria-haspopup="dialog"
-          aria-label={`Ouvrir le calendrier — ${monthLabel}`}
+          aria-label={t('tunnel.dateBand.openCalendar', { month: monthLabel })}
           onClick={onOpenMonth}
         >
           <Icon name="calendar" />
@@ -404,7 +426,7 @@ export function DateBand({
           }}
         >
           <span aria-hidden="true">›</span>
-          <span className="spa-visually-hidden">Jours suivants</span>
+          <span className="spa-visually-hidden">{t('tunnel.dateBand.nextDays')}</span>
         </Button>
       </div>
 
@@ -422,7 +444,7 @@ export function DateBand({
         ref={gridNode}
         className="spa-date-band__grid"
         role="grid"
-        aria-label={`Jour du rendez-vous — ${monthLabel}`}
+        aria-label={t('tunnel.dateBand.gridLabel', { month: monthLabel })}
         onKeyDown={moveFocus}
       >
         <div role="row" className="spa-date-band__row">
@@ -431,7 +453,7 @@ export function DateBand({
               key={date}
               date={date}
               state={stateOf(date)}
-              slotCount={slotCounts?.get(date) ?? null}
+              label={dayLabel(date, stateOf(date), slotCounts?.get(date) ?? null)}
               selected={date === selectedDate}
               selectable={canSelect(date)}
               tabbable={date === tabbableDate}
@@ -447,8 +469,8 @@ export function DateBand({
 interface BandDayProps {
   readonly date: CalendarDate;
   readonly state: DayState;
-  /** Le nombre de créneaux, quand le serveur l'a dit — il fait le nom accessible. */
-  readonly slotCount: number | null;
+  /** Le nom accessible déjà composé — date en toutes lettres et état (#846). */
+  readonly label: string;
   readonly selected: boolean;
   readonly selectable: boolean;
   readonly tabbable: boolean;
@@ -484,7 +506,7 @@ interface BandDayProps {
 function BandDay({
   date,
   state,
-  slotCount,
+  label,
   selected,
   selectable,
   tabbable,
@@ -500,7 +522,7 @@ function BandDay({
     >
       <Button
         variant="neutral"
-        aria-label={`${formatCalendarDate(date)} — ${dayStateSaid(state, slotCount)}`}
+        aria-label={label}
         aria-disabled={selectable ? undefined : true}
         tabIndex={tabbable ? 0 : -1}
         onClick={() => {

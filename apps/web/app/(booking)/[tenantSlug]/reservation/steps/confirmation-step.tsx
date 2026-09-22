@@ -1,6 +1,7 @@
 'use client';
 
 import type { BookedAppointment, PublicService, PublicTenant } from '@spa/shared';
+import { useLocale, useTranslations } from 'next-intl';
 import Link from 'next/link';
 import { useState } from 'react';
 
@@ -14,12 +15,14 @@ import { useState } from 'react';
 // fini par la dire autrement (#743). `lib/appointment-status.ts` ne dépend, lui
 // aussi, que de types partagés — c'est ce qui lui permet d'être lu du tunnel, de
 // l'espace client et du back-office à la fois (#917).
-import { PENDING_CONFIRMATION_LABEL } from '@/lib/appointment-status';
+//
+// La **fonction** et non la constante figée en français (#846) : le module tient
+// déjà ses deux langues, et la constante n'en est que le repli transitoire.
+import { pendingConfirmationLabel } from '@/lib/appointment-status';
 import { accountPath } from '@/app/(account)/[tenantSlug]/compte/paths';
 import {
   appointmentIcsFilename,
   appointmentIcsHref,
-  PENDING_HOLD_NOTE,
   type AppointmentBrief,
 } from '@/components/account/appointment-brief';
 import { Button } from '@/components/ui/button';
@@ -79,13 +82,25 @@ function bookedMinutes(appointment: BookedAppointment): number | null {
   return Number.isFinite(minutes) && minutes > 0 ? Math.round(minutes) : null;
 }
 
-/** L'issue annoncée en tête d'écran — la pastille, le titre, et la phrase. */
+/**
+ * L'issue annoncée en tête d'écran — la pastille, et ce qu'elle désigne.
+ *
+ * ## Elle ne porte plus ses phrases (#846)
+ *
+ * `outcomeOf` est une fonction **pure**, appelée hors de tout rendu : elle ne
+ * peut pas lire le catalogue, et ne doit pas — c'est la règle du dépôt pour ce
+ * qui n'est pas un composant. Elle rend donc l'issue, et le composant écrit les
+ * mots.
+ *
+ * Le `tone` suffit à les désigner : les trois issues et les trois tons se
+ * correspondent un pour un, et en ajouter un quatrième champ qui dirait la même
+ * chose serait exactement la façon dont deux descriptions d'un même fait
+ * finissent par diverger.
+ */
 interface Outcome {
-  /** Le ton de la pastille : la couleur, et rien d'autre. */
+  /** Le ton de la pastille — sa couleur, et le nom de l'issue. */
   readonly tone: 'done' | 'pending' | 'cancelled';
   readonly icon: IconName;
-  readonly title: string;
-  readonly line: string;
 }
 
 /**
@@ -106,12 +121,7 @@ function outcomeOf(appointment: BookedAppointment, restored: boolean): Outcome |
   if (appointment.status === 'cancelled') {
     // L'annulation est le seul état que le brouillon ne peut pas inventer : il
     // n'y arrive que par la réponse de l'API. Elle prime donc sur `restored`.
-    return {
-      tone: 'cancelled',
-      icon: 'close',
-      title: 'Votre rendez-vous est annulé',
-      line: 'Il ne figure plus à l’agenda du salon. Vous pouvez en prendre un nouveau quand vous le souhaitez.',
-    };
+    return { tone: 'cancelled', icon: 'close' };
   }
 
   if (restored) {
@@ -119,20 +129,16 @@ function outcomeOf(appointment: BookedAppointment, restored: boolean): Outcome |
   }
 
   if (appointment.status === 'pending') {
-    return {
-      tone: 'pending',
-      icon: 'clock',
-      title: 'Demande envoyée',
-      line: `${PENDING_CONFIRMATION_LABEL}. ${PENDING_HOLD_NOTE}`,
-    };
+    return { tone: 'pending', icon: 'clock' };
   }
 
-  return {
-    tone: 'done',
-    icon: 'check',
-    title: 'C’est réservé !',
-    line: 'Le salon a confirmé votre rendez-vous.',
-  };
+  return { tone: 'done', icon: 'check' };
+}
+
+/** Ce que la pastille annonce, en toutes lettres. */
+interface Announcement {
+  readonly title: string;
+  readonly line: string;
 }
 
 /**
@@ -206,6 +212,27 @@ function outcomeOf(appointment: BookedAppointment, restored: boolean): Outcome |
  * pas, l'écran **cesse d'affirmer** ce qu'il ne peut pas vérifier : `restored`
  * lui retire sa pastille, lui fait annoncer un instantané et renvoyer à l'espace
  * client, qui fait foi.
+ *
+ * ## La langue (#846)
+ *
+ * La **référence** du rendez-vous — « RDV-8F3K-27 » — est une donnée de l'API
+ * et ne se traduit pas ; son étiquette, « Réf. », si. Même partage pour la
+ * phrase d'attente : le mot de l'état vient de `lib/appointment-status.ts`, qui
+ * tient déjà ses deux langues, et celle de la retenue du catalogue
+ * (`tunnel.confirmationStep.pendingHold`) ; le catalogue ne fournit ici que la
+ * ponctuation qui les relie.
+ *
+ * ### Une phrase reste écrite deux fois, et il faut le dire
+ *
+ * `PENDING_HOLD_NOTE` (`components/account/appointment-brief.ts`) porte la
+ * **même** phrase, figée en français, pour les deux cartes de l'espace client.
+ * Les deux écritures sont identiques au caractère près aujourd'hui, mais rien ne
+ * les y tient : c'est exactement le doublon que #743 et #917 ont dû recoller
+ * ailleurs. Il n'est pas résorbé ici parce que `components/account/` est
+ * l'empreinte du ticket voisin de l'épique #843 — ce sera à lui de faire lire
+ * cette clé à `PENDING_HOLD_NOTE` quand il traduira l'espace client, et la
+ * constante disparaîtra alors, comme `UNCLASSIFIED_TITLE` et
+ * `PUBLIC_EXIT_LABELS` avant elle.
  */
 export function ConfirmationStep({
   tenant,
@@ -216,6 +243,8 @@ export function ConfirmationStep({
   onCancelled,
   onRestart,
 }: ConfirmationStepProps) {
+  const t = useTranslations('booking');
+  const locale = useLocale();
   const [confirmingCancellation, setConfirmingCancellation] = useState(false);
   const [cancelling, setCancelling] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -225,6 +254,37 @@ export function ConfirmationStep({
     service?.staff.find((member) => member.id === appointment.staffId)?.displayName ?? null;
   const minutes = bookedMinutes(appointment);
   const outcome = outcomeOf(appointment, restored);
+  /**
+   * Les mots de l'issue, lus dans le catalogue (#846).
+   *
+   * Le `tone` les désigne : trois issues, trois tons, une correspondance un
+   * pour un — voir `Outcome`. La phrase de l'attente est la seule composée, et
+   * ses deux moitiés viennent de leurs points d'écriture uniques.
+   */
+  const announced: Announcement | null =
+    outcome === null
+      ? null
+      : outcome.tone === 'cancelled'
+        ? {
+            title: t('tunnel.confirmationStep.cancelledTitle'),
+            line: t('tunnel.confirmationStep.cancelledLine'),
+          }
+        : outcome.tone === 'pending'
+          ? {
+              title: t('tunnel.confirmationStep.pendingTitle'),
+              line: t('tunnel.confirmationStep.pendingLine', {
+                confirmation: pendingConfirmationLabel(locale),
+                // La phrase de la retenue vient du catalogue, dans la langue du
+                // visiteur. `PENDING_HOLD_NOTE` porte la même, figée en
+                // français, pour les cartes de l'espace client : un doublon
+                // assumé le temps de l'épique #843 — voir l'en-tête (#846).
+                hold: t('tunnel.confirmationStep.pendingHold'),
+              }),
+            }
+          : {
+              title: t('tunnel.confirmationStep.bookedTitle'),
+              line: t('tunnel.confirmationStep.bookedLine'),
+            };
 
   /**
    * Ce que le fichier d'agenda a besoin de savoir.
@@ -261,18 +321,14 @@ export function ConfirmationStep({
   };
 
   return (
-    <section className="spa-booking__step" aria-label="Confirmation de votre réservation">
-      {outcome === null ? (
-        <Notification tone="info" title="Votre dernière réservation dans cet onglet">
+    <section className="spa-booking__step" aria-label={t('tunnel.confirmationStep.label')}>
+      {outcome === null || announced === null ? (
+        <Notification tone="info" title={t('tunnel.confirmationStep.snapshotTitle')}>
           {/* Aucune promesse d'espace client ici : une cliente qui a réservé
               sans compte n'en a pas. La phrase se borne à ce qui est vrai — cet
               écran ne relit rien — et l'agenda du salon reste la seule autorité
               qu'on puisse lui nommer sans se tromper. */}
-          <p>
-            Ce récapitulatif date du moment où vous avez réservé : il n’a pas été relu depuis. Un
-            report ou une annulation faits ailleurs n’y apparaissent pas — c’est l’agenda du salon
-            qui fait foi.
-          </p>
+          <p>{t('tunnel.confirmationStep.snapshotBody')}</p>
         </Notification>
       ) : (
         /* `role="status"` et non un simple bloc : l'étape qui vient de
@@ -285,8 +341,8 @@ export function ConfirmationStep({
           <span className="spa-booking__done-badge" aria-hidden="true">
             <Icon name={outcome.icon} />
           </span>
-          <h2 className="spa-booking__done-title">{outcome.title}</h2>
-          <p className="spa-booking__done-line">{outcome.line}</p>
+          <h2 className="spa-booking__done-title">{announced.title}</h2>
+          <p className="spa-booking__done-line">{announced.line}</p>
         </div>
       )}
 
@@ -328,7 +384,9 @@ export function ConfirmationStep({
           retrouver en API le rendez-vous qu'il vient de prendre
           (`tests/e2e/support/scene.ts`). */}
       <p className="spa-booking__reference" data-appointment-id={appointment.id}>
-        <span className="spa-booking__reference-term">Réf.</span>{' '}
+        {/* L'étiquette se traduit, la référence non : c'est une donnée, qu'on
+            recopie et qu'on dicte telle quelle (#846). */}
+        <span className="spa-booking__reference-term">{t('tunnel.confirmationStep.reference')}</span>{' '}
         <strong className="spa-booking__reference-code">{appointment.reference}</strong>
       </p>
 
@@ -354,14 +412,18 @@ export function ConfirmationStep({
            qui confirme, et `APPOINTMENT_CONFIRMED` part à ce moment-là. Le dire
            évite à la cliente de revenir guetter la pastille. */
         <p className="spa-booking__sent">
-          Un e-mail récapitulatif part vers <strong>{contact.email}</strong>, et un second quand le
-          salon aura confirmé. Avec un compte client chez {tenant.name}, ce rendez-vous se retrouve
-          dans votre espace, d’où il se reporte et s’annule.
+          {t.rich('tunnel.confirmationStep.sent', {
+            email: contact.email,
+            salon: tenant.name,
+            address: (chunks) => <strong>{chunks}</strong>,
+          })}
         </p>
       )}
 
       {error === null ? null : (
-        <Notification tone="danger" title="L’annulation n’a pas abouti">
+        // Le titre vient du catalogue ; la phrase, de l'action — traduite quand
+        // c'est elle qui l'écrit, celle de l'API sinon (voir `actions.ts`).
+        <Notification tone="danger" title={t('tunnel.confirmationStep.cancelFailedTitle')}>
           <p>{error}</p>
         </Notification>
       )}
@@ -380,12 +442,12 @@ export function ConfirmationStep({
             <Button
               variant="danger"
               loading={cancelling}
-              loadingLabel="Annulation en cours…"
+              loadingLabel={t('tunnel.confirmationStep.cancelling')}
               onClick={() => {
                 void cancel();
               }}
             >
-              Confirmer l’annulation
+              {t('tunnel.confirmationStep.confirmCancel')}
             </Button>
             <Button
               variant="quiet"
@@ -394,7 +456,7 @@ export function ConfirmationStep({
                 setConfirmingCancellation(false);
               }}
             >
-              Garder mon rendez-vous
+              {t('tunnel.confirmationStep.keep')}
             </Button>
           </>
         ) : (
@@ -414,7 +476,9 @@ export function ConfirmationStep({
                 href={appointmentIcsHref({ brief, tenant })}
                 download={appointmentIcsFilename(appointment)}
               >
-                <span className="spa-button__label">Ajouter à mon agenda</span>
+                <span className="spa-button__label">
+                  {t('tunnel.confirmationStep.addToCalendar')}
+                </span>
               </a>
             )}
 
@@ -424,11 +488,11 @@ export function ConfirmationStep({
                 conserver lui-même — le wireframe, Étape 6, ordonne de la même
                 façon « Modifier / annuler » avant « Réserver à nouveau ». */}
             <Link className="spa-button spa-button--neutral" href={accountPath(tenant.slug)}>
-              Voir mes rendez-vous
+              {t('tunnel.confirmationStep.myAppointments')}
             </Link>
 
             <Button variant={isCancelled ? 'accent' : 'quiet'} onClick={onRestart}>
-              Réserver à nouveau
+              {t('tunnel.confirmationStep.bookAgain')}
             </Button>
 
             {isCancelled ? null : (
@@ -439,7 +503,7 @@ export function ConfirmationStep({
                   setConfirmingCancellation(true);
                 }}
               >
-                Annuler ce rendez-vous
+                {t('tunnel.confirmationStep.cancel')}
               </Button>
             )}
           </>

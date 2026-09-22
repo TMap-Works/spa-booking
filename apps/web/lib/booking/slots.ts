@@ -15,6 +15,14 @@
  * calendrier mensuel, dont l'arithmétique et le clavier vivent dans
  * [month-grid.ts](month-grid.ts). Ce qui restait ici de la bande de journées —
  * `dateBarDays`, `moveInDateBar` et leur parentèle — est parti avec elle.
+ *
+ * ## La langue (#846)
+ *
+ * Ce fichier ne dit plus un mot. Les trois moments de la journée sont des
+ * **clés** (`SLOT_MOMENTS`), et c'est la grille qui les traduit : un module qui
+ * range des créneaux par tranche horaire n'a pas à savoir dans quelle langue on
+ * la nomme, et le faire lire un catalogue lui coûterait le contexte de requête
+ * qu'il n'a pas.
  */
 
 import type { AvailabilitySlot, CalendarDate, DayAvailability, TimeZone } from '@spa/shared';
@@ -91,20 +99,23 @@ export function resolveActiveDay(
 // ---------------------------------------------------------------------------
 
 /**
- * Les lignes de la grille : les moments de la journée.
+ * Les lignes de la grille : les moments de la journée, **en clés**.
  *
  * Le document de conception les nomme, et ce n'est pas un habillage. Une
  * journée de salon fait facilement trente créneaux ; les présenter en une seule
  * suite oblige à tout lire pour trouver « un début d'après-midi ». Les moments
  * donnent au clavier un axe vertical qui saute de bloc en bloc plutôt que de
  * quart d'heure en quart d'heure.
+ *
+ * L'ordre est celui de la journée, et il fait aussi l'ordre des lignes rendues.
  */
-export const SLOT_ROW_LABELS = ['Matin', 'Après-midi', 'Soir'] as const;
+export const SLOT_MOMENTS = ['morning', 'afternoon', 'evening'] as const;
 
-export type SlotRowLabel = (typeof SLOT_ROW_LABELS)[number];
+export type SlotMoment = (typeof SLOT_MOMENTS)[number];
 
 export interface SlotRow {
-  readonly label: SlotRowLabel;
+  /** La clé du moment — `tunnel.slotPicker.moments.*` dans le catalogue. */
+  readonly moment: SlotMoment;
   readonly slots: readonly AvailabilitySlot[];
 }
 
@@ -138,23 +149,23 @@ export function slotRows(
   slots: readonly AvailabilitySlot[],
   timeZone: TimeZone,
 ): readonly SlotRow[] {
-  const buckets: Record<SlotRowLabel, AvailabilitySlot[]> = {
-    Matin: [],
-    'Après-midi': [],
-    Soir: [],
+  const buckets: Record<SlotMoment, AvailabilitySlot[]> = {
+    morning: [],
+    afternoon: [],
+    evening: [],
   };
 
   for (const slot of slots) {
     const hour = hourInTimeZone(slot.startsAt, timeZone);
-    const label: SlotRowLabel =
-      hour < AFTERNOON_FROM_HOUR ? 'Matin' : hour < EVENING_FROM_HOUR ? 'Après-midi' : 'Soir';
+    const moment: SlotMoment =
+      hour < AFTERNOON_FROM_HOUR ? 'morning' : hour < EVENING_FROM_HOUR ? 'afternoon' : 'evening';
 
-    buckets[label].push(slot);
+    buckets[moment].push(slot);
   }
 
-  return SLOT_ROW_LABELS.filter((label) => buckets[label].length > 0).map((label) => ({
-    label,
-    slots: buckets[label],
+  return SLOT_MOMENTS.filter((moment) => buckets[moment].length > 0).map((moment) => ({
+    moment,
+    slots: buckets[moment],
   }));
 }
 

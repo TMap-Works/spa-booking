@@ -25,7 +25,10 @@ import {
 
 describe('le nom d’un jour de la semaine', () => {
   it('nomme les sept jours en numérotation ISO, lundi en tête', () => {
-    expect([1, 2, 3, 4, 5, 6, 7].map(weekdayLabel)).toEqual([
+    // Appelé par une lambda et non passé directement à `map` : `weekdayLabel`
+    // prend depuis #846 un contexte d'affichage facultatif en second paramètre,
+    // que `map` remplirait avec l'index de l'itération.
+    expect([1, 2, 3, 4, 5, 6, 7].map((weekday) => weekdayLabel(weekday))).toEqual([
       'Lundi',
       'Mardi',
       'Mercredi',

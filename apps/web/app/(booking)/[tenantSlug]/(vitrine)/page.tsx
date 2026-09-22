@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
+import { getLocale, getTranslations } from 'next-intl/server';
 import { notFound } from 'next/navigation';
 
 import { SalonBookingBar } from '@/components/salon/salon-booking-bar';
@@ -9,6 +10,7 @@ import { SalonTeam } from '@/components/salon/salon-team';
 import { ServiceCatalog } from '@/components/salon/service-catalog';
 import { SalonStructuredData } from '@/components/salon/structured-data';
 import { ApiClientError } from '@/lib/api-client';
+import { formattingLocale } from '@/lib/format';
 
 import { BookingErrorNotice } from '../booking-error-notice';
 import {
@@ -60,27 +62,6 @@ interface PageProps {
 }
 
 /**
- * La description que lit un moteur de recherche, accordée à l'état du catalogue
- * (#773).
- *
- * C'est **mot pour mot l'accroche** de `SalonHeader`, servie à une autre
- * surface : la laisser promettre « Découvrez les prestations…, leurs durées et
- * leurs tarifs » pour un salon qui n'a rien publié ferait dire au résultat de
- * recherche ce que la page vient précisément de cesser de dire.
- *
- * Fonction **pure** : l'état du catalogue lui est donné, elle ne le charge pas.
- * C'est ce qui permet à `generateMetadata` de lancer les deux chargements
- * ensemble plutôt que de les enchaîner — voir ci-dessous.
- */
-function salonDescription(tenantName: string, bookable: boolean): string {
-  return bookable
-    ? `Découvrez les prestations de ${tenantName}, leurs durées et leurs tarifs, ` +
-        `et réservez votre rendez-vous en ligne.`
-    : `${tenantName} n’a pas encore publié ses prestations en ligne : ` +
-        `la réservation en ligne n’est pas encore ouverte.`;
-}
-
-/**
  * Métadonnées SEO de la page.
  *
  * Le titre et la description portent le nom du salon : c'est ce qu'un moteur
@@ -89,9 +70,31 @@ function salonDescription(tenantName: string, bookable: boolean): string {
  *
  * L'établissement est chargé par le même loader mémoïsé que le composant
  * (`salon-data.ts`) : les deux appels n'en font qu'un.
+ *
+ * ## La description est accordée à l'état du catalogue (#773)
+ *
+ * C'est **mot pour mot l'accroche** de `SalonHeader`, servie à une autre
+ * surface : la laisser promettre « Découvrez les prestations…, leurs durées et
+ * leurs tarifs » pour un salon qui n'a rien publié ferait dire au résultat de
+ * recherche ce que la page vient précisément de cesser de dire. Le choix entre
+ * les deux phrases ne dépend que d'un booléen, et le catalogue est chargé en
+ * parallèle de la fiche plutôt qu'après elle — voir ci-dessous.
+ *
+ * ## La langue (#846)
+ *
+ * `getTranslations` et `getLocale`, et non les crochets : `generateMetadata` est
+ * asynchrone. Le **nom du salon** s'insère en paramètre des deux phrases — c'est
+ * du contenu, il ne se traduit pas.
+ *
+ * `openGraph.locale` suit la langue résolue, au format que le protocole attend
+ * (`fr_FR`, `en_US`) : l'étiquette vient de `formattingLocale`, donc du pays de
+ * l'établissement, et non d'un `fr_FR` figé qui annonçait du français sur toutes
+ * les vitrines du produit.
  */
 export async function generateMetadata({ params }: PageProps): Promise<Metadata> {
   const { tenantSlug } = await params;
+  const t = await getTranslations('booking');
+  const locale = await getLocale();
 
   // Le catalogue part **avant** l'attente de la fiche, et sous la même clé de
   // mémoïsation que le composant (`tenantSlug`, celui de l'URL) : les deux
@@ -110,8 +113,10 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
 
   try {
     const tenant = await loadSalonTenant(tenantSlug);
-    const title = `${tenant.name} — prestations et réservation en ligne`;
-    const description = salonDescription(tenant.name, await bookable);
+    const title = t('salon.metadata.title', { name: tenant.name });
+    const description = (await bookable)
+      ? t('salon.metadata.descriptionBookable', { name: tenant.name })
+      : t('salon.metadata.descriptionUnavailable', { name: tenant.name });
 
     return {
       metadataBase: new URL(siteOrigin()),
@@ -120,7 +125,9 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
       alternates: { canonical: salonPath(tenant.slug) },
       openGraph: {
         type: 'website',
-        locale: 'fr_FR',
+        // Le protocole Open Graph veut « langue_RÉGION » ; `formattingLocale`
+        // rend « langue-RÉGION ».
+        locale: formattingLocale(locale, tenant.address?.country).replace('-', '_'),
         siteName: tenant.name,
         url: salonPath(tenant.slug),
         title,
@@ -138,15 +145,23 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
     // il n'y a qu'un incident, et sortirait la page du salon de l'index jusqu'au
     // passage suivant. Une panne est transitoire, une désindexation ne l'est pas.
     if (error instanceof ApiClientError && error.status === 404) {
-      return { title: 'Salon introuvable', robots: { index: false, follow: false } };
+      return {
+        title: t('salon.metadata.notFoundTitle'),
+        robots: { index: false, follow: false },
+      };
     }
 
-    return { title: 'Réservation en ligne' };
+    return { title: t('salon.metadata.fallbackTitle') };
   }
 }
 
 export default async function SalonPage({ params }: PageProps) {
   const { tenantSlug } = await params;
+  // Composant **asynchrone** : `getTranslations` et non `useTranslations`, qui
+  // est un crochet (#846). Les composants qu'il monte, eux, sont synchrones et
+  // lisent le catalogue par le crochet.
+  const t = await getTranslations('booking');
+  const locale = await getLocale();
 
   try {
     // En parallèle : deux requêtes indépendantes, et c'est le chemin du LCP.
@@ -187,13 +202,13 @@ export default async function SalonPage({ params }: PageProps) {
             <div className="spa-salon__column">
               <ServiceCatalog
                 services={services}
-                contact={salonContactAction(tenant)}
+                contact={salonContactAction(tenant, locale)}
                 reservationPath={reservationHref}
               />
               <SalonTeam services={services} />
             </div>
 
-            <aside className="spa-salon__aside" aria-label="Informations pratiques">
+            <aside className="spa-salon__aside" aria-label={t('salon.info.label')}>
               <SalonInfo tenant={tenant} bookable={bookable} now={now} />
             </aside>
           </div>
@@ -217,7 +232,7 @@ export default async function SalonPage({ params }: PageProps) {
     return (
       <div className="spa-salon">
         <main className="spa-salon__main" id="contenu">
-          <BookingErrorNotice title="La page du salon n’a pas pu être chargée" error={error} />
+          <BookingErrorNotice title={t('salon.error.title')} error={error} />
         </main>
       </div>
     );

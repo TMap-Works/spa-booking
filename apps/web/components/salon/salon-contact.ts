@@ -1,4 +1,7 @@
-import type { PublicTenant } from '@spa/shared';
+import type { Locale, PublicTenant } from '@spa/shared';
+
+import en from '@/messages/en/booking.json';
+import fr from '@/messages/fr/booking.json';
 
 /**
  * Le moyen de joindre le salon **hors ligne**, quand il en a publié un (#773).
@@ -22,7 +25,31 @@ import type { PublicTenant } from '@spa/shared';
  * Elle ne fabrique pas de lien vers l'adresse postale ni vers les horaires :
  * ceux-là ne joignent personne. La section « informations pratiques » les rend
  * déjà, et c'est son travail (`salon-info.tsx`).
+ *
+ * ## La langue (#846)
+ *
+ * Le `href` est une URI, il ne se traduit pas ; le `label` est une phrase, et il
+ * vient du catalogue. Ce module est pur et sans React — il est appelé depuis
+ * `generateMetadata` comme depuis un Server Component —, il ne peut donc appeler
+ * aucun crochet : il lit les deux catalogues par import direct, exactement comme
+ * `public-exits.tsx` le fait de son registre de sorties, et reçoit la langue en
+ * dernier paramètre.
  */
+
+/** Les catalogues, dans les deux langues — la même source que les composants. */
+const CATALOG = { fr, en } as const;
+
+/**
+ * La langue employée quand l'appelant n'en passe pas encore.
+ *
+ * `'fr'`, et c'est **transitoire** : même arbitrage que `FALLBACK_LOCALE` de
+ * `public-exits.tsx` et de `lib/format.ts`. Le défaut garde le comportement
+ * d'avant le ticket plutôt que de basculer en anglais un écran dont personne n'a
+ * encore relu la traduction, et il tombera avec le dernier ticket d'écran de
+ * l'épique #843.
+ */
+const FALLBACK_LOCALE: Locale = 'fr';
+
 export interface SalonContactAction {
   /** `tel:` ou `mailto:` — prêt à poser dans un `href`, sans retouche. */
   readonly href: string;
@@ -56,13 +83,18 @@ export function telUri(phone: string): string {
   return `tel:${phone.replace(PHONE_URI_SEPARATORS, '')}`;
 }
 
-export function salonContactAction(tenant: PublicTenant): SalonContactAction | null {
+export function salonContactAction(
+  tenant: PublicTenant,
+  locale: Locale = FALLBACK_LOCALE,
+): SalonContactAction | null {
+  const words = CATALOG[locale].salon.contact;
+
   if (tenant.contactPhone !== undefined) {
-    return { href: telUri(tenant.contactPhone), label: 'Appeler le salon' };
+    return { href: telUri(tenant.contactPhone), label: words.call };
   }
 
   if (tenant.contactEmail !== undefined) {
-    return { href: `mailto:${tenant.contactEmail}`, label: 'Écrire au salon' };
+    return { href: `mailto:${tenant.contactEmail}`, label: words.email };
   }
 
   return null;

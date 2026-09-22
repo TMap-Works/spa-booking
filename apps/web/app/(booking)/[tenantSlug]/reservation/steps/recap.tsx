@@ -1,3 +1,4 @@
+import { useTranslations } from 'next-intl';
 import type { ReactNode } from 'react';
 
 import type { ContactDraft } from '@/lib/booking/draft';
@@ -70,33 +71,45 @@ function RecapRow({ term, children }: RecapRowProps) {
  * rendez-vous est pris, et l'adresse qui compte encore y est nommée par la ligne
  * qui annonce l'e-mail récapitulatif — la redire en liste ferait de l'écran de
  * succès un second formulaire relu.
+ *
+ * ## La langue (#846)
+ *
+ * Les quatre étiquettes viennent du catalogue ; les valeurs, non — ce sont les
+ * coordonnées que la cliente vient de taper, et le numéro reste mis en forme
+ * par `lib/phone.ts`, qui suit le pays du numéro et non la langue de l'écran.
  */
 export function ContactRecap({ contact, onEdit = null }: ContactRecapProps) {
+  const t = useTranslations('booking');
+
   return (
-    <section className="spa-booking__recap-block" aria-label="Vos coordonnées">
+    <section className="spa-booking__recap-block" aria-label={t('tunnel.recap.title')}>
       <div className="spa-booking__recap-head">
         {/* Un `<p>` et non un titre : le plan du document du récapitulatif est
             tenu par le `<h1>` de l'étape et par le `<h2>` « Avant de
             confirmer », qui est ce qu'il faut avoir lu avant de soumettre. Le
             nom accessible du bloc est porté par `aria-label` sur la `<section>`,
             qui en fait une région nommée sans ajouter un niveau de titre. */}
-        <p className="spa-booking__recap-title">Vos coordonnées</p>
-        {onEdit === null ? null : <EditAction target="mes coordonnées" onClick={onEdit} />}
+        <p className="spa-booking__recap-title">{t('tunnel.recap.title')}</p>
+        {onEdit === null ? null : (
+          <EditAction target={t('tunnel.recap.editTarget')} onClick={onEdit} />
+        )}
       </div>
 
       <dl className="spa-booking__recap">
-        <RecapRow term="Au nom de">
+        <RecapRow term={t('tunnel.recap.name')}>
           {contact.firstName} {contact.lastName}
         </RecapRow>
 
-        <RecapRow term="Adresse e-mail">{contact.email}</RecapRow>
+        <RecapRow term={t('tunnel.recap.email')}>{contact.email}</RecapRow>
 
         {contact.phone === '' ? null : (
-          <RecapRow term="Téléphone">{formatPhoneForDisplay(contact.phone)}</RecapRow>
+          <RecapRow term={t('tunnel.recap.phone')}>
+            {formatPhoneForDisplay(contact.phone)}
+          </RecapRow>
         )}
 
         {contact.clientNote === '' ? null : (
-          <RecapRow term="Votre mot au salon">{contact.clientNote}</RecapRow>
+          <RecapRow term={t('tunnel.recap.note')}>{contact.clientNote}</RecapRow>
         )}
       </dl>
     </section>

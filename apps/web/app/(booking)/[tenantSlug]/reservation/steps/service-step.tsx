@@ -1,6 +1,7 @@
 'use client';
 
 import type { PublicService } from '@spa/shared';
+import { useTranslations } from 'next-intl';
 import { useState } from 'react';
 
 import { ServiceChoice } from '@/components/booking/service-choice';
@@ -12,6 +13,11 @@ interface ServiceStepProps {
   readonly services: readonly PublicService[];
   readonly selectedServiceId: string | null;
   readonly selectedStaffId: string | null;
+  /**
+   * Le pays de l'établissement, pour la **région** des durées et des tarifs
+   * (#846) — la même que celle des autres étapes, qui le reçoivent du tunnel.
+   */
+  readonly countryCode?: string | null | undefined;
   readonly onSubmit: (serviceId: string, staffId: string | null) => void;
 }
 
@@ -57,8 +63,13 @@ export function ServiceStep({
   services,
   selectedServiceId,
   selectedStaffId,
+  countryCode,
   onSubmit,
 }: ServiceStepProps) {
+  // Les noms, les durées et les prix des prestations sont rendus par
+  // `ServiceChoice` et `StaffChoice` : cette étape n'écrit elle-même que le
+  // libellé de son bouton (#846).
+  const t = useTranslations('booking');
   const [serviceId, setServiceId] = useState<string | null>(selectedServiceId);
   const [staffId, setStaffId] = useState<string | null>(selectedStaffId);
 
@@ -92,6 +103,7 @@ export function ServiceStep({
       <ServiceChoice
         services={services}
         selectedServiceId={service?.id ?? null}
+        countryCode={countryCode}
         onSelect={(chosen) => {
           setServiceId(chosen);
           // Le praticien retenu peut ne pas tenir la nouvelle prestation.
@@ -119,7 +131,9 @@ export function ServiceStep({
           désigne une autre. Les lignes portent déjà durée et prix (#741). */}
       <BookingActionBar>
         <Button type="submit" variant="accent" block disabled={service === null}>
-          {service === null ? 'Choisissez une prestation' : 'Choisir un créneau'}
+          {service === null
+            ? t('tunnel.serviceStep.submitDisabled')
+            : t('tunnel.serviceStep.submit')}
         </Button>
       </BookingActionBar>
     </form>

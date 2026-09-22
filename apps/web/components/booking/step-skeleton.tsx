@@ -1,27 +1,8 @@
 import type { PublicService } from '@spa/shared';
+import { useTranslations } from 'next-intl';
 
 import { groupServicesByCategory } from '@/components/salon/group-services';
 import type { BookingStep } from '@/lib/booking/draft';
-
-/**
- * Ce que le lecteur d'écran entend pendant que l'étape se pose.
- *
- * Une phrase par étape, et non un « Chargement… » unique : `states.md` conçoit
- * l'état de chargement **par écran**, et l'annonce doit dire ce qui arrive — des
- * prestations, des disponibilités, un récapitulatif —, faute de quoi elle ne
- * vaut pas mieux que le silence.
- *
- * La phrase des disponibilités est celle que `SlotPicker` emploie déjà pour le
- * même objet : deux formulations pour un même chargement diraient à l'oreille
- * que l'écran a changé alors qu'il attend toujours.
- */
-const LOADING_LABELS: Readonly<Record<BookingStep, string>> = {
-  prestation: 'Chargement des prestations…',
-  creneau: 'Chargement des disponibilités…',
-  coordonnees: 'Chargement du formulaire de contact…',
-  recapitulatif: 'Chargement du récapitulatif…',
-  confirmation: 'Chargement de votre rendez-vous…',
-};
 
 /** Les journées dessinées dans la bande — de quoi remplir la rangée visible. */
 const SKELETON_DAYS = 7;
@@ -96,15 +77,36 @@ interface BookingStepSkeletonProps {
  *
  * Aucun état, aucun écouteur : le composant ne pèse que son balisage, et le
  * `"use client"` du tunnel qui le monte lui suffit.
+ *
+ * ## La langue (#846)
+ *
+ * Le seul texte de ce dessin est ce que le lecteur d'écran entend pendant que
+ * l'étape se pose — une phrase **par étape**, sous `tunnel.skeleton.loading`, et
+ * non un « Chargement… » unique : `states.md` conçoit l'état de chargement par
+ * écran, et l'annonce doit dire ce qui arrive — des prestations, des
+ * disponibilités, un récapitulatif —, faute de quoi elle ne vaut pas mieux que
+ * le silence.
+ *
+ * `SlotPicker` lit **la même clé** — `tunnel.skeleton.loading.creneau` — pour
+ * l'attente qui suit l'hydratation, comme il monte déjà le même
+ * `SlotGridSkeleton` : deux formulations pour un même chargement diraient à
+ * l'oreille que l'écran a changé alors qu'il attend toujours.
  */
 export function BookingStepSkeleton({
   step,
   services,
   selectedServiceId,
 }: BookingStepSkeletonProps) {
+  const t = useTranslations('booking');
+
   return (
     <div className="spa-booking__step spa-booking__step--skeleton" aria-busy="true">
-      <span className="spa-visually-hidden">{LOADING_LABELS[step]}</span>
+      {/* Clé construite : les cinq annonces ne se distinguent que par l'étape.
+          L'`as` désigne une clé réelle, comme dans
+          `components/ui/locale-switcher.tsx`. */}
+      <span className="spa-visually-hidden">
+        {t(`tunnel.skeleton.loading.${step}` as 'tunnel.skeleton.loading.prestation')}
+      </span>
 
       {step === 'prestation' ? (
         <ServiceListSkeleton services={services} selectedServiceId={selectedServiceId} />

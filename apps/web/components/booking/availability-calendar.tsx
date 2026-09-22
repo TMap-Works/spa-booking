@@ -1,6 +1,7 @@
 'use client';
 
 import type { CalendarDate, OpeningHoursEntry } from '@spa/shared';
+import { useLocale, useTranslations } from 'next-intl';
 import {
   useCallback,
   useEffect,
@@ -18,11 +19,11 @@ import {
   isSelectableState,
   type DayState,
   type DayStateContext,
+  type DayStateWords,
 } from '@/lib/booking/day-state';
 import { publishedOpenWeekdays } from '@/lib/booking/opening-days';
 import {
-  WEEKDAY_INITIALS,
-  WEEKDAY_NAMES,
+  WEEKDAY_KEYS,
   addMonths,
   dayOfMonth,
   formatMonth,
@@ -35,7 +36,41 @@ import {
   type BookingWindow,
   type CalendarMonth,
 } from '@/lib/booking/month-grid';
-import { formatCalendarDate } from '@/lib/format';
+import { formatCalendarDate, type DisplayLocale } from '@/lib/format';
+
+/**
+ * Le nom accessible d'une journée — « jeudi 17 septembre 2026 — 2 créneaux »
+ * (#846).
+ *
+ * Écrit ici et demandé par la bande de jours plutôt que relu de son côté :
+ * `day-state.ts` existe précisément pour que le calendrier et la bande ne
+ * disent jamais deux choses différentes d'une même journée, et deux lectures du
+ * catalogue rouvriraient l'écart au premier correctif.
+ *
+ * La date vient d'`Intl` (`lib/format.ts`), les mots du catalogue, et le tiret
+ * qui les sépare de la phrase qui les assemble : une langue peut avoir à les
+ * ordonner autrement.
+ */
+export function useDayLabel(
+  display: DisplayLocale,
+): (date: CalendarDate, state: DayState, slotCount: number | null) => string {
+  const t = useTranslations('booking');
+  const words: DayStateWords = {
+    // Le pluriel est tranché par ICU, dans le catalogue : « 1 créneau » et
+    // « 3 créneaux » ne se découpent pas pareil d'une langue à l'autre.
+    slotCount: (count: number) => t('tunnel.calendar.slotCount', { count }),
+    loading: t('tunnel.calendar.loading'),
+    outsideWindow: t('tunnel.calendar.outsideWindow'),
+    closed: t('tunnel.calendar.closed'),
+    full: t('tunnel.calendar.full'),
+  };
+
+  return (date, state, slotCount) =>
+    t('tunnel.calendar.dayLabel', {
+      date: formatCalendarDate(date, display),
+      state: dayStateSaid(state, slotCount, words),
+    });
+}
 
 /**
  * Le calendrier mensuel de disponibilité (#827).
@@ -97,6 +132,22 @@ import { formatCalendarDate } from '@/lib/format';
  * déjà déclarée sans créneau — voir
  * [`opening-days.ts`](../../lib/booking/opening-days.ts) pour ce que ces plages
  * décrivent et ce qu'elles ne décident pas.
+ *
+ * ## La langue (#846)
+ *
+ * Trois sources, et une seule par nature de texte :
+ *
+ * - le **nom du mois** vient d'`Intl` (`formatMonth`, qui reçoit le
+ *   `DisplayLocale`) — la bibliothèque standard le sait déjà dire ;
+ * - les **jours de la semaine**, eux, viennent du catalogue et non d'`Intl` :
+ *   `month-grid.ts` écrit pourquoi — la forme abrégée d'une locale dépend de la
+ *   version d'ICU, et l'en-tête différerait entre la CI et le poste ;
+ * - les **mots** — chevrons, état d'une journée — viennent du catalogue, sous
+ *   `tunnel.calendar`.
+ *
+ * Ce que la langue **ne change pas** : la semaine commence au lundi du contrat
+ * (`ISO_WEEKDAYS`), et les journées restent celles du fuseau de
+ * l'établissement.
  */
 interface AvailabilityCalendarProps {
   /** Le mois affiché, `YYYY-MM`. */
@@ -127,6 +178,11 @@ interface AvailabilityCalendarProps {
   readonly selectedDate: CalendarDate | null;
   /** Une action est en vol : plus rien ne se retient tant qu'elle n'a pas rendu. */
   readonly busy?: boolean;
+  /**
+   * Le pays de l'établissement, pour la **région** des dates (#846) — la
+   * semaine, elle, commence toujours au lundi du contrat.
+   */
+  readonly countryCode?: string | null | undefined;
   /** Le conteneur de la grille, quand l'appelant doit y poser le focus. */
   readonly calendarRef?: RefObject<HTMLDivElement | null> | undefined;
   readonly onMonthChange: (month: CalendarMonth) => void;
@@ -150,11 +206,15 @@ export function AvailabilityCalendar({
   openingHours,
   selectedDate,
   busy = false,
+  countryCode,
   calendarRef,
   onMonthChange,
   onSelect,
   onConfirm,
 }: AvailabilityCalendarProps) {
+  const t = useTranslations('booking');
+  const display: DisplayLocale = { locale: useLocale(), countryCode: countryCode ?? null };
+  const dayLabel = useDayLabel(display);
   const weeks = useMemo(() => monthWeeks(month), [month]);
   /** Les jours de semaine que le salon annonce ouverts — `null` s'il n'a rien publié. */
   const openWeekdays = useMemo(() => publishedOpenWeekdays(openingHours), [openingHours]);
@@ -335,7 +395,9 @@ export function AvailabilityCalendar({
 
   const previousReachable = isNavigableMonth(addMonths(month, -1), bounds);
   const nextReachable = isNavigableMonth(addMonths(month, 1), bounds);
-  const monthLabel = formatMonth(month);
+  // « septembre 2026 », « September 2026 » — le nom du mois vient d'`Intl`, pas
+  // d'un catalogue : la bibliothèque standard le sait déjà dire.
+  const monthLabel = formatMonth(month, display);
 
   return (
     <div className="spa-calendar">
@@ -364,7 +426,7 @@ export function AvailabilityCalendar({
           }}
         >
           <span aria-hidden="true">‹</span>
-          <span className="spa-visually-hidden">Mois précédent</span>
+          <span className="spa-visually-hidden">{t('tunnel.calendar.previousMonth')}</span>
         </Button>
 
         <span className="spa-calendar__period" role="status">
@@ -379,7 +441,7 @@ export function AvailabilityCalendar({
           }}
         >
           <span aria-hidden="true">›</span>
-          <span className="spa-visually-hidden">Mois suivant</span>
+          <span className="spa-visually-hidden">{t('tunnel.calendar.nextMonth')}</span>
         </Button>
       </div>
 
@@ -394,20 +456,28 @@ export function AvailabilityCalendar({
         ref={gridNode}
         className="spa-calendar__grid"
         role="grid"
-        aria-label={`Journée — ${monthLabel}`}
+        aria-label={t('tunnel.calendar.gridLabel', { month: monthLabel })}
         onKeyDown={moveFocus}
       >
         <div role="row" className="spa-calendar__row spa-calendar__row--head">
-          {WEEKDAY_INITIALS.map((initial, column) => (
+          {WEEKDAY_KEYS.map((weekday) => (
             <span
-              // Deux colonnes portent « M » et deux « S » : le nom complet fait
-              // la clé, l'initiale ne suffirait pas à les distinguer.
-              key={WEEKDAY_NAMES[column]}
+              // Deux colonnes portent « M » et deux « S » : la clé du jour fait
+              // la clé de liste, l'initiale ne suffirait pas à les distinguer.
+              key={weekday}
               role="columnheader"
               className="spa-calendar__weekday"
-              aria-label={WEEKDAY_NAMES[column]}
+              // Clés construites, comme dans `components/ui/locale-switcher.tsx` :
+              // sept jours, deux formes, et quatorze `t(...)` littéraux ne
+              // diraient rien de plus. L'`as` désigne des clés réelles, que
+              // `WEEKDAY_KEYS` tient avec le catalogue.
+              aria-label={t(`tunnel.calendar.weekdays.${weekday}` as 'tunnel.calendar.weekdays.monday')}
             >
-              <span aria-hidden="true">{initial}</span>
+              <span aria-hidden="true">
+                {t(
+                  `tunnel.calendar.weekdayInitials.${weekday}` as 'tunnel.calendar.weekdayInitials.monday',
+                )}
+              </span>
             </span>
           ))}
         </div>
@@ -434,7 +504,7 @@ export function AvailabilityCalendar({
                   key={date}
                   date={date}
                   state={stateOf(date)}
-                  slotCount={slotCounts?.get(date) ?? null}
+                  label={dayLabel(date, stateOf(date), slotCounts?.get(date) ?? null)}
                   selected={date === selectedDate}
                   selectable={canSelect(date)}
                   tabbable={date === tabbableDate}
@@ -452,8 +522,8 @@ export function AvailabilityCalendar({
 interface CalendarDayProps {
   readonly date: CalendarDate;
   readonly state: DayState;
-  /** Le nombre de créneaux, quand le serveur l'a dit — il fait le nom accessible. */
-  readonly slotCount: number | null;
+  /** Le nom accessible déjà composé — date en toutes lettres et état (#846). */
+  readonly label: string;
   readonly selected: boolean;
   readonly selectable: boolean;
   readonly tabbable: boolean;
@@ -497,14 +567,12 @@ interface CalendarDayProps {
 function CalendarDay({
   date,
   state,
-  slotCount,
+  label,
   selected,
   selectable,
   tabbable,
   onChoose,
 }: CalendarDayProps) {
-  const said = dayStateSaid(state, slotCount);
-
   return (
     <span
       role="gridcell"
@@ -517,7 +585,7 @@ function CalendarDay({
     >
       <Button
         variant="neutral"
-        aria-label={`${formatCalendarDate(date)} — ${said}`}
+        aria-label={label}
         aria-disabled={selectable ? undefined : true}
         tabIndex={tabbable ? 0 : -1}
         onClick={() => {

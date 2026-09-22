@@ -212,12 +212,32 @@ describe('La progression tient sur une ligne, et le budget de 120 px (#1047)', (
       '`tunnel-progress.tsx` n’écarte plus le filet de l’arbre d’accessibilité : ' +
         'la progression s’entend deux fois.',
     );
+    // Le compte vit au catalogue depuis #846 : ce qui se vérifie dans la source
+    // est donc qu'elle le **demande**, et dans les catalogues qu'il porte bien
+    // le rang et le total — une clé rendue vide dirait aussi peu que le filet.
     assert.match(
       readFileSync(progress, 'utf8'),
-      /Étape \{rank \+ 1\} sur \{total\}/u,
+      /tunnel\.progress\.count/u,
       '`tunnel-progress.tsx` n’écrit plus le compte en toutes lettres : la ' +
         'progression ne se lit plus qu’à la couleur d’un filet de 3 px (WCAG 1.4.1).',
     );
+
+    for (const locale of ['fr', 'en']) {
+      const count = JSON.parse(
+        readFileSync(join(here, '..', 'messages', locale, 'booking.json'), 'utf8'),
+      ).tunnel.progress.count;
+
+      assert.match(
+        count,
+        /\{rank\}/u,
+        `« tunnel.progress.count » ne dit plus le rang de l’étape en « ${locale} ».`,
+      );
+      assert.match(
+        count,
+        /\{total\}/u,
+        `« tunnel.progress.count » ne dit plus le nombre d’étapes en « ${locale} ».`,
+      );
+    }
   });
 
   it('pose le titre de l’étape en `<h1>`, et le tunnel n’en a qu’un', () => {

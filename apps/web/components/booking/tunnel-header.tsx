@@ -1,5 +1,6 @@
 'use client';
 
+import { useTranslations } from 'next-intl';
 import Link from 'next/link';
 import { useState } from 'react';
 
@@ -63,6 +64,17 @@ interface BookingTunnelHeaderProps {
  * Ce sont un repère, pas une navigation : un troisième lien dans une barre qui
  * n'en veut que deux rendrait la sortie moins claire, et c'est précisément ce
  * que le motif corrige. La vitrine reste atteignable par « Quitter ».
+ *
+ * ## La langue (#846)
+ *
+ * Les cinq libellés et la phrase de la feuille viennent du catalogue, sous
+ * `tunnel.header`. Le **nom du salon** n'en vient pas et n'en viendra jamais :
+ * c'est le contenu de l'établissement, affiché tel qu'il l'a saisi.
+ *
+ * Aucun sélecteur de langue ici : `salon-shell.tsx` le porte en pied de page
+ * pour les deux autres espaces, et cette barre-ci n'a de place que pour revenir
+ * et sortir (`BM-TUNNEL-10`). Le choix fait ailleurs s'applique ici comme
+ * partout.
  */
 export function BookingTunnelHeader({
   tenantName,
@@ -70,6 +82,7 @@ export function BookingTunnelHeader({
   onBack,
   unsavedWork,
 }: BookingTunnelHeaderProps) {
+  const t = useTranslations('booking');
   const [confirming, setConfirming] = useState(false);
 
   return (
@@ -90,7 +103,7 @@ export function BookingTunnelHeader({
                   tracé à `components/ui/icon.tsx` pour une rotation de 180°
                   ferait deux dessins à maintenir pour une seule forme. */}
               <Icon name="arrow" className="spa-booking__header-arrow" />
-              <span className="spa-booking__header-label">Retour</span>
+              <span className="spa-booking__header-label">{t('tunnel.header.back')}</span>
             </button>
           )}
         </div>
@@ -112,7 +125,7 @@ export function BookingTunnelHeader({
               }}
             >
               <Icon name="close" />
-              <span className="spa-booking__header-label">Quitter</span>
+              <span className="spa-booking__header-label">{t('tunnel.header.leave')}</span>
             </button>
           ) : (
             // Rien n'a encore été choisi : la sortie est une navigation
@@ -120,7 +133,7 @@ export function BookingTunnelHeader({
             // lien.
             <Link className="spa-booking__header-action" href={exitHref}>
               <Icon name="close" />
-              <span className="spa-booking__header-label">Quitter</span>
+              <span className="spa-booking__header-label">{t('tunnel.header.leave')}</span>
             </Link>
           )}
         </div>
@@ -151,11 +164,11 @@ export function BookingTunnelHeader({
         onClose={() => {
           setConfirming(false);
         }}
-        title="Quitter la réservation ?"
+        title={t('tunnel.header.leaveTitle')}
         footer={
           <>
             <Link className="spa-button spa-button--quiet" href={exitHref}>
-              <span className="spa-button__label">Quitter sans réserver</span>
+              <span className="spa-button__label">{t('tunnel.header.leaveConfirm')}</span>
             </Link>
             <Button
               variant="accent"
@@ -163,16 +176,12 @@ export function BookingTunnelHeader({
                 setConfirming(false);
               }}
             >
-              Rester
+              {t('tunnel.header.stay')}
             </Button>
           </>
         }
       >
-        <p>
-          Votre rendez-vous n’est pas encore pris. Votre prestation, votre créneau et vos
-          coordonnées restent enregistrés le temps de cet onglet : vous les retrouverez en
-          revenant ici.
-        </p>
+        <p>{t('tunnel.header.leaveNotice')}</p>
       </Sheet>
     </header>
   );

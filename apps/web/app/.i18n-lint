@@ -3,3 +3,6 @@
 # l'épique #843 dépose son propre marqueur dans le répertoire de son écran.
 layout.tsx
 not-found.tsx
+# L'accueil de la plateforme — le premier écran du parcours public, traduit par
+# #846. Les écrans de salon, eux, portent leur marqueur dans `app/(booking)/`.
+page.tsx

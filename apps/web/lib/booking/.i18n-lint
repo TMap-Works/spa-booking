@@ -1,0 +1,5 @@
+# Marqueur de lint i18n — voir eslint-rules/i18n-markers.mjs.
+# `consent.tsx` est le seul module de ce répertoire à porter du JSX ; les autres
+# sont des fonctions pures, que la règle laisse de toute façon passer. Le
+# sous-arbre entier plutôt que ce seul fichier : le jour où un second module y
+# rend du texte, la règle l'attrape sans qu'on y pense (#846).

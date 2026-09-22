@@ -1,13 +1,15 @@
 import type { PublicTenant } from '@spa/shared';
+import { useLocale, useTranslations } from 'next-intl';
 import Link from 'next/link';
 
 import { Avatar } from '@/components/ui/avatar';
 import { Icon } from '@/components/ui/icon';
 import { LinkPending } from '@/components/ui/link-pending';
+import type { DisplayLocale } from '@/lib/format';
 
 import { addressLocality, directionsUrl } from './salon-address';
 import { openingStatus } from './opening-hours';
-import { PUBLIC_EXIT_LABELS } from './public-exits';
+import { publicExitLabels } from './public-exits';
 import { telUri } from './salon-contact';
 
 interface SalonHeaderProps {
@@ -75,7 +77,22 @@ interface SalonHeaderProps {
  *
  * Le **libellé** vient du registre des sorties publiques (`public-exits.tsx`) :
  * cet appel à l'action et les barres de sorties nomment la même page, et deux
- * chaînes écrites à deux endroits finissent par diverger.
+ * chaînes écrites à deux endroits finissent par diverger. Depuis #846, il est
+ * demandé dans la **langue résolue** — `publicExitLabels(locale)` et non la
+ * table figée en français, qui n'existe plus que pour les surfaces que l'épique
+ * #843 n'a pas encore atteintes.
+ *
+ * ## La langue (#846)
+ *
+ * Ce que le bandeau écrit de lui-même — l'accroche, la mention d'itinéraire,
+ * « Appeler » — vient du catalogue, sous `salon.hero`. Le **nom du salon** et sa
+ * ville, eux, sont du contenu : ils s'insèrent en paramètre de l'accroche et ne
+ * se traduisent pas.
+ *
+ * L'état d'ouverture est calculé par `opening-hours.ts`, à qui la langue est
+ * passée : c'est lui qui écrit « Ouvert — ferme à 19:00 », parce que la phrase
+ * dépend de la branche empruntée. Le fuseau, lui, reste celui de
+ * l'établissement — la langue n'y touche pas.
  *
  * ## Ce que l'accroche promet, elle le tient (#773)
  *
@@ -90,8 +107,11 @@ interface SalonHeaderProps {
  * publié de quoi le joindre (`salon-contact.ts`).
  */
 export function SalonHeader({ tenant, reservationHref, now = new Date() }: SalonHeaderProps) {
+  const t = useTranslations('booking');
+  const locale = useLocale();
+  const display: DisplayLocale = { locale, countryCode: tenant.address?.country ?? null };
   const locality = addressLocality(tenant.address);
-  const status = openingStatus(tenant.openingHours ?? [], tenant.timezone, now);
+  const status = openingStatus(tenant.openingHours ?? [], tenant.timezone, now, display);
   const directions = tenant.address === undefined ? null : directionsUrl(tenant.name, tenant.address);
 
   return (
@@ -129,7 +149,7 @@ export function SalonHeader({ tenant, reservationHref, now = new Date() }: Salon
                       {locality}
                       <span className="spa-visually-hidden">
                         {' '}
-                        — ouvrir l’itinéraire (nouvel onglet)
+                        {t('salon.hero.directions')}
                       </span>
                     </a>
                   )}
@@ -156,15 +176,15 @@ export function SalonHeader({ tenant, reservationHref, now = new Date() }: Salon
 
       <p className="spa-salon-hero__lede">
         {reservationHref === null
-          ? `La réservation en ligne de ${tenant.name} n’est pas encore ouverte.`
-          : `Découvrez les prestations de ${tenant.name}, leurs durées et leurs tarifs, puis réservez votre rendez-vous en quelques minutes.`}
+          ? t('salon.hero.ledeUnavailable', { name: tenant.name })
+          : t('salon.hero.ledeBookable', { name: tenant.name })}
       </p>
 
       {reservationHref === null && tenant.contactPhone === undefined ? null : (
         <div className="spa-salon-hero__actions">
           {reservationHref === null ? null : (
             <Link className="spa-button spa-salon-hero__action" href={reservationHref}>
-              <span className="spa-button__label">{PUBLIC_EXIT_LABELS.reservation}</span>
+              <span className="spa-button__label">{publicExitLabels(locale).reservation}</span>
               <LinkPending />
             </Link>
           )}
@@ -177,7 +197,7 @@ export function SalonHeader({ tenant, reservationHref, now = new Date() }: Salon
               href={telUri(tenant.contactPhone)}
             >
               <Icon name="phone" />
-              Appeler
+              {t('salon.hero.call')}
             </a>
           )}
         </div>

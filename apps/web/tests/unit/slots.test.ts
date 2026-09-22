@@ -141,7 +141,10 @@ describe('slotRows', () => {
       timeZone,
     );
 
-    expect(rows.map((row) => row.label)).toEqual(['Matin', 'Après-midi', 'Soir']);
+    // Des **clés** et non des libellés depuis #846 : `slotRows` est une fonction
+    // pure, appelée hors de React, et c'est l'écran qui traduit ce qu'elle
+    // nomme (`tunnel.slotPicker.moments.*`).
+    expect(rows.map((row) => row.moment)).toEqual(['morning', 'afternoon', 'evening']);
     expect(rows.map((row) => row.slots.length)).toEqual([1, 1, 1]);
   });
 
@@ -149,7 +152,7 @@ describe('slotRows', () => {
     // « Soir » au-dessus de rien ferait chercher des créneaux qui n'existent pas.
     const rows = slotRows([slot('2026-09-01T06:00:00.000Z', HERY)], timeZone);
 
-    expect(rows.map((row) => row.label)).toEqual(['Matin']);
+    expect(rows.map((row) => row.moment)).toEqual(['morning']);
   });
 });
 

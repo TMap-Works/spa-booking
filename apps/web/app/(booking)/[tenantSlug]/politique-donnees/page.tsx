@@ -1,4 +1,6 @@
 import type { PublicTenant } from '@spa/shared';
+import { useTranslations } from 'next-intl';
+import { getTranslations } from 'next-intl/server';
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
@@ -7,7 +9,7 @@ import type { ReactNode } from 'react';
 import { SalonShell } from '@/components/salon/salon-shell';
 import { readAccountPresence } from '@/lib/account-presence';
 import { ApiClientError } from '@/lib/api-client';
-import { ACCOUNT_CONSENT, BOOKING_CONSENT, type ConsentCopy } from '@/lib/booking/consent';
+import { consentCopy, type ConsentVariant } from '@/lib/booking/consent';
 
 import { BookingErrorNotice } from '../booking-error-notice';
 import { accountPath, loadSalonTenant, reservationPath, salonPath, siteOrigin } from '../salon-data';
@@ -33,13 +35,14 @@ import { accountPath, loadSalonTenant, reservationPath, salonPath, siteOrigin } 
  *
  * ## Elle se **dérive** des deux blocs, elle ne les recopie pas
  *
- * `BOOKING_CONSENT` et `ACCOUNT_CONSENT` sont importés et rendus tels quels. Une
- * seconde rédaction des mêmes finalités aurait divergé de la première au premier
- * changement de texte, et c'est précisément le défaut que l'en-tête de
- * `consent.tsx` dit vouloir éviter en n'écrivant les finalités qu'une fois. Ce
- * que cette page ajoute, elle l'ajoute : le responsable du traitement, la base
- * légale, la preuve conservée, les sous-traitants, et rien qui soit déjà dit
- * ailleurs.
+ * `consentCopy(t, 'booking' | 'account')` rend exactement ce que les deux écrans
+ * affichent, dans la langue du visiteur (#846) : la page lit la même source
+ * qu'eux plutôt que d'en recopier le texte. Une seconde rédaction des mêmes
+ * finalités aurait divergé de la première au premier changement de texte, et
+ * c'est précisément le défaut que l'en-tête de `consent.tsx` dit vouloir éviter
+ * en n'écrivant les finalités qu'une fois. Ce que cette page ajoute, elle
+ * l'ajoute : le responsable du traitement, la base légale, la preuve conservée,
+ * les sous-traitants, et rien qui soit déjà dit ailleurs.
  *
  * ## Server Component, et `(booking)` plutôt que `(account)`
  *
@@ -58,6 +61,26 @@ import { accountPath, loadSalonTenant, reservationPath, salonPath, siteOrigin } 
  * Même raison que ses deux voisines : le nom de l'établissement change sans que
  * le front en soit averti, et un prérendu au build appellerait l'API depuis le
  * runner de CI ou l'étape `build` de l'image Docker, où elle n'existe pas.
+ *
+ * ## La langue (#846)
+ *
+ * C'est un texte **juridique** : il est traduit, jamais réécrit. Chaque section
+ * garde sa clé, chaque paragraphe la sienne, et la structure du document est
+ * celle du français — un titre de section fondu dans son paragraphe, ou deux
+ * paragraphes réunis en un, feraient de la version anglaise une autre
+ * information que celle due à la personne concernée (CDC §5.1, RGPD art. 12 et
+ * 13). Les mots du droit sont ceux du CDC anglais : *data controller*,
+ * *processor*, *data-subject rights*, *access, rectification, export and
+ * deletion*.
+ *
+ * Ce que l'**établissement** a saisi — son nom — traverse en paramètre et ne se
+ * traduit pas (`{salonName}`) : c'est son identité, pas un libellé d'interface.
+ *
+ * Les finalités, elles, ne sont toujours pas écrites ici : la page les **dérive**
+ * de `lib/booking/consent.tsx`, et c'est ce module qui porte leur traduction.
+ * En écrire une seconde version sous la racine `dataPolicy` aurait recréé
+ * exactement la divergence que l'en-tête ci-dessus dit vouloir éviter — en
+ * anglais cette fois, donc deux fois moins relue.
  */
 export const dynamic = 'force-dynamic';
 
@@ -67,13 +90,13 @@ interface PageProps {
 
 export async function generateMetadata({ params }: PageProps): Promise<Metadata> {
   const { tenantSlug } = await params;
+  // `generateMetadata` est asynchrone : `getTranslations` et non le crochet.
+  const t = await getTranslations('booking');
 
   try {
     const tenant = await loadSalonTenant(tenantSlug);
-    const title = `Politique de données — ${tenant.name}`;
-    const description =
-      `Quelles données ${tenant.name} collecte lorsque vous réservez ou créez un compte, ` +
-      `à quoi elles servent, combien de temps elles sont conservées, et comment exercer vos droits.`;
+    const title = t('dataPolicy.metadata.title', { salonName: tenant.name });
+    const description = t('dataPolicy.metadata.description', { salonName: tenant.name });
 
     return {
       metadataBase: new URL(siteOrigin()),
@@ -87,12 +110,16 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
     };
   } catch (error) {
     // Même conduite que la vitrine : `generateMetadata` ne doit pas jeter, et le
-    // `noindex` est réservé au 404 — une panne d'API n'est pas une consigne.
+    // `noindex` est réservé au 404 — une panne d'API n'est pas une consigne. Le
+    // titre de repli est celui de la page sans son établissement : le nom du
+    // salon est précisément ce qu'on n'a pas pu lire.
+    const fallbackTitle = t('dataPolicy.metadata.fallbackTitle');
+
     if (error instanceof ApiClientError && error.status === 404) {
-      return { title: 'Politique de données', robots: { index: false, follow: false } };
+      return { title: fallbackTitle, robots: { index: false, follow: false } };
     }
 
-    return { title: 'Politique de données' };
+    return { title: fallbackTitle };
   }
 }
 
@@ -102,17 +129,29 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
  *
  * Le libellé de la case (`copy.label`) est repris tel quel : c'est le texte
  * exact que la cliente accepte, et le lire ici sous une autre formulation
- * laisserait croire qu'elle a consenti à autre chose.
+ * laisserait croire qu'elle a consenti à autre chose. Cela vaut aussi d'une
+ * langue à l'autre (#846) — ce qui est repris est le libellé **tel que l'écran
+ * l'affiche à ce visiteur-là**, donc déjà dans sa langue, et non une seconde
+ * traduction faite ici qui pourrait en dévier d'un mot.
+ *
+ * Composant synchrone : `useTranslations` y fonctionne, là où la page qui
+ * l'appelle est asynchrone et lit ses messages par `getTranslations`.
  */
 function PurposeSection({
-  copy,
+  variant,
   title,
   headingId,
 }: {
-  readonly copy: ConsentCopy;
+  readonly variant: ConsentVariant;
   readonly title: string;
   readonly headingId: string;
 }) {
+  const t = useTranslations('booking');
+  // La copie est **lue**, pas reçue : c'est ce qui garantit qu'elle est la même
+  // chaîne que celle du formulaire, dans la même langue, et non une seconde
+  // rédaction (#846). `consentCopy` est la source unique des deux écrans.
+  const copy = consentCopy(t, variant);
+
   return (
     <section className="spa-salon__section" aria-labelledby={headingId}>
       <h2 className="spa-salon__section-title" id={headingId}>
@@ -126,9 +165,14 @@ function PurposeSection({
           </li>
         ))}
       </ul>
+      {/* Les guillemets font partie du message : le français cite entre « … »
+          et l'anglais entre “ … ”, et les laisser en JSX aurait figé les
+          premiers dans les deux langues. */}
       <p>
-        La case à cocher de cet écran porte exactement ces mots :{' '}
-        <em>« {copy.label} »</em>
+        {t.rich('dataPolicy.purposes.checkboxWording', {
+          label: copy.label,
+          quote: (chunks) => <em>{chunks}</em>,
+        })}
       </p>
     </section>
   );
@@ -136,6 +180,8 @@ function PurposeSection({
 
 export default async function DataPolicyPage({ params }: PageProps) {
   const { tenantSlug } = await params;
+  // Composant asynchrone : `getTranslations` et non le crochet (#846).
+  const t = await getTranslations('booking');
 
   // Le gabarit du salon (#1045) : même en-tête et même pied que la vitrine.
   const presence = await readAccountPresence();
@@ -169,13 +215,25 @@ export default async function DataPolicyPage({ params }: PageProps) {
       null,
       <div className="spa-salon">
         <main className="spa-salon__main" id="contenu">
-          <BookingErrorNotice title="La politique de données n’a pas pu être chargée" error={error} />
+          <BookingErrorNotice title={t('dataPolicy.loadError')} error={error} />
         </main>
       </div>,
     );
   }
 
   const tenantName = tenant.name;
+  /**
+   * Les deux balises que la prose de cette page porte, fournies une fois.
+   *
+   * `t.rich` et non une découpe du message en trois clés : une phrase coupée en
+   * « avant », « le mot en gras » et « après » n'est plus traduisible — l'ordre
+   * des mots change d'une langue à l'autre, et le traducteur ne voit jamais la
+   * phrase entière.
+   */
+  const marks = {
+    strong: (chunks: ReactNode) => <strong>{chunks}</strong>,
+    salon: (chunks: ReactNode) => <strong>{chunks}</strong>,
+  };
 
   return shell(
     tenant,
@@ -183,127 +241,86 @@ export default async function DataPolicyPage({ params }: PageProps) {
       <main className="spa-salon__main" id="contenu">
         <header className="spa-salon__header">
           <p className="spa-salon__eyebrow">{tenantName}</p>
-          <h1 className="spa-salon__title">Politique de données</h1>
+          <h1 className="spa-salon__title">{t('dataPolicy.heading.title')}</h1>
           <p className="spa-salon__lede">
-            Ce que {tenantName} collecte lorsque vous réservez ou créez un compte, à quoi cela
-            sert, combien de temps c’est conservé, et ce que vous pouvez en demander à tout
-            moment.
+            {t('dataPolicy.heading.lede', { salonName: tenantName })}
           </p>
         </header>
 
         <section className="spa-salon__section" aria-labelledby="responsable">
           <h2 className="spa-salon__section-title" id="responsable">
-            Qui traite vos données
+            {t('dataPolicy.controller.title')}
           </h2>
-          <p>
-            L’établissement <strong>{tenantName}</strong> décide de ce qui est collecté et de ce
-            qui en est fait : c’est lui votre interlocuteur, et c’est à lui que s’adressent les
-            demandes ci-dessous. Cette plateforme de réservation héberge et traite ces données
-            pour son compte, et pour aucun autre usage.
-          </p>
-          <p>
-            Vos données restent celles de cet établissement : elles ne sont partagées avec aucun
-            autre salon utilisant la même plateforme.
-          </p>
+          <p>{t.rich('dataPolicy.controller.body', { ...marks, salonName: tenantName })}</p>
+          <p>{t('dataPolicy.controller.isolation')}</p>
         </section>
 
         <PurposeSection
-          copy={BOOKING_CONSENT}
-          title="Quand vous prenez rendez-vous"
+          variant="booking"
+          title={t('dataPolicy.purposes.bookingTitle')}
           headingId="reservation"
         />
 
         <PurposeSection
-          copy={ACCOUNT_CONSENT}
-          title="Quand vous créez un compte"
+          variant="account"
+          title={t('dataPolicy.purposes.accountTitle')}
           headingId="compte"
         />
 
         <section className="spa-salon__section" aria-labelledby="base-legale">
           <h2 className="spa-salon__section-title" id="base-legale">
-            Sur quelle base, et ce que nous en gardons comme preuve
+            {t('dataPolicy.legalBasis.title')}
           </h2>
-          <p>
-            La case à cocher des deux écrans est bloquante : le formulaire ne part pas tant
-            qu’elle ne l’est pas.
-          </p>
-          <p>
-            Que vous <strong>preniez rendez-vous</strong> ou que vous{' '}
-            <strong>créiez un compte</strong>, cet accord est de surcroît enregistré avec la{' '}
-            <strong>date et l’heure exactes</strong> auxquelles vous l’avez donné, parce que
-            l’établissement doit pouvoir démontrer qu’il l’a bien reçu. Dans les deux cas, la
-            demande est refusée sans lui — y compris si elle nous parvient autrement que par le
-            formulaire.
-          </p>
-          <p>
-            Cette date est relevée par nos serveurs au moment où votre accord nous parvient :
-            elle n’est jamais fournie par l’appareil depuis lequel vous écrivez, pour qu’elle
-            garde sa valeur de preuve.
-          </p>
-          <p>
-            Trois traitements n’en dépendent pas, et il faut le dire : la confirmation de votre
-            rendez-vous, le rappel de la veille et l’avis d’annulation relèvent de l’exécution du
-            service que vous avez demandé. Les couper vous priverait précisément de ce que vous
-            êtes venue chercher.
-          </p>
+          <p>{t('dataPolicy.legalBasis.blocking')}</p>
+          <p>{t.rich('dataPolicy.legalBasis.proof', marks)}</p>
+          <p>{t('dataPolicy.legalBasis.serverClock')}</p>
+          <p>{t('dataPolicy.legalBasis.serviceMessages')}</p>
         </section>
 
         <section className="spa-salon__section" aria-labelledby="destinataires">
           <h2 className="spa-salon__section-title" id="destinataires">
-            Qui d’autre les voit
+            {t('dataPolicy.recipients.title')}
           </h2>
           <ul className="spa-list">
-            <li>
-              <strong>L’équipe de l’établissement</strong> — les personnes qui tiennent l’agenda
-              et le comptoir.
-            </li>
-            <li>
-              <strong>Les services d’envoi</strong> — un prestataire d’e-mail et un prestataire de
-              SMS, qui reçoivent votre adresse ou votre numéro le temps de vous transmettre le
-              message, et rien d’autre.
-            </li>
-            <li>
-              <strong>Le prestataire de paiement</strong> — si vous réglez en ligne. Vos données
-              de carte sont saisies chez lui et <strong>n’atteignent jamais nos serveurs</strong> :
-              nous n’en conservons qu’une référence opaque, qui ne permet ni de rejouer un
-              paiement ni de reconstituer un numéro.
-            </li>
+            <li>{t.rich('dataPolicy.recipients.team', marks)}</li>
+            <li>{t.rich('dataPolicy.recipients.senders', marks)}</li>
+            <li>{t.rich('dataPolicy.recipients.paymentProvider', marks)}</li>
           </ul>
-          <p>Aucune donnée n’est vendue, échangée ou cédée à un tiers à des fins commerciales.</p>
+          <p>{t('dataPolicy.recipients.noSale')}</p>
         </section>
 
         <section className="spa-salon__section" aria-labelledby="conservation">
           <h2 className="spa-salon__section-title" id="conservation">
-            Combien de temps, et vos droits
+            {t('dataPolicy.retention.title')}
           </h2>
-          <p>{BOOKING_CONSENT.rights}</p>
+          {/* La phrase des droits est celle du bloc de consentement, lue dans
+              la même source (#846) : les deux variantes la partagent. */}
+          <p>{consentCopy(t, 'booking').rights}</p>
+          <p>{t.rich('dataPolicy.retention.anonymisation', marks)}</p>
           <p>
-            Une demande de suppression n’efface pas l’historique comptable des règlements déjà
-            encaissés, que le commerçant est tenu de conserver : votre fiche est alors{' '}
-            <strong>anonymisée</strong> — nom, coordonnées et notes retirés — et ce qui subsiste
-            n’est plus rattachable à vous.
-          </p>
-          <p>
-            Vous pouvez corriger vos coordonnées vous-même depuis{' '}
-            <Link href={`${accountPath(tenantSlug)}/coordonnees`}>votre espace client</Link>. Pour
-            un export ou une suppression, écrivez à l’établissement — il est votre interlocuteur
-            et dispose des outils pour y répondre.
+            {t.rich('dataPolicy.retention.selfService', {
+              account: (chunks) => (
+                <Link href={`${accountPath(tenantSlug)}/coordonnees`}>{chunks}</Link>
+              ),
+            })}
           </p>
         </section>
 
         <section className="spa-salon__section" aria-labelledby="retour">
           <h2 className="spa-salon__section-title" id="retour">
-            Revenir au salon
+            {t('dataPolicy.backToSalon.title')}
           </h2>
           <ul className="spa-list">
             <li>
-              <Link href={salonPath(tenantSlug)}>Les prestations de {tenantName}</Link>
+              <Link href={salonPath(tenantSlug)}>
+                {t('dataPolicy.backToSalon.services', { salonName: tenantName })}
+              </Link>
             </li>
             <li>
-              <Link href={reservationPath(tenantSlug)}>Prendre rendez-vous</Link>
+              <Link href={reservationPath(tenantSlug)}>{t('dataPolicy.backToSalon.booking')}</Link>
             </li>
             <li>
-              <Link href={accountPath(tenantSlug)}>Mon espace client</Link>
+              <Link href={accountPath(tenantSlug)}>{t('dataPolicy.backToSalon.account')}</Link>
             </li>
           </ul>
         </section>

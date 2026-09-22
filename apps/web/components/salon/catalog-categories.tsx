@@ -1,5 +1,6 @@
 'use client';
 
+import { useTranslations } from 'next-intl';
 import { type ReactNode, useEffect, useRef, useState } from 'react';
 
 import { Tabs, tabPanelId, tabPanelProps } from '@/components/ui/tabs';
@@ -71,8 +72,17 @@ interface CatalogCategoriesProps {
  * L'appelant ne monte cet îlot qu'à partir de deux rubriques : un onglet unique
  * n'offre aucun choix et ajouterait une rangée de contrôles là où il n'y a rien
  * à contrôler.
+ *
+ * ## La langue (#846)
+ *
+ * Un seul mot est à lui : le nom accessible de la rangée d'onglets. Les
+ * **libellés des onglets**, eux, sont les rubriques du salon — ils arrivent dans
+ * `panels` et ne se traduisent pas. Client Component, donc `useTranslations` :
+ * les messages lui viennent du `NextIntlClientProvider` posé par le layout
+ * racine.
  */
 export function CatalogCategories({ panels, idPrefix }: CatalogCategoriesProps) {
+  const t = useTranslations('booking');
   // Le premier panneau, et non « toutes les rubriques » : un onglet « Toutes »
   // aurait rendu chaque prestation deux fois dans le document — une fois dans
   // son panneau, une fois dans celui du tout —, donc deux `id` d'ancre
@@ -127,7 +137,7 @@ export function CatalogCategories({ panels, idPrefix }: CatalogCategoriesProps) 
       <Tabs
         idPrefix={idPrefix}
         items={panels.map((panel) => ({ id: panel.id, label: panel.label, count: panel.count }))}
-        label="Rubriques du catalogue"
+        label={t('salon.catalog.categoriesLabel')}
         onChange={setCurrent}
         value={current}
       />

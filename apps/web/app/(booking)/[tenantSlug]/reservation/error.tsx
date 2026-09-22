@@ -1,5 +1,7 @@
 'use client';
 
+import { useTranslations } from 'next-intl';
+
 import { RouteError } from '@/components/ui/route-error';
 
 interface BookingErrorProps {
@@ -29,16 +31,28 @@ interface BookingErrorProps {
  *
  * Même cadre que l'encart d'erreur de la page, pour que les deux pannes se
  * ressemblent.
+ *
+ * ## La langue (#846)
+ *
+ * Le titre de la page et celui de l'encart sont **ceux de la page voisine** —
+ * `tunnel.page.title` et `tunnel.page.errorTitle` : les deux écrans disent la
+ * même panne, et deux clés pour une phrase sont la façon dont elles finissent
+ * par diverger. Seule la phrase du corps appartient à cette frontière-ci, qui
+ * ne voit que ce qui échappe à l'API — et c'est `errors.unexpected`, la phrase
+ * que tout le parcours public emploie pour ce dont il ne sait rien
+ * (`booking-error-notice.tsx`), plutôt qu'une quatrième écriture des mêmes mots.
  */
 export default function BookingError({ reset }: BookingErrorProps) {
+  const t = useTranslations('booking');
+
   return (
     <main className="spa-booking__main" id="contenu">
       <div className="spa-booking__frame spa-booking__content">
-        <h1 className="spa-booking__title">Prendre rendez-vous</h1>
+        <h1 className="spa-booking__title">{t('tunnel.page.title')}</h1>
         <RouteError
-          message="Une erreur inattendue est survenue. Merci de réessayer dans un instant."
+          message={t('errors.unexpected')}
           reset={reset}
-          title="La page de réservation n’a pas pu être chargée"
+          title={t('tunnel.page.errorTitle')}
         />
       </div>
     </main>

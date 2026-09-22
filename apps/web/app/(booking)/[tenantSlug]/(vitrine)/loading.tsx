@@ -1,3 +1,5 @@
+import { useTranslations } from 'next-intl';
+
 import { ProgressBar } from '@/components/ui/progress-bar';
 
 /** Trois lignes : le haut de la première rubrique du catalogue. */
@@ -15,12 +17,21 @@ const SKELETON_SERVICES = [1, 2, 3] as const;
  * Aucun nom de salon ni aucun tarif n'y figure : le squelette est servi avant que
  * la page connaisse ses données, et il n'en invente pas. Le 404 d'un slug inconnu
  * est décidé plus haut, par `layout.tsx`, avant que ce squelette parte.
+ *
+ * ## La langue (#846)
+ *
+ * Une seule phrase, et elle ne se voit pas : l'annonce faite au lecteur d'écran
+ * pendant que la page arrive. Le reste n'est que des blocs gris, qui ne disent
+ * rien dans aucune langue. Server Component **synchrone**, donc `useTranslations`
+ * et non `getTranslations`.
  */
 export default function VitrineLoading() {
+  const t = useTranslations('booking');
+
   return (
     <div aria-busy="true" className="spa-salon spa-salon-loading">
       <ProgressBar />
-      <p className="spa-visually-hidden">Chargement de la page du salon…</p>
+      <p className="spa-visually-hidden">{t('salon.loading.announcement')}</p>
 
       <div className="spa-salon__main">
         <div className="spa-salon-hero">

@@ -1,5 +1,5 @@
 import type { PublicTenant } from '@spa/shared';
-import { useTranslations } from 'next-intl';
+import { useLocale, useTranslations } from 'next-intl';
 import Link from 'next/link';
 import type { ReactNode } from 'react';
 
@@ -12,7 +12,7 @@ import type { AccountName, AccountPresence } from '@/lib/account-presence';
 import { formatPhoneForDisplay } from '@/lib/phone';
 import { PLATFORM_HOME_PATH, PLATFORM_NAME } from '@/lib/platform';
 
-import { PUBLIC_EXIT_LABELS } from './public-exits';
+import { publicExitLabels } from './public-exits';
 import { addressLines } from './salon-address';
 import { telUri } from './salon-contact';
 
@@ -132,6 +132,12 @@ export function SalonShell({
   children,
 }: SalonShellProps) {
   const t = useTranslations('shell');
+  // « Prendre rendez-vous » vient du registre des sorties publiques et non du
+  // catalogue de cette coquille (#749) : la même page ne doit pas s'appeler
+  // autrement ici que sur la vitrine ou dans l'espace client. Depuis #846, ce
+  // registre suit la langue — jusque-là, sa table figée en français laissait ce
+  // seul bouton en français sur une page servie en anglais.
+  const exits = publicExitLabels(useLocale());
   const name = tenant?.name ?? null;
 
   return (
@@ -154,7 +160,7 @@ export function SalonShell({
             </AccountEntry>
             {bookingHref === null ? null : (
               <Link className="spa-button spa-button--neutral spa-shell__cta" href={bookingHref}>
-                <span className="spa-button__label">{PUBLIC_EXIT_LABELS.reservation}</span>
+                <span className="spa-button__label">{exits.reservation}</span>
               </Link>
             )}
           </div>
@@ -176,6 +182,8 @@ interface SalonFooterProps {
 
 function SalonFooter({ tenantSlug, tenant, bookingHref }: SalonFooterProps) {
   const t = useTranslations('shell');
+  // Même registre que l'en-tête, et pour la même raison (#749, #846).
+  const exits = publicExitLabels(useLocale());
   const phone = tenant?.contactPhone;
   const email = tenant?.contactEmail;
 
@@ -233,7 +241,7 @@ function SalonFooter({ tenantSlug, tenant, bookingHref }: SalonFooterProps) {
             {bookingHref === null ? null : (
               <li>
                 <Link className="spa-shell__footer-link" href={bookingHref}>
-                  {PUBLIC_EXIT_LABELS.reservation}
+                  {exits.reservation}
                 </Link>
               </li>
             )}

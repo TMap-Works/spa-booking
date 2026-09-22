@@ -1,12 +1,13 @@
 'use client';
 
 import type { PublicService } from '@spa/shared';
+import { useLocale, useTranslations } from 'next-intl';
 import { useState } from 'react';
 
 import { groupServicesByCategory } from '@/components/salon/group-services';
 import { Icon } from '@/components/ui/icon';
 import { Tabs, tabPanelProps } from '@/components/ui/tabs';
-import { formatDuration, formatMoney } from '@/lib/format';
+import { formatDuration, formatMoney, type DisplayLocale } from '@/lib/format';
 
 /** Préfixe des `id` d'onglets et de panneaux de rubriques, à cette étape. */
 const CATEGORY_TABS_PREFIX = 'prestation-rubrique';
@@ -15,6 +16,15 @@ interface ServiceChoiceProps {
   readonly services: readonly PublicService[];
   /** `null` : aucune prestation retenue — aucune ligne n'est cochée. */
   readonly selectedServiceId: string | null;
+  /**
+   * Le pays de l'établissement (`PublicTenant.address.country`), pour la
+   * **région** des durées et des tarifs — #846.
+   *
+   * Facultatif : l'écran qui ne le renseigne pas garde le repli documenté de
+   * `lib/format.ts`, et aucun appelant n'a à changer de signature pour ce
+   * ticket.
+   */
+  readonly countryCode?: string | null | undefined;
   readonly onSelect: (serviceId: string) => void;
 }
 
@@ -77,9 +87,32 @@ interface ServiceChoiceProps {
  * dessous, et les répéter par prestation doublerait la même liste à l'écran. Ni
  * bouton « Choisir » : c'est la ligne qui est la cible, et l'action primaire de
  * l'étape est celle de la barre basse (#1047).
+ *
+ * ## La langue (#846)
+ *
+ * Ce que l'établissement a saisi — nom de prestation, description, nom de
+ * rubrique — s'affiche **tel quel** : le catalogue d'un salon n'est pas un
+ * texte d'interface, et le traduire reviendrait à réécrire son offre. Ne
+ * viennent du catalogue de messages que les mots du produit : la légende du
+ * groupe, le nom de la rangée d'onglets, les deux préfixes que seul un lecteur
+ * d'écran entend, et l'état vide.
+ *
+ * Durée et tarif passent par `lib/format.ts` avec la langue du lecteur et le
+ * pays de l'établissement — « 1 h 00 » et « 1 hr », « 35,00 € » et « €35.00 »
+ * sont le même fait dit deux fois.
  */
-export function ServiceChoice({ services, selectedServiceId, onSelect }: ServiceChoiceProps) {
-  const sections = groupServicesByCategory(services);
+export function ServiceChoice({
+  services,
+  selectedServiceId,
+  countryCode,
+  onSelect,
+}: ServiceChoiceProps) {
+  const t = useTranslations('booking');
+  const display: DisplayLocale = { locale: useLocale(), countryCode: countryCode ?? null };
+  // Le titre de la rubrique fictive est le seul mot du groupement qui s'affiche,
+  // et il se traduit : il devient l'onglet et la `<legend>` du groupe (#846).
+  // Les autres titres sont ceux des rubriques du salon, et ne bougent pas.
+  const sections = groupServicesByCategory(services, t('salon.catalog.unclassified'));
   const [openSection, setOpenSection] = useState(
     () =>
       // La rubrique qui porte la prestation déjà retenue, et non la première :
@@ -100,10 +133,9 @@ export function ServiceChoice({ services, selectedServiceId, onSelect }: Service
     // le message que portait l'`emptyLabel` du sélecteur.
     return (
       <div className="spa-card spa-card--empty">
-        <p className="spa-empty-state__title">Aucune prestation réservable en ligne</p>
+        <p className="spa-empty-state__title">{t('tunnel.serviceChoice.emptyTitle')}</p>
         <p className="spa-empty-state__description">
-          Ce salon ne propose aucune prestation à la réservation en ligne pour le moment.
-          Contactez-le directement pour connaître son offre.
+          {t('tunnel.serviceChoice.emptyDescription')}
         </p>
       </div>
     );
@@ -112,7 +144,8 @@ export function ServiceChoice({ services, selectedServiceId, onSelect }: Service
   if (sections.length < 2) {
     return (
       <ServiceGroup
-        legend="Prestation"
+        display={display}
+        legend={t('tunnel.serviceChoice.legend')}
         legendHidden={false}
         onSelect={onSelect}
         selectedServiceId={selectedServiceId}
@@ -135,11 +168,11 @@ export function ServiceChoice({ services, selectedServiceId, onSelect }: Service
           // toute trace du choix — le CTA devenu actif mis à part (#1079).
           marked: section.services.some((service) => service.id === selectedServiceId),
         }))}
-        label="Rubriques de prestations"
+        label={t('tunnel.serviceChoice.tabsLabel')}
         // La coche est décorative ; c'est cette phrase que le lecteur d'écran
         // entend à la suite du libellé et de l'effectif. Elle nomme la
         // prestation comme le reste de l'étape la nomme (`ds:libelles`).
-        markedLabel="prestation retenue"
+        markedLabel={t('tunnel.serviceChoice.tabsMarked')}
         onChange={setOpenSection}
         value={openSection}
       />
@@ -156,10 +189,12 @@ export function ServiceChoice({ services, selectedServiceId, onSelect }: Service
           hidden={section.key !== openSection}
         >
           <ServiceGroup
+            display={display}
             // Le panneau est déjà nommé par son onglet (`aria-labelledby`) : un
             // titre visible répéterait le mot qu'on vient de toucher. La
             // `<legend>` reste dans le document pour que le groupe de boutons
-            // radio garde un nom.
+            // radio garde un nom. C'est le nom de la rubrique **du salon**, et
+            // il ne se traduit pas.
             legend={section.title}
             legendHidden
             onSelect={onSelect}
@@ -177,6 +212,8 @@ interface ServiceGroupProps {
   readonly selectedServiceId: string | null;
   readonly legend: string;
   readonly legendHidden: boolean;
+  /** Composé une fois par `ServiceChoice` : deux lectures diraient deux prix. */
+  readonly display: DisplayLocale;
   readonly onSelect: (serviceId: string) => void;
 }
 
@@ -186,8 +223,11 @@ function ServiceGroup({
   selectedServiceId,
   legend,
   legendHidden,
+  display,
   onSelect,
 }: ServiceGroupProps) {
+  const t = useTranslations('booking');
+
   return (
     <fieldset className="spa-booking__services">
       <legend
@@ -222,8 +262,13 @@ function ServiceGroup({
                 se comprend d'un coup d'œil dans la ligne, mais s'entend comme un
                 nombre sans objet. */}
             <span className="spa-booking__service-meta">
-              <span className="spa-visually-hidden">Durée : </span>
-              {formatDuration(service.durationMinutes)}
+              <span className="spa-visually-hidden">
+                {t('tunnel.serviceChoice.durationPrefix')}
+                {/* L'espace est écrit à part : JSX efface celui qui borde une
+                    fin de ligne, et « Durée :1 h 00 » s'entendrait d'un bloc. */}
+                {' '}
+              </span>
+              {formatDuration(service.durationMinutes, display)}
             </span>
 
             {service.description === null ? null : (
@@ -233,8 +278,11 @@ function ServiceGroup({
 
           <span className="spa-booking__service-aside">
             <span className="spa-booking__service-price">
-              <span className="spa-visually-hidden">Tarif : </span>
-              {formatMoney(service.price)}
+              <span className="spa-visually-hidden">
+                {t('tunnel.serviceChoice.pricePrefix')}
+                {' '}
+              </span>
+              {formatMoney(service.price, display)}
             </span>
 
             {/* La coche — le signal non chromatique de l'état retenu, celui qui
