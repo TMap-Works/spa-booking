@@ -18,9 +18,9 @@ import {
   COUNTRY_PRESETS,
   CURRENCY_CHOICES,
   DEFAULT_COUNTRY,
-  TIMEZONE_CHOICES,
   countryPreset,
   slugifySalonName,
+  timezoneChoices,
 } from '@/lib/salon-presets';
 import { PLAN_PROMISE } from '@/lib/plan';
 
@@ -54,7 +54,7 @@ const EMPTY_VALUES: SignupFormValues = {
   postalCode: '',
   city: '',
   countryCode: DEFAULT_COUNTRY.code,
-  timezone: DEFAULT_COUNTRY.timezone,
+  timezone: DEFAULT_COUNTRY.timezones[0],
   defaultCurrency: DEFAULT_COUNTRY.currency,
   adminFirstName: '',
   adminLastName: '',
@@ -74,6 +74,7 @@ export function SignupForm() {
     handleSubmit,
     setValue,
     setError,
+    watch,
     formState: { errors, isSubmitting },
   } = useForm<SignupFormValues, unknown, z.output<typeof signupFormSchema>>({
     resolver: zodResolver(signupFormSchema),
@@ -105,6 +106,9 @@ export function SignupForm() {
   const nameField = register('name');
   const slugField = register('slug');
   const countryField = register('countryCode');
+  // Les fuseaux proposés suivent le pays choisi : un salon de Chicago n'a que
+  // faire de `Indian/Reunion` (#1103).
+  const timezones = timezoneChoices(watch('countryCode'));
 
   return (
     <form
@@ -186,7 +190,7 @@ export function SignupForm() {
               void countryField.onChange(event);
               const preset = countryPreset(event.target.value);
               if (preset !== undefined) {
-                setValue('timezone', preset.timezone);
+                setValue('timezone', preset.timezones[0]);
                 setValue('defaultCurrency', preset.currency);
               }
             }}
@@ -203,7 +207,7 @@ export function SignupForm() {
             error={errors.timezone?.message}
             {...register('timezone')}
           >
-            {TIMEZONE_CHOICES.map((timezone) => (
+            {timezones.map((timezone) => (
               <option key={timezone} value={timezone}>
                 {timezone}
               </option>

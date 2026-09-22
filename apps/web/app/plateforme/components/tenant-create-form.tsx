@@ -26,9 +26,9 @@ import {
   COUNTRY_PRESETS as COUNTRIES,
   CURRENCY_CHOICES as CURRENCIES,
   DEFAULT_COUNTRY,
-  TIMEZONE_CHOICES as TIMEZONES,
   countryPreset,
   slugifySalonName as slugify,
+  timezoneChoices,
 } from '@/lib/salon-presets';
 
 /**
@@ -36,10 +36,11 @@ import {
  *
  * ## Le pays règle le reste
  *
- * Choisir le pays pose le fuseau et la devise qui lui vont — les deux restent
- * modifiables. Un salon ouvert dans le mauvais fuseau affiche tous ses créneaux
+ * Choisir le pays pose la devise qui lui va et le premier de ses fuseaux, et
+ * borne les fuseaux proposés à ceux de ce pays — les deux restent modifiables
+ * (#1103). Un salon ouvert dans le mauvais fuseau affiche tous ses créneaux
  * décalés (CLAUDE.md, « sévérité haute ») : le préremplir évite l'oubli le plus
- * probable.
+ * probable, et restreindre la liste évite le second.
  *
  * ## L'adresse du salon suit son nom
  *
@@ -61,7 +62,7 @@ const EMPTY_VALUES: CreateTenantRequest = {
   postalCode: '',
   city: '',
   countryCode: DEFAULT_COUNTRY.code,
-  timezone: DEFAULT_COUNTRY.timezone,
+  timezone: DEFAULT_COUNTRY.timezones[0],
   defaultCurrency: DEFAULT_COUNTRY.currency,
   adminFirstName: '',
   adminLastName: '',
@@ -81,6 +82,7 @@ export function TenantCreateForm() {
     setValue,
     setError,
     reset,
+    watch,
     formState: { errors, isSubmitting },
   } = useForm<CreateTenantRequest, unknown, z.output<typeof createTenantRequestSchema>>({
     resolver: zodResolver(createTenantRequestSchema),
@@ -151,6 +153,7 @@ export function TenantCreateForm() {
   const nameField = register('name');
   const slugField = register('slug');
   const countryField = register('countryCode');
+  const timezones = timezoneChoices(watch('countryCode'));
 
   return (
     <form className="spa-platform-form" onSubmit={(event) => void submit(event)} noValidate>
@@ -229,7 +232,7 @@ export function TenantCreateForm() {
               void countryField.onChange(event);
               const preset = countryPreset(event.target.value);
               if (preset !== undefined) {
-                setValue('timezone', preset.timezone);
+                setValue('timezone', preset.timezones[0]);
                 setValue('defaultCurrency', preset.currency);
               }
             }}
@@ -247,7 +250,7 @@ export function TenantCreateForm() {
             error={errors.timezone?.message}
             {...register('timezone')}
           >
-            {TIMEZONES.map((timezone) => (
+            {timezones.map((timezone) => (
               <option key={timezone} value={timezone}>
                 {timezone}
               </option>
