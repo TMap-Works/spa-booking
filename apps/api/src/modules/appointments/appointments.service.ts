@@ -18,6 +18,7 @@ import type {
   AgendaAppointmentRecord,
   AgendaAppointmentView,
   AppointmentActor,
+  AppointmentClientPrincipal,
   AppointmentDraft,
   AppointmentRecord,
   AppointmentView,
@@ -455,6 +456,12 @@ export class AppointmentsService {
       throw new NotFoundError('Rendez-vous introuvable.');
     }
 
+    // Juste après le 404 de tenant, et avant tout le reste : la cliente du
+    // tunnel public ne déplace que ses propres rendez-vous (#1135). Placé ici
+    // plutôt qu'après le contrôle d'état, pour que le refus n'apprenne rien du
+    // rendez-vous d'autrui — pas même s'il est encore déplaçable.
+    assertOwnAppointment(input.client, previous.clientId);
+
     // Avant le contrôle de disponibilité, et non après lui. Ce n'est pas la
     // garde — celle-là est l'écriture conditionnelle du repository, dans la
     // transaction —, c'est ce qui rend la **réponse** juste : sans elle, un
@@ -785,6 +792,13 @@ export class AppointmentsService {
       // indiscernable d'un identifiant qui n'existe pas (tenant-isolation §4).
       throw new NotFoundError('Rendez-vous introuvable.');
     }
+
+    // La cliente d'abord, quand la porte est publique : elle n'annule que ses
+    // propres rendez-vous (#1135). Le refus est un 404, pour que le rendez-vous
+    // d'autrui reste indiscernable d'un identifiant inconnu — un 403 aurait
+    // confirmé à un praticien que l'identifiant relevé dans le journal des
+    // envois désigne bien un rendez-vous de sa collègue.
+    assertOwnAppointment(input.client, previous.clientId);
 
     // Même ordre que dans `changeStatus`, et pour la même raison : le 404 du
     // voisin d'abord, la portée ensuite (#812).
@@ -1372,6 +1386,45 @@ interface OfferedSlotQuery {
    * l'agenda tel qu'il est.
    */
   readonly excludeAppointmentId?: string;
+}
+
+/**
+ * « Ce rendez-vous est-il **le sien** ? » — la garde de la surface publique
+ * (#1135).
+ *
+ * ## Pourquoi une fonction libre, et non une méthode de plus
+ *
+ * Parce qu'elle ne lit rien : la ligne est déjà sous la main de l'appelant, qui
+ * vient de la relire dans l'établissement courant. `assertOwnScope`, elle, est
+ * une méthode parce qu'elle doit aller chercher la fiche praticien d'un compte.
+ * Deux questions différentes, deux formes différentes — et celle-ci se teste
+ * sans monter le service.
+ *
+ * ## `null` est une réponse, pas un trou
+ *
+ * `null` se lit « la porte n'a pas de cliente à comparer » — le comptoir, dont
+ * la portée est jugée par `assertOwnScope`, et les annulations que le service se
+ * fait à lui-même. C'est le type d'entrée qui l'impose : `RescheduleAppointmentInput.client`
+ * est **obligatoire** et nullable, si bien qu'aucun appelant ne peut l'omettre
+ * par distraction, et `CancelAppointmentInput` ne laisse écrire
+ * `cancelledBy: 'CLIENT'` qu'en nommant la cliente.
+ *
+ * ## 404 et non 403
+ *
+ * Le rendez-vous d'une autre cliente doit rester indiscernable d'un identifiant
+ * qui n'existe pas (tenant-isolation §4). C'est ce qui prive de valeur les
+ * `appointmentId` qu'un praticien peut relever ailleurs : les essayer ici
+ * n'apprend rien de plus que d'essayer un UUID au hasard. Un `OwnScopeOnlyError`
+ * aurait dit « il existe, mais il n'est pas à vous » — la moitié de ce que le
+ * refus existe pour taire.
+ */
+function assertOwnAppointment(
+  client: AppointmentClientPrincipal | null | undefined,
+  clientId: string,
+): void {
+  if (client != null && client.userId !== clientId) {
+    throw new NotFoundError('Rendez-vous introuvable.');
+  }
 }
 
 /**

@@ -464,10 +464,11 @@ export class AppointmentsController {
    * ## Distincte de la route publique, et ce n'est pas un doublon
    *
    * `POST /public/:tenantSlug/appointments/:id/reschedule` sert la cliente qui
-   * déplace son propre rendez-vous, sans compte, sur la seule connaissance de
-   * son identifiant. Celle-ci sert le comptoir, derrière un jeton, et rend une
-   * ligne d'agenda plutôt qu'une confirmation. Les fondre aurait fait dépendre
-   * d'un `if` sur le rôle ce qui dépend aujourd'hui de la porte.
+   * déplace **son propre** rendez-vous : jeton `CLIENT` depuis #1135, et un 404
+   * sur celui d'une autre. Celle-ci sert le comptoir, sur la matrice de
+   * permissions, et rend une ligne d'agenda plutôt qu'une confirmation. Les
+   * fondre aurait fait dépendre d'un `if` sur le rôle ce qui dépend aujourd'hui
+   * de la porte.
    */
   @Post(':appointmentId/reschedule')
   // Les deux portées : le gérant déplace n'importe quel rendez-vous, le
@@ -517,6 +518,12 @@ export class AppointmentsController {
   ): Promise<AgendaAppointmentDto> {
     return this.appointments.rescheduleAtDesk({
       actor: { userId: actor.userId, role: actor.role },
+      // Le comptoir déplace le rendez-vous de n'importe quelle cliente de son
+      // établissement : il n'y a pas de cliente à comparer ici, et c'est
+      // `actor` qui porte la portée (#812). Déclaré plutôt qu'omis — le champ
+      // est obligatoire depuis #1135, pour que l'oubli cesse d'être le cas par
+      // défaut sur la porte publique.
+      client: null,
       appointmentId,
       // La chaîne a été validée **et normalisée en UTC** par
       // `offsetDateTimeSchema` : `new Date` ne peut donc produire ici ni une
