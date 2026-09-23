@@ -1,5 +1,6 @@
-import type { Appointment, CalendarDate, PublicTenant, TimeZone } from '@spa/shared';
+import type { Appointment, CalendarDate, Locale, PublicTenant, TimeZone } from '@spa/shared';
 import Link from 'next/link';
+import { getLocale, getTranslations } from 'next-intl/server';
 
 import { Notification } from '@/components/ui/notification';
 import { fetchAppointments, fetchPublicTenant } from '@/lib/api-client';
@@ -25,6 +26,7 @@ import {
   formatDuration,
   formatMoney,
   formatTimeInTimeZone,
+  type DisplayLocale,
 } from '@/lib/format';
 import type { PaymentTransaction } from '@/lib/admin/payment-contract';
 
@@ -82,9 +84,25 @@ import { readDaySettlements } from './settlements';
  * est au seuil `MANAGER` quand cet écran est ouvert à `STAFF`, et son refus
  * rend `null`, c'est-à-dire « inconnu ». L'écran tait alors le règlement au
  * lieu de l'affirmer, et l'encaissement reste possible.
+ *
+ * ## La langue (#850)
+ *
+ * Les mots viennent du namespace `admin-checkout` — sauf le statut du
+ * rendez-vous, qui vient de `lib/appointment-status.ts`, seul endroit du front
+ * où ce vocabulaire s'écrit, et sauf les refus de l'API, que
+ * `lib/admin/checkout-summary.ts` traduit sur leur **code**.
+ *
+ * Le **fuseau reste celui du salon** dans les deux langues, et la journée de
+ * caisse avec lui : la langue et la région — le pays de l'établissement, lu sur
+ * sa vitrine — ne disent que la façon d'écrire une heure et un montant, jamais
+ * quelle heure il est ni combien la cliente doit (`CLAUDE.md`). Un montant reste
+ * un entier accompagné d'un code devise de bout en bout ; sa seule mise en forme
+ * a lieu dans `lib/format.ts`.
  */
 
 export const dynamic = 'force-dynamic';
+
+type CheckoutTranslator = Awaited<ReturnType<typeof getTranslations<'admin-checkout'>>>;
 
 interface CheckoutPageProps {
   readonly params: Promise<{ readonly tenantSlug: string }>;
@@ -94,6 +112,8 @@ interface CheckoutPageProps {
 export default async function CheckoutPage({ params, searchParams }: CheckoutPageProps) {
   const { tenantSlug } = await params;
   const { date, rdv } = await searchParams;
+  const t = await getTranslations('admin-checkout');
+  const locale = await getLocale();
 
   // La journée et le rendez-vous en cours de règlement sont lus **avant** la
   // garde : ils ne demandent aucun jeton, et c'est ce qui permet de dire à la
@@ -111,10 +131,9 @@ export default async function CheckoutPage({ params, searchParams }: CheckoutPag
   await redirectWithoutPermission(tenantSlug, 'checkout:collect');
 
   const denial = {
-    deniedTitle: 'Accès réservé',
-    deniedHint:
-      'L’encaissement est réservé aux comptes du salon. Demandez l’accès à l’administrateur.',
-    failedTitle: 'Encaissement indisponible',
+    deniedTitle: t('denied.title'),
+    deniedHint: t('denied.hint'),
+    failedTitle: t('denied.failedTitle'),
   };
 
   // Le fuseau vient de la **vitrine publique** et non de `GET /tenant`, qui est
@@ -133,6 +152,9 @@ export default async function CheckoutPage({ params, searchParams }: CheckoutPag
   // La journée par défaut est celle du **salon**, pas celle du navigateur : on
   // encaisse la journée que l'équipe travaille.
   const anchor = requested ?? todayInTimeZone(tenant.timezone);
+  // La région vient du pays de l'établissement, déjà lu sur la vitrine ci-dessus :
+  // elle ne dit que la façon d'écrire une date et un montant (#850).
+  const display: DisplayLocale = { locale, countryCode: tenant.address?.country ?? null };
 
   let appointments: Appointment[];
   try {
@@ -152,7 +174,7 @@ export default async function CheckoutPage({ params, searchParams }: CheckoutPag
   return (
     <section aria-labelledby="encaissement-titre">
       <h1 className="spa-admin__title" id="encaissement-titre">
-        Encaissement
+        {t('title')}
       </h1>
 
       {/* La même barre que le planning, et le même composant (#629) : deux
@@ -161,31 +183,28 @@ export default async function CheckoutPage({ params, searchParams }: CheckoutPag
        * côté serveur et changer de jour n'a aucune raison d'embarquer du
        * JavaScript (web-frontend §1). Le jour courant est celui du salon, comme
        * l'ancre par défaut : on encaisse la journée que l'équipe travaille. */}
-      <nav aria-label="Journée encaissée" className="spa-admin-toolbar">
+      <nav aria-label={t('day.navLabel')} className="spa-admin-toolbar">
         <PeriodNav
-          label={rangeLabel('jour', anchor)}
+          label={rangeLabel('jour', anchor, display)}
           next={{
             href: adminCheckoutPath(tenantSlug, { date: shiftAnchor('jour', anchor, 1) }),
           }}
-          nextLabel="Jour suivant"
+          nextLabel={t('day.next')}
           previous={{
             href: adminCheckoutPath(tenantSlug, { date: shiftAnchor('jour', anchor, -1) }),
           }}
-          previousLabel="Jour précédent"
+          previousLabel={t('day.previous')}
           today={{
             href: adminCheckoutPath(tenantSlug, { date: todayInTimeZone(tenant.timezone) }),
           }}
         />
         <span className="spa-admin-toolbar__spacer" />
-        <p className="spa-admin-toolbar__hint">Heures affichées dans le fuseau du salon.</p>
+        <p className="spa-admin-toolbar__hint">{t('day.timeZoneHint')}</p>
       </nav>
 
       {rdv !== undefined && selected === undefined ? (
-        <Notification tone="warning" title="Rendez-vous introuvable dans cette journée">
-          <p>
-            Le rendez-vous demandé n’est pas au planning du {formatCalendarDate(anchor)}. Changez
-            de jour, ou choisissez-en un dans la liste ci-dessous.
-          </p>
+        <Notification tone="warning" title={t('notInDay.title')}>
+          <p>{t('notInDay.body', { date: formatCalendarDate(anchor, display) })}</p>
         </Notification>
       ) : null}
 
@@ -193,7 +212,9 @@ export default async function CheckoutPage({ params, searchParams }: CheckoutPag
         <AppointmentsToSettle
           anchor={anchor}
           appointments={appointments}
+          display={display}
           settlements={settlements}
+          t={t}
           tenantSlug={tenantSlug}
           timeZone={tenant.timezone}
         />
@@ -201,11 +222,14 @@ export default async function CheckoutPage({ params, searchParams }: CheckoutPag
         <div className="spa-admin-checkout">
           <AppointmentRecap
             appointment={selected}
+            display={display}
             settlement={settlementFor(selected.id)}
+            t={t}
             timeZone={tenant.timezone}
           />
           <CheckoutPanel
             appointment={selected}
+            countryCode={tenant.address?.country ?? null}
             settlement={settlementFor(selected.id)}
             tenantSlug={tenantSlug}
             timeZone={tenant.timezone}
@@ -215,9 +239,7 @@ export default async function CheckoutPage({ params, searchParams }: CheckoutPag
 
       {selected === undefined ? null : (
         <p className="spa-admin-toolbar__hint">
-          <Link href={adminCheckoutPath(tenantSlug, { date: anchor })}>
-            Revenir à la liste de la journée
-          </Link>
+          <Link href={adminCheckoutPath(tenantSlug, { date: anchor })}>{t('day.backToList')}</Link>
         </p>
       )}
     </section>
@@ -232,8 +254,14 @@ export default async function CheckoutPage({ params, searchParams }: CheckoutPag
  * balayage : une journée se lit d'un coup d'œil, et l'information ne doit jamais
  * tenir à la seule teinte (WCAG 1.4.1).
  */
-function SettlementBadge({ settlement }: { readonly settlement: SettlementState }) {
-  const badge = settlementBadge(settlement);
+function SettlementBadge({
+  locale,
+  settlement,
+}: {
+  readonly locale: Locale;
+  readonly settlement: SettlementState;
+}) {
+  const badge = settlementBadge(settlement, locale);
 
   return (
     <span className={`spa-admin-badge spa-admin-badge--settlement-${badge.modifier}`}>
@@ -256,12 +284,16 @@ function SettlementBadge({ settlement }: { readonly settlement: SettlementState 
  */
 function AppointmentRecap({
   appointment,
+  display,
   settlement,
+  t,
   timeZone,
 }: {
   readonly appointment: Appointment;
+  readonly display: DisplayLocale;
   /** `null` quand l'historique n'a pas répondu — l'état est alors inconnu. */
   readonly settlement: SettlementState | null;
+  readonly t: CheckoutTranslator;
   readonly timeZone: TimeZone;
 }) {
   const due = amountDue(appointment);
@@ -270,41 +302,42 @@ function AppointmentRecap({
   return (
     <div className="spa-admin-checkout__ticket">
       <div className="spa-admin-checkout__origin">
-        <span>Rattaché au rendez-vous de</span>
+        <span>{t('recap.attachedTo')}</span>
         <strong>
           {appointment.client.firstName} {appointment.client.lastName} —{' '}
-          {formatTimeInTimeZone(appointment.startsAt, timeZone)}
+          {formatTimeInTimeZone(appointment.startsAt, timeZone, display)}
         </strong>
         <span
           className={`spa-admin-badge spa-admin-badge--${statusModifier(appointment.status)}`}
         >
-          {appointmentOutcomeLabel(appointment)}
+          {appointmentOutcomeLabel(appointment, 'desk', display.locale)}
         </span>
       </div>
 
       <table className="spa-admin-table">
-        <caption className="spa-visually-hidden">Prestation à encaisser</caption>
+        <caption className="spa-visually-hidden">{t('recap.caption')}</caption>
         <thead>
           <tr>
             <th className="spa-admin-table__head" scope="col">
-              Prestation
+              {t('recap.service')}
             </th>
             <th className="spa-admin-table__head" scope="col">
-              Praticien
+              {t('recap.staff')}
             </th>
             <th className="spa-admin-table__head spa-admin-table__head--numeric" scope="col">
-              Total
+              {t('recap.total')}
             </th>
           </tr>
         </thead>
         <tbody>
           <tr className="spa-admin-table__row">
             <td className="spa-admin-table__cell">
-              {appointment.service.name} — {formatDuration(appointment.service.durationMinutes)}
+              {appointment.service.name} —{' '}
+              {formatDuration(appointment.service.durationMinutes, display)}
             </td>
             <td className="spa-admin-table__cell">{appointment.staff.displayName}</td>
             <td className="spa-admin-table__cell spa-admin-table__cell--numeric">
-              {formatMoney(due)}
+              {formatMoney(due, display)}
             </td>
           </tr>
         </tbody>
@@ -312,22 +345,21 @@ function AppointmentRecap({
 
       <div className="spa-admin-checkout__totals">
         <div className="spa-admin-checkout__total-row">
-          <span className="spa-admin-checkout__total-label">Horaire</span>
+          <span className="spa-admin-checkout__total-label">{t('recap.schedule')}</span>
           <span className="spa-admin-checkout__total-value">
-            {formatTimeInTimeZone(appointment.startsAt, timeZone)} –{' '}
-            {formatTimeInTimeZone(appointment.endsAt, timeZone)}
+            {formatTimeInTimeZone(appointment.startsAt, timeZone, display)} –{' '}
+            {formatTimeInTimeZone(appointment.endsAt, timeZone, display)}
           </span>
         </div>
         <div className="spa-admin-checkout__total-row spa-admin-checkout__total-row--grand">
-          <span className="spa-admin-checkout__total-label">{settled ? 'Réglé' : 'À encaisser'}</span>
-          <span className="spa-admin-checkout__total-value">{formatMoney(due)}</span>
+          <span className="spa-admin-checkout__total-label">
+            {settled ? t('recap.settled') : t('recap.due')}
+          </span>
+          <span className="spa-admin-checkout__total-value">{formatMoney(due, display)}</span>
         </div>
       </div>
 
-      <p className="spa-admin-toolbar__hint">
-        Montant figé à la réservation. Le total qui fait foi est celui que le serveur recalcule à
-        la validation — le front n’en fait jamais l’arithmétique.
-      </p>
+      <p className="spa-admin-toolbar__hint">{t('recap.fixedPrice')}</p>
     </div>
   );
 }
@@ -349,14 +381,18 @@ function AppointmentRecap({
 function AppointmentsToSettle({
   anchor,
   appointments,
+  display,
   settlements,
+  t,
   tenantSlug,
   timeZone,
 }: {
   readonly anchor: CalendarDate;
   readonly appointments: readonly Appointment[];
+  readonly display: DisplayLocale;
   /** `null` quand l'historique n'a pas répondu — la colonne est alors tue. */
   readonly settlements: readonly PaymentTransaction[] | null;
+  readonly t: CheckoutTranslator;
   readonly tenantSlug: string;
   readonly timeZone: TimeZone;
 }) {
@@ -365,10 +401,9 @@ function AppointmentsToSettle({
   if (appointments.length === 0) {
     return (
       <div className="spa-empty-state">
-        <p className="spa-empty-state__title">Aucun rendez-vous ce jour-là</p>
+        <p className="spa-empty-state__title">{t('list.emptyTitle')}</p>
         <p className="spa-empty-state__description">
-          Rien à encaisser au {formatCalendarDate(anchor)}. Changez de jour pour retrouver une
-          prestation rendue.
+          {t('list.emptyBody', { date: formatCalendarDate(anchor, display) })}
         </p>
       </div>
     );
@@ -376,32 +411,34 @@ function AppointmentsToSettle({
 
   return (
     <table className="spa-admin-table">
-      <caption className="spa-visually-hidden">Rendez-vous de la journée</caption>
+      <caption className="spa-visually-hidden">{t('list.caption')}</caption>
       <thead>
         <tr>
           <th className="spa-admin-table__head" scope="col">
-            Heure
+            {t('list.time')}
           </th>
           {/* « Client » — le nom que le CDC §2.4 donne à l'entité, et celui que
               le rail, le fichier et le tiroir du planning emploient déjà. Le
               féminin d'avant était faux la moitié du temps : le produit vise
               aussi barbershops et studios de massage (CDC §1.2), et un comptoir
-              ne choisit pas ses clients (#761). */}
+              ne choisit pas ses clients (#761). L'anglais dit « Client » lui
+              aussi, pour la même raison qu'il le dit dans le reste du
+              back-office : c'est le mot du contrat partagé. */}
           <th className="spa-admin-table__head" scope="col">
-            Client
+            {t('list.client')}
           </th>
           <th className="spa-admin-table__head" scope="col">
-            Prestation
+            {t('list.service')}
           </th>
           <th className="spa-admin-table__head spa-admin-table__head--numeric" scope="col">
-            Montant
+            {t('list.amount')}
           </th>
           <th className="spa-admin-table__head" scope="col">
-            Statut
+            {t('list.status')}
           </th>
           {settlements === null ? null : (
             <th className="spa-admin-table__head" scope="col">
-              Règlement
+              {t('list.settlement')}
             </th>
           )}
         </tr>
@@ -414,7 +451,7 @@ function AppointmentsToSettle({
           return (
             <tr className="spa-admin-table__row" key={appointment.id}>
               <td className="spa-admin-table__cell">
-                {formatTimeInTimeZone(appointment.startsAt, timeZone)}
+                {formatTimeInTimeZone(appointment.startsAt, timeZone, display)}
               </td>
               <td className="spa-admin-table__cell">
                 {isSettleable(appointment.status) ? (
@@ -432,8 +469,8 @@ function AppointmentsToSettle({
                      * écart que celui que ce ticket corrige, un cran plus bas. */}
                     <span className="spa-visually-hidden">
                       {settlement !== null && isSettled(settlement)
-                        ? ' — voir le règlement'
-                        : ' — encaisser ce rendez-vous'}
+                        ? t('list.openSettlement')
+                        : t('list.openCheckout')}
                     </span>
                   </Link>
                 ) : (
@@ -444,18 +481,18 @@ function AppointmentsToSettle({
               </td>
               <td className="spa-admin-table__cell">{appointment.service.name}</td>
               <td className="spa-admin-table__cell spa-admin-table__cell--numeric">
-                {formatMoney(amountDue(appointment))}
+                {formatMoney(amountDue(appointment), display)}
               </td>
               <td className="spa-admin-table__cell">
                 <span
                   className={`spa-admin-badge spa-admin-badge--${statusModifier(appointment.status)}`}
                 >
-                  {appointmentOutcomeLabel(appointment)}
+                  {appointmentOutcomeLabel(appointment, 'desk', display.locale)}
                 </span>
               </td>
               {settlement === null ? null : (
                 <td className="spa-admin-table__cell">
-                  <SettlementBadge settlement={settlement} />
+                  <SettlementBadge locale={display.locale} settlement={settlement} />
                 </td>
               )}
             </tr>

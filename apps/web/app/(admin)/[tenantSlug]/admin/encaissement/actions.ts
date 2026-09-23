@@ -31,9 +31,18 @@
  * serveur Next et consommant pour tout le monde le quota de dix ouvertures par
  * minute et par adresse. Le jeton de comptoir n'ajoute donc pas une autorisation
  * que l'API exigerait : il empêche notre propre serveur de servir d'amplificateur.
+ *
+ * ## Les refus de ces actions parlent la langue de l'appelant (#850)
+ *
+ * Les deux seuls messages écrits ici — une cible illisible — viennent du
+ * catalogue `admin-checkout`, lu par `getTranslations` : une action serveur
+ * s'exécute dans le contexte de la requête, donc dans la langue que le visiteur
+ * a obtenue. Les autres refus n'ont rien à traduire ici : ils viennent de l'API,
+ * et c'est `checkoutFailureMessage` qui les nomme, sur leur **code**.
  */
 
 import { slugSchema, uuidSchema, type SaleReceipt } from '@spa/shared';
+import { getTranslations } from 'next-intl/server';
 
 import {
   fetchSaleReceipt,
@@ -85,7 +94,7 @@ export async function openCardPaymentAction(
   const target = checkTarget(tenantSlug, appointmentId);
 
   if (target === null) {
-    return invalid('Rendez-vous ou établissement inconnu.');
+    return invalid((await getTranslations('admin-checkout'))('failure.unknownTarget'));
   }
 
   const access = await adminActionAccess(target.slug);
@@ -119,7 +128,7 @@ export async function settleInCashAction(
   const target = checkTarget(tenantSlug, appointmentId);
 
   if (target === null) {
-    return invalid('Rendez-vous ou établissement inconnu.');
+    return invalid((await getTranslations('admin-checkout'))('failure.unknownTarget'));
   }
 
   const access = await adminActionAccess(target.slug);
@@ -152,7 +161,7 @@ export async function loadReceiptAction(
   const sale = uuidSchema.safeParse(saleId);
 
   if (!slug.success || !sale.success) {
-    return invalid('Ticket ou établissement inconnu.');
+    return invalid((await getTranslations('admin-checkout'))('failure.unknownReceiptTarget'));
   }
 
   const access = await adminActionAccess(slug.data);

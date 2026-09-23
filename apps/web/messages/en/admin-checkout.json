@@ -1,0 +1,162 @@
+{
+  "title": "Checkout",
+  "denied": {
+    "title": "Restricted access",
+    "hint": "Checkout is reserved for salon accounts. Ask your administrator for access.",
+    "failedTitle": "Checkout unavailable"
+  },
+  "day": {
+    "navLabel": "Day being settled",
+    "previous": "Previous day",
+    "next": "Next day",
+    "timeZoneHint": "Times are shown in the salon’s time zone.",
+    "backToList": "Back to the day’s list"
+  },
+  "notInDay": {
+    "title": "Appointment not found on this day",
+    "body": "The requested appointment is not on the schedule for {date}. Change day, or pick one from the list below."
+  },
+  "list": {
+    "caption": "Appointments of the day",
+    "time": "Time",
+    "client": "Client",
+    "service": "Service",
+    "amount": "Amount",
+    "status": "Status",
+    "settlement": "Settlement",
+    "openSettlement": " — view the settlement",
+    "openCheckout": " — check out this appointment",
+    "emptyTitle": "No appointments that day",
+    "emptyBody": "Nothing to settle on {date}. Change day to find a service that was delivered."
+  },
+  "recap": {
+    "attachedTo": "Attached to the appointment of",
+    "caption": "Service to settle",
+    "service": "Service",
+    "staff": "Practitioner",
+    "total": "Total",
+    "schedule": "Time",
+    "due": "Due",
+    "settled": "Settled",
+    "fixedPrice": "Amount fixed at booking time. The total that counts is the one the server recalculates on validation — the front end never does that arithmetic."
+  },
+  "badge": {
+    "settled": "settled",
+    "refunded": "refunded",
+    "partiallyRefunded": "partially refunded",
+    "cardOpen": "card in progress",
+    "cardFailed": "card failed",
+    "due": "to settle"
+  },
+  "method": {
+    "legend": "Payment method",
+    "cash": "Cash",
+    "card": "Card",
+    "cashPhrase": "in cash",
+    "cardPhrase": "by card",
+    "cashHint": "Recorded with the operator and a timestamp; the till is the reference at reconciliation. No call to the payment provider.",
+    "cardHint": "The client enters their card in fields served by Stripe. No number is entered, seen or kept by the salon.",
+    "unavailableTitle": "{method} unavailable"
+  },
+  "blocker": {
+    "nothingToSettleTitle": "Nothing to settle",
+    "cancelled": "This appointment is cancelled: the slot has been released, there is no service left to settle.",
+    "alreadySettled": "This appointment has already been settled: a second payment would create one accounting record too many.",
+    "cardOpenBlocksCash": "A card payment is already open on this appointment. Finish it — a cash settlement would be refused while it runs.",
+    "cardFailedBlocksCash": "A failed card payment intent is still attached to this appointment. Resume the card — a cash settlement would be refused until it is cleared.",
+    "cardNotPayable": "Card payment does not accept an appointment that is already completed or was a no-show. Settle in cash, or with the counter terminal."
+  },
+  "settlement": {
+    "title": "Settled {method} — {amount}",
+    "recordedAt": "Settlement recorded on {date}.",
+    "refundedPart": " Of which {amount} refunded.",
+    "nothingLeft": " There is nothing left to settle on this appointment.",
+    "reprint": "Reprint the receipt",
+    "alreadySettledTitle": "Appointment already settled"
+  },
+  "action": {
+    "settleCash": "Take {amount} in cash",
+    "settleCashLoading": "Settling…",
+    "openCard": "Pay {amount} by card",
+    "openCardLoading": "Opening the payment…",
+    "confirmCard": "Take {amount} by card",
+    "confirmCardLoading": "Payment in progress…"
+  },
+  "pci": {
+    "cash": "No call to the payment provider on this path: the sale is recorded with its operator and its timestamp, and the till is the reference at reconciliation.",
+    "card": "Card fields are served by Stripe: no number is entered here, nor written down anywhere else.",
+    "cardForm": "Card fields are served by Stripe: no number is entered anywhere else, written down anywhere else, or passed through the salon or our servers."
+  },
+  "card": {
+    "unavailableTitle": "Card payment unavailable",
+    "cashStillPossible": "Settling in cash is still possible.",
+    "loadFailedScript": "Stripe’s payment module could not be loaded. Check this workstation’s connection.",
+    "loadFailedEntrypoint": "Stripe.js loaded without exposing its entry point.",
+    "loadFailedUnknown": "The payment module could not be loaded.",
+    "declined": "The payment was declined.",
+    "unknownStatus": "unknown",
+    "notCompleted": "The payment did not go through (state “{status}”). Nothing was charged: try again, or settle in cash."
+  },
+  "receipt": {
+    "acceptedTitle": "Payment accepted by the provider",
+    "recordedTitle": "Settlement recorded — {amount}",
+    "heading": "Till receipt",
+    "loading": "Preparing the receipt…",
+    "unavailableTitle": "Receipt unavailable",
+    "retry": "Try again",
+    "loadFailed": "The receipt could not be loaded. Check the connection and try again.",
+    "pdfTicket": "Receipt PDF",
+    "pdfInvoice": "A4 invoice",
+    "label": "Receipt",
+    "provisionalTitle": "Provisional receipt",
+    "finalTitle": "Receipt",
+    "pendingNote": "Payment awaiting confirmation.",
+    "client": "Client",
+    "staff": "Practitioner",
+    "linesCaption": "Receipt lines",
+    "item": "Item",
+    "quantity": "Qty",
+    "amount": "Amount",
+    "refunded": "Refunded",
+    "total": "Total",
+    "kept": "Amount kept",
+    "payment": "Payment",
+    "thanks": "Thank you for your visit!",
+    "provisionalDisclaimer": "The final confirmation is recorded by the signed webhook, server side: this receipt proves the attempt, not the capture.",
+    "cashDisclaimer": "Cash settlement recorded and timestamped. The till is the reference at reconciliation.",
+    "settledCardDisclaimer": "Card settlement recorded in the database, on confirmation from the signed webhook. This receipt is final."
+  },
+  "completion": {
+    "card": "Moving the appointment to “completed” is not served by the API yet: the status will follow the webhook confirmation, with nothing to redo here.",
+    "cash": "Moving the appointment to “completed” is not served by the API yet: the settlement is recorded, and the appointment status will follow with nothing to redo here."
+  },
+  "failure": {
+    "providerUnreachable": "The payment provider did not answer. Nothing was charged: try again, or settle in cash.",
+    "alreadySettled": "This appointment has already been settled. Reload the screen before carrying on — a second payment would create one accounting record too many.",
+    "notPayable": "Card payment does not accept this appointment: it is cancelled, completed or a no-show. Settle in cash if the service was delivered.",
+    "notSettleable": "This appointment is cancelled: there is no service left to settle.",
+    "tooManyRequests": "Too many payments opened in a short time. Wait a few seconds before trying again.",
+    "notFound": "This appointment cannot be found in this salon.",
+    "forbidden": "Your account is not allowed to take payments. Ask the salon administrator for access.",
+    "unknownTarget": "Unknown appointment or salon.",
+    "unknownReceiptTarget": "Unknown receipt or salon."
+  },
+  "sale": {
+    "subtotal": "Subtotal",
+    "tax": "Tax",
+    "tip": "Tip",
+    "total": "Total",
+    "itemUnavailable": "An item on the receipt is no longer on sale. Remove it and reload the catalog before carrying on.",
+    "currencyMismatch": "An item on the receipt is priced in a currency other than the salon’s. It cannot be sold here: remove it from the receipt.",
+    "amountOutOfRange": "The total exceeds what a single receipt can carry. Reduce the quantities, or split it into several receipts.",
+    "historyWindowInvalid": "The requested period is empty: the end must come after the start.",
+    "validation": "The receipt was refused: a line is incomplete or out of bounds. Check the quantities before trying again.",
+    "notFound": "A service or an item on the receipt cannot be found in this salon.",
+    "forbidden": "Your account is not allowed to run the till. Ask the salon administrator for access.",
+    "unavailable": "The till is temporarily unreachable. The receipt was not recorded: try again in a moment."
+  },
+  "pdf": {
+    "notFound": "Receipt not found.",
+    "failed": "The receipt could not be produced. Please try again."
+  }
+}

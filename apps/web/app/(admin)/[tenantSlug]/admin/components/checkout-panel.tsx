@@ -1,6 +1,7 @@
 'use client';
 
-import type { Appointment, PaymentMethod, TimeZone } from '@spa/shared';
+import type { Appointment, Locale, PaymentMethod, TimeZone } from '@spa/shared';
+import { useLocale, useTranslations } from 'next-intl';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 
@@ -8,7 +9,6 @@ import { Button } from '@/components/ui/button';
 import { Notification } from '@/components/ui/notification';
 import {
   CHECKOUT_METHODS,
-  PROVIDER_UNREACHABLE_MESSAGE,
   amountDue,
   checkoutBlocker,
   checkoutFailureMessage,
@@ -18,10 +18,11 @@ import {
   methodHint,
   methodLabel,
   methodPhrase,
+  providerUnreachableMessage,
   type SettlementState,
 } from '@/lib/admin/checkout-summary';
 import type { AppointmentPaymentIntent, PaymentTransaction } from '@/lib/admin/payment-contract';
-import { formatDateTimeInTimeZone, formatMoney } from '@/lib/format';
+import { formatDateTimeInTimeZone, formatMoney, type DisplayLocale } from '@/lib/format';
 
 import type { AdminActionResult } from '../action-result';
 import { openCardPaymentAction, settleInCashAction } from '../encaissement/actions';
@@ -106,6 +107,18 @@ import { useAdminSessionRenewal } from './use-admin-session-renewal';
  * examinée **avant** `settlement` plus bas : sinon le reçu cédait la place à un
  * bouton « Réimprimer le ticket », et l'opérateur devait recliquer pour
  * retrouver ce qu'il avait sous les yeux.
+ *
+ * ## La langue (#850)
+ *
+ * Les mots de ce panneau viennent de `useTranslations('admin-checkout')` ; ceux
+ * que `lib/admin/checkout-summary.ts` compose — un moyen fermé, un refus de
+ * l'API — reçoivent la langue en paramètre, ce module n'ayant aucun crochet à sa
+ * disposition. Les deux lisent **le même catalogue**.
+ *
+ * Le `countryCode` vient du serveur, en prop : il donne la région de la mise en
+ * forme (`fr-CA` plutôt que `fr-FR`) et rien d'autre. Un montant reste un entier
+ * accompagné d'un code devise jusqu'à `formatMoney`, qui est le seul point où la
+ * langue touche un chiffre.
  */
 type Phase =
   | { readonly kind: 'choix' }
@@ -120,11 +133,14 @@ type Phase =
 
 export function CheckoutPanel({
   appointment,
+  countryCode = null,
   settlement = null,
   tenantSlug,
   timeZone,
 }: {
   readonly appointment: Appointment;
+  /** `Tenant.countryCode` — la région de la mise en forme, jamais le fuseau. */
+  readonly countryCode?: string | null;
   /**
    * L'état de règlement lu avec la journée — `null` quand l'historique n'a pas
    * répondu, ce qui n'est **pas** la même chose que « rien n'est réglé ».
@@ -133,6 +149,9 @@ export function CheckoutPanel({
   readonly tenantSlug: string;
   readonly timeZone: TimeZone;
 }) {
+  const t = useTranslations('admin-checkout');
+  const locale = useLocale() as Locale;
+  const display: DisplayLocale = { locale, countryCode };
   const due = amountDue(appointment);
   const known: SettlementState = settlement ?? { kind: 'du' };
   // Le moyen présélectionné est le premier qui soit **ouvert**, et non les
@@ -143,7 +162,7 @@ export function CheckoutPanel({
   const [method, setMethod] = useState<PaymentMethod>(
     () =>
       CHECKOUT_METHODS.find(
-        (candidate) => checkoutBlocker(appointment.status, candidate, known) === null,
+        (candidate) => checkoutBlocker(appointment.status, candidate, known, locale) === null,
       ) ?? 'cash',
   );
   const [phase, setPhase] = useState<Phase>({ kind: 'choix' });
@@ -153,7 +172,7 @@ export function CheckoutPanel({
   const router = useRouter();
   const { renewIfExpired } = useAdminSessionRenewal(tenantSlug);
 
-  const blocker = checkoutBlocker(appointment.status, method, known);
+  const blocker = checkoutBlocker(appointment.status, method, known, locale);
 
   /**
    * Déroule une action d'encaissement en tenant l'indicateur d'attente.
@@ -190,7 +209,7 @@ export function CheckoutPanel({
         return;
       }
 
-      const explained = checkoutFailureMessage(result.code, result.message);
+      const explained = checkoutFailureMessage(result.code, result.message, locale);
 
       // « Déjà encaissé » n'est pas une erreur de saisie qu'on corrige en
       // recliquant : c'est un état du rendez-vous, et l'écran le devient.
@@ -203,7 +222,7 @@ export function CheckoutPanel({
     } catch {
       // L'action n'a pas répondu du tout : rien n'a été encaissé, et le message
       // le dit plutôt que de laisser le comptoir deviner.
-      setFailure(PROVIDER_UNREACHABLE_MESSAGE);
+      setFailure(providerUnreachableMessage(locale));
     } finally {
       setPending(false);
     }
@@ -243,8 +262,8 @@ export function CheckoutPanel({
   if (!isSettleable(appointment.status)) {
     return (
       <div className="spa-admin-checkout__payment">
-        <Notification tone="warning" title="Rien à encaisser">
-          <p>{checkoutBlocker(appointment.status, 'cash')}</p>
+        <Notification tone="warning" title={t('blocker.nothingToSettleTitle')}>
+          <p>{checkoutBlocker(appointment.status, 'cash', { kind: 'du' }, locale)}</p>
         </Notification>
       </div>
     );
@@ -267,6 +286,7 @@ export function CheckoutPanel({
       <div className="spa-admin-checkout__payment">
         <CheckoutReceipt
           appointment={appointment}
+          countryCode={countryCode}
           method={phase.method}
           settled={confirmed !== null}
           tenantSlug={tenantSlug}
@@ -274,7 +294,7 @@ export function CheckoutPanel({
           transaction={confirmed ?? phase.transaction}
         />
         <p className="spa-admin-checkout__pci">
-          {completionUnavailableMessage(phase.method)}
+          {completionUnavailableMessage(phase.method, locale)}
         </p>
       </div>
     );
@@ -292,19 +312,27 @@ export function CheckoutPanel({
       <div className="spa-admin-checkout__payment">
         <Notification
           tone={refunded ? 'info' : 'success'}
-          title={`Réglé ${methodPhrase(payment.method)} — ${formatMoney(payment.amount)}`}
+          title={t('settlement.title', {
+            method: methodPhrase(payment.method, locale),
+            amount: formatMoney(payment.amount, display),
+          })}
         >
           <p>
-            Encaissement inscrit le {formatDateTimeInTimeZone(settledAt, timeZone)}.
+            {t('settlement.recordedAt', {
+              date: formatDateTimeInTimeZone(settledAt, timeZone, display),
+            })}
             {refunded
-              ? ` Dont ${formatMoney(payment.refunded)} remboursés.`
-              : ' Il n’y a plus rien à encaisser sur ce rendez-vous.'}
+              ? t('settlement.refundedPart', {
+                  amount: formatMoney(payment.refunded, display),
+                })
+              : t('settlement.nothingLeft')}
           </p>
         </Notification>
 
         {reprinting ? (
           <CheckoutReceipt
             appointment={appointment}
+            countryCode={countryCode}
             method={payment.method}
             settled
             tenantSlug={tenantSlug}
@@ -319,7 +347,7 @@ export function CheckoutPanel({
             }}
             variant="neutral"
           >
-            Réimprimer le ticket
+            {t('settlement.reprint')}
           </Button>
         )}
       </div>
@@ -329,7 +357,7 @@ export function CheckoutPanel({
   if (phase.kind === 'deja-regle') {
     return (
       <div className="spa-admin-checkout__payment">
-        <Notification tone="warning" title="Rendez-vous déjà encaissé">
+        <Notification tone="warning" title={t('settlement.alreadySettledTitle')}>
           <p>{phase.message}</p>
         </Notification>
       </div>
@@ -339,10 +367,10 @@ export function CheckoutPanel({
   return (
     <div className="spa-admin-checkout__payment">
       <fieldset className="spa-admin-checkout__methods">
-        <legend className="spa-admin__section-title">Moyen de paiement</legend>
+        <legend className="spa-admin__section-title">{t('method.legend')}</legend>
 
         {CHECKOUT_METHODS.map((candidate) => {
-          const unavailable = checkoutBlocker(appointment.status, candidate, known);
+          const unavailable = checkoutBlocker(appointment.status, candidate, known, locale);
           const inputId = `moyen-${candidate}`;
 
           return (
@@ -360,9 +388,11 @@ export function CheckoutPanel({
                 value={candidate}
               />
               <label className="spa-admin-checkout__method" htmlFor={inputId}>
-                <span className="spa-admin-checkout__method-label">{methodLabel(candidate)}</span>
+                <span className="spa-admin-checkout__method-label">
+                  {methodLabel(candidate, locale)}
+                </span>
                 <span className="spa-admin-checkout__method-hint">
-                  {unavailable ?? methodHint(candidate)}
+                  {unavailable ?? methodHint(candidate, locale)}
                 </span>
               </label>
             </div>
@@ -377,7 +407,10 @@ export function CheckoutPanel({
       )}
 
       {blocker !== null ? (
-        <Notification tone="warning" title={`${methodLabel(method)} indisponible`}>
+        <Notification
+          tone="warning"
+          title={t('method.unavailableTitle', { method: methodLabel(method, locale) })}
+        >
           <p>{blocker}</p>
         </Notification>
       ) : method === 'cash' ? (
@@ -385,23 +418,22 @@ export function CheckoutPanel({
           <Button
             block
             loading={pending}
-            loadingLabel="Encaissement en cours…"
+            loadingLabel={t('action.settleCashLoading')}
             onClick={() => void settleInCash()}
             variant="accent"
           >
-            Encaisser {formatMoney(due)} en espèces
+            {t('action.settleCash', { amount: formatMoney(due, display) })}
           </Button>
           <p className="spa-admin-checkout__pci">
             <span aria-hidden="true">🔒</span>
-            Aucun appel au prestataire de paiement sur ce chemin : la vente est
-            inscrite avec son opérateur et son horodatage, et la caisse fait foi
-            au rapprochement.
+            {t('pci.cash')}
           </p>
         </>
       ) : phase.kind === 'carte' ? (
         <CheckoutCardForm
           amount={due}
           clientSecret={phase.intent.clientSecret}
+          countryCode={countryCode}
           onAccepted={() => {
             setPhase({ kind: 'regle', method: 'card', transaction: null });
           }}
@@ -412,16 +444,15 @@ export function CheckoutPanel({
           <Button
             block
             loading={pending}
-            loadingLabel="Ouverture du paiement…"
+            loadingLabel={t('action.openCardLoading')}
             onClick={() => void openCardPayment()}
             variant="accent"
           >
-            Payer {formatMoney(due)} par carte
+            {t('action.openCard', { amount: formatMoney(due, display) })}
           </Button>
           <p className="spa-admin-checkout__pci">
             <span aria-hidden="true">🔒</span>
-            Les champs de carte sont servis par Stripe : aucun numéro ne se
-            saisit ici, ni ne se note ailleurs.
+            {t('pci.card')}
           </p>
         </>
       )}

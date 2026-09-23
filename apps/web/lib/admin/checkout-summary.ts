@@ -16,11 +16,34 @@
  * recalcule et que la base vérifie (payments-stripe §4 et §5). Un front qui
  * additionnerait des lignes finirait par afficher un total que la caisse ne
  * confirme pas — et c'est devant la cliente que l'écart se verrait.
+ *
+ * ## Les mots viennent du catalogue, pas de ce fichier (#850)
+ *
+ * Les phrases ci-dessous sont lues dans `messages/<langue>/admin-checkout.json`,
+ * par **import direct des deux fichiers** — ce sont les mêmes que ceux
+ * qu'`useTranslations('admin-checkout')` sert aux trois composants du comptoir.
+ * Un crochet de `next-intl` aurait rendu ce module inappelable depuis un Server
+ * Component et depuis les tests sans DOM, qui sont justement là où ces règles
+ * s'éprouvent.
+ *
+ * Ce qui ne change pas : **les montants restent des entiers accompagnés d'un
+ * code devise**, et aucune fonction d'ici n'en met un en forme. C'est
+ * `lib/format.ts` qui le fait, à l'affichage, et c'est le seul endroit où la
+ * langue touche à un chiffre (`CLAUDE.md`).
+ *
+ * ## Pourquoi `locale` a une valeur par défaut, et laquelle
+ *
+ * `fr`, comme `lib/appointment-status.ts` et `lib/format.ts` : c'est ce que ces
+ * fonctions rendaient avant ce ticket, et le défaut garde donc le comportement
+ * des rares appelants qui ne la passent pas encore — aujourd'hui, uniquement des
+ * suites de tests antérieures. Les quatre surfaces du comptoir, elles, la
+ * passent toutes.
  */
 
 import type {
   Appointment,
   AppointmentStatus,
+  Locale,
   Money,
   PaymentMethod,
   PaymentStatus,
@@ -33,6 +56,19 @@ import type {
   SaleLineRequest,
   SaleSummary,
 } from '@/lib/admin/payment-contract';
+import en from '@/messages/en/admin-checkout.json';
+import fr from '@/messages/fr/admin-checkout.json';
+
+/** Les deux catalogues du comptoir — la même source que les composants. */
+const CATALOG = { fr, en } as const;
+
+/** La langue employée quand l'appelant n'en passe pas — voir l'en-tête. */
+export const CHECKOUT_FALLBACK_LOCALE: Locale = 'fr';
+
+/** Le catalogue de l'encaissement, dans la langue demandée. */
+export function checkoutWords(locale: Locale = CHECKOUT_FALLBACK_LOCALE): typeof en {
+  return CATALOG[locale];
+}
 
 /**
  * Les deux moyens que le comptoir propose, dans l'ordre où l'écran les montre.
@@ -156,23 +192,26 @@ export function isSettled(settlement: SettlementState): boolean {
  */
 export function settlementBadge(
   settlement: SettlementState,
+  locale: Locale = CHECKOUT_FALLBACK_LOCALE,
 ): { readonly label: string; readonly modifier: string } {
+  const words = checkoutWords(locale).badge;
+
   switch (settlement.kind) {
     case 'regle':
       switch (settlement.payment.status) {
         case 'refunded':
-          return { label: 'remboursé', modifier: 'refunded' };
+          return { label: words.refunded, modifier: 'refunded' };
         case 'partially_refunded':
-          return { label: 'partiellement remboursé', modifier: 'refunded' };
+          return { label: words.partiallyRefunded, modifier: 'refunded' };
         default:
-          return { label: 'réglé', modifier: 'settled' };
+          return { label: words.settled, modifier: 'settled' };
       }
     case 'ouvert':
-      return { label: 'carte en cours', modifier: 'open' };
+      return { label: words.cardOpen, modifier: 'open' };
     case 'echoue':
-      return { label: 'carte en échec', modifier: 'failed' };
+      return { label: words.cardFailed, modifier: 'failed' };
     default:
-      return { label: 'à encaisser', modifier: 'due' };
+      return { label: words.due, modifier: 'due' };
   }
 }
 
@@ -187,18 +226,17 @@ export function settlementBadge(
 export function settlementBlocker(
   settlement: SettlementState,
   method: PaymentMethod,
+  locale: Locale = CHECKOUT_FALLBACK_LOCALE,
 ): string | null {
+  const words = checkoutWords(locale).blocker;
+
   switch (settlement.kind) {
     case 'regle':
-      return 'Ce rendez-vous a déjà été encaissé : un second règlement créerait une pièce comptable de trop.';
+      return words.alreadySettled;
     case 'ouvert':
-      return method === 'cash'
-        ? 'Un paiement par carte est déjà ouvert sur ce rendez-vous. Terminez-le — le règlement en espèces serait refusé tant qu’il court.'
-        : null;
+      return method === 'cash' ? words.cardOpenBlocksCash : null;
     case 'echoue':
-      return method === 'cash'
-        ? 'Une intention de paiement par carte en échec reste attachée à ce rendez-vous. Reprenez la carte — le règlement en espèces serait refusé tant qu’elle n’est pas levée.'
-        : null;
+      return method === 'cash' ? words.cardFailedBlocksCash : null;
     default:
       return null;
   }
@@ -219,19 +257,22 @@ export function checkoutBlocker(
   status: AppointmentStatus,
   method: PaymentMethod,
   settlement: SettlementState = { kind: 'du' },
+  locale: Locale = CHECKOUT_FALLBACK_LOCALE,
 ): string | null {
+  const words = checkoutWords(locale).blocker;
+
   if (NOT_SETTLEABLE.includes(status)) {
-    return 'Ce rendez-vous est annulé : le créneau a été rendu, il n’y a plus de prestation à encaisser.';
+    return words.cancelled;
   }
 
-  const settled = settlementBlocker(settlement, method);
+  const settled = settlementBlocker(settlement, method, locale);
 
   if (settled !== null) {
     return settled;
   }
 
   if (method === 'card' && NOT_PAYABLE_ONLINE.includes(status)) {
-    return 'Le paiement par carte n’accepte pas un rendez-vous déjà terminé ou non honoré. Encaissez en espèces, ou par le lecteur du comptoir.';
+    return words.cardNotPayable;
   }
 
   return null;
@@ -243,8 +284,13 @@ export function isSettleable(status: AppointmentStatus): boolean {
 }
 
 /** Le libellé du moyen de paiement, tel que le fieldset l'annonce. */
-export function methodLabel(method: PaymentMethod): string {
-  return method === 'cash' ? 'Espèces' : 'Carte';
+export function methodLabel(
+  method: PaymentMethod,
+  locale: Locale = CHECKOUT_FALLBACK_LOCALE,
+): string {
+  const words = checkoutWords(locale).method;
+
+  return method === 'cash' ? words.cash : words.card;
 }
 
 /**
@@ -255,9 +301,18 @@ export function methodLabel(method: PaymentMethod): string {
  * cocher et la seconde un complément : « Réglé par Espèces » se lit comme une
  * chaîne concaténée, ce qu'elle est, et un bandeau d'encaissement est ce que
  * l'opérateur montre à sa cliente.
+ *
+ * Les deux langues portent la distinction : « en espèces » / « par carte » et
+ * « in cash » / « by card ». Elle n'est donc pas une particularité du français
+ * qu'on pourrait laisser tomber à la traduction.
  */
-export function methodPhrase(method: PaymentMethod): string {
-  return method === 'cash' ? 'en espèces' : 'par carte';
+export function methodPhrase(
+  method: PaymentMethod,
+  locale: Locale = CHECKOUT_FALLBACK_LOCALE,
+): string {
+  const words = checkoutWords(locale).method;
+
+  return method === 'cash' ? words.cashPhrase : words.cardPhrase;
 }
 
 /**
@@ -269,10 +324,13 @@ export function methodPhrase(method: PaymentMethod): string {
  * trouver la raison avant d'ajouter le champ qui semblerait manquer
  * (payments-stripe §1).
  */
-export function methodHint(method: PaymentMethod): string {
-  return method === 'cash'
-    ? 'Enregistré avec l’opérateur et l’horodatage ; la caisse fait foi au rapprochement. Aucun appel au prestataire.'
-    : 'La cliente saisit sa carte dans les champs servis par Stripe. Aucun numéro n’est saisi, ni vu, ni conservé par le salon.';
+export function methodHint(
+  method: PaymentMethod,
+  locale: Locale = CHECKOUT_FALLBACK_LOCALE,
+): string {
+  const words = checkoutWords(locale).method;
+
+  return method === 'cash' ? words.cashHint : words.cardHint;
 }
 
 /*
@@ -305,9 +363,16 @@ export function methodHint(method: PaymentMethod): string {
  * `confirmPayment` qui échoue dans le navigateur. Ils appellent la même conduite
  * — réessayer, ou encaisser en espèces —, et deux formulations différentes pour
  * un même incident feraient croire à deux incidents.
+ *
+ * Une fonction depuis #850, et non plus une constante : une constante se fige à
+ * l'évaluation du module, c'est-à-dire dans une seule langue, pour tout le
+ * processus — le serveur Next sert les deux, souvent dans la même seconde.
  */
-export const PROVIDER_UNREACHABLE_MESSAGE =
-  'Le prestataire de paiement n’a pas répondu. Rien n’a été débité : réessayez, ou encaissez en espèces.';
+export function providerUnreachableMessage(
+  locale: Locale = CHECKOUT_FALLBACK_LOCALE,
+): string {
+  return checkoutWords(locale).failure.providerUnreachable;
+}
 
 /**
  * Les refus qui disent « ce rendez-vous porte déjà un encaissement » (#828).
@@ -354,10 +419,6 @@ const ALREADY_SETTLED_REFUSAL_CODES: readonly string[] = [
   'HTTP_409',
 ];
 
-/** Ce que le comptoir lit sur un encaissement déjà inscrit, quel que soit le code. */
-const ALREADY_SETTLED_MESSAGE =
-  'Ce rendez-vous a déjà été encaissé. Rechargez l’écran avant de reprendre — un second règlement créerait une pièce comptable de trop.';
-
 /**
  * `true` si ce refus dit « ce rendez-vous porte déjà un encaissement » (#828).
  *
@@ -382,30 +443,39 @@ export function isAlreadySettledRefusal(code: string): boolean {
  * **et** celui d'un autre établissement, indistinctement, et l'écran n'a pas à
  * distinguer ce que l'API refuse de distinguer (tenant-isolation §4).
  */
-export function checkoutFailureMessage(code: string, message: string): string {
+export function checkoutFailureMessage(
+  code: string,
+  message: string,
+  locale: Locale = CHECKOUT_FALLBACK_LOCALE,
+): string {
+  const words = checkoutWords(locale).failure;
+
   // Avant le `switch`, et non parmi ses `case` : c'est ce qui garantit que le
   // texte affiché et l'état de l'écran se décident sur la **même** liste.
   if (isAlreadySettledRefusal(code)) {
-    return ALREADY_SETTLED_MESSAGE;
+    return words.alreadySettled;
   }
 
   switch (code) {
     case PAYMENT_ERROR_CODES.APPOINTMENT_NOT_PAYABLE:
-      return 'Le paiement par carte n’accepte pas ce rendez-vous : il est annulé, terminé ou non honoré. Encaissez en espèces si la prestation a été rendue.';
+      return words.notPayable;
     case PAYMENT_ERROR_CODES.APPOINTMENT_NOT_SETTLEABLE:
-      return 'Ce rendez-vous est annulé : il n’y a plus de prestation à encaisser.';
+      return words.notSettleable;
     case PAYMENT_ERROR_CODES.PAYMENT_PROVIDER_UNAVAILABLE:
     case ERROR_CODES.SERVICE_UNAVAILABLE:
-      return PROVIDER_UNREACHABLE_MESSAGE;
+      return words.providerUnreachable;
     case ERROR_CODES.TOO_MANY_REQUESTS:
     case 'HTTP_429':
-      return 'Trop d’ouvertures de paiement en peu de temps. Patientez quelques secondes avant de réessayer.';
+      return words.tooManyRequests;
     case ERROR_CODES.NOT_FOUND:
     case 'HTTP_404':
-      return 'Ce rendez-vous est introuvable dans cet établissement.';
+      return words.notFound;
     case ERROR_CODES.FORBIDDEN:
-      return 'Votre compte n’a pas le droit d’encaisser. Demandez l’accès à l’administrateur du salon.';
+      return words.forbidden;
     default:
+      // Le message de l'API, tel qu'elle l'a rendu. Il n'est pas traduit ici :
+      // c'est elle qui nomme un refus qu'aucun code connu ne couvre, et le
+      // remplacer par une phrase générique n'apprendrait rien au comptoir.
       return message;
   }
 }
@@ -451,17 +521,23 @@ export function receiptIsProvisional(method: PaymentMethod): boolean {
  * que la ligne du dessus vient de déclarer provisoire contredirait la seule
  * règle que payments-stripe §2 interdit de brouiller.
  */
-export function completionUnavailableMessage(method: PaymentMethod): string {
-  return receiptIsProvisional(method)
-    ? 'Le passage du rendez-vous en « honoré » n’est pas encore servi par l’API : le statut suivra la confirmation du webhook, sans rien à reprendre ici.'
-    : 'Le passage du rendez-vous en « honoré » n’est pas encore servi par l’API : l’encaissement est bien inscrit, le statut du rendez-vous suivra sans rien à reprendre ici.';
+export function completionUnavailableMessage(
+  method: PaymentMethod,
+  locale: Locale = CHECKOUT_FALLBACK_LOCALE,
+): string {
+  const words = checkoutWords(locale).completion;
+
+  return receiptIsProvisional(method) ? words.card : words.cash;
 }
 
 /** La mention que le reçu porte sous son total, selon le moyen employé. */
-export function receiptDisclaimer(method: PaymentMethod): string {
-  return receiptIsProvisional(method)
-    ? 'La confirmation définitive est inscrite par le webhook signé, côté serveur : ce reçu vaut preuve de passage, pas de capture.'
-    : 'Règlement en espèces inscrit et horodaté. C’est la caisse qui fait foi au rapprochement.';
+export function receiptDisclaimer(
+  method: PaymentMethod,
+  locale: Locale = CHECKOUT_FALLBACK_LOCALE,
+): string {
+  const words = checkoutWords(locale).receipt;
+
+  return receiptIsProvisional(method) ? words.provisionalDisclaimer : words.cashDisclaimer;
 }
 
 /**
@@ -475,10 +551,13 @@ export function receiptDisclaimer(method: PaymentMethod): string {
  * (payments-stripe §2). Réutiliser la mention provisoire ferait dire à l'écran
  * qu'il ne sait pas ce qu'il vient de lire en base.
  */
-export function settledReceiptDisclaimer(method: PaymentMethod): string {
+export function settledReceiptDisclaimer(
+  method: PaymentMethod,
+  locale: Locale = CHECKOUT_FALLBACK_LOCALE,
+): string {
   return method === 'card'
-    ? 'Encaissement par carte inscrit en base, sur confirmation du webhook signé. Ce reçu est définitif.'
-    : receiptDisclaimer('cash');
+    ? checkoutWords(locale).receipt.settledCardDisclaimer
+    : receiptDisclaimer('cash', locale);
 }
 
 // ---------------------------------------------------------------------------
@@ -750,16 +829,21 @@ export interface SaleTotalRow {
  * toujours là — y compris égaux, ce qui est précisément le cas d'un salon sans
  * taxe et d'une cliente sans pourboire.
  */
-export function saleTotalRows(sale: SaleSummary): readonly SaleTotalRow[] {
+export function saleTotalRows(
+  sale: SaleSummary,
+  locale: Locale = CHECKOUT_FALLBACK_LOCALE,
+): readonly SaleTotalRow[] {
+  const words = checkoutWords(locale).sale;
+
   return [
-    { label: 'Sous-total', amount: sale.subtotal, isGrand: false },
+    { label: words.subtotal, amount: sale.subtotal, isGrand: false },
     ...(sale.tax.amountMinor === 0
       ? []
-      : [{ label: 'Taxe', amount: sale.tax, isGrand: false }]),
+      : [{ label: words.tax, amount: sale.tax, isGrand: false }]),
     ...(sale.tip.amountMinor === 0
       ? []
-      : [{ label: 'Pourboire', amount: sale.tip, isGrand: false }]),
-    { label: 'Total', amount: sale.total, isGrand: true },
+      : [{ label: words.tip, amount: sale.tip, isGrand: false }]),
+    { label: words.total, amount: sale.total, isGrand: true },
   ];
 }
 
@@ -783,26 +867,32 @@ export function saleTotalRows(sale: SaleSummary): readonly SaleTotalRow[] {
  * indistinctement — l'écran n'a pas à distinguer ce que l'API refuse de
  * distinguer (tenant-isolation §4).
  */
-export function saleFailureMessage(code: string, message: string): string {
+export function saleFailureMessage(
+  code: string,
+  message: string,
+  locale: Locale = CHECKOUT_FALLBACK_LOCALE,
+): string {
+  const words = checkoutWords(locale).sale;
+
   switch (code) {
     case PAYMENT_ERROR_CODES.SALE_ITEM_UNAVAILABLE:
-      return 'Un article du ticket n’est plus au rayon. Retirez-le et rechargez le catalogue avant de reprendre.';
+      return words.itemUnavailable;
     case PAYMENT_ERROR_CODES.SALE_CURRENCY_MISMATCH:
     case ERROR_CODES.CURRENCY_MISMATCH:
-      return 'Un article du ticket est libellé dans une autre devise que celle du salon. Il n’est pas vendable ici : retirez-le du ticket.';
+      return words.currencyMismatch;
     case PAYMENT_ERROR_CODES.SALE_AMOUNT_OUT_OF_RANGE:
-      return 'Le total dépasse ce qu’un ticket peut porter. Réduisez les quantités, ou composez plusieurs tickets.';
+      return words.amountOutOfRange;
     case PAYMENT_ERROR_CODES.HISTORY_WINDOW_INVALID:
-      return 'La période demandée est vide : la fin doit suivre le début.';
+      return words.historyWindowInvalid;
     case ERROR_CODES.VALIDATION_ERROR:
-      return 'Le ticket a été refusé : une ligne est incomplète ou hors bornes. Vérifiez les quantités avant de réessayer.';
+      return words.validation;
     case ERROR_CODES.NOT_FOUND:
     case 'HTTP_404':
-      return 'Une prestation ou un article du ticket est introuvable dans cet établissement.';
+      return words.notFound;
     case ERROR_CODES.FORBIDDEN:
-      return 'Votre compte n’a pas le droit de tenir la caisse. Demandez l’accès à l’administrateur du salon.';
+      return words.forbidden;
     case ERROR_CODES.SERVICE_UNAVAILABLE:
-      return 'La caisse est momentanément injoignable. Le ticket n’a pas été enregistré : réessayez dans un instant.';
+      return words.unavailable;
     default:
       return message;
   }

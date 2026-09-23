@@ -24,3 +24,8 @@ service-staff-panel.tsx
 #
 # Les deux morceaux interactifs de « Mon planning » — #1104.
 my-planning-client.tsx
+#
+# Les trois briques du comptoir — panneau, carte, reçu — #850.
+checkout-card-form.tsx
+checkout-panel.tsx
+checkout-receipt.tsx
