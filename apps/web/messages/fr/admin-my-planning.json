@@ -20,12 +20,12 @@
     "a-venir": "À venir"
   },
   "period": {
-    "week": "Du {from} au {to}",
     "upcoming": "Les {days} prochains jours"
   },
+  "toolbar": {
+    "load": "{count, plural, =0 {Aucun rendez-vous} one {# rendez-vous} other {# rendez-vous}}"
+  },
   "nav": {
-    "label": "Période",
-    "today": "Aujourd’hui",
     "previousDay": "Jour précédent",
     "previousWeek": "Semaine précédente",
     "nextDay": "Jour suivant",
@@ -46,7 +46,8 @@
     "reference": "Référence",
     "clientNote": "Note de la cliente",
     "noNote": "Aucune",
-    "staffNote": "Note interne"
+    "staffNote": "Note interne",
+    "next": "Prochain"
   },
   "schedule": {
     "midnight": "minuit",
