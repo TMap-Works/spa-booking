@@ -8,6 +8,7 @@ import { runInTenantScope } from '../../../common/tenant';
 import { AppointmentsController } from '../../appointments/appointments.controller';
 import { MyStaffController } from '../../appointments/my-staff.controller';
 import { CustomersController } from '../../crm/customers.controller';
+import { NotificationsController } from '../../notifications/notifications.controller';
 import { CounterPaymentsController } from '../../payments/counter-payments.controller';
 import { ProductsController } from '../../payments/products.controller';
 import { SalesController } from '../../payments/sales.controller';
@@ -44,7 +45,11 @@ import { fakeConfig } from './identity.doubles';
  * La **portée** — « ce rendez-vous est-il le vôtre ? ». Elle ne se décide pas à
  * la porte, puisqu'il faut lire la ressource : c'est
  * `appointments.service.spec.ts` et `customers.service.spec.ts` qui la tiennent,
- * et le refus y est `OWN_SCOPE_ONLY`, pas `FORBIDDEN`.
+ * et le refus y est `OWN_SCOPE_ONLY`, pas `FORBIDDEN`. Sur
+ * `GET /v1/notifications`, elle est tenue par
+ * `notifications/__tests__/notifications.own-scope.spec.ts`, où elle ne refuse
+ * rien du tout : elle **restreint** ce que la liste rend, pour ne pas faire de la
+ * route un oracle sur l'agenda du salon.
  */
 
 const TENANT = '11111111-1111-4111-8111-111111111111';
@@ -222,6 +227,12 @@ const ROUTES: readonly GuardedRoute[] = [
     cls: ProductsController,
     handler: ProductsController.prototype.update,
     expected: ['checkout:collect'],
+  },
+  {
+    label: 'GET /v1/notifications — le journal d’envois (#1200)',
+    cls: NotificationsController,
+    handler: NotificationsController.prototype.list,
+    expected: ['agenda:read:own', 'agenda:read:all'],
   },
 ];
 
