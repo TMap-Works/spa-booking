@@ -298,9 +298,10 @@ function settlements(canvas: ReceiptSurface, receipt: SaleReceipt): void {
 
   for (const settlement of receipt.settlements) {
     canvas.row(
-      // La référence du ticket du TPE, quand le caissier l'a saisie — #834. Le
-      // paramètre existait depuis #819 et n'avait rien à recevoir ; il l'a.
-      formatSettlementMethod(settlement.method, settlement.terminalReference),
+      // Le règlement entier, et non son seul `method` : c'est le **canal** qui
+      // décide du libellé depuis #1027, et la référence du TPE ne se lit que
+      // sur le canal qui peut en porter une.
+      formatSettlementMethod(settlement),
       formatMoney(settlement.amount),
     );
 

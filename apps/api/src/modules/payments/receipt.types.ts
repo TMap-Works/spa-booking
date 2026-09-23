@@ -1,6 +1,6 @@
 import type { LegalIdType } from '@spa/shared';
 
-import type { Money } from './payments.types';
+import type { Money, PaymentCardChannel } from './payments.types';
 import type { SaleItemKind } from './pos.types';
 
 /**
@@ -79,6 +79,28 @@ export interface ReceiptTaxLine {
 /** Un règlement porté sur la pièce. */
 export interface ReceiptSettlement {
   readonly method: 'CASH' | 'CARD';
+  /**
+   * Par quel tuyau la carte est passée — `payments.card_channel` (#1027).
+   *
+   * C'est **ce champ, et non `method`, qui décide du libellé** de la ligne. La
+   * pièce libellait toute carte « Carte bancaire (TPE) », canal compris : un
+   * règlement Stripe s'imprimait donc comme un passage au terminal, et le
+   * rapprochement allait chercher sur le relevé du TPE une ligne qui n'y est
+   * pas. Ce n'était pas une régression de #834 — le comportement date de #819,
+   * quand le canal n'existait pas —, et la `terminalReference` que #834 a
+   * ajoutée ne suffisait pas à le lever : elle est facultative, et un passage au
+   * terminal sans référence relevée restait indiscernable d'une carte en ligne.
+   *
+   * `null` dans deux cas, qui ne disent pas la même chose : un règlement **en
+   * espèces** — `payments_card_channel_check` interdit qu'un billet porte un
+   * tuyau —, et une carte **antérieure à #834** que la migration n'a pas
+   * reprise. Cette dernière ne peut être qu'une intention Stripe, le TPE
+   * n'existant pas alors : les deux s'impriment sans jamais nommer le terminal.
+   *
+   * **Ce n'est pas une donnée de carte** : ni marque, ni porteur, ni chiffre —
+   * c'est le nom du tuyau (payments-stripe §1).
+   */
+  readonly cardChannel: PaymentCardChannel | null;
   readonly amount: Money;
   /** Ce que la cliente a tendu — espèces seulement, `null` partout ailleurs. */
   readonly tendered: Money | null;

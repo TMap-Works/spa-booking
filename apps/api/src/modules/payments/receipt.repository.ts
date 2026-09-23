@@ -105,6 +105,10 @@ const RECEIPT_SELECT = {
       amountMinor: true,
       currency: true,
       tenderedAmountMinor: true,
+      // Le tuyau de la carte — #1027. C'est lui, et non `method`, qui décide du
+      // libellé de la ligne : sans lui, la pièce nommait le terminal sur un
+      // règlement Stripe et envoyait le rapprochement au mauvais relevé.
+      cardChannel: true,
       // Le numéro du ticket du TPE — #834. Il s'imprime à côté du moyen, et
       // c'est la seule référence de prestataire que la pièce porte : les
       // références Stripe n'y figurent pas, elles servent le rapprochement et
@@ -175,6 +179,7 @@ export interface ReceiptRow {
   }[];
   payments: {
     method: string;
+    cardChannel: string | null;
     amountMinor: number;
     currency: string;
     tenderedAmountMinor: number | null;

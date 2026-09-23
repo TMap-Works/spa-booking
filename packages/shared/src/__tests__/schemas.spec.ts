@@ -1111,6 +1111,7 @@ describe('règlement d’un ticket au comptoir', () => {
     // au lieu d'émettre `null` : les deux formes sont celles de la route.
     const terminal = receiptSettlementSchema.parse({
       method: 'CARD',
+      cardChannel: 'TERMINAL',
       amount: { amountMinor: 2801, currency: 'EUR' },
       terminalReference: 'A0000123',
       capturedAt: '2026-09-16T14:32:07.000Z',
@@ -1120,6 +1121,7 @@ describe('règlement d’un ticket au comptoir', () => {
 
     const cash = receiptSettlementSchema.parse({
       method: 'CASH',
+      cardChannel: null,
       amount: { amountMinor: 5000, currency: 'EUR' },
       tendered: { amountMinor: 6000, currency: 'EUR' },
       change: { amountMinor: 1000, currency: 'EUR' },
@@ -1127,6 +1129,46 @@ describe('règlement d’un ticket au comptoir', () => {
     });
 
     expect(cash.terminalReference).toBeUndefined();
+  });
+
+  /**
+   * **#1027, premier point.** Le libellé de la pièce se décide sur le canal, et
+   * le canal doit donc traverser le contrat : une carte en ligne et un passage
+   * au terminal ne se distinguaient que par une `terminalReference` facultative,
+   * si bien qu'un règlement Stripe s'imprimait comme un passage au TPE.
+   */
+  it('porte le canal de la carte, sans lequel les deux cartes se confondent', () => {
+    const online = receiptSettlementSchema.parse({
+      method: 'CARD',
+      cardChannel: 'STRIPE',
+      amount: { amountMinor: 4500, currency: 'EUR' },
+      capturedAt: '2026-09-16T14:32:07.000Z',
+    });
+
+    expect(online.cardChannel).toBe('STRIPE');
+    expect(online.terminalReference).toBeUndefined();
+
+    // Une carte antérieure à #834 n'a pas de canal en base : elle ne peut être
+    // qu'une intention Stripe, et le contrat la laisse se lire telle quelle
+    // plutôt que de refuser la pièce entière.
+    expect(
+      receiptSettlementSchema.parse({
+        method: 'CARD',
+        cardChannel: null,
+        amount: { amountMinor: 4500, currency: 'EUR' },
+        capturedAt: null,
+      }).cardChannel,
+    ).toBeNull();
+
+    // Le canal est un fait de la colonne, pas un champ libre.
+    expect(
+      receiptSettlementSchema.safeParse({
+        method: 'CARD',
+        cardChannel: 'TPE',
+        amount: { amountMinor: 4500, currency: 'EUR' },
+        capturedAt: null,
+      }).success,
+    ).toBe(false);
   });
 });
 

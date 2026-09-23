@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 
 import { NotFoundError } from '../../common/errors';
-import type { Money } from './payments.types';
+import type { Money, PaymentCardChannel } from './payments.types';
 import type { SaleItemKind } from './pos.types';
 import { ReceiptRepository, type ReceiptRow } from './receipt.repository';
 import type {
@@ -129,6 +129,12 @@ function toSettlement(payment: ReceiptRow['payments'][number]): ReceiptSettlemen
 
   return {
     method: payment.method as 'CASH' | 'CARD',
+    // Le tuyau tel que la colonne le porte, recopié sans repli — #1027. La
+    // lecture ne replie pas le canal nul sur `STRIPE` : « antérieur à #834 » et
+    // « intention du tunnel » sont deux faits distincts, et c'est le libellé,
+    // seul, qui les traite pareil. Les replier ici aurait fait écrire dans le
+    // contrat une valeur que la base ne porte pas.
+    cardChannel: payment.cardChannel as PaymentCardChannel | null,
     amount: money(payment.amountMinor, payment.currency),
     tendered: tendered === null ? null : money(tendered, payment.currency),
     change: tendered === null ? null : money(tendered - payment.amountMinor, payment.currency),
