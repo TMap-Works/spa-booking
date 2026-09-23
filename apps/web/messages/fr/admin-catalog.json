@@ -1,0 +1,198 @@
+{
+  "denied": {
+    "title": "Accès réservé",
+    "list": "Le catalogue est réservé aux comptes du salon. Demandez l’accès à l’administrateur.",
+    "newService": "La création d’une prestation est réservée aux gérantes et aux administrateurs du salon.",
+    "service": "La modification du catalogue est réservée aux gérantes et aux administrateurs.",
+    "categories": "Les rubriques du catalogue sont réservées aux comptes du salon."
+  },
+  "failure": {
+    "list": "Catalogue indisponible",
+    "newService": "Formulaire indisponible",
+    "service": "Prestation indisponible",
+    "categories": "Rubriques indisponibles",
+    "category": "Rubrique indisponible"
+  },
+  "actions": {
+    "unknownTenant": "Établissement inconnu.",
+    "unknownService": "Prestation inconnue.",
+    "unknownCategory": "Rubrique inconnue.",
+    "unknownAssignment": "Affectation inconnue.",
+    "invalidService": "La prestation saisie est invalide.",
+    "invalidCategory": "La rubrique saisie est invalide.",
+    "chooseStaff": "Choisissez un praticien à affecter."
+  },
+  "status": {
+    "active": "Active",
+    "inactive": "Désactivée"
+  },
+  "activation": {
+    "deactivate": "Désactiver",
+    "reactivate": "Réactiver",
+    "updating": "Mise à jour…"
+  },
+  "list": {
+    "title": "Catalogue des prestations",
+    "filters": {
+      "all": "Toutes",
+      "activeOnly": "Actives seulement"
+    },
+    "toolbar": {
+      "categories": "Rubriques",
+      "preview": "Aperçu public",
+      "newService": "Nouvelle prestation",
+      "restricted": "La création et la modification des prestations sont réservées au rang gérant."
+    },
+    "empty": {
+      "activeTitle": "Aucune prestation en ligne",
+      "title": "Catalogue vide",
+      "activeManager": "Toutes les prestations du salon sont désactivées : la page publique n’en propose aucune. Retirez le filtre pour les retrouver et en réactiver une.",
+      "activeReader": "Toutes les prestations du salon sont désactivées : la page publique n’en propose aucune. Retirez le filtre pour les retrouver — leur réactivation est réservée au rang gérant.",
+      "manager": "Créez votre première prestation pour que la page publique du salon propose quelque chose à réserver.",
+      "reader": "Aucune prestation n’est enregistrée : la page publique du salon ne propose rien à réserver. La création d’une prestation est réservée au rang gérant."
+    },
+    "caption": {
+      "activeOnly": "Prestations actives du salon.",
+      "all": "Prestations du salon, actives et désactivées."
+    },
+    "columns": {
+      "service": "Prestation",
+      "category": "Rubrique",
+      "duration": "Durée",
+      "buffers": "Tampons avant / après",
+      "occupied": "Durée bloquée",
+      "price": "Prix",
+      "state": "État",
+      "actions": "Actions"
+    },
+    "unclassified": "Non classée",
+    "buffers": "{before} / {after} min"
+  },
+  "newService": {
+    "title": "Nouvelle prestation",
+    "backToCatalog": "Retour au catalogue",
+    "restrictedTitle": "Accès réservé",
+    "restrictedBody": "La création d’une prestation est réservée au rang gérant. Le catalogue reste consultable, et une gérante ou une administratrice du salon peut ajouter la prestation pour vous. <link>Revenir au catalogue</link>."
+  },
+  "service": {
+    "occupiedHint": "Bloque {duration} sur l’agenda, tampons compris.",
+    "backToCatalog": "Retour au catalogue",
+    "publicView": "Voir le rendu public",
+    "notFoundTitle": "Prestation introuvable",
+    "notFoundBody": "Aucune prestation de ce salon ne porte cet identifiant. Elle a pu être créée dans un autre établissement.",
+    "notFoundLink": "Revenir au catalogue"
+  },
+  "categories": {
+    "title": "Rubriques du catalogue",
+    "backToCatalog": "Retour au catalogue",
+    "hint": "Une rubrique regroupe les prestations sur la page publique. Elle se désactive, elle ne se supprime pas — le reporting doit continuer à savoir sous quelle rubrique une vente a été faite.",
+    "backToCategories": "Retour aux rubriques",
+    "categoryHint": "Une rubrique désactivée disparaît de la page publique ; les prestations qu’elle regroupe restent au catalogue.",
+    "notFoundTitle": "Rubrique introuvable",
+    "notFoundBody": "Aucune rubrique de ce salon ne porte cet identifiant. Elle a pu être créée dans un autre établissement.",
+    "notFoundLink": "Revenir aux rubriques"
+  },
+  "preview": {
+    "title": "Aperçu du rendu public",
+    "unavailable": "Aperçu indisponible",
+    "unavailableHint": "La page publique du salon n’a pas pu être lue.",
+    "backToCatalog": "Retour au catalogue",
+    "openSalonPage": "Ouvrir la page du salon",
+    "noticeTitle": "Ce que voit la cliente",
+    "noticeScope": "Seules les prestations actives, classées sous une rubrique active, apparaissent ici. Les tampons de préparation et de remise en état n’y figurent pas : ils décrivent la cadence interne du salon.",
+    "noticeUnstaffed": "Une prestation active qu’aucun praticien ne pratique y figure quand même, avec la mention « {unstaffed} » à la place des noms : le moteur de disponibilité ne proposera aucun créneau pour elle. La carte ne compte que les praticiens dont le compte est actif — affectez-lui un praticien depuis sa fiche, ou réactivez celui qui y figure déjà sous la mention « {disabled} »."
+  },
+  "form": {
+    "savedTitle": "Prestation enregistrée",
+    "savedBody": "Le catalogue public reflète désormais ces informations.",
+    "failureTitle": "L’enregistrement a échoué",
+    "priceExample": "35,00",
+    "errors": {
+      "nameRequired": "ce champ est obligatoire",
+      "nameTooLong": "ce champ fait au plus {max} caractères",
+      "slug": "slug attendu en minuscules, chiffres et tirets simples",
+      "slugReserved": "ce nom est réservé par la plateforme — choisissez-en un autre",
+      "slugTooLong": "cette adresse fait au plus {max} caractères",
+      "minutes": "nombre entier de minutes attendu",
+      "positiveDuration": "une durée doit être strictement positive",
+      "amount": "montant attendu dans la devise du salon (« {example} »)",
+      "slugTaken": "une autre prestation porte déjà cette adresse."
+    },
+    "name": "Nom de la prestation",
+    "description": "Description",
+    "descriptionHint": "Affichée sur la page publique, sous le nom de la prestation. Facultative.",
+    "category": "Rubrique",
+    "categoryHint": "Regroupe la prestation sur la page publique. « Non classée » est un choix valide.",
+    "unclassified": "Non classée",
+    "duration": "Durée du soin (minutes)",
+    "durationHint": "Ce que la cliente voit et paie, tampons exclus.",
+    "bufferBefore": "Tampon avant (minutes)",
+    "bufferBeforeHint": "Préparation de la cabine. Invisible de la cliente, occupée sur l’agenda.",
+    "bufferAfter": "Tampon après (minutes)",
+    "bufferAfterHint": "Remise en état. Invisible de la cliente, occupée sur l’agenda.",
+    "occupied": "Durée bloquée sur l’agenda : <strong>{duration}</strong> — durée du soin et tampons compris.",
+    "price": "Prix ({currency})",
+    "priceHint": "Devise de l’établissement. Un soin offert vaut 0.",
+    "slug": "Adresse publique",
+    "slugHintNew": "Laissez vide : elle sera dérivée du nom. Utile à renseigner pour figer un lien déjà partagé.",
+    "slugHintEdit": "Le lien profond vers cette prestation. La changer casse les liens déjà partagés.",
+    "saving": "Enregistrement…",
+    "create": "Créer la prestation",
+    "save": "Enregistrer",
+    "restricted": "La modification du catalogue est réservée au rang gérant."
+  },
+  "staffPanel": {
+    "title": "Praticiens",
+    "hint": "Tant qu’aucun praticien ne pratique cette prestation, le moteur de disponibilité ne proposera aucun créneau pour elle.",
+    "failureTitle": "Affectation impossible",
+    "alreadyAssigned": "Ce praticien est déjà affecté à cette prestation.",
+    "emptyTitle": "Aucune fiche praticien",
+    "emptyDescription": "Créez au moins une fiche praticien pour pouvoir l’affecter à cette prestation.",
+    "disabledAccount": "Compte désactivé",
+    "assigned": "Affecté",
+    "saving": "Enregistrement…",
+    "remove": "Retirer",
+    "assign": "Affecter",
+    "restricted": "L’affectation des praticiens est réservée au rang gérant."
+  },
+  "categoryForm": {
+    "newTitle": "Nouvelle rubrique",
+    "createdTitle": "Rubrique « {name} » créée",
+    "createdBody": "Elle regroupera les prestations qu’on lui affecte, et paraîtra sur la page publique du salon. <link>Ouvrir la rubrique</link>",
+    "savedTitle": "Rubrique enregistrée",
+    "savedBody": "La page publique du salon reflète désormais ces informations.",
+    "failureTitle": "L’enregistrement a échoué",
+    "errors": {
+      "nameRequired": "ce champ est obligatoire",
+      "nameTooLong": "ce champ fait au plus {max} caractères",
+      "slug": "slug attendu en minuscules, chiffres et tirets simples",
+      "slugReserved": "ce nom est réservé par la plateforme — choisissez-en un autre",
+      "slugTooLong": "cette adresse fait au plus {max} caractères"
+    },
+    "slugTaken": "une autre rubrique porte déjà cette adresse.",
+    "name": "Nom de la rubrique",
+    "namePlaceholder": "Soins du visage",
+    "description": "Description",
+    "descriptionHint": "Facultative.",
+    "slug": "Adresse publique",
+    "slugHintNew": "Laissez vide : elle sera dérivée du nom.",
+    "slugHintEdit": "La changer casse les liens déjà partagés vers cette rubrique.",
+    "saving": "Enregistrement…",
+    "create": "Créer la rubrique",
+    "save": "Enregistrer",
+    "restricted": "La modification des rubriques est réservée au rang gérant."
+  },
+  "categoryManager": {
+    "restricted": "La création et la modification des rubriques sont réservées au rang gérant.",
+    "title": "Rubriques du catalogue",
+    "emptyTitle": "Aucune rubrique",
+    "emptyDescription": "Les prestations restent affichées sans regroupement tant qu’aucune rubrique n’existe. Ce n’est pas une erreur — c’est le cas d’un salon qui vend une poignée de soins.",
+    "caption": "Rubriques du catalogue, actives et désactivées.",
+    "columns": {
+      "category": "Rubrique",
+      "slug": "Adresse publique",
+      "state": "État",
+      "actions": "Actions"
+    }
+  }
+}

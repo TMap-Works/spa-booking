@@ -14,3 +14,10 @@ calendar-move-confirm.tsx
 client-picker.tsx
 notification-status-list.tsx
 period-nav.tsx
+#
+# Les briques du catalogue — prestations, rubriques, affectations — #849.
+catalog-status-badge.tsx
+category-manager.tsx
+service-activation-button.tsx
+service-form.tsx
+service-staff-panel.tsx

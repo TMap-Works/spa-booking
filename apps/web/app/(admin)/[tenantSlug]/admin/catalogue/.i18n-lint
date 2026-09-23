@@ -1,0 +1,6 @@
+# Marqueur de lint i18n — voir eslint-rules/i18n-markers.mjs.
+# Le catalogue du back-office, traduit par #849 : la liste, la création, la
+# fiche d'une prestation, les rubriques et l'aperçu de la vitrine.
+#
+# Vide de motifs, donc tout le sous-arbre : ce répertoire n'appartient qu'à ce
+# ticket, et aucun de ses écrans ne reste en français en dur.

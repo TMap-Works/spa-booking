@@ -1,0 +1,198 @@
+{
+  "denied": {
+    "title": "Restricted access",
+    "list": "The catalogue is reserved for salon accounts. Ask your administrator for access.",
+    "newService": "Creating a service is reserved for the salon’s managers and administrators.",
+    "service": "Editing the catalogue is reserved for managers and administrators.",
+    "categories": "Catalogue sections are reserved for salon accounts."
+  },
+  "failure": {
+    "list": "Catalogue unavailable",
+    "newService": "Form unavailable",
+    "service": "Service unavailable",
+    "categories": "Sections unavailable",
+    "category": "Section unavailable"
+  },
+  "actions": {
+    "unknownTenant": "Unknown establishment.",
+    "unknownService": "Unknown service.",
+    "unknownCategory": "Unknown section.",
+    "unknownAssignment": "Unknown assignment.",
+    "invalidService": "The service entered is invalid.",
+    "invalidCategory": "The section entered is invalid.",
+    "chooseStaff": "Choose a practitioner to assign."
+  },
+  "status": {
+    "active": "Active",
+    "inactive": "Disabled"
+  },
+  "activation": {
+    "deactivate": "Disable",
+    "reactivate": "Re-enable",
+    "updating": "Updating…"
+  },
+  "list": {
+    "title": "Service catalogue",
+    "filters": {
+      "all": "All",
+      "activeOnly": "Active only"
+    },
+    "toolbar": {
+      "categories": "Sections",
+      "preview": "Public preview",
+      "newService": "New service",
+      "restricted": "Creating and editing services are reserved for the manager rank."
+    },
+    "empty": {
+      "activeTitle": "No service online",
+      "title": "Empty catalogue",
+      "activeManager": "Every service of the salon is disabled: the public page offers none. Remove the filter to find them and re-enable one.",
+      "activeReader": "Every service of the salon is disabled: the public page offers none. Remove the filter to find them — re-enabling one is reserved for the manager rank.",
+      "manager": "Create your first service so the salon’s public page has something to book.",
+      "reader": "No service is registered: the salon’s public page has nothing to book. Creating a service is reserved for the manager rank."
+    },
+    "caption": {
+      "activeOnly": "Active services of the salon.",
+      "all": "Services of the salon, active and disabled."
+    },
+    "columns": {
+      "service": "Service",
+      "category": "Section",
+      "duration": "Duration",
+      "buffers": "Buffers before / after",
+      "occupied": "Time blocked",
+      "price": "Price",
+      "state": "State",
+      "actions": "Actions"
+    },
+    "unclassified": "Unclassified",
+    "buffers": "{before} / {after} min"
+  },
+  "newService": {
+    "title": "New service",
+    "backToCatalog": "Back to the catalogue",
+    "restrictedTitle": "Restricted access",
+    "restrictedBody": "Creating a service is reserved for the manager rank. The catalogue stays readable, and a manager or an administrator of the salon can add the service for you. <link>Back to the catalogue</link>."
+  },
+  "service": {
+    "occupiedHint": "Blocks {duration} on the agenda, buffers included.",
+    "backToCatalog": "Back to the catalogue",
+    "publicView": "See the public rendering",
+    "notFoundTitle": "Service not found",
+    "notFoundBody": "No service of this salon carries that identifier. It may have been created in another establishment.",
+    "notFoundLink": "Back to the catalogue"
+  },
+  "categories": {
+    "title": "Catalogue sections",
+    "backToCatalog": "Back to the catalogue",
+    "hint": "A section groups services on the public page. It is disabled, it is not deleted — reporting must keep knowing under which section a sale was made.",
+    "backToCategories": "Back to sections",
+    "categoryHint": "A disabled section leaves the public page; the services it groups stay in the catalogue.",
+    "notFoundTitle": "Section not found",
+    "notFoundBody": "No section of this salon carries that identifier. It may have been created in another establishment.",
+    "notFoundLink": "Back to sections"
+  },
+  "preview": {
+    "title": "Preview of the public rendering",
+    "unavailable": "Preview unavailable",
+    "unavailableHint": "The salon’s public page could not be read.",
+    "backToCatalog": "Back to the catalogue",
+    "openSalonPage": "Open the salon page",
+    "noticeTitle": "What the client sees",
+    "noticeScope": "Only active services, classified under an active section, appear here. Preparation and turnaround buffers are not shown: they describe the salon’s internal pace.",
+    "noticeUnstaffed": "An active service that no practitioner performs still appears, with the mention “{unstaffed}” in place of the names: the availability engine will offer no slot for it. The card only counts practitioners whose account is active — assign a practitioner from its record, or re-enable the one already listed there under the mention “{disabled}”."
+  },
+  "form": {
+    "savedTitle": "Service saved",
+    "savedBody": "The public catalogue now reflects this information.",
+    "failureTitle": "Saving failed",
+    "priceExample": "35.00",
+    "errors": {
+      "nameRequired": "this field is required",
+      "nameTooLong": "this field is {max} characters at most",
+      "slug": "an address in lowercase letters, digits and single hyphens is expected",
+      "slugReserved": "this name is reserved by the platform — choose another one",
+      "slugTooLong": "this address is {max} characters at most",
+      "minutes": "a whole number of minutes is expected",
+      "positiveDuration": "a duration must be strictly positive",
+      "amount": "an amount in the salon’s currency is expected (“{example}”)",
+      "slugTaken": "another service already carries this address."
+    },
+    "name": "Service name",
+    "description": "Description",
+    "descriptionHint": "Shown on the public page, under the service name. Optional.",
+    "category": "Section",
+    "categoryHint": "Groups the service on the public page. “Unclassified” is a valid choice.",
+    "unclassified": "Unclassified",
+    "duration": "Treatment duration (minutes)",
+    "durationHint": "What the client sees and pays for, buffers excluded.",
+    "bufferBefore": "Buffer before (minutes)",
+    "bufferBeforeHint": "Getting the room ready. Invisible to the client, busy on the agenda.",
+    "bufferAfter": "Buffer after (minutes)",
+    "bufferAfterHint": "Putting the room back in order. Invisible to the client, busy on the agenda.",
+    "occupied": "Time blocked on the agenda: <strong>{duration}</strong> — treatment duration and buffers included.",
+    "price": "Price ({currency})",
+    "priceHint": "Currency of the establishment. A complimentary treatment is worth 0.",
+    "slug": "Public address",
+    "slugHintNew": "Leave it empty: it will be derived from the name. Worth filling in to pin down a link already shared.",
+    "slugHintEdit": "The deep link to this service. Changing it breaks the links already shared.",
+    "saving": "Saving…",
+    "create": "Create the service",
+    "save": "Save",
+    "restricted": "Editing the catalogue is reserved for the manager rank."
+  },
+  "staffPanel": {
+    "title": "Practitioners",
+    "hint": "As long as no practitioner performs this service, the availability engine will offer no slot for it.",
+    "failureTitle": "Assignment impossible",
+    "alreadyAssigned": "This practitioner is already assigned to this service.",
+    "emptyTitle": "No practitioner record",
+    "emptyDescription": "Create at least one practitioner record to be able to assign it to this service.",
+    "disabledAccount": "Account disabled",
+    "assigned": "Assigned",
+    "saving": "Saving…",
+    "remove": "Remove",
+    "assign": "Assign",
+    "restricted": "Assigning practitioners is reserved for the manager rank."
+  },
+  "categoryForm": {
+    "newTitle": "New section",
+    "createdTitle": "Section “{name}” created",
+    "createdBody": "It will group the services assigned to it, and appear on the salon’s public page. <link>Open the section</link>",
+    "savedTitle": "Section saved",
+    "savedBody": "The salon’s public page now reflects this information.",
+    "failureTitle": "Saving failed",
+    "errors": {
+      "nameRequired": "this field is required",
+      "nameTooLong": "this field is {max} characters at most",
+      "slug": "an address in lowercase letters, digits and single hyphens is expected",
+      "slugReserved": "this name is reserved by the platform — choose another one",
+      "slugTooLong": "this address is {max} characters at most"
+    },
+    "slugTaken": "another section already carries this address.",
+    "name": "Section name",
+    "namePlaceholder": "Facial treatments",
+    "description": "Description",
+    "descriptionHint": "Optional.",
+    "slug": "Public address",
+    "slugHintNew": "Leave it empty: it will be derived from the name.",
+    "slugHintEdit": "Changing it breaks the links already shared towards this section.",
+    "saving": "Saving…",
+    "create": "Create the section",
+    "save": "Save",
+    "restricted": "Editing sections is reserved for the manager rank."
+  },
+  "categoryManager": {
+    "restricted": "Creating and editing sections are reserved for the manager rank.",
+    "title": "Catalogue sections",
+    "emptyTitle": "No section",
+    "emptyDescription": "Services stay listed without grouping as long as no section exists. This is not an error — it is the case of a salon selling a handful of treatments.",
+    "caption": "Catalogue sections, active and disabled.",
+    "columns": {
+      "category": "Section",
+      "slug": "Public address",
+      "state": "State",
+      "actions": "Actions"
+    }
+  }
+}
