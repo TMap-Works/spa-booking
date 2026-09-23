@@ -227,6 +227,37 @@ un compte : deux transitions concurrentes du même rendez-vous se sérialisent s
 le verrou de ligne, et la seconde sort en 409. Même conduite que l'annulation et
 le report — le service parle, la base décide (booking-engine §1).
 
+### Un constat ne s'écrit pas avant le fait (#1137)
+
+La table dit ce qui **suit** quoi ; elle ne disait pas *quand*. `completed`
+(« honoré, encaissé ») et `no_show` (« client absent ») sont des **constats**, et
+ils étaient acceptés sur un rendez-vous du mois prochain. Les deux sont
+terminaux et libèrent le créneau : le geste était irréversible, et le reporting
+du CDC §1.4 comptait des absences à des soins qui n'avaient pas eu lieu — 66,7 %
+de no-show sur un octobre entièrement à venir, et une « dernière visite » datée
+du futur sur la fiche de la cliente.
+
+Depuis, `AppointmentLifecycleService` refuse les deux tant que le début du
+**soin** n'est pas atteint : **422 `INVALID_STATE_TRANSITION`**, le même code —
+c'est bien le cycle de vie qui refuse —, avec `details.notStarted` pour que
+l'écran dise « attendre l'heure du rendez-vous » plutôt que « recharger ».
+
+L'heure mesurée est celle du **soin**, c'est-à-dire l'heure annoncée à la cliente
+— le début de l'intervalle facturé, dérivé par `AppointmentsService` comme les
+écrans le dérivent. Et non la colonne `starts_at`, qui porte l'intervalle
+**occupé** et commence un tampon de préparation plus tôt (`billed-interval.ts`) :
+la lire telle quelle aurait rouvert le no-show cinq à dix minutes avant l'heure
+du rendez-vous, l'écart exact que #750 a corrigé sur la fiche cliente.
+
+L'instant exact du début compte comme commencé, et c'est le **début** du soin et
+non sa fin : le comptoir solde une cliente partie plus tôt, et marque absente à
+9 h 05 celle qui n'est pas venue à 9 h.
+
+`cancelled` et `confirmed` ne sont pas touchés : ce sont des **décisions**, et
+elles se prennent par définition avant le soin. Ni `reporting` ni `crm` n'ont eu
+à changer — ils comptent des lignes, et il n'y a plus de ligne à compter de
+travers.
+
 ## Le contrat partagé, et la substitution en cours (#314, #404)
 
 `packages/shared` est la source de vérité du contrat d'API (CLAUDE.md) : le front
