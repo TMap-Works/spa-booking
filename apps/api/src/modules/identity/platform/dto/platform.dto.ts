@@ -92,10 +92,12 @@ const ADDRESS_LINE_MAX_LENGTH = 160;
 const POSTAL_CODE_MAX_LENGTH = 16;
 /** `tenants.city` — `VARCHAR(120)`. */
 const CITY_MAX_LENGTH = 120;
-/** `platform_tenant_provisionings.idempotency_key` — `VARCHAR(128)`. */
-export const IDEMPOTENCY_KEY_MAX_LENGTH = 128;
-/** Le minimum qui rend une clé d'idempotence non devinable par accident. */
-export const IDEMPOTENCY_KEY_MIN_LENGTH = 8;
+
+// Les bornes de la clé d'idempotence — `IDEMPOTENCY_KEY_MIN_LENGTH` et
+// `IDEMPOTENCY_KEY_MAX_LENGTH` — viennent de `common/validation/idempotency-key.ts` :
+// `platform_tenant_provisionings.idempotency_key` et `payments.idempotency_key` ont la
+// même largeur, et c'est `readIdempotencyKey` — que le contrôleur appelle — qui les
+// applique à la frontière HTTP. Les élargir ici n'aurait rien élargi.
 
 // Les bornes du mot de passe d'un opérateur — `PLATFORM_PASSWORD_MIN_LENGTH` et
 // `PLATFORM_PASSWORD_MAX_LENGTH` — viennent de `platform.types.ts` : la commande
