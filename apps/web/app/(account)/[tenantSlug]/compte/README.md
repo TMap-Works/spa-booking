@@ -214,6 +214,31 @@ par la page. Le `next` de la route est revalidé à l'arrivée, et borné à l'e
 client de l'établissement : sans quoi `?next=https://exemple.test` ferait de
 cette route une redirection ouverte.
 
+## Le tunnel annule par une adresse de cet espace
+
+Le `path` borné à `/{slug}/compte` a une conséquence que l'on paie ailleurs : le
+navigateur ne joint les cookies de session qu'aux requêtes de ce chemin-là. Une
+action serveur poste sur l'URL de la page qui l'appelle — donc, depuis l'écran de
+confirmation du tunnel, sur `/{slug}/reservation`, où aucun jeton n'arrive.
+
+Tant que `POST /public/{slug}/appointments/{id}/cancel` s'ouvrait sans jeton,
+cela ne se voyait pas. Depuis #1135 elle exige celui de la cliente du
+rendez-vous, et le lien d'annulation du tunnel ne rendait plus que des 401
+(#1201). Élargir la portée des cookies était l'autre issue, et elle est fermée :
+des cookies homonymes posés sur `/{slug}/compte` survivraient à la déconnexion et
+le navigateur enverrait le plus spécifique — donc le périmé (voir
+`lib/account-presence.ts`).
+
+L'annulation est donc servie **ici**, par
+`rendez-vous/[appointmentId]/annulation/route.ts`, pour la raison exacte qui met
+déjà le flux temps réel sous `accountPath` (`flux/route.ts`) : c'est l'adresse
+qui fait voyager la session. Le tunnel l'appelle par
+`cancellation-request.ts`, et ne voit toujours aucun jeton.
+
+Ce que la route n'ouvre pas : aucun choix de cible — l'identifiant est dans le
+chemin, et c'est l'API qui tranche la propriété de la ligne, en **404** —, et
+aucune écriture d'origine tierce, les cookies étant `sameSite: 'lax'`.
+
 ## La langue : l'espace la lit, et il l'enregistre
 
 Tous les textes de cet espace viennent du namespace `account`

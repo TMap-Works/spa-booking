@@ -29,6 +29,25 @@ export function accountFeedPath(tenantSlug: string): string {
 }
 
 /**
+ * L'annulation d'un rendez-vous, appelable **depuis le tunnel** (#1201).
+ *
+ * Sous `accountPath` pour la raison qui y met déjà le flux temps réel : les deux
+ * cookies de session sont posés sur `/{slug}/compte` (`session.ts`), et le
+ * navigateur ne les joint qu'aux requêtes de ce chemin-là. L'écran de
+ * confirmation, lui, est servi sur `/{slug}/reservation` — une action serveur
+ * appelée de là ne reçoit donc **aucun jeton**, et la route d'annulation de
+ * l'API rend 401 depuis #1135. Élargir la portée des cookies au salon entier
+ * était l'autre issue, et elle est fermée : voir `lib/account-presence.ts`, qui
+ * dit pourquoi les jetons ne sortent pas de l'espace client.
+ */
+export function cancellationPath(tenantSlug: string, appointmentId: string): string {
+  return accountPath(
+    tenantSlug,
+    `/rendez-vous/${encodeURIComponent(appointmentId)}/annulation`,
+  );
+}
+
+/**
  * La vitrine publique de l'établissement — son catalogue et ses tarifs.
  *
  * ## Pourquoi l'espace client construit ces deux chemins lui-même
