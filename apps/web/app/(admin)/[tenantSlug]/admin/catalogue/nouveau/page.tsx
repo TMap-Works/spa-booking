@@ -4,6 +4,7 @@ import {
   type ServiceCategory,
   type SessionUser,
 } from '@spa/shared';
+import { getTranslations } from 'next-intl/server';
 import Link from 'next/link';
 
 import { Notification } from '@/components/ui/notification';
@@ -49,6 +50,7 @@ interface NewServicePageProps {
 
 export default async function NewServicePage({ params }: NewServicePageProps) {
   const { tenantSlug } = await params;
+  const t = await getTranslations('admin-catalog');
   const accessToken = await requireAdminAccessToken(tenantSlug, adminNewServicePath(tenantSlug));
 
   let categories: ServiceCategory[];
@@ -62,20 +64,23 @@ export default async function NewServicePage({ params }: NewServicePageProps) {
     ]);
   } catch (error) {
     return adminLoadFailure(error, tenantSlug, {
-      deniedTitle: 'Accès réservé',
-      deniedHint:
-        'La création d’une prestation est réservée aux gérantes et aux administrateurs du salon.',
-      failedTitle: 'Formulaire indisponible',
+      deniedTitle: t('denied.title'),
+      deniedHint: t('denied.newService'),
+      failedTitle: t('failure.newService'),
     });
   }
 
   if (!hasAtLeastRole(profile.role, 'manager')) {
     return (
-      <Notification tone="warning" title="Accès réservé">
+      // `t.rich` et non une phrase coupée en deux clés : le lien est au milieu du
+      // texte, et une découpe figerait l'ordre des morceaux d'une langue à
+      // l'autre. Le point final reste dans le message, où la ponctuation d'une
+      // langue se décide (#849).
+      <Notification tone="warning" title={t('newService.restrictedTitle')}>
         <p>
-          La création d’une prestation est réservée au rang gérant. Le catalogue reste consultable,
-          et une gérante ou une administratrice du salon peut ajouter la prestation pour vous.{' '}
-          <Link href={adminCatalogPath(tenantSlug)}>Revenir au catalogue</Link>.
+          {t.rich('newService.restrictedBody', {
+            link: (parts) => <Link href={adminCatalogPath(tenantSlug)}>{parts}</Link>,
+          })}
         </p>
       </Notification>
     );
@@ -84,12 +89,12 @@ export default async function NewServicePage({ params }: NewServicePageProps) {
   return (
     <section aria-labelledby="prestation-nouvelle">
       <h1 className="spa-admin__title" id="prestation-nouvelle">
-        Nouvelle prestation
+        {t('newService.title')}
       </h1>
 
       <div className="spa-admin-toolbar">
         <Link className="spa-button spa-button--quiet" href={adminCatalogPath(tenantSlug)}>
-          Retour au catalogue
+          {t('newService.backToCatalog')}
         </Link>
       </div>
 

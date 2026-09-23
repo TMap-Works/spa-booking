@@ -1,4 +1,5 @@
 import { hasAtLeastRole, uuidSchema, type ServiceCategory, type SessionUser } from '@spa/shared';
+import { getTranslations } from 'next-intl/server';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 
@@ -61,6 +62,7 @@ interface ServiceCategoryPageProps {
 
 export default async function ServiceCategoryPage({ params }: ServiceCategoryPageProps) {
   const { tenantSlug, categoryId } = await params;
+  const t = await getTranslations('admin-catalog');
   const accessToken = await requireAdminAccessToken(
     tenantSlug,
     adminServiceCategoryPath(tenantSlug, categoryId),
@@ -86,9 +88,9 @@ export default async function ServiceCategoryPage({ params }: ServiceCategoryPag
     ]);
   } catch (error) {
     return adminLoadFailure(error, tenantSlug, {
-      deniedTitle: 'Accès réservé',
-      deniedHint: 'Les rubriques du catalogue sont réservées aux comptes du salon.',
-      failedTitle: 'Rubrique indisponible',
+      deniedTitle: t('denied.title'),
+      deniedHint: t('denied.categories'),
+      failedTitle: t('failure.category'),
     });
   }
 
@@ -105,6 +107,7 @@ export default async function ServiceCategoryPage({ params }: ServiceCategoryPag
 
   return (
     <section aria-labelledby="rubrique-titre">
+      {/* Le titre est le nom que le salon a saisi : il n'est pas traduit (#849). */}
       <h1 className="spa-admin__title" id="rubrique-titre">
         {category.name}
       </h1>
@@ -112,17 +115,14 @@ export default async function ServiceCategoryPage({ params }: ServiceCategoryPag
       <div className="spa-admin-toolbar">
         <div className="spa-admin-toolbar__group">
           <CatalogStatusBadge isActive={category.isActive} />
-          <span className="spa-admin-toolbar__hint">
-            Une rubrique désactivée disparaît de la page publique ; les prestations qu’elle regroupe
-            restent au catalogue.
-          </span>
+          <span className="spa-admin-toolbar__hint">{t('categories.categoryHint')}</span>
         </div>
         <span className="spa-admin-toolbar__spacer" />
         <Link
           className="spa-button spa-button--quiet"
           href={adminServiceCategoriesPath(tenantSlug)}
         >
-          Retour aux rubriques
+          {t('categories.backToCategories')}
         </Link>
       </div>
 

@@ -1,4 +1,5 @@
-import { hasAtLeastRole, type Service, type SessionUser } from '@spa/shared';
+import { hasAtLeastRole, type Locale, type Service, type SessionUser } from '@spa/shared';
+import { getLocale, getTranslations } from 'next-intl/server';
 import Link from 'next/link';
 
 import { fetchOwnProfile, fetchServices } from '@/lib/api-client';
@@ -120,17 +121,27 @@ import {
  * Ce que dit l'écran vide, selon le filtre **et** selon ce que le rôle peut
  * faire : inviter une praticienne à créer une prestation, c'est lui proposer
  * exactement le geste que l'API refusera.
+ *
+ * La fonction ne rend plus la phrase mais sa **clé** (#849) : les quatre textes
+ * vivent au catalogue `admin-catalog`, et c'est l'appelant qui les lit dans la
+ * langue de la requête. L'arbre de décision, lui, n'a pas bougé.
+ *
+ * Le type de retour est l'**union des quatre clés** et non `string` : c'est ce
+ * qui laisse `tsc` vérifier qu'elles existent au catalogue, comme il le ferait
+ * d'un `t('…')` écrit sur place.
  */
-function emptyCatalogDescription(activeOnly: boolean, canManage: boolean): string {
+type EmptyCatalogKey =
+  | 'list.empty.activeManager'
+  | 'list.empty.activeReader'
+  | 'list.empty.manager'
+  | 'list.empty.reader';
+
+function emptyCatalogDescriptionKey(activeOnly: boolean, canManage: boolean): EmptyCatalogKey {
   if (activeOnly) {
-    return canManage
-      ? 'Toutes les prestations du salon sont désactivées : la page publique n’en propose aucune. Retirez le filtre pour les retrouver et en réactiver une.'
-      : 'Toutes les prestations du salon sont désactivées : la page publique n’en propose aucune. Retirez le filtre pour les retrouver — leur réactivation est réservée au rang gérant.';
+    return canManage ? 'list.empty.activeManager' : 'list.empty.activeReader';
   }
 
-  return canManage
-    ? 'Créez votre première prestation pour que la page publique du salon propose quelque chose à réserver.'
-    : 'Aucune prestation n’est enregistrée : la page publique du salon ne propose rien à réserver. La création d’une prestation est réservée au rang gérant.';
+  return canManage ? 'list.empty.manager' : 'list.empty.reader';
 }
 
 export const dynamic = 'force-dynamic';
@@ -143,6 +154,18 @@ interface CatalogPageProps {
 export default async function CatalogPage({ params, searchParams }: CatalogPageProps) {
   const { tenantSlug } = await params;
   const { actives } = await searchParams;
+  const t = await getTranslations('admin-catalog');
+  /*
+   * La langue de la mise en forme des durées et des montants (#849).
+   *
+   * Sans `countryCode` : c'est exactement ce que fait le catalogue **public**
+   * (`components/salon/service-catalog.tsx`), et les deux écrans doivent
+   * annoncer le même prix. `lib/format.ts` retombe alors sur la région figée de
+   * la langue — `fr` → `fr-FR`, `en` → `en-US` —, et la lecture du pays de
+   * l'établissement n'appartient à aucun des deux : elle coûterait un
+   * aller-retour de plus à une liste qui n'en fait que deux.
+   */
+  const display = { locale: (await getLocale()) as Locale };
   const activeOnly = actives === '1';
   // Le filtre voyage avec la garde : un renouvellement de session doit rendre la
   // main sur la liste qu'on regardait, pas sur le catalogue entier (#458).
@@ -162,10 +185,9 @@ export default async function CatalogPage({ params, searchParams }: CatalogPageP
     ]);
   } catch (error) {
     return adminLoadFailure(error, tenantSlug, {
-      deniedTitle: 'Accès réservé',
-      deniedHint:
-        'Le catalogue est réservé aux comptes du salon. Demandez l’accès à l’administrateur.',
-      failedTitle: 'Catalogue indisponible',
+      deniedTitle: t('denied.title'),
+      deniedHint: t('denied.list'),
+      failedTitle: t('failure.list'),
     });
   }
 
@@ -174,7 +196,7 @@ export default async function CatalogPage({ params, searchParams }: CatalogPageP
   return (
     <section aria-labelledby="catalogue-titre">
       <h1 className="spa-admin__title" id="catalogue-titre">
-        Catalogue des prestations
+        {t('list.title')}
       </h1>
 
       <div className="spa-admin-toolbar">
@@ -184,32 +206,30 @@ export default async function CatalogPage({ params, searchParams }: CatalogPageP
             href={adminCatalogPath(tenantSlug)}
             aria-current={activeOnly ? undefined : 'page'}
           >
-            Toutes
+            {t('list.filters.all')}
           </Link>
           <Link
             className="spa-button spa-button--quiet"
             href={adminCatalogPath(tenantSlug, { activeOnly: true })}
             aria-current={activeOnly ? 'page' : undefined}
           >
-            Actives seulement
+            {t('list.filters.activeOnly')}
           </Link>
         </div>
         <span className="spa-admin-toolbar__spacer" />
         <div className="spa-admin-toolbar__group">
           <Link className="spa-button spa-button--neutral" href={adminServiceCategoriesPath(tenantSlug)}>
-            Rubriques
+            {t('list.toolbar.categories')}
           </Link>
           <Link className="spa-button spa-button--neutral" href={adminCatalogPreviewPath(tenantSlug)}>
-            Aperçu public
+            {t('list.toolbar.preview')}
           </Link>
           {canManage ? (
             <Link className="spa-button spa-button--accent" href={adminNewServicePath(tenantSlug)}>
-              Nouvelle prestation
+              {t('list.toolbar.newService')}
             </Link>
           ) : (
-            <span className="spa-admin-toolbar__hint">
-              La création et la modification des prestations sont réservées au rang gérant.
-            </span>
+            <span className="spa-admin-toolbar__hint">{t('list.toolbar.restricted')}</span>
           )}
         </div>
       </div>
@@ -217,46 +237,44 @@ export default async function CatalogPage({ params, searchParams }: CatalogPageP
       {services.length === 0 ? (
         <div className="spa-empty-state">
           <p className="spa-empty-state__title">
-            {activeOnly ? 'Aucune prestation en ligne' : 'Catalogue vide'}
+            {activeOnly ? t('list.empty.activeTitle') : t('list.empty.title')}
           </p>
           <p className="spa-empty-state__description">
-            {emptyCatalogDescription(activeOnly, canManage)}
+            {t(emptyCatalogDescriptionKey(activeOnly, canManage))}
           </p>
         </div>
       ) : (
         <div className="spa-admin__section">
           <table className="spa-admin-table">
             <caption className="spa-visually-hidden">
-              {activeOnly
-                ? 'Prestations actives du salon.'
-                : 'Prestations du salon, actives et désactivées.'}
+              {activeOnly ? t('list.caption.activeOnly') : t('list.caption.all')}
             </caption>
             <thead>
               <tr>
                 <th className="spa-admin-table__head" scope="col">
-                  Prestation
+                  {t('list.columns.service')}
                 </th>
                 <th className="spa-admin-table__head" scope="col">
-                  Rubrique
+                  {t('list.columns.category')}
                 </th>
                 <th className="spa-admin-table__head" scope="col">
-                  Durée
+                  {t('list.columns.duration')}
                 </th>
                 <th className="spa-admin-table__head" scope="col">
-                  Tampons avant / après
+                  {t('list.columns.buffers')}
                 </th>
                 <th className="spa-admin-table__head" scope="col">
-                  Durée bloquée
+                  {t('list.columns.occupied')}
                 </th>
                 <th className="spa-admin-table__head spa-admin-table__head--numeric" scope="col">
-                  Prix
+                  {t('list.columns.price')}
                 </th>
                 <th className="spa-admin-table__head" scope="col">
-                  État
+                  {t('list.columns.state')}
                 </th>
                 {canManage ? (
                   <th className="spa-admin-table__head" scope="col">
-                    Actions
+                    {t('list.columns.actions')}
                   </th>
                 ) : null}
               </tr>
@@ -264,27 +282,42 @@ export default async function CatalogPage({ params, searchParams }: CatalogPageP
             <tbody>
               {services.map((service) => (
                 <tr className="spa-admin-table__row" key={service.id}>
+                  {/* Le nom et le nom de la rubrique sont la saisie du salon :
+                      ils ne se traduisent pas. Seul le « Non classée » d'une
+                      prestation sans rubrique est un mot du produit (#849). */}
                   <td className="spa-admin-table__cell">
                     <Link href={adminServicePath(tenantSlug, service.id)}>{service.name}</Link>
                   </td>
-                  <td className="spa-admin-table__cell">{service.category?.name ?? 'Non classée'}</td>
-                  <td className="spa-admin-table__cell">{formatDuration(service.durationMinutes)}</td>
+                  <td className="spa-admin-table__cell">
+                    {service.category?.name ?? t('list.unclassified')}
+                  </td>
+                  <td className="spa-admin-table__cell">
+                    {formatDuration(service.durationMinutes, display)}
+                  </td>
                   {/* L'ordre des deux nombres est celui de l'en-tête, et plus
                       aucune mention n'est réservée aux seuls lecteurs d'écran :
-                      « Tampons avant / après » le dit à tout le monde (#776). */}
+                      « Tampons avant / après » le dit à tout le monde (#776).
+                      L'unité vient du catalogue plutôt que du JSX : « min »
+                      s'abrège autrement d'une langue à l'autre. */}
                   <td className="spa-admin-table__cell">
-                    {service.bufferBeforeMinutes} / {service.bufferAfterMinutes} min
+                    {t('list.buffers', {
+                      before: service.bufferBeforeMinutes,
+                      after: service.bufferAfterMinutes,
+                    })}
                   </td>
                   {/* La durée réellement bloquée, tampons compris : c'est elle
                       qui explique pourquoi le créneau suivant n'est pas libre à
                       l'heure attendue. L'API la calcule ; le front ne la
                       recompose pas. */}
-                  <td className="spa-admin-table__cell">{formatDuration(service.occupiedMinutes)}</td>
+                  <td className="spa-admin-table__cell">
+                    {formatDuration(service.occupiedMinutes, display)}
+                  </td>
                   {/* Le montant arrive en entier de plus petite unité avec son
                       code devise, et n'est mis en forme qu'ici — le front n'en
-                      fait jamais l'arithmétique. */}
+                      fait jamais l'arithmétique. Seule sa mise en forme suit la
+                      langue. */}
                   <td className="spa-admin-table__cell spa-admin-table__cell--numeric">
-                    {formatMoney(service.price)}
+                    {formatMoney(service.price, display)}
                   </td>
                   <td className="spa-admin-table__cell">
                     <CatalogStatusBadge isActive={service.isActive} />

@@ -1,6 +1,7 @@
 'use client';
 
 import { ERROR_CODES } from '@spa/shared';
+import { useTranslations } from 'next-intl';
 import { useRouter } from 'next/navigation';
 import { useState, useTransition } from 'react';
 
@@ -104,6 +105,7 @@ export function ServiceStaffPanel({
    */
   readonly canManage?: boolean;
 }) {
+  const t = useTranslations('admin-catalog.staffPanel');
   const router = useRouter();
   const { renewIfExpired } = useAdminSessionRenewal(tenantSlug);
   const [pending, setPending] = useState<string | null>(null);
@@ -131,11 +133,10 @@ export function ServiceStaffPanel({
       // Un 409 n'est pas une panne : quelqu'un a posé la même affectation entre
       // le rendu de la page et le clic. On le dit, et le rafraîchissement remet
       // la liste d'aplomb.
-      setFailure(
-        result.code === ERROR_CODES.CONFLICT
-          ? 'Ce praticien est déjà affecté à cette prestation.'
-          : result.message,
-      );
+      // Le message de l'action serveur, lui, arrive déjà dans la langue de la
+      // requête : les actions du catalogue le lisent sur le catalogue de
+      // messages, jamais en dur (`catalogue/actions.ts`).
+      setFailure(result.code === ERROR_CODES.CONFLICT ? t('alreadyAssigned') : result.message);
     }
 
     startRefresh(() => {
@@ -146,38 +147,35 @@ export function ServiceStaffPanel({
   return (
     <section className="spa-admin__section" aria-labelledby="prestation-praticiens">
       <h2 className="spa-admin__section-title" id="prestation-praticiens">
-        Praticiens
+        {t('title')}
       </h2>
-      <p className="spa-admin-toolbar__hint">
-        Tant qu’aucun praticien ne pratique cette prestation, le moteur de disponibilité ne
-        proposera aucun créneau pour elle.
-      </p>
+      <p className="spa-admin-toolbar__hint">{t('hint')}</p>
 
       {failure === null ? null : (
-        <Notification tone="danger" title="Affectation impossible">
+        <Notification tone="danger" title={t('failureTitle')}>
           <p>{failure}</p>
         </Notification>
       )}
 
       {staff.length === 0 ? (
         <div className="spa-empty-state">
-          <p className="spa-empty-state__title">Aucune fiche praticien</p>
-          <p className="spa-empty-state__description">
-            Créez au moins une fiche praticien pour pouvoir l’affecter à cette prestation.
-          </p>
+          <p className="spa-empty-state__title">{t('emptyTitle')}</p>
+          <p className="spa-empty-state__description">{t('emptyDescription')}</p>
         </div>
       ) : (
         <ul className="spa-admin__nav" role="list">
           {staff.map((member) => (
             <li className="spa-admin-toolbar" key={member.id}>
+              {/* Le nom du praticien vient de la fiche du salon : il ne se
+                  traduit pas, pas plus que le nom d'une prestation (#849). */}
               <span className="spa-admin-toolbar__caption">{member.displayName}</span>
               {member.isActive ? null : (
                 <span className="spa-admin-badge spa-admin-badge--cancelled">
-                  Compte désactivé
+                  {t('disabledAccount')}
                 </span>
               )}
               {member.assigned ? (
-                <span className="spa-admin-badge spa-admin-badge--confirmed">Affecté</span>
+                <span className="spa-admin-badge spa-admin-badge--confirmed">{t('assigned')}</span>
               ) : null}
               <span className="spa-admin-toolbar__spacer" />
               {/* La bascule d'une ligne rend les autres inertes : `pending` est une
@@ -190,11 +188,11 @@ export function ServiceStaffPanel({
                 <Button
                   disabled={refreshing || (pending !== null && pending !== member.id)}
                   loading={pending === member.id}
-                  loadingLabel="Enregistrement…"
+                  loadingLabel={t('saving')}
                   onClick={() => void toggle(member)}
                   variant={member.assigned ? 'quiet' : 'neutral'}
                 >
-                  {member.assigned ? 'Retirer' : 'Affecter'}
+                  {member.assigned ? t('remove') : t('assign')}
                   <span className="spa-visually-hidden"> {member.displayName}</span>
                 </Button>
               ) : null}
@@ -203,11 +201,7 @@ export function ServiceStaffPanel({
         </ul>
       )}
 
-      {canManage ? null : (
-        <p className="spa-admin-toolbar__hint">
-          L’affectation des praticiens est réservée au rang gérant.
-        </p>
-      )}
+      {canManage ? null : <p className="spa-admin-toolbar__hint">{t('restricted')}</p>}
     </section>
   );
 }
