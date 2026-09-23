@@ -9,6 +9,8 @@ import { AvailabilityRepository } from '../src/modules/availability/availability
 import { StaffTimeOffRepository } from '../src/modules/availability/staff-time-off.repository';
 import { FakeCatalogRepository } from '../src/modules/catalog/__tests__/catalog.doubles';
 import { CatalogRepository } from '../src/modules/catalog/catalog.repository';
+import type { UserRole } from '../src/modules/identity/roles';
+import { TokenService } from '../src/modules/identity/token.service';
 import { createTenantHarness, type TenantFixture, type TenantHarness } from './utils/tenant-harness';
 
 /**
@@ -85,6 +87,16 @@ export interface BookableTenant {
   readonly tenant: TenantFixture;
   readonly serviceId: string;
   readonly staffId: string;
+  /**
+   * La cliente du salon — celle **pour qui** le tunnel réserve depuis #1136.
+   *
+   * Réserver exige un compte : il n'y a plus de fiche créée au passage depuis
+   * des coordonnées, et une suite qui ne sèmerait pas cette fiche-là
+   * exercerait le 404 de cliente inconnue au lieu du cas passant. Elle est
+   * semée d'office, comme le praticien et la prestation, parce qu'elle est
+   * devenue une condition de la même façon qu'eux.
+   */
+  readonly clientId: string;
 }
 
 export interface AppointmentsHarness {
@@ -107,6 +119,19 @@ export interface AppointmentsHarness {
    * des créneaux qu'elles ne comptent pas.
    */
   addStaff(target: BookableTenant): string;
+  /**
+   * Un en-tête `Authorization` signé par le **vrai** `TokenService`, pour un
+   * compte de cet établissement (#1136).
+   *
+   * Signé plutôt que fabriqué : c'est la seule façon d'exercer `JwtAuthGuard`
+   * pour ce qu'il fait — lire le `tenantId` d'un jeton *vérifié* et le poser
+   * dans le contexte de requête —, et donc la seule façon de prouver qu'un
+   * jeton du salon voisin ne passe pas sous ce slug-ci.
+   *
+   * Sans `userId`, le jeton désigne la cliente du salon (`target.clientId`) :
+   * c'est le cas dominant depuis que réserver, annuler et reporter l'exigent.
+   */
+  bearer(target: BookableTenant, role?: UserRole, userId?: string): Promise<string>;
   server(): ReturnType<INestApplication['getHttpServer']>;
   close(): Promise<void>;
 }
@@ -201,8 +226,26 @@ export async function createAppointmentsHarness(): Promise<AppointmentsHarness> 
       priceAmountMinor: SERVICE_PRICE_MINOR,
     });
 
-    return { tenant, serviceId: service.id, staffId: equipStaff(tenant.id, service.id) };
+    // La cliente du salon (#1136) — une fiche `CLIENT` au fichier, celle que le
+    // jeton du tunnel désigne. L'adresse porte le slug pour rester unique d'un
+    // établissement à l'autre : la clé du fichier client est `(tenant, e-mail)`.
+    const client = appointments.seedClient({
+      tenantId: tenant.id,
+      email: `cliente@${tenant.slug}.test`,
+      firstName: 'Camille',
+      lastName: 'Rakoto',
+      phone: '+261341234567',
+    });
+
+    return {
+      tenant,
+      serviceId: service.id,
+      staffId: equipStaff(tenant.id, service.id),
+      clientId: client.id,
+    };
   };
+
+  const tokens = harness.app.get(TokenService);
 
   return {
     app: harness.app,
@@ -213,6 +256,12 @@ export async function createAppointmentsHarness(): Promise<AppointmentsHarness> 
     a: equip(harness.a),
     b: equip(harness.b),
     addStaff: (target: BookableTenant) => equipStaff(target.tenant.id, target.serviceId),
+    bearer: async (target: BookableTenant, role: UserRole = 'CLIENT', userId?: string) =>
+      `Bearer ${await tokens.signAccessToken({
+        userId: userId ?? target.clientId,
+        tenantId: target.tenant.id,
+        role,
+      })}`,
     server: () => harness.server(),
     close: () => harness.close(),
   };

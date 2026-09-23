@@ -190,12 +190,17 @@ describe('Écritures de rendez-vous au comptoir', () => {
     });
 
     it('ne crée aucune fiche cliente au passage', async () => {
+      // Le compte du fichier **avant** l'appel : le harnais sème désormais une
+      // cliente par établissement (#1136), et un nombre figé ici compterait les
+      // siennes plutôt que ce que cette route écrit.
+      const avant = harness.appointments.clients.length;
+
       await createAtDesk();
 
       // Le comptoir **désigne** une fiche, il n'en crée pas : c'est la frontière
       // que le `.strict()` des deux schémas de création tient côté contrat, et
       // qu'un doublon de fiche trahirait ici.
-      expect(harness.appointments.clients).toHaveLength(1);
+      expect(harness.appointments.clients).toHaveLength(avant);
     });
 
     it('accepte un `clientNote` et le sert sur la ligne rendue', async () => {

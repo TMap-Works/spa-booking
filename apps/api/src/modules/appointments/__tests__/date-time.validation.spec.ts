@@ -182,7 +182,12 @@ function bookingRefusal(startsAt: string): Promise<string> {
 async function bookedInstant(startsAt: string): Promise<string> {
   const { controller, captured } = capturingService();
 
-  await controller.book((await bookBody.transform(bookingBody(startsAt))) as BookAppointmentBody);
+  await controller.book(
+    (await bookBody.transform(bookingBody(startsAt))) as BookAppointmentBody,
+    // La cliente du jeton, exigée depuis #1136 — même raison que pour le report
+    // ci-dessous : le sujet de cette suite est l'instant, pas la porte.
+    CLIENTE_AUTHENTIFIEE,
+  );
 
   return instantOf(captured.book, 'book');
 }
