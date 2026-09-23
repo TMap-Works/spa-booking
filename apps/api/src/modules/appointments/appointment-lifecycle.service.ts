@@ -2,7 +2,8 @@ import { Injectable } from '@nestjs/common';
 
 import { InvalidStateTransitionError } from '../../common/errors';
 import type { AppointmentStatus } from './appointment-status';
-import { APPOINTMENT_STATUSES } from './appointment-status';
+import { APPOINTMENT_STATUSES, recordsOutcome } from './appointment-status';
+import { AppointmentNotStartedError } from './appointments.errors';
 
 /**
  * Le cycle de vie du rendez-vous, et **le seul endroit qui dise ce qui suit
@@ -32,6 +33,20 @@ import { APPOINTMENT_STATUSES } from './appointment-status';
  * d'œil, se teste sans conteneur d'injection, et un test la compare aux statuts
  * qui occupent l'agenda.
  *
+ * ## Deux règles, et non une seule table
+ *
+ * La table dit ce qui **suit** quoi. Elle ne dit pas *quand* : c'est la seconde
+ * règle, posée par #1137. `COMPLETED` et `NO_SHOW` ne sont pas des décisions, ce
+ * sont des **constats** — « honoré, encaissé », « client absent » —, et un constat
+ * ne s'écrit pas avant le fait. Tant que le rendez-vous n'a pas commencé, les
+ * deux sortent en 422 comme n'importe quelle transition interdite.
+ *
+ * C'est exactement la condition que ce fichier annonçait : « la règle est appelée
+ * à s'enrichir … chacun de ces tickets ajoutera une condition qui a besoin de
+ * collaborateurs — l'horloge ». Elle arrive ici, et non dans le contrôleur, pour
+ * la raison qui vaut déjà pour la table — booking-engine §5 : « les valider dans
+ * un service dédié ».
+ *
  * ## Ce que ce service garantit, et ce qu'il ne garantit pas
  *
  * Il rend la **réponse** juste : un rendez-vous déjà annulé, terminé ou no-show
@@ -41,6 +56,12 @@ import { APPOINTMENT_STATUSES } from './appointment-status';
  * du repository — `updateMany` filtré sur le statut, qui rend un compte — et
  * c'est la même répartition que pour le report (#39) : ce service parle, la base
  * décide (booking-engine §1).
+ *
+ * La règle d'horloge, elle, **n'a pas de doublure en base** — et n'en a pas
+ * besoin : `startsAt` ne bouge pas sous la requête. Un report en produit une
+ * ligne neuve (booking-engine §5) plutôt que de déplacer celle-ci, si bien que
+ * l'heure lue avant l'écriture est encore celle de la ligne écrite. Le seul écart
+ * possible est le temps qui passe, et il ne va que dans le sens qui autorise.
  *
  * Les faire coexister n'est pas une redondance : sans ce service, la perdante
  * d'une course et la cliente qui reclique sur un lien d'annulation périmé
@@ -75,6 +96,33 @@ export const ALLOWED_TRANSITIONS: Readonly<
   NO_SHOW: [],
 };
 
+/**
+ * Le rendez-vous sur lequel la transition porte, et l'instant où on la demande —
+ * #1137.
+ *
+ * Les deux vont ensemble et se lisent ensemble : séparés, on aurait pu appeler
+ * la règle avec l'heure d'un rendez-vous et l'horloge d'un autre geste. `now`
+ * n'est pas lu de l'horloge système ici, mais reçu : c'est la discipline du
+ * module — toute méthode de `AppointmentsService` porte son instant en
+ * paramètre, faute de quoi aucun test ne pourrait décaler le temps sans décaler
+ * celui de la machine.
+ */
+export interface StatusChangeOccurrence {
+  /**
+   * L'heure du **soin** — le début de l'intervalle facturé, UTC.
+   *
+   * Et non `appointments.starts_at` tel quel : la colonne porte l'intervalle
+   * **occupé**, qui commence un tampon de préparation plus tôt
+   * (`billed-interval.ts`). L'appelant dérive donc cette heure comme les écrans
+   * la dérivent — `AppointmentsService.treatmentStartOf` —, sans quoi la règle
+   * ouvrirait « non présenté » cinq à dix minutes avant l'heure annoncée à la
+   * cliente.
+   */
+  readonly startsAt: Date;
+  /** L'instant de la décision. UTC. */
+  readonly now: Date;
+}
+
 @Injectable()
 export class AppointmentLifecycleService {
   /** `true` si le cycle de vie autorise ce passage. Un statut vers lui-même, non. */
@@ -83,15 +131,56 @@ export class AppointmentLifecycleService {
   }
 
   /**
-   * Refuse le passage que le cycle de vie n'autorise pas.
+   * `true` si le rendez-vous a commencé — l'instant de son début est atteint.
+   *
+   * L'égalité compte comme « commencé » : à l'instant exact de son heure, le
+   * rendez-vous a lieu, et une cliente qui ne s'est pas présentée à l'heure
+   * pile est déjà absente.
+   *
+   * Le **début** et non la fin, délibérément : c'est ce que demande #1137
+   * (« tant que le rendez-vous n'a pas commencé »), et c'est aussi ce qui reste
+   * utilisable au comptoir. Exiger `endsAt` interdirait de solder une cliente
+   * partie plus tôt, ou de marquer absente, à 9 h 05, celle qui ne viendra pas
+   * à son rendez-vous de 9 h — deux gestes que le salon fait sans attendre.
+   */
+  public hasStarted(occurrence: StatusChangeOccurrence): boolean {
+    return occurrence.startsAt.getTime() <= occurrence.now.getTime();
+  }
+
+  /**
+   * Refuse le passage que le cycle de vie n'autorise pas — par sa table, puis par
+   * l'horloge.
+   *
+   * L'ordre n'est pas indifférent : `PENDING → COMPLETED` est interdit *par
+   * nature* et doit le rester dit comme tel, même sur un rendez-vous passé. Ce
+   * n'est qu'un passage autorisé par la table qui se voit ensuite demander s'il
+   * a lieu d'être maintenant.
+   *
+   * `occurrence` est **obligatoire**, et c'est ce qui fait tenir la règle : un
+   * paramètre facultatif aurait laissé un appelant futur — ou une méthode
+   * ajoutée demain à `AppointmentsService` — la contourner par omission, sans
+   * qu'aucun test ne le voie.
    *
    * @throws {InvalidStateTransitionError} 422, avec `from` et `to` dans
    * `details` : le front sait alors quoi dire sans avoir à interpréter un
    * message traduisible.
+   * @throws {AppointmentNotStartedError} 422 lui aussi, `details.notStarted`
+   * posé : le constat précède le fait qu'il prétend constater.
    */
-  public requireTransition(from: AppointmentStatus, to: AppointmentStatus): void {
+  public requireTransition(
+    from: AppointmentStatus,
+    to: AppointmentStatus,
+    occurrence: StatusChangeOccurrence,
+  ): void {
     if (!this.canTransition(from, to)) {
       throw new InvalidStateTransitionError(from, to);
+    }
+
+    // `recordsOutcome` plutôt que deux littéraux : la liste vit dans
+    // `appointment-status.ts`, avec le reste du vocabulaire, et un sixième statut
+    // qui constaterait le passé s'y rangerait une fois pour toutes.
+    if (recordsOutcome(to) && !this.hasStarted(occurrence)) {
+      throw new AppointmentNotStartedError(from, to, occurrence.startsAt, occurrence.now);
     }
   }
 

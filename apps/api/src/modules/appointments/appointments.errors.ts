@@ -1,6 +1,7 @@
 import { APPOINTMENTS_ERROR_CODES, MAX_APPOINTMENT_RANGE_DAYS } from '@spa/shared';
 
-import { DOMAIN_HTTP_STATUS, DomainError } from '../../common/errors';
+import { DOMAIN_HTTP_STATUS, DomainError, InvalidStateTransitionError } from '../../common/errors';
+import type { AppointmentStatus, OutcomeStatus } from './appointment-status';
 
 /**
  * Erreurs du module `appointments`.
@@ -89,6 +90,55 @@ export class AppointmentRangeTooWideError extends DomainError {
       `La plage demandée doit être ordonnée et ne pas excéder ${String(MAX_APPOINTMENT_RANGE_DAYS)} jours.`,
       { from, to, maxRangeDays: MAX_APPOINTMENT_RANGE_DAYS },
     );
+  }
+}
+
+/**
+ * On ne constate pas l'issue d'un rendez-vous qui n'a pas commencé (#1137).
+ *
+ * ## Ce que le bug faisait
+ *
+ * `CONFIRMED → NO_SHOW` et `CONFIRMED → COMPLETED` passaient quelle que soit la
+ * date. Deux statuts terminaux, donc sans retour : un clic de trop sur la ligne
+ * d'un rendez-vous du mois prochain le marquait « client absent » **et** libérait
+ * son créneau, sans que rien ne permette de revenir en arrière. Le taux de
+ * no-show d'octobre annonçait 66,7 % sur des soins qui n'avaient pas encore eu
+ * lieu, et la fiche de la cliente affichait une « dernière visite » dans le
+ * futur — CDC §1.4 « mesurer », qui ne compte que des rendez-vous passés.
+ *
+ * ## Pourquoi le même code que la transition interdite
+ *
+ * Parce que c'est bien le **cycle de vie** qui refuse, et que le front branche sur
+ * `code` : ajouter un code au contrat partagé aurait obligé chaque appelant à
+ * traiter un cas de plus pour un refus qu'il affiche déjà. La sous-classe existe
+ * pour deux autres raisons — un message qui dit *pourquoi* au comptoir, et
+ * `notStarted` dans `details`, sur lequel un écran peut proposer « attendre
+ * l'heure du rendez-vous » plutôt que « recharger ».
+ *
+ * ## Ce que `details` porte
+ *
+ * `startsAt` est l'heure du rendez-vous **que l'appelant vise déjà** : il l'a
+ * sous les yeux sur la ligne d'agenda, la lui rendre ne lui apprend rien de plus
+ * et lui évite d'aller la relire. `now` est l'instant de la décision, ISO 8601
+ * UTC comme partout — c'est ce qui rend le refus explicable quand l'horloge du
+ * poste et celle du serveur divergent. Rien de la cliente ni du praticien.
+ */
+export class AppointmentNotStartedError extends InvalidStateTransitionError {
+  public constructor(from: AppointmentStatus, to: OutcomeStatus, startsAt: Date, now: Date) {
+    super(from, to, {
+      startsAt: startsAt.toISOString(),
+      now: now.toISOString(),
+      notStarted: true,
+    });
+
+    // Le message du parent — « Transition « CONFIRMED » → « NO_SHOW »
+    // interdite. » — est juste et n'explique rien : au comptoir, la question est
+    // *pourquoi*, et la réponse est qu'il n'y a encore rien à constater. Le
+    // `code` et le `status` restent ceux du parent, eux.
+    this.message =
+      to === 'NO_SHOW'
+        ? 'Un rendez-vous qui n’a pas commencé ne peut pas être marqué « non présenté ».'
+        : 'Un rendez-vous qui n’a pas commencé ne peut pas être marqué « honoré ».';
   }
 }
 
