@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
+import { NotFoundError } from '../../../common/errors';
 import { runWithTenant } from '../../../common/tenant';
 import { OwnScopeOnlyError } from '../../identity/identity.errors';
 import { AppointmentLifecycleService } from '../appointment-lifecycle.service';
@@ -31,6 +32,16 @@ import { FakeAppointmentsRepository, FakeCacheLocks } from './appointments.doubl
  * 3. le **404 du voisin l'emporte** sur le 403 de portée. C'est l'ordre des
  *    vérifications, et l'inverse aurait dit à un salon que le rendez-vous d'un
  *    autre existe (tenant-isolation §4).
+ *
+ * ## La quatrième, ajoutée par #1135 : la porte publique ne rouvre pas le 403
+ *
+ * Les trois propriétés ci-dessus ne valaient que sur les routes gardées. Le
+ * tunnel public, lui, n'exigeait que la connaissance de l'identifiant — et un
+ * praticien lit ceux de ses collègues dans le journal des envois. Ce que le
+ * back-office refusait en 403, la route publique l'accordait donc en 200, en
+ * l'inscrivant au nom de la cliente. La portée du praticien n'y est toujours pas
+ * la question ; ce qui la remplace est la **propriété du rendez-vous**, et son
+ * refus est un 404.
  */
 
 const TENANT = randomUUID();
@@ -47,6 +58,14 @@ const COLLEGUE_STAFF = randomUUID();
 
 /** La gérante : pas de fiche praticien, et tous les droits d'agenda. */
 const GERANTE_USER = randomUUID();
+
+/**
+ * Les deux clientes — une par praticienne. Ce sont des comptes `users`, et c'est
+ * `users.id` que `appointments.client_id` porte : le principal du tunnel public
+ * se compare à cette colonne, jamais à une fiche praticien (#1135).
+ */
+const CLIENTE_DE_CLAIRE = randomUUID();
+const CLIENTE_DE_LA_COLLEGUE = randomUUID();
 
 const OCCUPIED_START = new Date('2026-09-01T10:00:00.000Z');
 const OCCUPIED_END = new Date('2026-09-01T11:00:00.000Z');
@@ -110,6 +129,10 @@ function createHarness(): Harness {
 /**
  * Le décor commun : Claire a une fiche praticien dans le salon, et deux
  * rendez-vous existent — le sien et celui de sa collègue.
+ *
+ * Les deux portent une **cliente nommée** depuis #1135 : la surface publique ne
+ * juge plus la portée du praticien mais la propriété de la cliente, et un
+ * `clientId` semé au hasard aurait rendu cette moitié-là inexprimable.
  */
 function seed(repository: FakeAppointmentsRepository): {
   readonly mien: string;
@@ -125,6 +148,7 @@ function seed(repository: FakeAppointmentsRepository): {
   const mien = repository.seedAppointment({
     tenantId: TENANT,
     staffId: CLAIRE_STAFF,
+    clientId: CLIENTE_DE_CLAIRE,
     startsAt: OCCUPIED_START,
     endsAt: OCCUPIED_END,
     status: 'CONFIRMED',
@@ -134,6 +158,7 @@ function seed(repository: FakeAppointmentsRepository): {
   const deLaCollegue = repository.seedAppointment({
     tenantId: TENANT,
     staffId: COLLEGUE_STAFF,
+    clientId: CLIENTE_DE_LA_COLLEGUE,
     startsAt: OCCUPIED_START,
     endsAt: OCCUPIED_END,
     status: 'CONFIRMED',
@@ -249,18 +274,78 @@ describe('annulation', () => {
     ).rejects.toBeInstanceOf(OwnScopeOnlyError);
   });
 
-  it('n’impose aucune portée au tunnel public, qui n’a pas d’acteur', async () => {
+  it('n’impose aucune portée de praticien au tunnel public — mais la propriété de la cliente', async () => {
     const { service, repository } = createHarness();
     const { deLaCollegue } = seed(repository);
 
-    // Sans `actor`, la portée n'est pas la question : c'est la porte qui en
-    // décide, et la cliente qui annule son propre rendez-vous n'a pas de fiche
-    // praticien à comparer.
+    // Sans `actor`, la portée du praticien n'est pas la question : la cliente
+    // n'a pas de fiche praticien à comparer. Ce qui la remplace depuis #1135,
+    // c'est la propriété du rendez-vous — et elle annule bien le sien.
     const view = await runWithTenant(TENANT, () =>
-      service.cancel({ appointmentId: deLaCollegue, cancelledBy: 'CLIENT', reason: null }, NOW),
+      service.cancel(
+        {
+          appointmentId: deLaCollegue,
+          cancelledBy: 'CLIENT',
+          reason: null,
+          client: { userId: CLIENTE_DE_LA_COLLEGUE },
+        },
+        NOW,
+      ),
     );
 
     expect(String(view.status).toUpperCase()).toBe('CANCELLED');
+  });
+
+  it('ferme au tunnel public le rendez-vous d’une autre cliente, en 404 (#1135)', async () => {
+    const { service, repository } = createHarness();
+    const { deLaCollegue } = seed(repository);
+
+    // Le contournement que #1135 a relevé : Claire relève l'identifiant du
+    // rendez-vous de sa collègue dans le journal des envois, et le présente à la
+    // route publique — où le 403 `OWN_SCOPE_ONLY` ci-dessus ne s'applique pas.
+    // Le refus est un 404 et non un 403 : un 403 aurait confirmé que
+    // l'identifiant relevé désigne bien un rendez-vous de ce salon.
+    await expect(
+      runWithTenant(TENANT, () =>
+        service.cancel(
+          {
+            appointmentId: deLaCollegue,
+            cancelledBy: 'CLIENT',
+            reason: null,
+            client: { userId: CLIENTE_DE_CLAIRE },
+          },
+          NOW,
+        ),
+      ),
+    ).rejects.toBeInstanceOf(NotFoundError);
+
+    // Et rien n'a bougé : la trace fausse — `cancelledBy: CLIENT` sur le
+    // rendez-vous d'autrui — est ce que le ticket existe pour empêcher.
+    const cible = repository.appointments.find((row) => row.id === deLaCollegue);
+    expect(cible?.status).toBe('CONFIRMED');
+    expect(cible?.cancelledBy).toBeNull();
+  });
+
+  it('ferme de même le report public du rendez-vous d’une autre cliente (#1135)', async () => {
+    const { service, repository } = createHarness();
+    const { deLaCollegue } = seed(repository);
+
+    await expect(
+      runWithTenant(TENANT, () =>
+        service.reschedule(
+          {
+            appointmentId: deLaCollegue,
+            startsAt: new Date('2026-09-02T10:00:00.000Z'),
+            staffId: null,
+            client: { userId: CLIENTE_DE_CLAIRE },
+          },
+          NOW,
+        ),
+      ),
+    ).rejects.toBeInstanceOf(NotFoundError);
+
+    // Une seule ligne : aucun successeur n'a été créé.
+    expect(repository.appointments).toHaveLength(2);
   });
 });
 

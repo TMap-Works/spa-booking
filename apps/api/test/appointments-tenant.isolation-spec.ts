@@ -1,5 +1,8 @@
+import { randomUUID } from 'node:crypto';
+
 import request from 'supertest';
 
+import { TokenService } from '../src/modules/identity/token.service';
 import { bookableSlot, createAppointmentsHarness, type AppointmentsHarness } from './appointments.harness';
 
 /**
@@ -389,8 +392,11 @@ describe('Isolation inter-tenant — report de rendez-vous', () => {
     await harness.close();
   });
 
-  /** Réserve dans l'établissement A et rend l'identifiant obtenu. */
-  async function bookInA(): Promise<string> {
+  /**
+   * Réserve dans l'établissement A et rend le rendez-vous obtenu, **avec le
+   * porteur de sa cliente** (#1135).
+   */
+  async function bookInA(): Promise<{ id: string; authorization: string }> {
     const response = await request(harness.server())
       .post(BOOKING_PATH(harness.a.tenant.slug))
       .send({
@@ -402,33 +408,47 @@ describe('Isolation inter-tenant — report de rendez-vous', () => {
       });
 
     expect(response.status).toBe(201);
-    return String(response.body.id);
+    return {
+      id: String(response.body.id),
+      authorization: await clientBearer(harness.a.tenant.id, String(response.body.clientId)),
+    };
+  }
+
+  /** Le porteur d'une cliente de cet établissement — ce que `JwtAuthGuard` lira. */
+  async function clientBearer(tenantId: string, userId: string): Promise<string> {
+    const tokens = harness.app.get(TokenService);
+    return `Bearer ${await tokens.signAccessToken({ userId, tenantId, role: 'CLIENT' })}`;
   }
 
   it('refuse en 404 le rendez-vous de A demandé sous le slug de B', async () => {
     const inA = await bookInA();
 
     const response = await request(harness.server())
-      .post(`${BOOKING_PATH(harness.b.tenant.slug)}/${inA}/reschedule`)
+      .post(`${BOOKING_PATH(harness.b.tenant.slug)}/${inA.id}/reschedule`)
+      // Une cliente de **B** : depuis #1135 il faut un jeton pour atteindre le
+      // code métier, et c'est bien la frontière de tenant — non la garde — que
+      // ce cas observe.
+      .set('Authorization', await clientBearer(harness.b.tenant.id, randomUUID()))
       .send({ startsAt: to.startsAt.toISOString() });
 
     // 404 et non 403 : un 403 confirmerait que ce rendez-vous existe ailleurs.
     expect(response.status).toBe(404);
     expect(response.body).toMatchObject({ code: 'NOT_FOUND' });
     expect(JSON.stringify(response.body)).not.toContain(harness.a.tenant.id);
-    expect(JSON.stringify(response.body)).not.toContain(inA);
+    expect(JSON.stringify(response.body)).not.toContain(inA.id);
   });
 
   it('laisse intact le rendez-vous du voisin après un report refusé', async () => {
     const inA = await bookInA();
 
     await request(harness.server())
-      .post(`${BOOKING_PATH(harness.b.tenant.slug)}/${inA}/reschedule`)
+      .post(`${BOOKING_PATH(harness.b.tenant.slug)}/${inA.id}/reschedule`)
+      .set('Authorization', await clientBearer(harness.b.tenant.id, randomUUID()))
       .send({ startsAt: to.startsAt.toISOString() });
 
     // Un report qui aurait franchi la frontière aurait **annulé** ce
     // rendez-vous : c'est une écriture, pas une lecture.
-    const kept = harness.appointments.appointments.find((row) => row.id === inA);
+    const kept = harness.appointments.appointments.find((row) => row.id === inA.id);
     expect(kept?.status).toBe('PENDING');
     expect(harness.appointments.appointments).toHaveLength(1);
   });
@@ -437,7 +457,8 @@ describe('Isolation inter-tenant — report de rendez-vous', () => {
     const inA = await bookInA();
 
     const response = await request(harness.server())
-      .post(`${BOOKING_PATH(harness.a.tenant.slug)}/${inA}/reschedule`)
+      .post(`${BOOKING_PATH(harness.a.tenant.slug)}/${inA.id}/reschedule`)
+      .set('Authorization', inA.authorization)
       .send({ startsAt: to.startsAt.toISOString(), staffId: harness.b.staffId });
 
     // Le praticien du voisin ne produit aucun créneau ici : le même 409 qu'un
@@ -453,7 +474,8 @@ describe('Isolation inter-tenant — report de rendez-vous', () => {
     const inA = await bookInA();
 
     const response = await request(harness.server())
-      .post(`${BOOKING_PATH(harness.a.tenant.slug)}/${inA}/reschedule`)
+      .post(`${BOOKING_PATH(harness.a.tenant.slug)}/${inA.id}/reschedule`)
+      .set('Authorization', inA.authorization)
       .send({ startsAt: to.startsAt.toISOString() });
 
     expect(response.status).toBe(201);

@@ -17,7 +17,7 @@ import {
  *
  * | Route | Appelant |
  * |---|---|
- * | `POST /api/v1/public/:tenantSlug/appointments/:id/cancel` | la cliente, sans compte |
+ * | `POST /api/v1/public/:tenantSlug/appointments/:id/cancel` | la cliente **du rendez-vous**, jeton `CLIENT` (#1135) |
  * | `POST /api/v1/appointments/:id/cancel` | le salon, jeton `STAFF` et au-dessus |
  *
  * L'application est la **vraie** : préfixe, versionnement, `ValidationPipe`
@@ -34,7 +34,10 @@ import {
  * 4. le motif est **enregistré** et n'est **jamais rendu** ;
  * 5. le créneau libéré se réserve à nouveau, tout de suite, par la route
  *    publique ;
- * 6. la route de back-office est gardée : 401 sans jeton, 403 sous le rang.
+ * 6. la route de back-office est gardée : 401 sans jeton, 403 sous le rang ;
+ * 7. la route **publique** l'est aussi depuis #1135 : 401 sans jeton, 403 sur un
+ *    jeton de praticien, 404 sur le rendez-vous d'une autre cliente — et aucune
+ *    trace `cancelledBy: CLIENT` n'est écrite dans ces trois cas.
  *
  * L'isolation inter-tenant a sa suite propre —
  * `appointments-cancel.isolation-spec.ts` ; la trace en base, la sienne contre un
@@ -73,8 +76,17 @@ describe('Annulation d’un rendez-vous — les deux surfaces', () => {
     await harness.close();
   });
 
-  /** Réserve le créneau et rend le rendez-vous obtenu. */
-  async function book(): Promise<{ id: string; clientId: string }> {
+  /**
+   * Réserve le créneau et rend le rendez-vous obtenu, **avec le porteur de sa
+   * cliente** (#1135).
+   *
+   * L'annulation publique n'est plus ouverte à la seule connaissance de
+   * l'identifiant : elle exige le jeton de la cliente du rendez-vous. Le rendre
+   * ici, plutôt que le fabriquer dans chaque cas, est ce qui garde ces cas
+   * lisibles — ils parlent de la trace, du créneau libéré et du cycle de vie, et
+   * la garde a ses propres cas plus bas.
+   */
+  async function book(): Promise<{ id: string; clientId: string; authorization: string }> {
     const response = await request(harness.server())
       .post(BOOKING_PATH(harness.a.tenant.slug))
       .send({
@@ -86,7 +98,12 @@ describe('Annulation d’un rendez-vous — les deux surfaces', () => {
       });
 
     expect(response.status).toBe(201);
-    return { id: String(response.body.id), clientId: String(response.body.clientId) };
+    const clientId = String(response.body.clientId);
+    return {
+      id: String(response.body.id),
+      clientId,
+      authorization: await bearerFor(clientId, 'CLIENT'),
+    };
   }
 
   /**
@@ -99,14 +116,19 @@ describe('Annulation d’un rendez-vous — les deux surfaces', () => {
    * façon d'exercer `JwtAuthGuard` pour ce qu'il fait, lire le `tenantId` d'un
    * jeton *vérifié* et le poser dans le contexte de requête.
    */
-  async function bearer(role: UserRole): Promise<string> {
+  async function bearerFor(userId: string, role: UserRole): Promise<string> {
     const tokens = harness.app.get(TokenService);
     const token = await tokens.signAccessToken({
-      userId: randomUUID(),
+      userId,
       tenantId: harness.a.tenant.id,
       role,
     });
     return `Bearer ${token}`;
+  }
+
+  /** Un porteur de ce rôle, pour un compte quelconque de l'établissement. */
+  function bearer(role: UserRole): Promise<string> {
+    return bearerFor(randomUUID(), role);
   }
 
   describe('POST /api/v1/public/:tenantSlug/appointments/:appointmentId/cancel', () => {
@@ -115,6 +137,7 @@ describe('Annulation d’un rendez-vous — les deux surfaces', () => {
 
       const response = await request(harness.server())
         .post(PUBLIC_CANCEL_PATH(harness.a.tenant.slug, booked.id))
+        .set('Authorization', booked.authorization)
         .send({ reason: 'Empêchement de dernière minute' });
 
       // 200 et non 201 : rien n'a été créé, un rendez-vous a changé d'état.
@@ -132,6 +155,7 @@ describe('Annulation d’un rendez-vous — les deux surfaces', () => {
 
       const response = await request(harness.server())
         .post(PUBLIC_CANCEL_PATH(harness.a.tenant.slug, booked.id))
+        .set('Authorization', booked.authorization)
         .send({ reason: 'Grippe' });
 
       // Deuxième critère de #40 : le motif est **enregistré**…
@@ -149,6 +173,7 @@ describe('Annulation d’un rendez-vous — les deux surfaces', () => {
 
       const response = await request(harness.server())
         .post(PUBLIC_CANCEL_PATH(harness.a.tenant.slug, booked.id))
+        .set('Authorization', booked.authorization)
         .send({});
 
       // Exiger un motif ferait abandonner des annulations, donc laisserait des
@@ -164,6 +189,7 @@ describe('Annulation d’un rendez-vous — les deux surfaces', () => {
 
       const response = await request(harness.server())
         .post(PUBLIC_CANCEL_PATH(harness.a.tenant.slug, booked.id))
+        .set('Authorization', booked.authorization)
         .send({ reason: '   ' });
 
       // `@Trim()` ramène la saisie à la chaîne vide, et une chaîne vide n'est pas
@@ -182,6 +208,7 @@ describe('Annulation d’un rendez-vous — les deux surfaces', () => {
 
       await request(harness.server())
         .post(PUBLIC_CANCEL_PATH(harness.a.tenant.slug, booked.id))
+        .set('Authorization', booked.authorization)
         .send({});
 
       // Troisième critère de #40, exercé par la porte d'entrée : le créneau se
@@ -204,6 +231,7 @@ describe('Annulation d’un rendez-vous — les deux surfaces', () => {
       const booked = await book();
       await request(harness.server())
         .post(PUBLIC_CANCEL_PATH(harness.a.tenant.slug, booked.id))
+        .set('Authorization', booked.authorization)
         .send({});
 
       const payload = {
@@ -227,10 +255,12 @@ describe('Annulation d’un rendez-vous — les deux surfaces', () => {
       const booked = await book();
       await request(harness.server())
         .post(PUBLIC_CANCEL_PATH(harness.a.tenant.slug, booked.id))
+        .set('Authorization', booked.authorization)
         .send({});
 
       const rejoue = await request(harness.server())
         .post(PUBLIC_CANCEL_PATH(harness.a.tenant.slug, booked.id))
+        .set('Authorization', booked.authorization)
         .send({ reason: 'encore' });
 
       // Le refus vient du service de cycle de vie, jamais du contrôleur —
@@ -247,10 +277,15 @@ describe('Annulation d’un rendez-vous — les deux surfaces', () => {
     });
 
     it.each(['COMPLETED', 'NO_SHOW'] as const)('refuse en 422 un rendez-vous %s', async (status) => {
+      // La cliente est **nommée** sur la ligne semée : sans cela le refus serait
+      // le 404 de propriété de #1135, et ce cas-ci ne dirait plus rien du cycle
+      // de vie qu'il existe pour exercer.
+      const clientId = randomUUID();
       const seeded = harness.appointments.seedAppointment({
         tenantId: harness.a.tenant.id,
         staffId: harness.a.staffId,
         serviceId: harness.a.serviceId,
+        clientId,
         startsAt: slot.occupiedStartsAt,
         endsAt: new Date(slot.occupiedStartsAt.getTime() + 80 * 60_000),
         status,
@@ -258,6 +293,7 @@ describe('Annulation d’un rendez-vous — les deux surfaces', () => {
 
       const response = await request(harness.server())
         .post(PUBLIC_CANCEL_PATH(harness.a.tenant.slug, seeded.id))
+        .set('Authorization', await bearerFor(clientId, 'CLIENT'))
         .send({});
 
       expect(response.status).toBe(422);
@@ -267,16 +303,75 @@ describe('Annulation d’un rendez-vous — les deux surfaces', () => {
     it('refuse en 404 un rendez-vous inconnu', async () => {
       const response = await request(harness.server())
         .post(PUBLIC_CANCEL_PATH(harness.a.tenant.slug, randomUUID()))
+        .set('Authorization', await bearer('CLIENT'))
         .send({});
 
       expect(response.status).toBe(404);
       expect(response.body).toMatchObject({ code: 'NOT_FOUND' });
     });
 
+    describe('la garde de la cliente — #1135', () => {
+      it('refuse en 401 une annulation sans jeton, fût-elle sur le bon identifiant', async () => {
+        const booked = await book();
+
+        const response = await request(harness.server())
+          .post(PUBLIC_CANCEL_PATH(harness.a.tenant.slug, booked.id))
+          .send({});
+
+        // La connaissance de l'identifiant ne suffit plus : c'est tout le
+        // ticket. Un UUID v4 ne se devine pas, mais il se **lit** — un
+        // praticien relève ceux de ses collègues dans le journal des envois.
+        expect(response.status).toBe(401);
+        expect(harness.appointments.appointments.find((row) => row.id === booked.id)?.status).toBe(
+          'PENDING',
+        );
+      });
+
+      it('refuse en 403 le jeton d’un praticien sur cette route', async () => {
+        const booked = await book();
+
+        const response = await request(harness.server())
+          .post(PUBLIC_CANCEL_PATH(harness.a.tenant.slug, booked.id))
+          .set('Authorization', await bearer('STAFF'))
+          .send({});
+
+        // Le contournement relevé par #1135 : le back-office refusait à Sam
+        // l'annulation du rendez-vous de Marc en 403 `OWN_SCOPE_ONLY`, et cette
+        // route-ci la lui accordait en 200. Elle n'est pas la sienne : c'est
+        // celle de la cliente, et `POST /appointments/:id/cancel` reste la porte
+        // du salon.
+        expect(response.status).toBe(403);
+        expect(harness.appointments.appointments.find((row) => row.id === booked.id)?.status).toBe(
+          'PENDING',
+        );
+      });
+
+      it('refuse en 404 le rendez-vous d’une autre cliente du même salon', async () => {
+        const booked = await book();
+
+        const response = await request(harness.server())
+          .post(PUBLIC_CANCEL_PATH(harness.a.tenant.slug, booked.id))
+          .set('Authorization', await bearer('CLIENT'))
+          .send({});
+
+        // 404 et non 403 : le rendez-vous d'autrui doit rester indiscernable
+        // d'un identifiant qui n'existe pas (tenant-isolation §4). Un 403 aurait
+        // confirmé que l'identifiant essayé désigne bien un rendez-vous.
+        expect(response.status).toBe(404);
+        expect(response.body).toMatchObject({ code: 'NOT_FOUND' });
+        const stored = harness.appointments.appointments.find((row) => row.id === booked.id);
+        expect(stored?.status).toBe('PENDING');
+        // Et surtout : aucune trace au nom de la cliente. C'est la seconde
+        // moitié du défaut — la trace accusait celle qui n'avait rien fait.
+        expect(stored?.cancelledBy).toBeNull();
+      });
+    });
+
     describe('validation du corps et du chemin', () => {
       it('refuse en 400 un identifiant de rendez-vous mal formé', async () => {
         const response = await request(harness.server())
           .post(PUBLIC_CANCEL_PATH(harness.a.tenant.slug, 'pas-un-uuid'))
+          .set('Authorization', await bearer('CLIENT'))
           .send({});
 
         // `ParseUUIDPipe` : la requête ne descend jamais jusqu'au pilote
@@ -289,6 +384,7 @@ describe('Annulation d’un rendez-vous — les deux surfaces', () => {
 
         const response = await request(harness.server())
           .post(PUBLIC_CANCEL_PATH(harness.a.tenant.slug, booked.id))
+          .set('Authorization', booked.authorization)
           .send({ reason: 'x'.repeat(REASON_MAX_LENGTH + 1) });
 
         // Une borne plus large que `VARCHAR(500)` ferait sortir un 500 du pilote
@@ -302,6 +398,7 @@ describe('Annulation d’un rendez-vous — les deux surfaces', () => {
 
         const response = await request(harness.server())
           .post(PUBLIC_CANCEL_PATH(harness.a.tenant.slug, booked.id))
+          .set('Authorization', booked.authorization)
           .send({ cancelledBy: 'STAFF' });
 
         // `forbidNonWhitelisted` : sans ce refus, une cliente inscrirait au
@@ -317,6 +414,7 @@ describe('Annulation d’un rendez-vous — les deux surfaces', () => {
 
         const response = await request(harness.server())
           .post(PUBLIC_CANCEL_PATH(harness.a.tenant.slug, booked.id))
+          .set('Authorization', booked.authorization)
           .send({ cancelledAt: '2020-01-01T00:00:00Z' });
 
         // Antidater une annulation permettrait de se ranger sous un délai de
@@ -329,6 +427,7 @@ describe('Annulation d’un rendez-vous — les deux surfaces', () => {
 
         const response = await request(harness.server())
           .post(PUBLIC_CANCEL_PATH(harness.a.tenant.slug, booked.id))
+          .set('Authorization', booked.authorization)
           .send({ status: 'COMPLETED' });
 
         expect(response.status).toBe(400);
@@ -343,6 +442,7 @@ describe('Annulation d’un rendez-vous — les deux surfaces', () => {
 
         await request(harness.server())
           .post(PUBLIC_CANCEL_PATH(harness.a.tenant.slug, booked.id))
+          .set('Authorization', booked.authorization)
           .send({ reason: 'hospitalisation' });
         off();
 
@@ -372,6 +472,7 @@ describe('Annulation d’un rendez-vous — les deux surfaces', () => {
 
         await request(harness.server())
           .post(PUBLIC_CANCEL_PATH(harness.a.tenant.slug, booked.id))
+          .set('Authorization', booked.authorization)
           .send({});
         off();
 

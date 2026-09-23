@@ -39,6 +39,7 @@
  * sur la même liste de chaînes refusées.
  */
 
+import type { AuthenticatedUser } from '../../identity/identity.types';
 import type { AppointmentsService } from '../appointments.service';
 import type {
   AppointmentView,
@@ -62,6 +63,20 @@ const CLIENT = {
 
 const APPOINTMENT_ID = '3f7c1f4e-2a9d-4c53-8f0e-1b2c3d4e5f60';
 const SERVICE_ID = '9a1b2c3d-4e5f-4a7b-8c9d-0e1f2a3b4c5d';
+
+/**
+ * L'identité que `JwtAuthGuard` aurait posée sur la requête — exigée par le
+ * report public depuis #1135.
+ *
+ * Elle n'est pas le sujet de cette suite : sans elle, le handler ne compilerait
+ * simplement plus. Ce qu'elle rappelle en passant, c'est d'où vient la cliente —
+ * d'un jeton vérifié, jamais du chemin ni du corps.
+ */
+const CLIENTE_AUTHENTIFIEE: AuthenticatedUser = {
+  userId: 'd41b7f6e-8c35-4b31-9a14-5e6f7a8b9c0d',
+  tenantId: '0c9e8d7f-6a5b-4c3d-9e2f-1a0b9c8d7e6f',
+  role: 'CLIENT',
+};
 
 /**
  * Le service, réduit à ce qui nous intéresse : l'instant qu'il a reçu.
@@ -179,6 +194,10 @@ async function rescheduledInstant(startsAt: string): Promise<string> {
   await controller.reschedule(
     APPOINTMENT_ID,
     rescheduleAppointmentBody.transform({ startsAt }) as RescheduleAppointmentBody,
+    // La cliente du jeton, exigée depuis #1135. Le sujet de cette suite reste
+    // l'instant : le double de service ne juge pas la propriété du rendez-vous,
+    // c'est `appointments.own-scope.spec.ts` qui l'exerce.
+    CLIENTE_AUTHENTIFIEE,
   );
 
   return instantOf(captured.reschedule, 'reschedule');
