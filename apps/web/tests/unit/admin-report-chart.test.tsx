@@ -95,6 +95,7 @@ describe('l’échelle dit la même chose que le tableau de sa figure', () => {
         bars={[{ key: '2026-09-11', label: '11 sept.', value: amount.amountMinor, valueLabel: formatMoney(amount) }]}
         emptyLabel="Aucun encaissement sur la période."
         formatScaleValue={(value) => formatMoneyCompact({ amountMinor: value, currency: amount.currency })}
+        labelHeader="Période"
         layout="colonnes"
         seriesLabel="Revenu net (EUR)"
         summary="Revenu net par journée de caisse en EUR."
@@ -124,6 +125,7 @@ describe('l’échelle dit la même chose que le tableau de sa figure', () => {
         bars={[{ key: '2026-09-11', label: '11 sept.', value: amount.amountMinor, valueLabel: formatMoney(amount) }]}
         emptyLabel="Aucun encaissement sur la période."
         formatScaleValue={(value) => formatMoneyCompact({ amountMinor: value, currency: amount.currency })}
+        labelHeader="Période"
         layout="colonnes"
         seriesLabel="Revenu net (EUR)"
         summary="Revenu net par journée de caisse en EUR."
@@ -159,6 +161,7 @@ describe('l’échelle dit la même chose que le tableau de sa figure', () => {
       <ReportChart
         bars={[{ key: '2026-09-11', label: '11 sept.', value: 18, valueLabel: '18 rendez-vous' }]}
         emptyLabel="Aucun rendez-vous sur la période."
+        labelHeader="Période"
         layout="colonnes"
         seriesLabel="Rendez-vous"
         summary="Nombre de rendez-vous par jour."
@@ -180,6 +183,7 @@ describe('ce qu’un lecteur d’écran reçoit', () => {
         emptyLabel="Aucun rendez-vous sur la période."
         innerHeader="Dont no-shows"
         innerSeriesLabel="dont no-shows"
+        labelHeader="Période"
         layout="colonnes"
         seriesLabel="Rendez-vous"
         summary="Nombre de rendez-vous par jour, dont no-shows."
@@ -203,6 +207,7 @@ describe('ce qu’un lecteur d’écran reçoit', () => {
       <ReportChart
         bars={[{ key: 'a', label: 'a', value: 0, valueLabel: '0' }]}
         emptyLabel="Aucun encaissement sur la période."
+        labelHeader="Période"
         layout="colonnes"
         seriesLabel="Revenu net"
         summary="Revenu net par journée de caisse."
@@ -231,6 +236,7 @@ describe('ce qui déborde reste atteignable', () => {
         <ReportChart
           bars={BARS}
           emptyLabel="Aucun rendez-vous sur la période."
+          labelHeader="Période"
           layout={layout}
           seriesLabel="Rendez-vous"
           summary="Nombre de rendez-vous par jour."
@@ -253,6 +259,7 @@ describe('ce qui déborde reste atteignable', () => {
       <ReportChart
         bars={BARS}
         emptyLabel="Aucun rendez-vous sur la période."
+        labelHeader="Période"
         layout="colonnes"
         seriesLabel="Rendez-vous"
         summary="Nombre de rendez-vous par jour."
@@ -278,6 +285,7 @@ describe('la couleur ne porte jamais l’information seule', () => {
           { key: 'b', label: 'Tiana', value: 76, valueLabel: '76 rendez-vous' },
         ]}
         emptyLabel="Aucun rendez-vous sur la période."
+        labelHeader="Période"
         layout="barres"
         seriesLabel="Rendez-vous"
         summary="Nombre de rendez-vous par praticien."
@@ -296,6 +304,7 @@ describe('la couleur ne porte jamais l’information seule', () => {
         emptyLabel="Aucun rendez-vous sur la période."
         innerHeader="Dont no-shows"
         innerSeriesLabel="dont no-shows"
+        labelHeader="Période"
         layout="colonnes"
         seriesLabel="Rendez-vous"
         summary="Nombre de rendez-vous par jour, dont no-shows."
@@ -321,6 +330,7 @@ describe('la couleur ne porte jamais l’information seule', () => {
           emptyLabel="Aucun rendez-vous."
           innerHeader="Dont no-shows"
           innerSeriesLabel="dont no-shows"
+          labelHeader="Période"
           layout="colonnes"
           seriesLabel="Rendez-vous"
           summary="Volume par jour."
@@ -332,6 +342,7 @@ describe('la couleur ne porte jamais l’information seule', () => {
           emptyLabel="Aucun encaissement."
           innerHeader="Dont no-shows"
           innerSeriesLabel="dont no-shows"
+          labelHeader="Période"
           layout="colonnes"
           seriesLabel="Revenu net"
           summary="Revenu par jour."
@@ -354,6 +365,7 @@ describe('la couleur ne porte jamais l’information seule', () => {
       <ReportChart
         bars={BARS}
         emptyLabel="Aucun rendez-vous sur la période."
+        labelHeader="Période"
         layout="colonnes"
         seriesLabel="Rendez-vous"
         summary="Nombre de rendez-vous par jour."

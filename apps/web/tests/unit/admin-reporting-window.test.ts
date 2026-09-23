@@ -8,6 +8,7 @@ import {
   rangeLabel,
   rangeOfPeriod,
   rangeRefusal,
+  reportPeriodLabels,
   resolveReportRange,
   shortDayLabel,
   startOfCivilDay,
@@ -187,5 +188,63 @@ describe('les libellés', () => {
     // Une date civile est **déjà** celle du salon : la reprojeter dans son fuseau
     // la décalerait d'un jour pour tout salon à l'est de Greenwich.
     expect(shortDayLabel('2026-09-03')).toBe('3 sept.');
+  });
+});
+
+/**
+ * La langue des libellés — #851, premier et deuxième critères.
+ *
+ * Ce que ces cas gardent : que les **mots** suivent la langue, que la **région**
+ * vient du pays de l'établissement, et que ni l'une ni l'autre ne déplace une
+ * journée — une date civile reste la même date des deux côtés.
+ */
+describe('la langue des libellés', () => {
+  it('écrit la période dans la langue demandée', () => {
+    const range = { from: '2026-09-01', to: '2026-09-30' } as const;
+
+    expect(rangeLabel(range, { locale: 'fr' })).toBe('1 – 30 septembre 2026');
+    expect(rangeLabel(range, { locale: 'en', countryCode: 'GB' })).toBe('1 – 30 September 2026');
+  });
+
+  it('prend la région au pays de l’établissement, jamais au navigateur', () => {
+    // Un salon montréalais écrit ses dates comme le Québec, en français comme en
+    // anglais : la langue dit les mots, la région dit l'ordre et la ponctuation.
+    const jour = { from: '2026-09-03', to: '2026-09-03' } as const;
+
+    expect(rangeLabel(jour, { locale: 'en', countryCode: 'GB' })).toBe('3 September 2026');
+    expect(rangeLabel(jour, { locale: 'en', countryCode: 'US' })).toBe('September 3, 2026');
+  });
+
+  it('abrège l’abscisse d’un graphique quotidien dans la langue de l’écran', () => {
+    expect(shortDayLabel('2026-09-03', { locale: 'fr' })).toBe('3 sept.');
+    expect(shortDayLabel('2026-09-03', { locale: 'en', countryCode: 'GB' })).toBe('3 Sept');
+  });
+
+  it('garde le français par défaut — aucun appelant ne bascule sans le demander', () => {
+    // Le repli transitoire de l'épique #843 : le tableau de bord lit ce module
+    // sans lui demander un mot, et n'a pas à changer de signature pour cela.
+    expect(shortDayLabel('2026-09-03')).toBe(shortDayLabel('2026-09-03', { locale: 'fr' }));
+    expect(rangeLabel({ from: '2026-09-01', to: '2026-09-30' })).toBe(
+      rangeLabel({ from: '2026-09-01', to: '2026-09-30' }, { locale: 'fr' }),
+    );
+  });
+
+  it('dit les refus de période dans la langue de l’écran', () => {
+    const inversee = { from: '2026-09-30', to: '2026-09-01' } as const;
+    const trop = { from: '2020-01-01', to: '2026-09-30' } as const;
+
+    expect(rangeRefusal(inversee, 'fr')).toMatch(/précède/);
+    expect(rangeRefusal(inversee, 'en')).toMatch(/before/);
+    // Le plafond reste le même nombre : seule la phrase change.
+    expect(rangeRefusal(trop, 'en')).toContain(String(MAX_REPORT_WINDOW_DAYS));
+    expect(rangeRefusal({ from: '2026-09-01', to: '2026-09-30' }, 'en')).toBeNull();
+  });
+
+  it('nomme les périodes du sélecteur sans traduire leur valeur d’URL', () => {
+    // La clé est un segment d'URL, pas un mot : la traduire ferait qu'un lien
+    // partagé entre deux collègues n'ouvre pas le même écran.
+    expect(reportPeriodLabels('fr')['trente-jours']).toBe('30 derniers jours');
+    expect(reportPeriodLabels('en')['trente-jours']).toBe('Last 30 days');
+    expect(Object.keys(reportPeriodLabels('en'))).toEqual(Object.keys(reportPeriodLabels('fr')));
   });
 });

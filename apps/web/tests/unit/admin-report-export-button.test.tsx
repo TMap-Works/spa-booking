@@ -64,7 +64,9 @@ describe('ReportExportButton', () => {
     fireEvent.click(screen.getByRole('button', { name: /Exporter en CSV/i }));
 
     await waitFor(() => {
-      expect(createReportExportAction).toHaveBeenCalledWith(SLUG, FENETRE);
+      // La langue de l'interface part avec la demande depuis #851 : c'est elle
+      // qui décide de l'en-tête et des séparateurs du fichier.
+      expect(createReportExportAction).toHaveBeenCalledWith(SLUG, FENETRE, 'fr');
     });
   });
 
