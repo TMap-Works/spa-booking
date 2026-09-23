@@ -30,6 +30,92 @@ export const paymentMethodSchema = z.enum(PAYMENT_METHODS);
 export const paymentStatusSchema = z.enum(PAYMENT_STATUSES);
 
 /**
+ * Moyen d'encaissement **tel qu'il arrive du fil**, ramené au vocabulaire du
+ * contrat.
+ *
+ * L'API émet `CASH` — la casse de l'énumération PostgreSQL que Prisma génère —
+ * là où ce contrat nomme le même moyen `cash`. La conversion se fait donc **une
+ * fois, à la frontière**, exactement comme `receivedAppointmentStatusSchema` le
+ * fait pour les statuts de rendez-vous : au-delà, plus aucun écran n'a à se
+ * demander dans quelle casse il compare un moyen de paiement.
+ *
+ * Ce n'était pas ici jusqu'à #1026 mais dans `apps/web`, et c'est exactement le
+ * défaut que #444 avait corrigé sur l'agenda : un schéma de sortie qui nomme ses
+ * valeurs autrement que la route ne les sert **échoue sur la casse d'une
+ * chaîne**, et il échoue pour tout lecteur qui n'a pas pensé à réécrire le champ.
+ * Le champ inféré reste `PaymentMethod`, en minuscules : rien ne change pour qui
+ * consomme ce type.
+ */
+export const receivedPaymentMethodSchema = z
+  .string()
+  .transform((value) => value.toLowerCase())
+  .pipe(paymentMethodSchema);
+
+/** Statut d'encaissement reçu du fil (`SUCCEEDED`), même normalisation. */
+export const receivedPaymentStatusSchema = z
+  .string()
+  .transform((value) => value.toLowerCase())
+  .pipe(paymentStatusSchema);
+
+/**
+ * Par quel tuyau une carte est passée — `enum PaymentCardChannel` du schéma
+ * (#834, [ADR 0015](../../../../docs/adr/0015-carte-au-comptoir-par-tpe.md)).
+ *
+ * `STRIPE` est l'intention du tunnel public, le seul endroit du produit où
+ * Stripe touche une carte. `TERMINAL` est le **TPE autonome** du salon : celui
+ * de sa banque, non relié à l'application, dont nous n'enregistrons que
+ * l'issue — rien de ce qu'il manipule ne traverse notre code
+ * (payments-stripe §1).
+ *
+ * En majuscules, comme {@link counterPaymentMethodSchema} et pour la même
+ * raison : c'est la casse que `GET /v1/payments` **sert**, et décrire ce que la
+ * route sert plutôt que ce qu'elle devrait servir est ce que #554 a tranché.
+ * C'est aussi pourquoi ce canal n'est pas normalisé par un `received…` comme le
+ * moyen l'est : il n'a pas de second vocabulaire en minuscules dont il faudrait
+ * le rapprocher.
+ */
+export const paymentCardChannelSchema = z.enum(['STRIPE', 'TERMINAL']);
+
+export type PaymentCardChannel = z.infer<typeof paymentCardChannelSchema>;
+
+/**
+ * La référence du ticket du TPE — #834, deuxième critère.
+ *
+ * Le terminal imprime un numéro d'opération ou d'autorisation ; le caissier le
+ * recopie pour que le rapprochement de fin de journée puisse partir de notre
+ * ligne et retrouver la sienne. C'est un identifiant opaque émis par la banque
+ * du salon, du même rang qu'un `pi_…`.
+ *
+ * ## Les bornes, et celle qui n'est pas ici
+ *
+ * La **forme** est bornée comme la colonne et comme le DTO la bornent : 32
+ * caractères alphanumériques au plus, et au moins un. Ni espace, ni tiret, ni
+ * barre oblique — aucun terminal n'imprime de référence qui en ait besoin, et
+ * les séparateurs sont précisément ce qui rend un numéro de carte méconnaissable
+ * à un contrôle. La longueur nulle n'en est pas une : un champ laissé vide doit
+ * être **absent** du corps, sans quoi « le caissier n'a pas saisi la référence »
+ * et « le caissier a saisi une chaîne vide » deviendraient deux états
+ * indiscernables d'une même colonne.
+ *
+ * La seconde barrière de l'API — **la clé de Luhn**, qui refuse en 400 une suite
+ * de 13 à 19 chiffres qui la vérifie — n'est **pas** reprise ici, et c'est
+ * délibéré : elle vit à un seul endroit,
+ * `apps/api/src/modules/payments/terminal-reference.ts`, et la recopier dans ce
+ * paquet donnerait deux implémentations d'un même contrôle de conformité, donc
+ * deux implémentations à faire diverger un jour. La garantie ne s'en trouve pas
+ * affaiblie : le refus tombe dans le `ValidationPipe` global, avant qu'aucune
+ * ligne de code métier ne s'exécute et avant que la valeur n'atteigne un journal
+ * (payments-stripe §1). Ce que ce schéma garantit est qu'aucun appelant ne peut
+ * *construire* une référence hors format ; ce que l'API garantit est qu'un PAN
+ * bien formé n'entre pas.
+ */
+export const terminalReferenceSchema = z
+  .string()
+  .min(1)
+  .max(32)
+  .regex(/^[A-Za-z0-9]+$/);
+
+/**
  * Encaissement tel que l'API le renvoie.
  *
  * `amount` et `refunded` sont deux `Money` complets et non deux entiers
@@ -46,6 +132,18 @@ export const paymentStatusSchema = z.enum(PAYMENT_STATUSES);
  * `refunded` porte le nom de la clé du fil, celui de `PaymentTransactionDto` :
  * décrire la même réponse sous deux noms était exactement ce qui obligeait le
  * back-office à redéclarer l'enveloppe au lieu de lire celle-ci.
+ *
+ * ## Le moyen et le statut sont normalisés **à la réception** (#1026)
+ *
+ * `receivedPaymentMethodSchema` et `receivedPaymentStatusSchema`, et non les deux
+ * énumérations nues : l'API émet la casse de l'énumération PostgreSQL (`CASH`,
+ * `SUCCEEDED`), ce contrat nomme les mêmes valeurs en minuscules, et un schéma
+ * qui les exigeait telles quelles **ne pouvait pas lire la réponse** qu'il
+ * prétendait décrire. C'est la conversion que `apps/web` portait seul et qu'un
+ * second lecteur — l'écran d'encaissement de #1025 — aurait dû redécouvrir à ses
+ * frais ; même remède, et pour la même raison, que `appointmentSchema` en #444.
+ * Les champs inférés ne changent pas : `PaymentMethod` et `PaymentStatus`, en
+ * minuscules.
  */
 export const paymentSchema = z.object({
   id: uuidSchema,
@@ -73,8 +171,46 @@ export const paymentSchema = z.object({
   saleId: uuidSchema.nullable().optional(),
   amount: nonNegativeMoneySchema,
   refunded: nonNegativeMoneySchema,
-  method: paymentMethodSchema,
-  status: paymentStatusSchema,
+  method: receivedPaymentMethodSchema,
+  /**
+   * Le tuyau de la carte — `null` sur un règlement en espèces (#834).
+   *
+   * Avec `method`, il forme le **moyen** : c'est ce couple, et non `method`
+   * seul, qui distingue le TPE du salon de l'intention du tunnel public. Deux
+   * rapprochements différents en dépendent — le relevé de fin de journée du
+   * terminal d'un côté, le relevé Stripe de l'autre — et `method` seul les
+   * confondrait.
+   *
+   * `nullable` parce que l'API émet explicitement `null` : sur une vente en
+   * espèces, et sur les lignes `CARD` inscrites avant #834 que la migration n'a
+   * volontairement pas reprises. `optional` **en plus**, pour la raison qui vaut
+   * déjà pour `saleId` juste au-dessus : un champ ajouté à une réponse s'ajoute
+   * de façon **additive** (api-module §6), et le déclarer exigé d'emblée ferait
+   * échouer à la compilation tout consommateur qui construit un encaissement —
+   * fixtures du back-office comprises — pour un champ qu'aucun d'eux ne lit
+   * encore. Le resserrer est le travail du ticket qui le fera lire.
+   */
+  cardChannel: paymentCardChannelSchema.nullable().optional(),
+  /**
+   * La référence du ticket du TPE, quand le caissier l'a saisie — #834.
+   *
+   * Elle est au rapprochement du terminal ce que `providerChargeId` est au relevé
+   * Stripe : la ligne par laquelle on retrouve l'opération chez celui qui l'a
+   * exécutée. `null` partout ailleurs, et **jamais une donnée de carte**.
+   *
+   * Même régime d'ajout que `cardChannel` ci-dessus. En revanche **pas** la
+   * borne de forme de {@link terminalReferenceSchema}, et c'est la même règle
+   * que celle qui fait de `saleSettlementSchema` un schéma non strict : borner
+   * en lecture ce qu'on borne à l'écriture, c'est faire échouer la **réponse
+   * entière** sur une valeur qui existe déjà. La base ne garantit que
+   * `VARCHAR(32)` ; une référence posée hors du DTO — reprise de données,
+   * import, chaîne blanche que `receipt-pdf.format.ts` sait déjà absorber — ferait
+   * alors tomber le journal des transactions au complet plutôt que d'afficher un
+   * champ douteux. Le refus de forme appartient à l'aller, où il empêche la
+   * valeur d'entrer ; au retour, on décrit ce qui est là.
+   */
+  terminalReference: z.string().nullable().optional(),
+  status: receivedPaymentStatusSchema,
   capturedAt: utcInstantSchema.nullable(),
   createdAt: utcInstantSchema,
 });
@@ -121,8 +257,11 @@ export type CreatePaymentIntentRequest = z.infer<typeof createPaymentIntentReque
  * redéclaraient chacun de leur côté.
  *
  * `status` est nommé dans le vocabulaire **du contrat**, en minuscules. L'API
- * sert la casse de l'énumération PostgreSQL (`PENDING`) ; la conversion se fait
- * une fois, à la frontière du client d'API, par `receivedPaymentStatusSchema`.
+ * sert la casse de l'énumération PostgreSQL (`PENDING`), et le tunnel de paiement
+ * réécrit donc ce seul champ par `receivedPaymentStatusSchema`
+ * (`apps/web/lib/admin/payment-contract.ts`). Il reste le dernier schéma de ce
+ * fichier dans ce cas : `paymentSchema` normalise désormais lui-même, et le jour
+ * où celui-ci le fera aussi l'extension du front n'aura plus de raison d'être.
  * C'est la même discipline que pour le statut d'un rendez-vous, et elle est
  * délibérée : un seul endroit sait dans quelle casse la valeur est arrivée.
  */
@@ -204,10 +343,49 @@ export type RefundPaymentRequest = z.infer<typeof refundPaymentRequestSchema>;
  * Stripe (arbitrage du 16/09, #834) : rien de ce que le terminal manipule ne
  * traverse notre code, et le serveur n'en conserve que l'issue
  * (payments-stripe §4).
+ *
+ * ## Ce n'est plus ce que le règlement **accepte** — #1026
+ *
+ * Ce schéma décrivait aussi le `method` de {@link settleSaleRequestSchema}. Il ne
+ * le décrit plus : depuis #834 la route de règlement attend `CARD_TERMINAL`, et
+ * les deux valeurs ont cessé d'être la même liste sous deux emplois. Ce qui reste
+ * à cette énumération est ce que la **pièce** imprime — la ligne de règlement du
+ * reçu, où « carte » n'a plus à distinguer un tuyau puisque le comptoir n'en a
+ * qu'un : `ReceiptSettlementDto.method` sert bien `CASH` ou `CARD`. Voir
+ * {@link counterSettlementMeanSchema} pour l'aller.
  */
 export const counterPaymentMethodSchema = z.enum(['CASH', 'CARD']);
 
 export type CounterPaymentMethod = z.infer<typeof counterPaymentMethodSchema>;
+
+/**
+ * Les moyens de règlement que le **comptoir** sait produire — #834, deuxième
+ * critère.
+ *
+ * ## Pourquoi ce n'est pas `counterPaymentMethodSchema`
+ *
+ * Parce que la base porte deux faits là où le caissier en désigne un seul. « La
+ * cliente a payé au terminal » est une phrase ; en base, c'est le couple
+ * (`method = CARD`, `card_channel = TERMINAL`). Demander à l'écran de caisse
+ * d'envoyer les deux champs l'aurait rendu capable d'en composer un troisième qui
+ * n'existe pas — une espèce avec un canal, une carte sans tuyau —, alors que
+ * `payments_card_channel_check` refuse précisément ces couples-là. Le fil nomme
+ * donc les **combinaisons légitimes**, et la conversion se fait une fois, côté
+ * serveur (`payments.types.ts`, `counterSettlementOf`).
+ *
+ * ## `CARD_ONLINE` n'y est pas, et c'est le cœur de l'ADR 0015
+ *
+ * « Stripe n'est plus utilisé au comptoir » : une carte réglée devant le caissier
+ * passe par le TPE de la banque du salon, l'application n'appelle aucun
+ * prestataire et n'a aucun formulaire de carte à afficher. Ce n'est pas un
+ * contrôle défensif mais la **forme du contrat** — il n'y a pas de valeur à
+ * refuser, puisqu'aucun appelant ne peut la taper. `GET /v1/sales?method=` sait
+ * en revanche filtrer `CARD_ONLINE` : relire les intentions du tunnel n'est pas
+ * en produire une.
+ */
+export const counterSettlementMeanSchema = z.enum(['CASH', 'CARD_TERMINAL']);
+
+export type CounterSettlementMean = z.infer<typeof counterSettlementMeanSchema>;
 
 /**
  * Régler un ticket, en une fois ou en plusieurs — quatrième critère de #817.
@@ -233,12 +411,30 @@ export type CounterPaymentMethod = z.infer<typeof counterPaymentMethodSchema>;
  * Le `.strict()` refuse ce qu'il ne connaît pas, à commencer par un `saleId`
  * glissé dans le corps : la vente est désignée par l'URL, et l'établissement
  * par le jeton (tenant-isolation §2).
+ *
+ * ## Le moyen est celui du fil, pas celui de la base — #834, refermé par #1026
+ *
+ * `method` valait `CASH` ou `CARD` ; la route attend `CASH` ou `CARD_TERMINAL`
+ * depuis #834, si bien que **la seule requête carte que ce schéma savait
+ * construire était celle que l'API refuse en 400**. Un contrat qui ne sait
+ * produire qu'un refus est pire qu'un contrat absent : il donne l'assurance
+ * d'avoir vérifié. C'est le constat de #1026, et la raison pour laquelle
+ * `counterSettlementMeanSchema` existe.
+ *
+ * `terminalReference` entre par le même chemin : facultative — le caissier n'a
+ * pas toujours le ticket du terminal sous la main, et bloquer la caisse sur un
+ * champ de confort serait un refus de service —, bornée en forme par
+ * {@link terminalReferenceSchema}, et **refusée sur un règlement en espèces** :
+ * seul un passage au terminal en porte une (`settlement.dto.ts`,
+ * `LegitimateTerminalReference`). Ce dernier refus est croisé et reste côté
+ * serveur, comme la clé de Luhn.
  */
 export const settleSaleRequestSchema = z
   .object({
-    method: counterPaymentMethodSchema,
+    method: counterSettlementMeanSchema,
     amountMinor: z.number().int().positive().optional(),
     tenderedAmountMinor: z.number().int().positive().optional(),
+    terminalReference: terminalReferenceSchema.optional(),
   })
   .strict();
 
@@ -255,18 +451,44 @@ export type SettleSaleRequest = z.infer<typeof settleSaleRequestSchema>;
  *
  * `change` vaut zéro dès que rien n'est à rendre — un `Money` à zéro plutôt
  * qu'un champ absent, pour que l'écran n'ait pas deux formes à lire.
+ *
+ * ## `replayed`, quatrième fait — #834, refermé par #1026
+ *
+ * `true` lorsque la clé `Idempotency-Key` désignait un règlement **déjà
+ * inscrit** : rien n'a été écrit, et `payment` est celui de la première
+ * soumission. L'écran n'a rien de différent à faire des deux cas — c'est tout
+ * l'intérêt de la clé — mais le comptoir a le droit de savoir qu'il n'a pas
+ * encaissé deux fois, et un journal structuré a le droit de le distinguer d'un
+ * geste réel.
+ *
+ * ## Pourquoi ce schéma n'est plus `.strict()`
+ *
+ * Parce qu'il décrit une **sortie**, et que le `.strict()` annoncé en tête de
+ * fichier est un dispositif d'**entrée** : y refuser l'inconnu est ce qui empêche
+ * un `cardNumber` d'atterrir dans un journal. En lecture, la même rigueur se
+ * retourne contre ce qu'elle protège, et c'est exactement ce que #1026 constate :
+ * l'API a ajouté `replayed`, le schéma a rejeté la réponse **entière** par
+ * `unrecognized_keys`, et un écran de caisse aurait cessé d'encaisser pour un
+ * champ qu'il ne lit pas. Un objet Zod non strict **retire** ce qu'il ne déclare
+ * pas : la donnée n'atteint ni composant ni journal dans les deux cas, seule
+ * diffère la manière dont le comptoir survit à l'ajout. Le raisonnement est écrit
+ * au long dans `apps/web/lib/admin/payment-contract.ts`, où le même arbitrage a
+ * dû être rendu à l'envers : faute de pouvoir lever le `.strict()` de
+ * {@link paymentIntentSchema}, le front y pose un `.strip()` explicite sur
+ * `appointmentPaymentIntentSchema`. Ce schéma-ci n'a pas eu besoin d'un tel
+ * contrepoids — aucun consommateur ne le lisait encore quand #1026 l'a
+ * constaté —, et c'est bien pourquoi la rigueur se corrige à la source.
  */
-export const saleSettlementSchema = z
-  .object({
-    payment: paymentSchema,
-    saleId: uuidSchema,
-    total: nonNegativeMoneySchema,
-    settled: nonNegativeMoneySchema,
-    remaining: nonNegativeMoneySchema,
-    change: nonNegativeMoneySchema,
-    settledAt: utcInstantSchema.nullable(),
-  })
-  .strict();
+export const saleSettlementSchema = z.object({
+  payment: paymentSchema,
+  saleId: uuidSchema,
+  total: nonNegativeMoneySchema,
+  settled: nonNegativeMoneySchema,
+  remaining: nonNegativeMoneySchema,
+  change: nonNegativeMoneySchema,
+  settledAt: utcInstantSchema.nullable(),
+  replayed: z.boolean(),
+});
 
 export type SaleSettlement = z.infer<typeof saleSettlementSchema>;
 
