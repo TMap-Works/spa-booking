@@ -1,3 +1,4 @@
+import { getTranslations } from 'next-intl/server';
 import { Inter } from 'next/font/google';
 import { redirect } from 'next/navigation';
 import type { ReactNode } from 'react';
@@ -28,14 +29,16 @@ export default async function PlatformConsoleLayout({ children }: { readonly chi
     redirect(platformLoginPath());
   }
 
+  const t = await getTranslations('platform');
+
   return (
     <div className={`spa-admin ${consoleFont.variable}`}>
       <PlatformRail operatorName={await readPlatformOperatorName()} />
       <div className="spa-admin__main">
         <header className="spa-admin-topbar">
           <div className="spa-admin-topbar__context">
-            <span className="spa-admin-topbar__eyebrow">Console plateforme</span>
-            <span className="spa-admin-topbar__date">Suivi des salons de la plateforme</span>
+            <span className="spa-admin-topbar__eyebrow">{t('shell.title')}</span>
+            <span className="spa-admin-topbar__date">{t('shell.subtitle')}</span>
           </div>
           <div className="spa-admin-topbar__actions">
             <ThemeToggle />

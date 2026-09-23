@@ -1,6 +1,7 @@
 'use client';
 
-import { ERROR_CODES, type PlatformTenant, type TenantAccessLinks } from '@spa/shared';
+import { ERROR_CODES, type Locale, type PlatformTenant, type TenantAccessLinks } from '@spa/shared';
+import { useLocale, useTranslations } from 'next-intl';
 import { useRouter } from 'next/navigation';
 import { Fragment, useState } from 'react';
 
@@ -8,6 +9,7 @@ import Link from 'next/link';
 
 import { Button } from '@/components/ui/button';
 import { Notification } from '@/components/ui/notification';
+import type { DisplayLocale } from '@/lib/format';
 import { billingBadge, formatPlatformDate, originLabel } from '@/lib/platform-console';
 
 import { reissueTenantInvitationAction } from '../actions';
@@ -19,17 +21,34 @@ import { AccessLinks } from './access-links';
  * La liste des salons. « Liens d'accès » réémet l'invitation du gérant et
  * déplie, sous la ligne, les trois liens à lui remettre : c'est le geste qu'on
  * fait quand un gérant a perdu son e-mail ou laissé expirer son lien.
+ *
+ * L'état d'une ligne porte une **clé d'erreur** et non un message (#1106) : le
+ * message d'un refus est écrit côté serveur, donc en français, et l'afficher tel
+ * quel rendrait un tableau anglais bilingue au premier échec.
  */
+
+type ErrorKey = 'noAdmin' | 'tooManyRequests' | 'unavailable' | 'unexpected';
+
+/** Ce que chaque refus de l'API devient à l'écran. */
+const ERROR_KEYS: Readonly<Record<string, ErrorKey>> = {
+  [ERROR_CODES.TENANT_ADMIN_MISSING]: 'noAdmin',
+  [ERROR_CODES.TOO_MANY_REQUESTS]: 'tooManyRequests',
+  [ERROR_CODES.SERVICE_UNAVAILABLE]: 'unavailable',
+};
 
 type RowState =
   | { readonly kind: 'idle' }
   | { readonly kind: 'loading' }
   | { readonly kind: 'links'; readonly links: TenantAccessLinks; readonly email: string }
-  | { readonly kind: 'error'; readonly message: string };
+  | { readonly kind: 'error'; readonly error: ErrorKey };
 
 export function TenantTable({ tenants }: { readonly tenants: readonly PlatformTenant[] }) {
+  const t = useTranslations('platform');
   const router = useRouter();
   const [rows, setRows] = useState<Readonly<Record<string, RowState>>>({});
+  // Aucun établissement de référence : la console lit les dates de tous les
+  // salons, et la région vient du repli documenté de `lib/format.ts`.
+  const display: DisplayLocale = { locale: useLocale() as Locale, countryCode: null };
 
   const setRow = (id: string, state: RowState): void => {
     setRows((current) => ({ ...current, [id]: state }));
@@ -53,45 +72,44 @@ export function TenantTable({ tenants }: { readonly tenants: readonly PlatformTe
       router.replace(PLATFORM_SESSION_END_PATH);
       return;
     }
-    setRow(tenant.id, {
-      kind: 'error',
-      message:
-        result.code === ERROR_CODES.TENANT_ADMIN_MISSING
-          ? 'Ce salon n’a aucun compte administrateur à réinviter.'
-          : result.message,
-    });
+    setRow(tenant.id, { kind: 'error', error: ERROR_KEYS[result.code] ?? 'unexpected' });
   };
+
+  /** Le message d'un refus — `noAdmin` a le sien, les autres sont génériques. */
+  const errorMessage = (error: ErrorKey): string =>
+    error === 'noAdmin' ? t('actions.noAdmin') : t(`errors.${error}`);
 
   return (
     <table className="spa-admin-table">
       <thead>
         <tr>
           <th className="spa-admin-table__head" scope="col">
-            Salon
+            {t('tenants.table.name')}
           </th>
           <th className="spa-admin-table__head" scope="col">
-            Adresse
+            {t('tenants.table.address')}
           </th>
           <th className="spa-admin-table__head" scope="col">
-            Fuseau · devise
+            {t('tenants.table.zoneCurrency')}
           </th>
           <th className="spa-admin-table__head" scope="col">
-            Ouvert le
+            {t('tenants.table.openedOn')}
           </th>
           <th className="spa-admin-table__head" scope="col">
-            Facturation
+            {t('tenants.table.billing')}
           </th>
           <th className="spa-admin-table__head" scope="col">
-            Statut
+            {t('tenants.table.status')}
           </th>
           <th className="spa-admin-table__head" scope="col">
-            <span className="spa-visually-hidden">Actions</span>
+            <span className="spa-visually-hidden">{t('tenants.table.actions')}</span>
           </th>
         </tr>
       </thead>
       <tbody>
         {tenants.map((tenant) => {
           const state = rows[tenant.id] ?? { kind: 'idle' };
+          const badge = billingBadge(tenant, display);
 
           return (
             <Fragment key={tenant.id}>
@@ -100,7 +118,9 @@ export function TenantTable({ tenants }: { readonly tenants: readonly PlatformTe
                   <Link className="spa-console-table__name" href={platformTenantPath(tenant.id)}>
                     {tenant.name}
                   </Link>
-                  <span className="spa-console-table__origin">{originLabel(tenant)}</span>
+                  <span className="spa-console-table__origin">
+                    {originLabel(tenant, display.locale)}
+                  </span>
                 </td>
                 <td className="spa-admin-table__cell">
                   <a href={`/${tenant.slug}`} target="_blank" rel="noreferrer">
@@ -110,10 +130,12 @@ export function TenantTable({ tenants }: { readonly tenants: readonly PlatformTe
                 <td className="spa-admin-table__cell">
                   {tenant.timezone} · {tenant.defaultCurrency}
                 </td>
-                <td className="spa-admin-table__cell">{formatPlatformDate(tenant.createdAt, tenant.timezone)}</td>
                 <td className="spa-admin-table__cell">
-                  <span className={`spa-admin-badge spa-admin-badge--${billingBadge(tenant).tone}`}>
-                    {billingBadge(tenant).label}
+                  {formatPlatformDate(tenant.createdAt, tenant.timezone, display)}
+                </td>
+                <td className="spa-admin-table__cell">
+                  <span className={`spa-admin-badge spa-admin-badge--${badge.tone}`}>
+                    {badge.label}
                   </span>
                 </td>
                 <td className="spa-admin-table__cell">
@@ -124,18 +146,20 @@ export function TenantTable({ tenants }: { readonly tenants: readonly PlatformTe
                         : 'spa-admin-badge spa-admin-badge--cancelled'
                     }
                   >
-                    {tenant.isActive ? 'Actif' : 'Suspendu'}
+                    {tenant.isActive ? t('state.active') : t('state.suspended')}
                   </span>
                 </td>
                 <td className="spa-admin-table__cell spa-platform-actions">
                   <Button
                     variant="neutral"
                     loading={state.kind === 'loading'}
-                    loadingLabel="Réémission de l’invitation…"
+                    loadingLabel={t('tenants.table.reissuing')}
                     aria-expanded={state.kind === 'links'}
                     onClick={() => void reveal(tenant)}
                   >
-                    {state.kind === 'links' ? 'Masquer les liens' : 'Liens d’accès'}
+                    {state.kind === 'links'
+                      ? t('tenants.table.hide')
+                      : t('tenants.table.reveal')}
                   </Button>
                 </td>
               </tr>
@@ -145,14 +169,13 @@ export function TenantTable({ tenants }: { readonly tenants: readonly PlatformTe
                     {state.kind === 'links' ? (
                       <>
                         <p className="spa-admin-toolbar__hint">
-                          Nouvelle invitation émise pour {state.email}. Si le compte est déjà
-                          activé, le lien d’activation reste sans effet : seul le back-office sert.
+                          {t('tenants.table.reissued', { email: state.email })}
                         </p>
                         <AccessLinks idPrefix={`salon-${tenant.id}`} links={state.links} />
                       </>
                     ) : (
-                      <Notification tone="danger" title="Liens indisponibles">
-                        <p>{state.message}</p>
+                      <Notification tone="danger" title={t('actions.linksUnavailable')}>
+                        <p>{errorMessage(state.error)}</p>
                       </Notification>
                     )}
                   </td>

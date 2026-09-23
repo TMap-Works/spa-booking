@@ -1,0 +1,424 @@
+{
+  "meta": {
+    "title": "Console plateforme"
+  },
+  "shell": {
+    "title": "Console plateforme",
+    "subtitle": "Suivi des salons de la plateforme",
+    "railLabel": "Sections de la console",
+    "navGroup": "Établissements",
+    "nav": {
+      "dashboard": "Tableau de bord",
+      "tenants": "Salons",
+      "newTenant": "Ouvrir un salon"
+    },
+    "sessionLength": "Session de 30 minutes",
+    "signedInAs": "Connecté·e :",
+    "operatorRole": "Opérateur·rice",
+    "signOut": "Se déconnecter",
+    "signingOut": "Déconnexion en cours…"
+  },
+  "login": {
+    "headline": "La console de l’éditeur",
+    "lead": "L’espace réservé à l’équipe qui ouvre et accompagne les salons de la plateforme.",
+    "highlights": {
+      "open": "Ouvrir un salon et inviter son gérant",
+      "links": "Remettre le lien de réservation et celui du back-office",
+      "watch": "Suivre les salons ouverts sur la plateforme"
+    },
+    "exitHome": "Accueil {platform}",
+    "title": "Console plateforme — se connecter",
+    "expired": {
+      "title": "Votre session a expiré",
+      "body": "Une session de console dure trente minutes. Reconnectez-vous avec un nouveau code."
+    },
+    "email": "Adresse e-mail",
+    "password": "Mot de passe",
+    "totp": "Code de vérification",
+    "totpHint": "Les six chiffres affichés par votre application d’authentification.",
+    "submit": "Se connecter",
+    "submitting": "Connexion en cours…",
+    "fieldErrors": {
+      "email": "Saisissez une adresse e-mail valide.",
+      "password": "Le mot de passe fait au moins {min} caractères.",
+      "totpCode": "Six chiffres, tels que les affiche votre application."
+    },
+    "errors": {
+      "credentials": {
+        "title": "Connexion refusée",
+        "body": "Adresse, mot de passe ou code incorrect. Si le code venait d’expirer, saisissez le suivant."
+      },
+      "throttled": {
+        "title": "Trop de tentatives",
+        "body": "Patientez une minute avant de réessayer."
+      },
+      "unavailable": {
+        "title": "Service indisponible",
+        "body": "Le service est momentanément injoignable. Merci de réessayer dans un instant."
+      },
+      "validation": {
+        "title": "Formulaire incomplet",
+        "body": "Renseignez votre adresse e-mail, votre mot de passe et le code à six chiffres."
+      },
+      "unexpected": {
+        "title": "Connexion impossible",
+        "body": "Une erreur inattendue est survenue. Merci de réessayer."
+      }
+    }
+  },
+  "dashboard": {
+    "eyebrow": "Console plateforme",
+    "title": "Vue d’ensemble",
+    "lead": "{count, plural, =0 {Aucun salon ouvert} one {# salon ouvert} other {# salons ouverts}} · état au {stamp}",
+    "allTenants": "Tous les salons",
+    "newTenant": "Ouvrir un salon",
+    "kpi": {
+      "revenue": "Revenu mensuel récurrent",
+      "revenueDetail": "{count, plural, =0 {aucun salon abonné} one {# salon abonné} other {# salons abonnés}}",
+      "trials": "Essais en cours",
+      "trialsDetail": "{amount} / mois à convertir · {soon} sous 7 jours",
+      "pastDue": "Impayés",
+      "pastDueNone": "Aucun salon en impayé",
+      "pastDueDetail": "{amount} / mois à risque",
+      "suspended": "Salons suspendus",
+      "suspendedDetail": "{canceled, plural, one {# résilié} other {# résiliés}} · {pending, plural, one {# paiement en attente} other {# paiements en attente}}"
+    },
+    "openings": {
+      "title": "Ouvertures — 12 dernières semaines",
+      "count": "{count, plural, =0 {aucun salon} one {# salon} other {# salons}}"
+    },
+    "activation": {
+      "title": "Activation des salons"
+    },
+    "trials": {
+      "title": "Essais qui se terminent",
+      "all": "Tous les essais",
+      "none": "Aucun essai ne se termine dans les 7 jours.",
+      "today": "Aujourd’hui",
+      "days": "{count} j"
+    },
+    "byBilling": {
+      "title": "Salons par facturation"
+    },
+    "recent": {
+      "title": "Derniers salons ouverts",
+      "all": "Tous",
+      "none": "Aucun salon pour l’instant."
+    }
+  },
+  "widgets": {
+    "weeksLabel": "Ouvertures de salons par semaine",
+    "weekSummary": "Semaine du {week} : {signup, plural, one {# inscription en ligne} other {# inscriptions en ligne}}, {console, plural, one {# ouverture par la console} other {# ouvertures par la console}}",
+    "legendSignup": "Inscription en ligne",
+    "legendConsole": "Ouvert par la console",
+    "funnel": {
+      "opened": "Salons ouverts",
+      "configured": "Prestation et praticien en place",
+      "booked": "Au moins un rendez-vous",
+      "active": "Un rendez-vous ces 30 derniers jours"
+    }
+  },
+  "tenants": {
+    "title": "Salons de la plateforme",
+    "searchLabel": "Rechercher",
+    "searchPlaceholder": "Nom, adresse, e-mail de contact ou d’un gérant",
+    "billingLabel": "Facturation",
+    "billingAny": "Toutes",
+    "stateLabel": "État",
+    "stateAny": "Tous",
+    "filter": "Filtrer",
+    "clear": "Effacer",
+    "count": "{count, plural, =0 {Aucun salon} one {# salon} other {# salons}}",
+    "countFiltered": "{count, plural, =0 {Aucun salon} one {# salon} other {# salons}} correspondant aux filtres",
+    "export": "Exporter en CSV",
+    "newTenant": "Ouvrir un salon",
+    "emptyFiltered": {
+      "title": "Aucun salon ne correspond",
+      "description": "Élargissez la recherche, ou effacez les filtres pour revoir tous les salons.",
+      "action": "Effacer les filtres"
+    },
+    "empty": {
+      "title": "Aucun salon ouvert pour l’instant",
+      "description": "Ouvrez le premier : vous obtiendrez le lien d’activation à envoyer au gérant, l’adresse de son back-office et sa page de réservation.",
+      "action": "Ouvrir un salon"
+    },
+    "pagination": {
+      "label": "Pages de la liste",
+      "previous": "Page précédente",
+      "next": "Page suivante",
+      "position": "Page {page} sur {pages}"
+    },
+    "table": {
+      "name": "Salon",
+      "address": "Adresse",
+      "zoneCurrency": "Fuseau · devise",
+      "openedOn": "Ouvert le",
+      "billing": "Facturation",
+      "status": "Statut",
+      "actions": "Actions",
+      "reveal": "Liens d’accès",
+      "hide": "Masquer les liens",
+      "reissuing": "Réémission de l’invitation…",
+      "reissued": "Nouvelle invitation émise pour {email}. Si le compte est déjà activé, le lien d’activation reste sans effet : seul le back-office sert."
+    }
+  },
+  "state": {
+    "active": "Actif",
+    "suspended": "Suspendu"
+  },
+  "record": {
+    "crumbs": "Fil d’Ariane",
+    "tenants": "Salons",
+    "identity": "/{slug} · {origin} le {date} · {zone} · {currency}",
+    "storefront": "Vitrine",
+    "backOffice": "Back-office",
+    "newTab": " (nouvel onglet)",
+    "setup": {
+      "title": "Mise en route",
+      "progress": "{done, plural, one {# étape} other {# étapes}} sur {total}",
+      "label": "Mise en route : {done, plural, one {# étape} other {# étapes}} sur {total}",
+      "done": " — fait",
+      "todo": " — à faire"
+    },
+    "activity": {
+      "title": "Activité — 30 derniers jours",
+      "clients": "{count, plural, =0 {aucun compte client} one {# compte client} other {# comptes clients}}",
+      "created": "Réservations prises",
+      "upcoming": "À venir",
+      "completed": "Honorés",
+      "noShow": "Non honorés",
+      "cancelled": "Annulés",
+      "never": "Aucune réservation depuis l’ouverture.",
+      "last": "Dernière réservation prise le {stamp}."
+    },
+    "accounts": {
+      "title": "Comptes du salon",
+      "count": "{count, plural, =0 {aucun compte} one {# compte} other {# comptes}}",
+      "none": "Aucun compte interne.",
+      "name": "Nom",
+      "role": "Rôle",
+      "state": "État",
+      "lastLogin": "Dernière connexion",
+      "never": "Jamais",
+      "roles": {
+        "admin": "Administrateur·rice",
+        "manager": "Gérant·e",
+        "staff": "Praticien·ne"
+      },
+      "states": {
+        "disabled": "Désactivé",
+        "pending": "Invitation en attente",
+        "active": "Actif"
+      }
+    },
+    "history": {
+      "title": "Historique et notes",
+      "none": "Aucune note ni action de la console sur ce salon pour l’instant."
+    },
+    "billing": {
+      "title": "Abonnement",
+      "status": "Statut",
+      "trialEnd": "Fin de l’essai",
+      "periodEnd": "Fin de la période en cours",
+      "stripe": "Client Stripe",
+      "noStripe": "Aucun — salon hors facturation",
+      "stripeHint": " (tableau de bord Stripe, nouvel onglet)"
+    },
+    "contact": {
+      "title": "Coordonnées",
+      "email": "E-mail",
+      "phone": "Téléphone",
+      "address": "Adresse",
+      "legalName": "Raison sociale",
+      "language": "Langue du salon",
+      "languageUnknown": "Indisponible tant que le salon est suspendu",
+      "missing": "Non renseigné",
+      "missingFeminine": "Non renseignée"
+    },
+    "access": {
+      "title": "Accès du gérant"
+    },
+    "suspendTitle": "Suspendre le salon",
+    "suspendedTitle": "Salon suspendu"
+  },
+  "actions": {
+    "accessHint": "Émet une nouvelle invitation pour l’administrateur et affiche les trois liens à lui remettre. Sans effet sur un compte déjà activé, sinon de redonner l’adresse du back-office.",
+    "accessSend": "Renvoyer les liens d’accès",
+    "accessAgain": "Réémettre à nouveau",
+    "accessPending": "Réémission de l’invitation…",
+    "accessIssued": "Nouvelle invitation émise pour {email}.",
+    "linksUnavailable": "Liens indisponibles",
+    "noAdmin": "Ce salon n’a aucun compte administrateur à réinviter.",
+    "suspendHint": "La suspension ferme la vitrine, la réservation et la connexion au back-office, et coupe les sessions ouvertes. Réversible.",
+    "suspendedHint": "Le salon est suspendu : sa vitrine et son back-office répondent « introuvable ».",
+    "suspend": "Suspendre le salon",
+    "reactivate": "Réactiver le salon",
+    "reasonRequired": "Indiquez le motif — il est gardé dans l’historique du salon.",
+    "reasonHint": "Gardé dans l’historique du salon, visible des autres opérateurs.",
+    "suspendReason": "Motif de la suspension",
+    "reactivateReason": "Motif de la réactivation",
+    "confirmSuspend": "Confirmer la suspension",
+    "confirmReactivate": "Confirmer la réactivation",
+    "suspending": "Suspension…",
+    "reactivating": "Réactivation…",
+    "cancel": "Annuler",
+    "noteLabel": "Ajouter une note",
+    "noteHint": "Visible des seuls opérateurs. Pas de données de clientes.",
+    "notePlaceholder": "Ex. : gérante relancée par téléphone, rappel prévu lundi.",
+    "noteEmpty": "La note est vide.",
+    "noteInvalid": "La note est invalide.",
+    "noteSubmit": "Enregistrer la note",
+    "noteSaving": "Enregistrement…"
+  },
+  "access": {
+    "invitationLabel": "1. Lien d’activation du gérant",
+    "invitationHint": "À envoyer au gérant : il y choisit son mot de passe et arrive dans son back-office. Valable {expiry}, une seule fois.",
+    "adminLabel": "2. Back-office du salon",
+    "adminHint": "L’adresse de connexion du gérant et de son équipe, une fois le compte activé.",
+    "bookingLabel": "3. Page de réservation",
+    "bookingHint": "Le lien public que le salon partage à ses clientes.",
+    "copy": "Copier",
+    "copied": "Copié",
+    "expiryDays": "{count, plural, one {# jour} other {# jours}}",
+    "expiryHours": "{count} h"
+  },
+  "create": {
+    "title": "Ouvrir un salon",
+    "salonLegend": "Le salon",
+    "name": "Nom du salon",
+    "slug": "Adresse web du salon",
+    "slugHint": "Minuscules, chiffres et tirets. Elle apparaît dans tous ses liens : /maison-lotus/reservation.",
+    "addressLine1": "Adresse",
+    "addressLine2": "Complément d’adresse",
+    "postalCode": "Code postal",
+    "city": "Ville",
+    "country": "Pays",
+    "timezone": "Fuseau horaire",
+    "timezoneHint": "Tous les créneaux du salon s’affichent dans ce fuseau.",
+    "currency": "Devise",
+    "language": "Langue du salon",
+    "languageHint": "La langue dans laquelle s’ouvrent sa vitrine, son back-office et ses e-mails. Le salon peut la changer dans ses réglages.",
+    "ownerLegend": "Le gérant",
+    "ownerHint": "Il devient administrateur du salon : il gère les prestations, les horaires, l’équipe et les réglages. Aucun e-mail ne part automatiquement — vous lui remettez le lien d’activation.",
+    "firstName": "Prénom",
+    "lastName": "Nom",
+    "email": "Adresse e-mail",
+    "cancel": "Annuler",
+    "submit": "Ouvrir le salon",
+    "submitting": "Ouverture du salon…",
+    "openedTitle": "{name} est ouvert",
+    "replayedTitle": "{name} était déjà ouvert",
+    "openedBody": "Un compte administrateur a été créé pour {firstName} {lastName} ({email}). Envoyez-lui le lien d’activation ci-dessous : il y choisira son mot de passe, puis pourra saisir ses prestations, ses horaires et inviter son équipe.",
+    "openAnother": "Ouvrir un autre salon",
+    "seeRecord": "Voir la fiche du salon",
+    "failureTitle": "Le salon n’a pas été ouvert",
+    "fieldErrors": {
+      "name": "Indiquez le nom du salon.",
+      "slug": "Minuscules, chiffres et tirets seulement.",
+      "slugTaken": "Cette adresse est déjà prise ou réservée — choisissez-en une autre.",
+      "slugReserved": "Cette adresse est réservée par la plateforme — choisissez-en une autre.",
+      "addressLine1": "Indiquez l’adresse.",
+      "addressLine2": "Ce complément d’adresse est trop long.",
+      "postalCode": "Ce code postal est trop long.",
+      "city": "Indiquez la ville.",
+      "countryCode": "Choisissez le pays.",
+      "timezone": "Choisissez le fuseau horaire.",
+      "defaultCurrency": "Choisissez la devise.",
+      "defaultLocale": "Choisissez la langue.",
+      "adminFirstName": "Indiquez le prénom du gérant.",
+      "adminLastName": "Indiquez le nom du gérant.",
+      "adminEmail": "Saisissez une adresse e-mail valide."
+    },
+    "errors": {
+      "emailTaken": "Cette adresse a déjà un compte."
+    }
+  },
+  "errors": {
+    "validation": "Le formulaire contient une erreur. Vérifiez les champs.",
+    "tooManyRequests": "Trop de tentatives. Patientez une minute avant de réessayer.",
+    "unavailable": "Le service est momentanément injoignable. Merci de réessayer dans un instant.",
+    "unexpected": "Une erreur inattendue est survenue. Merci de réessayer."
+  },
+  "billingStatus": {
+    "managed": "Géré par la plateforme",
+    "pending": "Paiement en attente",
+    "trialing": "Essai",
+    "active": "Abonné",
+    "past_due": "Impayé",
+    "canceled": "Résilié"
+  },
+  "badge": {
+    "trialEnds": "Essai · fin le {date}",
+    "pastDue": "Impayé — relance"
+  },
+  "origin": {
+    "console": "Ouvert par la console",
+    "signup": "Inscrit en ligne",
+    "legacy": "Créé hors console"
+  },
+  "setup": {
+    "admin": {
+      "label": "Compte administrateur activé",
+      "done": "Le gérant a posé son mot de passe.",
+      "todo": "Invitation non acceptée — renvoyer les liens d’accès."
+    },
+    "address": {
+      "label": "Adresse du salon",
+      "done": "Affichée sur la vitrine.",
+      "todo": "À saisir dans les réglages du salon."
+    },
+    "openingHours": {
+      "label": "Horaires d’ouverture",
+      "done": "Renseignés.",
+      "todo": "Aucun horaire saisi."
+    },
+    "services": {
+      "label": "Prestations en ligne",
+      "doneOne": "{count} prestation active",
+      "doneOther": "{count} prestations actives",
+      "todo": "Aucune prestation active."
+    },
+    "staff": {
+      "label": "Praticiens avec horaires",
+      "doneOne": "Horaires saisis pour {withSchedule} sur {active} praticien·ne actif·ve",
+      "doneOther": "Horaires saisis pour {withSchedule} sur {active} praticien·ne·s actif·ve·s",
+      "todo": "Aucun praticien actif."
+    },
+    "legal": {
+      "label": "Identité légale (ticket de caisse)",
+      "done": "Raison sociale et identifiant renseignés.",
+      "todo": "Raison sociale ou SIRET / NIF manquant."
+    },
+    "firstAppointment": {
+      "label": "Premier rendez-vous",
+      "done": "Le {date}",
+      "todo": "Aucun rendez-vous pour l’instant."
+    }
+  },
+  "events": {
+    "provisioned": "Salon ouvert depuis la console",
+    "note": "Note",
+    "suspended": "Salon suspendu",
+    "reactivated": "Salon réactivé",
+    "invitationReissued": "Liens d’accès renvoyés"
+  },
+  "csv": {
+    "name": "Salon",
+    "address": "Adresse",
+    "origin": "Origine",
+    "billing": "Facturation",
+    "trialEnd": "Fin d’essai",
+    "state": "État",
+    "openedOn": "Ouvert le",
+    "timezone": "Fuseau",
+    "currency": "Devise",
+    "originConsole": "Console",
+    "originSignup": "Libre-service",
+    "originLegacy": "Hors console",
+    "stateActive": "Actif",
+    "stateSuspended": "Suspendu"
+  },
+  "export": {
+    "failed": "L’export n’a pas pu être produit. Merci de réessayer."
+  }
+}

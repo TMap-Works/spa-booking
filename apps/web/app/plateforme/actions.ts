@@ -10,6 +10,15 @@
  * Les **liens** rendus par l'ouverture d'un salon portent, eux, un jeton
  * d'invitation : c'est leur raison d'être — l'opérateur les remet au gérant — et
  * ils ne sont affichés qu'à lui.
+ *
+ * ## Les `message` de ce module sont des diagnostics, jamais de l'affichage (#1106)
+ *
+ * Ils restent en français, et aucun écran ne les montre : chaque composant de la
+ * console lit le **code** du refus et écrit sa propre phrase dans la langue de la
+ * session (web-frontend §2). Les traduire ici aurait demandé à chaque action de
+ * résoudre la langue de la requête pour produire un texte que personne ne lit —
+ * et aurait laissé deux écritures du même message, celle de l'action et celle de
+ * l'écran, libres de diverger.
  */
 
 import {

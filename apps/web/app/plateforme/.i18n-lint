@@ -1,0 +1,4 @@
+# Marqueur de lint i18n — voir eslint-rules/i18n-markers.mjs.
+# La console de l'éditeur (ADR 0012) entière, traduite par #1106 : la coquille,
+# le rail, la connexion à deux facteurs, le tableau de bord, la liste, la fiche,
+# le formulaire d'ouverture et l'export. Marqueur vide : tout le sous-arbre.

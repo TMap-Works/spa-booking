@@ -1,7 +1,13 @@
 'use client';
 
 import { zodResolver } from '@hookform/resolvers/zod';
-import { ERROR_CODES, platformLoginRequestSchema, type PlatformLoginRequest } from '@spa/shared';
+import {
+  ERROR_CODES,
+  PLATFORM_PASSWORD_MIN_LENGTH,
+  platformLoginRequestSchema,
+  type PlatformLoginRequest,
+} from '@spa/shared';
+import { useTranslations } from 'next-intl';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 import { useForm } from 'react-hook-form';
@@ -19,36 +25,44 @@ import { PLATFORM_CONSOLE_PATH } from '../paths';
  * Le refus ne dit jamais lequel des trois facteurs est faux — l'API ne le dit
  * pas non plus (`INVALID_PLATFORM_CREDENTIALS`). Le seul conseil utile est donc
  * celui du code, le facteur qui expire toutes les trente secondes.
+ *
+ * ## Les refus sont lus sur le code, jamais sur le message (#1106)
+ *
+ * Le message que porte un refus est écrit côté serveur — dans le contrat partagé
+ * ou dans l'API —, donc en français : l'afficher tel quel rendrait un écran
+ * anglais bilingue à la première erreur. La table ci-dessous traduit donc
+ * **chaque code**, et le repli est un message du catalogue et non `result.message`.
+ *
+ * Même règle pour les refus de champ : les messages de `platformLoginRequestSchema`
+ * sont des littéraux français, et ne peuvent pas se traduire là où ils sont
+ * écrits — `packages/shared` est lu par l'API autant que par le front, et n'a
+ * pas de langue de requête. L'écran traduit donc par champ.
  */
 
-const FAILURE_COPY: ReadonlyMap<string, { title: string; message: string }> = new Map([
-  [
-    ERROR_CODES.INVALID_PLATFORM_CREDENTIALS,
-    {
-      title: 'Connexion refusée',
-      message:
-        'Adresse, mot de passe ou code incorrect. Si le code venait d’expirer, saisissez le suivant.',
-    },
-  ],
-  [
-    ERROR_CODES.TOO_MANY_REQUESTS,
-    {
-      title: 'Trop de tentatives',
-      message: 'Patientez une minute avant de réessayer.',
-    },
-  ],
-  [
-    ERROR_CODES.SERVICE_UNAVAILABLE,
-    {
-      title: 'Service indisponible',
-      message: 'Le service est momentanément injoignable. Merci de réessayer dans un instant.',
-    },
-  ],
-]);
+/** Les clés d'un couple titre + corps d'échec, telles que `t()` les accepte. */
+type FailureKey = 'credentials' | 'throttled' | 'unavailable' | 'validation' | 'unexpected';
+
+/** Ce que chaque refus de l'API devient à l'écran. */
+const FAILURE_KEYS: Readonly<Record<string, FailureKey>> = {
+  [ERROR_CODES.INVALID_PLATFORM_CREDENTIALS]: 'credentials',
+  [ERROR_CODES.UNAUTHORIZED]: 'credentials',
+  [ERROR_CODES.TOO_MANY_REQUESTS]: 'throttled',
+  [ERROR_CODES.SERVICE_UNAVAILABLE]: 'unavailable',
+  [ERROR_CODES.VALIDATION_ERROR]: 'validation',
+  [ERROR_CODES.BAD_REQUEST]: 'validation',
+};
+
+/** Ce qu'un champ refusé annonce — un message par champ, jamais par code de Zod. */
+const FIELD_ERROR_KEYS = {
+  email: 'login.fieldErrors.email',
+  password: 'login.fieldErrors.password',
+  totpCode: 'login.fieldErrors.totpCode',
+} as const;
 
 export function PlatformLoginForm({ expired }: { readonly expired: boolean }) {
+  const t = useTranslations('platform');
   const router = useRouter();
-  const [failure, setFailure] = useState<{ title: string; message: string } | null>(null);
+  const [failure, setFailure] = useState<FailureKey | null>(null);
 
   const {
     register,
@@ -61,14 +75,18 @@ export function PlatformLoginForm({ expired }: { readonly expired: boolean }) {
     mode: 'onTouched',
   });
 
+  /** Ce qu'affiche un champ refusé — rien s'il ne l'est pas. */
+  const fieldError = (name: keyof typeof FIELD_ERROR_KEYS): string | undefined =>
+    errors[name] === undefined
+      ? undefined
+      : t(FIELD_ERROR_KEYS[name], { min: PLATFORM_PASSWORD_MIN_LENGTH });
+
   const submit = handleSubmit(async (values) => {
     setFailure(null);
     const result = await platformLoginAction(values);
 
     if (!result.ok) {
-      setFailure(
-        FAILURE_COPY.get(result.code) ?? { title: 'Connexion impossible', message: result.message },
-      );
+      setFailure(FAILURE_KEYS[result.code] ?? 'unexpected');
       // Un code refusé ne resservira pas : le vider épargne une seconde erreur.
       resetField('totpCode');
       return;
@@ -86,48 +104,48 @@ export function PlatformLoginForm({ expired }: { readonly expired: boolean }) {
       noValidate
     >
       <h1 className="spa-admin__section-title" id="plateforme-connexion-titre">
-        Console plateforme — se connecter
+        {t('login.title')}
       </h1>
 
       {expired ? (
-        <Notification tone="warning" title="Votre session a expiré">
-          <p>Une session de console dure trente minutes. Reconnectez-vous avec un nouveau code.</p>
+        <Notification tone="warning" title={t('login.expired.title')}>
+          <p>{t('login.expired.body')}</p>
         </Notification>
       ) : null}
 
       {failure === null ? null : (
-        <Notification tone="danger" title={failure.title}>
-          <p>{failure.message}</p>
+        <Notification tone="danger" title={t(`login.errors.${failure}.title`)}>
+          <p>{t(`login.errors.${failure}.body`)}</p>
         </Notification>
       )}
 
       <Field
         id="plateforme-email"
-        label="Adresse e-mail"
+        label={t('login.email')}
         type="email"
         autoComplete="username"
         required
-        error={errors.email?.message}
+        error={fieldError('email')}
         {...register('email')}
       />
       <Field
         id="plateforme-password"
-        label="Mot de passe"
+        label={t('login.password')}
         type="password"
         autoComplete="current-password"
         required
-        error={errors.password?.message}
+        error={fieldError('password')}
         {...register('password')}
       />
       <Field
         id="plateforme-totp"
-        label="Code de vérification"
-        hint="Les six chiffres affichés par votre application d’authentification."
+        label={t('login.totp')}
+        hint={t('login.totpHint')}
         inputMode="numeric"
         autoComplete="one-time-code"
         maxLength={6}
         required
-        error={errors.totpCode?.message}
+        error={fieldError('totpCode')}
         {...register('totpCode')}
       />
       <Button
@@ -135,9 +153,9 @@ export function PlatformLoginForm({ expired }: { readonly expired: boolean }) {
         variant="accent"
         block
         loading={isSubmitting}
-        loadingLabel="Connexion en cours…"
+        loadingLabel={t('login.submitting')}
       >
-        Se connecter
+        {t('login.submit')}
       </Button>
     </form>
   );

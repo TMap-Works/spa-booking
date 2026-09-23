@@ -1,6 +1,7 @@
 'use client';
 
 import type { TenantAccessLinks } from '@spa/shared';
+import { useTranslations } from 'next-intl';
 import { useState } from 'react';
 
 import { Button } from '@/components/ui/button';
@@ -13,13 +14,16 @@ import { Button } from '@/components/ui/button';
  * depuis la liste des salons. Il est affiché ici et nulle part ailleurs.
  */
 
-function expiryLabel(seconds: number): string {
-  const days = Math.round(seconds / 86_400);
-
-  return days >= 1 ? `${String(days)} jour${days > 1 ? 's' : ''}` : `${String(Math.round(seconds / 3600))} h`;
+/** Ce que porte un lien : son libellé, ce qu'il sert, et l'adresse elle-même. */
+interface CopyableLinkProps {
+  readonly id: string;
+  readonly label: string;
+  readonly hint: string;
+  readonly url: string;
 }
 
-function CopyableLink({ id, label, hint, url }: { id: string; label: string; hint: string; url: string }) {
+function CopyableLink({ id, label, hint, url }: CopyableLinkProps) {
+  const t = useTranslations('platform');
   const [copied, setCopied] = useState(false);
 
   const copy = async (): Promise<void> => {
@@ -47,7 +51,7 @@ function CopyableLink({ id, label, hint, url }: { id: string; label: string; hin
           onFocus={(event) => event.currentTarget.select()}
         />
         <Button variant="neutral" onClick={() => void copy()}>
-          {copied ? 'Copié' : 'Copier'}
+          {copied ? t('access.copied') : t('access.copy')}
         </Button>
       </div>
     </div>
@@ -55,24 +59,35 @@ function CopyableLink({ id, label, hint, url }: { id: string; label: string; hin
 }
 
 export function AccessLinks({ idPrefix, links }: { idPrefix: string; links: TenantAccessLinks }) {
+  const t = useTranslations('platform');
+  // Le délai d'expiration s'annonce en jours dès qu'il en couvre un ; en heures
+  // sinon. Deux clés et non une règle de pluriel sur une même phrase : « 1 jour »
+  // et « 7 jours » ne sont pas la même forme dans les deux langues.
+  const seconds = links.invitationExpiresIn;
+  const days = Math.round(seconds / 86_400);
+  const expiry =
+    days >= 1
+      ? t('access.expiryDays', { count: days })
+      : t('access.expiryHours', { count: Math.round(seconds / 3600) });
+
   return (
     <div className="spa-platform-links">
       <CopyableLink
         id={`${idPrefix}-invitation`}
-        label="1. Lien d’activation du gérant"
-        hint={`À envoyer au gérant : il y choisit son mot de passe et arrive dans son back-office. Valable ${expiryLabel(links.invitationExpiresIn)}, une seule fois.`}
+        label={t('access.invitationLabel')}
+        hint={t('access.invitationHint', { expiry })}
         url={links.adminInvitationUrl}
       />
       <CopyableLink
         id={`${idPrefix}-admin`}
-        label="2. Back-office du salon"
-        hint="L’adresse de connexion du gérant et de son équipe, une fois le compte activé."
+        label={t('access.adminLabel')}
+        hint={t('access.adminHint')}
         url={links.adminLoginUrl}
       />
       <CopyableLink
         id={`${idPrefix}-booking`}
-        label="3. Page de réservation"
-        hint="Le lien public que le salon partage à ses clientes."
+        label={t('access.bookingLabel')}
+        hint={t('access.bookingHint')}
         url={links.bookingUrl}
       />
     </div>
