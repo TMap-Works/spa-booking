@@ -38,7 +38,12 @@ import { contact, presence, service, tenant } from './fixtures';
 
 vi.mock('@/app/(booking)/[tenantSlug]/reservation/actions', () => ({
   loadAvailabilityAction: vi.fn(),
-  bookAppointmentAction: vi.fn(),
+}));
+
+// La réservation part vers l'espace client depuis #1207 : c'est ce module-là
+// que le tunnel importe désormais, et qu'il faut neutraliser ici.
+vi.mock('@/app/(booking)/[tenantSlug]/reservation/booking-request', () => ({
+  requestBooking: vi.fn(),
 }));
 
 /** Le mot laissé au salon, celui que le rechargement emportait. */

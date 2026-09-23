@@ -8,11 +8,13 @@ import { contact, service, tenant } from './fixtures';
 
 const bookAppointmentAction = vi.fn();
 
-// Le composant appelle une action serveur ; sous test, c'est un module Next qui
-// n'existe pas hors du serveur. On le remplace entièrement — ce qu'on éprouve
-// ici est le comportement du bouton, pas le transport.
-vi.mock('@/app/(booking)/[tenantSlug]/reservation/actions', () => ({
-  bookAppointmentAction: (...args: unknown[]) => bookAppointmentAction(...args),
+// Le composant poste sa réservation sur une adresse de l'espace client depuis
+// #1207 — seule à recevoir les cookies de session. On remplace ce module-là
+// entièrement : ce qu'on éprouve ici est le comportement du bouton, pas le
+// transport. Le nom de la doublure ne change pas, parce que le geste, lui, n'a
+// pas changé.
+vi.mock('@/app/(booking)/[tenantSlug]/reservation/booking-request', () => ({
+  requestBooking: (...args: unknown[]) => bookAppointmentAction(...args),
 }));
 
 afterEach(() => {
