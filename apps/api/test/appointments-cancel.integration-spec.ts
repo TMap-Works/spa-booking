@@ -87,8 +87,13 @@ describe('Annulation d’un rendez-vous — les deux surfaces', () => {
    * la garde a ses propres cas plus bas.
    */
   async function book(): Promise<{ id: string; clientId: string; authorization: string }> {
+    const authorization = await bearerFor(harness.a.clientId, 'CLIENT');
     const response = await request(harness.server())
       .post(BOOKING_PATH(harness.a.tenant.slug))
+      // Réserver exige la cliente authentifiée depuis #1136 — le pendant de
+      // #1135 sur la porte d'entrée du tunnel. C'est donc le **même** porteur
+      // qui pose le rendez-vous et qui l'annule ensuite.
+      .set('Authorization', authorization)
       .send({
         serviceId: harness.a.serviceId,
         staffId: harness.a.staffId,
@@ -98,12 +103,20 @@ describe('Annulation d’un rendez-vous — les deux surfaces', () => {
       });
 
     expect(response.status).toBe(201);
-    const clientId = String(response.body.clientId);
-    return {
-      id: String(response.body.id),
-      clientId,
-      authorization: await bearerFor(clientId, 'CLIENT'),
-    };
+    return { id: String(response.body.id), clientId: String(response.body.clientId), authorization };
+  }
+
+  /**
+   * Une **autre** cliente du salon, et son porteur — celle qui reprend le
+   * créneau qu'une annulation vient de libérer (#1136).
+   *
+   * Avant, il suffisait de changer l'adresse e-mail du corps pour réserver sous
+   * une autre identité. La cliente venant désormais du jeton, il faut une
+   * seconde fiche et un second porteur.
+   */
+  async function anotherClient(email: string): Promise<string> {
+    const client = harness.appointments.seedClient({ tenantId: harness.a.tenant.id, email });
+    return bearerFor(client.id, 'CLIENT');
   }
 
   /**
@@ -215,11 +228,11 @@ describe('Annulation d’un rendez-vous — les deux surfaces', () => {
       // revend, sans qu'aucune libération n'ait été écrite.
       const reprise = await request(harness.server())
         .post(BOOKING_PATH(harness.a.tenant.slug))
+        .set('Authorization', await anotherClient('autre@example.test'))
         .send({
           serviceId: harness.a.serviceId,
           staffId: harness.a.staffId,
           startsAt: slot.startsAt.toISOString(),
-          client: { ...GUEST, email: 'autre@example.test' },
           dataConsent: true,
         });
 
@@ -238,13 +251,16 @@ describe('Annulation d’un rendez-vous — les deux surfaces', () => {
         serviceId: harness.a.serviceId,
         staffId: harness.a.staffId,
         startsAt: slot.startsAt.toISOString(),
-        client: { ...GUEST, email: 'autre@example.test' },
         dataConsent: true,
       };
-      await request(harness.server()).post(BOOKING_PATH(harness.a.tenant.slug)).send(payload);
+      await request(harness.server())
+        .post(BOOKING_PATH(harness.a.tenant.slug))
+        .set('Authorization', await anotherClient('autre@example.test'))
+        .send(payload);
       const troisieme = await request(harness.server())
         .post(BOOKING_PATH(harness.a.tenant.slug))
-        .send({ ...payload, client: { ...GUEST, email: 'troisieme@example.test' } });
+        .set('Authorization', await anotherClient('troisieme@example.test'))
+        .send(payload);
 
       // Le créneau a été rendu, il n'a pas été ouvert.
       expect(troisieme.status).toBe(409);
@@ -587,11 +603,11 @@ describe('Annulation d’un rendez-vous — les deux surfaces', () => {
 
       const reprise = await request(harness.server())
         .post(BOOKING_PATH(harness.a.tenant.slug))
+        .set('Authorization', await anotherClient('autre@example.test'))
         .send({
           serviceId: harness.a.serviceId,
           staffId: harness.a.staffId,
           startsAt: slot.startsAt.toISOString(),
-          client: { ...GUEST, email: 'autre@example.test' },
           dataConsent: true,
         });
 

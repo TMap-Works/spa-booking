@@ -246,6 +246,15 @@ export class FakeAppointmentsRepository {
   public seedClient(input: {
     tenantId: string;
     email: string;
+    /**
+     * L'identifiant de la fiche, tiré au hasard par défaut.
+     *
+     * Nommé depuis #1136 : le tunnel public réserve désormais pour la cliente
+     * d'un **jeton**, et une suite qui veut exercer cette porte doit pouvoir
+     * semer la fiche que ce jeton désigne. Sans lui, il n'y avait aucun moyen de
+     * faire coïncider `AppointmentClientPrincipal.userId` et une ligne du double.
+     */
+    id?: string;
     firstName?: string;
     lastName?: string;
     phone?: string | null;
@@ -255,7 +264,7 @@ export class FakeAppointmentsRepository {
   }): StoredClient {
     const client: StoredClient = {
       tenantId: input.tenantId,
-      id: randomUUID(),
+      id: input.id ?? randomUUID(),
       email: input.email,
       firstName: input.firstName ?? 'Cliente',
       lastName: input.lastName ?? 'Fidèle',
@@ -880,17 +889,18 @@ export class FakeAppointmentsRepository {
     client: ClientReference,
   ): { id: string; created: boolean } {
     if ('clientId' in client) {
-      // La forme du comptoir (#461) : la fiche est **désignée**, pas résolue.
-      // Le vrai la laisse descendre jusqu'aux clés étrangères composites
-      // `(tenant_id, client_id)`, et `AppointmentsRepository.create` traduit
-      // leur refus en 404. Ce double reproduit la seule chose dont l'appelant
-      // dépend : une fiche inconnue de **cet** établissement est introuvable,
-      // jamais interdite — un 403 confirmerait son existence ailleurs.
-      const known = this.clients.some(
+      // La forme du comptoir (#461) et, depuis #1136, celle du tunnel public :
+      // la fiche est **désignée**, pas résolue. Le vrai la fait traverser
+      // `crm.assertBookableWithin` (#465), qui juge trois choses d'un même 404 —
+      // la fiche existe, elle est de cet établissement, et son rôle est
+      // `CLIENT`. Le rôle n'est pas un détail de double : `appointments.client_id`
+      // référence `users`, où vivent aussi les comptes du personnel, et un 403
+      // à la place du 404 confirmerait l'existence de la fiche voisine.
+      const known = this.clients.find(
         (candidate) => candidate.tenantId === tenantId && candidate.id === client.clientId,
       );
 
-      if (!known) {
+      if (known === undefined || known.role !== 'CLIENT') {
         throw new NotFoundError('Cliente introuvable.');
       }
 

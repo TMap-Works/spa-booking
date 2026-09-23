@@ -70,6 +70,7 @@ describe('Isolation inter-tenant — réservation publique', () => {
   it('refuse en 404 la prestation de A demandée sous le slug de B', async () => {
     const response = await request(harness.server())
       .post(BOOKING_PATH(harness.b.tenant.slug))
+      .set('Authorization', await harness.bearer(harness.b))
       .send({
         serviceId: harness.a.serviceId,
         staffId: harness.a.staffId,
@@ -110,6 +111,7 @@ describe('Isolation inter-tenant — réservation publique', () => {
     it('accepte le numéro français sous le slug de A, qui est le salon français', async () => {
       const response = await request(harness.server())
         .post(BOOKING_PATH(harness.a.tenant.slug))
+        .set('Authorization', await harness.bearer(harness.a))
         .send({
           serviceId: harness.a.serviceId,
           staffId: harness.a.staffId,
@@ -118,14 +120,17 @@ describe('Isolation inter-tenant — réservation publique', () => {
           dataConsent: true,
         });
 
+      // Le **statut** : depuis #1136 les coordonnées du corps n'atteignent plus
+      // aucune fiche, et c'est le verdict de la frontière qui dit quel pays a
+      // été lu. Le rendez-vous, lui, est bien posé dans l'établissement du slug.
       expect(response.status).toBe(201);
-      expect(harness.appointments.clients[0]?.tenantId).toBe(harness.a.tenant.id);
-      expect(harness.appointments.clients[0]?.phone).toBe('+33612345678');
+      expect(harness.appointments.appointments[0]?.tenantId).toBe(harness.a.tenant.id);
     });
 
     it('refuse le même numéro sous le slug de B — son pays n’est pas celui de A', async () => {
       const response = await request(harness.server())
         .post(BOOKING_PATH(harness.b.tenant.slug))
+        .set('Authorization', await harness.bearer(harness.b))
         .send({
           serviceId: harness.b.serviceId,
           staffId: harness.b.staffId,
@@ -139,13 +144,13 @@ describe('Isolation inter-tenant — réservation publique', () => {
       // qu'aucune cliente ne lui a donné.
       expect(response.status).toBe(400);
       expect(response.body).toMatchObject({ code: 'VALIDATION_ERROR' });
-      expect(harness.appointments.clients).toHaveLength(0);
       expect(harness.appointments.appointments).toHaveLength(0);
     });
 
     it('n’expose le pays du voisin ni dans le refus ni dans la réponse', async () => {
       const response = await request(harness.server())
         .post(BOOKING_PATH(harness.b.tenant.slug))
+        .set('Authorization', await harness.bearer(harness.b))
         .send({
           serviceId: harness.b.serviceId,
           staffId: harness.b.staffId,
@@ -166,6 +171,7 @@ describe('Isolation inter-tenant — réservation publique', () => {
   it('refuse en 404 la prestation de B demandée sous le slug de A', async () => {
     const response = await request(harness.server())
       .post(BOOKING_PATH(harness.a.tenant.slug))
+      .set('Authorization', await harness.bearer(harness.a))
       .send({
         serviceId: harness.b.serviceId,
         staffId: harness.b.staffId,
@@ -181,6 +187,7 @@ describe('Isolation inter-tenant — réservation publique', () => {
   it('refuse en 409 le praticien de B sur une prestation de A', async () => {
     const response = await request(harness.server())
       .post(BOOKING_PATH(harness.a.tenant.slug))
+      .set('Authorization', await harness.bearer(harness.a))
       .send({
         serviceId: harness.a.serviceId,
         staffId: harness.b.staffId,
@@ -200,6 +207,7 @@ describe('Isolation inter-tenant — réservation publique', () => {
   it('ne partage pas la fiche cliente entre deux établissements', async () => {
     const inA = await request(harness.server())
       .post(BOOKING_PATH(harness.a.tenant.slug))
+      .set('Authorization', await harness.bearer(harness.a))
       .send({
         serviceId: harness.a.serviceId,
         staffId: harness.a.staffId,
@@ -209,6 +217,7 @@ describe('Isolation inter-tenant — réservation publique', () => {
       });
     const inB = await request(harness.server())
       .post(BOOKING_PATH(harness.b.tenant.slug))
+      .set('Authorization', await harness.bearer(harness.b))
       .send({
         serviceId: harness.b.serviceId,
         staffId: harness.b.staffId,
@@ -219,21 +228,45 @@ describe('Isolation inter-tenant — réservation publique', () => {
 
     expect(inA.status).toBe(201);
     expect(inB.status).toBe(201);
-    // Deux fiches, une par salon : l'unicité de l'adresse est `(tenant_id,
-    // email)`, et une fiche partagée ferait de l'historique d'une cliente une
-    // donnée inter-établissement.
-    expect(harness.appointments.clients).toHaveLength(2);
+    // Deux comptes, un par salon : une cliente a un compte **chez un salon**, et
+    // un compte partagé ferait de son historique une donnée inter-établissement.
+    // Depuis #1136 c'est le jeton qui le dit, et non plus une adresse e-mail
+    // résolue au passage — la propriété est la même, et elle se lit désormais sur
+    // la ligne plutôt que dans une unicité `(tenant_id, email)`.
+    expect(inA.body.clientId).toBe(harness.a.clientId);
+    expect(inB.body.clientId).toBe(harness.b.clientId);
     expect(inA.body.clientId).not.toBe(inB.body.clientId);
-    expect(harness.appointments.clients.map((client) => client.tenantId).sort()).toEqual(
-      [harness.a.tenant.id, harness.b.tenant.id].sort(),
-    );
+  });
+
+  it('refuse en 401 le jeton d’une cliente de A présenté sous le slug de B', async () => {
+    // La frontière que ce ticket ajoute à cette suite : un jeton parfaitement
+    // valide, mais d'un autre établissement. `JwtAuthGuard` compare le `tenantId`
+    // du jeton **vérifié** à celui que le slug a résolu, et refuse avant tout
+    // code métier — rien du salon B n'est lu, et le corps ne dit rien de A.
+    const response = await request(harness.server())
+      .post(BOOKING_PATH(harness.b.tenant.slug))
+      .set('Authorization', await harness.bearer(harness.a))
+      .send({
+        serviceId: harness.b.serviceId,
+        staffId: harness.b.staffId,
+        startsAt: slot.startsAt.toISOString(),
+        dataConsent: true,
+      });
+
+    expect(response.status).toBe(401);
+    expect(JSON.stringify(response.body)).not.toContain(harness.a.tenant.id);
+    expect(JSON.stringify(response.body)).not.toContain(harness.a.clientId);
+    expect(harness.appointments.appointments).toHaveLength(0);
   });
 
   it('ne laisse pas le compte du personnel d’un voisin bloquer une réservation ici', async () => {
     // Le refus de #313 est **borné à l'établissement** : il vient d'une lecture
     // que l'extension Prisma scope au tenant courant. Une gérante du salon voisin
     // qui porte cette adresse n'a donc aucun effet ici — et la déduire d'un refus
-    // rendu chez le voisin serait une fuite inter-tenant.
+    // rendu chez le voisin serait une fuite inter-tenant. Depuis #1136 la
+    // réservation ne résout plus d'adresse du tout, ce qui ne rend pas le cas
+    // caduc : c'est `assertBookableWithin` qui juge la fiche, et elle est scopée
+    // de la même façon.
     harness.appointments.seedClient({
       tenantId: harness.b.tenant.id,
       email: GUEST.email,
@@ -242,6 +275,7 @@ describe('Isolation inter-tenant — réservation publique', () => {
 
     const response = await request(harness.server())
       .post(BOOKING_PATH(harness.a.tenant.slug))
+      .set('Authorization', await harness.bearer(harness.a))
       .send({
         serviceId: harness.a.serviceId,
         staffId: harness.a.staffId,
@@ -251,18 +285,19 @@ describe('Isolation inter-tenant — réservation publique', () => {
       });
 
     expect(response.status).toBe(201);
-    // Une fiche neuve chez A, et le compte du voisin intact.
-    const here = harness.appointments.clients.filter(
-      (client) => client.tenantId === harness.a.tenant.id,
+    // La cliente de A, et le compte du voisin intact.
+    expect(response.body.clientId).toBe(harness.a.clientId);
+    const voisine = harness.appointments.clients.filter(
+      (client) => client.tenantId === harness.b.tenant.id && client.email === GUEST.email,
     );
-    expect(here).toHaveLength(1);
-    expect(here[0]?.id).toBe(response.body.clientId);
-    expect(here[0]?.role).toBe('CLIENT');
+    expect(voisine).toHaveLength(1);
+    expect(voisine[0]?.role).toBe('MANAGER');
   });
 
   it('laisse deux établissements réserver le même instant sans se gêner', async () => {
     await request(harness.server())
       .post(BOOKING_PATH(harness.a.tenant.slug))
+      .set('Authorization', await harness.bearer(harness.a))
       .send({
         serviceId: harness.a.serviceId,
         staffId: harness.a.staffId,
@@ -273,6 +308,7 @@ describe('Isolation inter-tenant — réservation publique', () => {
 
     const response = await request(harness.server())
       .post(BOOKING_PATH(harness.b.tenant.slug))
+      .set('Authorization', await harness.bearer(harness.b))
       .send({
         serviceId: harness.b.serviceId,
         staffId: harness.b.staffId,
@@ -293,6 +329,7 @@ describe('Isolation inter-tenant — réservation publique', () => {
   it('n’écrit rien chez le voisin quand la réservation aboutit', async () => {
     const response = await request(harness.server())
       .post(BOOKING_PATH(harness.a.tenant.slug))
+      .set('Authorization', await harness.bearer(harness.a))
       .send({
         serviceId: harness.a.serviceId,
         staffId: harness.a.staffId,
@@ -329,6 +366,7 @@ describe('Isolation inter-tenant — réservation publique', () => {
 
       const response = await request(harness.server())
         .post(BOOKING_PATH(harness.a.tenant.slug))
+        .set('Authorization', await harness.bearer(harness.a))
         .send({
           serviceId: harness.a.serviceId,
           startsAt: slot.startsAt.toISOString(),
@@ -349,6 +387,7 @@ describe('Isolation inter-tenant — réservation publique', () => {
     it('ne réserve rien chez A quand la prestation du voisin est demandée sans praticien', async () => {
       const response = await request(harness.server())
         .post(BOOKING_PATH(harness.a.tenant.slug))
+        .set('Authorization', await harness.bearer(harness.a))
         .send({
           serviceId: harness.b.serviceId,
           startsAt: slot.startsAt.toISOString(),
@@ -399,6 +438,7 @@ describe('Isolation inter-tenant — report de rendez-vous', () => {
   async function bookInA(): Promise<{ id: string; authorization: string }> {
     const response = await request(harness.server())
       .post(BOOKING_PATH(harness.a.tenant.slug))
+      .set('Authorization', await harness.bearer(harness.a))
       .send({
         serviceId: harness.a.serviceId,
         staffId: harness.a.staffId,

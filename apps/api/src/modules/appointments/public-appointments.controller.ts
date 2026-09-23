@@ -32,7 +32,6 @@ import {
   type BookAppointmentBody,
   BookAppointmentBodyPipe,
   BookAppointmentDto,
-  toGuestContact,
 } from './dto/book-appointment.dto';
 import {
   type CancelAppointmentBody,
@@ -48,8 +47,8 @@ import {
 import { AllowUnpaidTenant, RequireBookableSalon } from '../identity/tenant-billing.guard';
 
 /**
- * Le régime d'accès des deux gestes que la cliente exerce **sur un rendez-vous
- * existant** — annuler et reporter (#1135).
+ * Le régime d'accès des trois gestes que la cliente exerce sur le tunnel
+ * public — réserver (#1136), annuler et reporter (#1135).
  *
  * `@Auth('CLIENT')` seul, sans permission : la matrice de l'ADR 0013 n'en donne
  * aucune au rôle `CLIENT`, délibérément (`identity/permissions.ts`), et c'est
@@ -68,12 +67,21 @@ import { AllowUnpaidTenant, RequireBookableSalon } from '../identity/tenant-bill
  * | cliente, sur le sien | 200 | 200 |
  *
  * `@AllowUnpaidTenant()` neutralise `TenantBillingGuard`, que `@Auth` monte.
- * Sans lui, ces deux routes se seraient mises à rendre 402 chez un salon dont
- * l'abonnement a expiré — un changement que ce ticket n'a pas à faire, et qui
- * retiendrait une cliente de **libérer** un créneau qu'elle n'honorera pas.
+ * Sans lui, ces routes se seraient mises à rendre 402 chez un salon dont
+ * l'abonnement a expiré — un changement que ces tickets n'ont pas à faire, et
+ * qui retiendrait une cliente de **libérer** un créneau qu'elle n'honorera pas.
  * L'ADR 0016 ferme la prise de rendez-vous d'un salon impayé, ce que porte
  * `@RequireBookableSalon()` sur `book` ; il ne ferme pas la tenue des
  * rendez-vous déjà pris.
+ *
+ * Sur `book`, les deux décorateurs se complètent plutôt qu'ils ne se
+ * contredisent, et l'ordre importe peu puisqu'une seule des deux gardes parle :
+ * `AllowUnpaidTenant` fait taire `TenantBillingGuard` — dont le 402
+ * `SUBSCRIPTION_REQUIRED` s'adresse au back-office —, et `BookableSalonGuard`
+ * garde la main sur le refus que l'ADR 0016 destine au parcours public, le 409
+ * `SALON_BOOKING_CLOSED`. Sans cela, poser la garde d'authentification aurait
+ * silencieusement changé le code d'erreur d'un salon fermé, et le tunnel aurait
+ * cessé d'expliquer pourquoi il ne prend plus de rendez-vous.
  */
 const AuthenticatedClient = (): MethodDecorator & ClassDecorator =>
   applyDecorators(Auth('CLIENT'), AllowUnpaidTenant());
@@ -102,30 +110,55 @@ const AuthenticatedClient = (): MethodDecorator & ClassDecorator =>
  * numéro de téléphone national. Là encore, rien ne vient du chemin : le pays est
  * celui de l'établissement **résolu**, pas d'une chaîne d'URL.
  *
- * ## Deux régimes d'accès, et non plus un seul (#1135)
+ * ## Un seul régime d'accès, depuis #1136
  *
  * | Route | Qui peut l'appeler |
  * |---|---|
- * | `POST /public/{slug}/appointments` | tout le monde — voir ci-dessous |
+ * | `POST /public/{slug}/appointments` | une **cliente authentifiée**, jeton vérifié |
  * | `POST …/{id}/reschedule` | la **cliente du rendez-vous**, jeton vérifié |
  * | `POST …/{id}/cancel` | la **cliente du rendez-vous**, jeton vérifié |
  *
- * La doctrine d'origine était uniforme — « on réserve sans compte, donc on
- * annule sans compte » (#40) — et elle tenait tant que l'identifiant du
- * rendez-vous était un secret de la cliente. Il ne l'est plus : un praticien
- * lit les `appointmentId` de ses collègues par le journal des envois, et la
- * route publique lui rouvrait sans jeton ce que le back-office lui refusait
- * (403 `OWN_SCOPE_ONLY`, #812) — en l'inscrivant `cancelledBy: CLIENT`, c'est-à-
- * dire au nom de la cliente. Voir {@link AuthenticatedClient}.
+ * La doctrine d'origine était uniforme dans l'autre sens — « on réserve sans
+ * compte, donc on annule sans compte » (#37, #40). Deux décisions l'ont périmée
+ * en deux temps, et le tableau ci-dessus est ce qui reste quand les deux sont
+ * appliquées :
  *
- * `book` garde son régime : c'est #1136 qui tranche la réservation sans compte,
- * et le faire ici aurait mêlé deux décisions dans un même diff.
+ * 1. **#1135** a fermé l'annulation et le report, que la seule connaissance de
+ *    l'identifiant ouvrait — un praticien lisait les `appointmentId` de ses
+ *    collègues par le journal des envois, et annulait par ici ce que le
+ *    back-office lui refusait en 403 `OWN_SCOPE_ONLY` (#812) ;
+ * 2. **#1136** ferme la réservation elle-même. « Réserver exige un compte » est
+ *    une décision produit du 22/09/2026, déjà appliquée à l'interface (#1119) :
+ *    le tunnel s'arrête après le choix du créneau et bascule sur
+ *    l'authentification. Le contrat d'API, lui, l'ignorait encore — le portail
+ *    se contournait d'un `curl`, et c'est ce que cette garde referme.
  *
- * ## Pas de garde sur `book`, et c'est le propos
+ * Voir {@link AuthenticatedClient} pour ce que la garde tranche, et ce qu'elle
+ * ne tranche pas.
  *
- * Le quatrième critère de #37 est « un client peut réserver sans compte, avec
- * seulement ses coordonnées » : exiger un jeton le contredirait mot pour mot.
- * Ce qui tient cette route n'est donc pas une garde, mais trois choses :
+ * ## Ce que `book` ne peut plus faire, et comment c'est tenu (#1136)
+ *
+ * Le défaut n'était pas seulement l'absence de porte : la route **rattachait le
+ * rendez-vous au compte que l'adresse e-mail du corps désignait**. Un appelant
+ * anonyme qui connaissait l'adresse d'une cliente posait un rendez-vous dans son
+ * compte — il apparaissait dans ses « mes rendez-vous » —, et la réponse lui
+ * rendait le `clientId` de sa victime.
+ *
+ * Fermer la porte n'aurait donc pas suffi : une cliente authentifiée aurait
+ * encore pu réserver au nom d'une autre en donnant son adresse. Ce qui l'en
+ * empêche n'est pas un contrôle, c'est le **type d'entrée** du service, qui ne
+ * prend plus de coordonnées mais un compte de jeton vérifié
+ * (`AppointmentClientPrincipal`). Il n'existe aucune valeur du corps par
+ * laquelle désigner quelqu'un d'autre, et c'est la même façon de refermer que
+ * #1135 a employée pour `cancelledBy: CLIENT`.
+ *
+ * `crm` juge ensuite la fiche dans la transaction d'insertion : elle existe, elle
+ * est de cet établissement, et son rôle est `CLIENT` (`assertBookableWithin`,
+ * #465).
+ *
+ * ## Ce qui tenait cette route avant la garde, et qui la tient encore
+ *
+ * La garde s'ajoute à ces quatre-là, elle ne les remplace pas :
  *
  * 1. la validation de la frontière — aucun champ non déclaré, donc aucun
  *    `tenantId`, `clientId` ni `price` glissé dans le corps. Sur `book`, c'est
@@ -138,20 +171,19 @@ const AuthenticatedClient = (): MethodDecorator & ClassDecorator =>
  *    calendrier proposait, chez un praticien qui pratique le soin, dans ses
  *    heures, hors congés et hors préavis ;
  * 3. la contrainte d'exclusion en base, qui tranche l'unicité et rend 409 ;
- * 4. `ThrottlerGuard`, pour la même raison qui le pose sur `/auth/register` :
- *    cette route **écrit** sans qu'on ait à prouver quoi que ce soit — une fiche
- *    dans `users`, et un rendez-vous `PENDING` qui **occupe l'agenda dès sa
- *    création**. Sans quota, un script tire tous les créneaux libres d'un salon
- *    en quelques secondes et le rend incapable de vendre, sans jamais rien
- *    exploiter d'autre que le comportement nominal.
+ * 4. `ThrottlerGuard`, qui garde son intérêt malgré la garde : un jeton de
+ *    cliente s'obtient en s'inscrivant, et cette route **occupe l'agenda dès la
+ *    création** du rendez-vous. Sans quota, un compte suffirait à tirer tous les
+ *    créneaux libres d'un salon en quelques secondes et à le rendre incapable de
+ *    vendre, sans jamais rien exploiter d'autre que le comportement nominal.
  *
- * ## Ce que cette route ne fait pas
+ * ## Ce que cette route ne fait toujours pas
  *
- * Elle ne réserve **pas pour autrui** : il n'y a pas de `clientId` dans le corps.
- * Le comptoir qui réserve au nom d'une cliente déjà fichée est une surface de
- * back-office, gardée, et c'est #50. La mêler ici obligerait à distinguer par le
- * corps deux appelants qui n'ont pas les mêmes droits — la façon la plus sûre de
- * se tromper.
+ * Elle ne réserve **pas pour autrui** : il n'y a pas de `clientId` dans le corps,
+ * et il n'y a plus d'adresse e-mail qui en tienne lieu. Le comptoir qui réserve
+ * au nom d'une cliente déjà fichée est une surface de back-office, gardée, et
+ * c'est #50. La mêler ici obligerait à distinguer par le corps deux appelants qui
+ * n'ont pas les mêmes droits — la façon la plus sûre de se tromper.
  */
 @ApiTags('public')
 @Controller({ path: 'public/:tenantSlug/appointments', version: '1' })
@@ -167,7 +199,7 @@ export class PublicAppointmentsController {
   public constructor(private readonly appointments: AppointmentsService) {}
 
   /**
-   * Réserve un créneau, au statut `PENDING`.
+   * Réserve un créneau **pour la cliente du jeton**, au statut `PENDING`.
    *
    * **201**, et le corps porte le rendez-vous — le tunnel a besoin de son
    * identifiant pour l'écran de confirmation et pour le lien d'annulation (#45).
@@ -186,34 +218,39 @@ export class PublicAppointmentsController {
    * créneau, et son `details.staffId` vaut `null` — le corps ne nomme jamais un
    * praticien que la cliente n'a pas désigné.
    *
-   * **409 `CLIENT_EMAIL_NOT_BOOKABLE`** est l'autre conflit, et il n'a rien à
-   * voir avec l'agenda (#313) : l'adresse envoyée est celle d'un compte du
-   * personnel de cet établissement, à laquelle une réservation en ligne ne se
-   * rattache jamais. Le front ne doit pas le traiter comme le précédent —
-   * réafficher les créneaux n'y changerait rien —, mais demander une autre
-   * adresse. C'est ce que le `code` distinct existe pour dire.
-   *
-   * Une adresse **déjà cliente** du salon, elle, rend 201 comme une adresse
-   * inconnue : le refus ne dit donc rien du fichier client, seulement de
-   * l'annuaire du personnel.
-   *
-   * **429** au-delà de dix réservations par minute et par adresse. Le quota est
+   * **429** au-delà de dix réservations par minute et par appelant. Le quota est
    * du même ordre que celui de `/auth/register` — cinq inscriptions par minute —
    * et pour la même raison : une cliente réserve un rendez-vous, pas dix, et le
    * seul appelant que cette borne dérange est celui qui remplit l'agenda d'un
    * salon pour l'empêcher de vendre.
    *
+   * ## La garde, depuis #1136
+   *
+   * **401** sans jeton, **403** avec un jeton qui n'est pas celui d'une cliente,
+   * et le rendez-vous se rattache **au compte du jeton** — jamais à celui qu'une
+   * adresse e-mail du corps désignerait. Voir {@link AuthenticatedClient} et
+   * l'en-tête de cette classe.
+   *
+   * La conséquence utile pour le front : `clientId` de la réponse est toujours
+   * celui de l'appelante. La route n'apprend plus à personne l'identifiant de
+   * fiche de quelqu'un d'autre, et il n'y a plus d'adresse e-mail par laquelle
+   * sonder le fichier client d'un salon.
+   *
    * ## Ce que cette route écrit, et où
    *
-   * Un rendez-vous, et — si l'adresse est nouvelle — une fiche cliente. Les deux
-   * dans **une seule transaction** depuis #313 : un 409 de créneau ne laisse plus
-   * de fiche derrière lui. La fiche est écrite par `crm`, jamais par ce module.
+   * Un rendez-vous, et rien d'autre. La fiche cliente n'est plus créée au
+   * passage depuis #1136 : l'appelante en a une, c'est son compte. La
+   * transaction unique de #313 reste celle qui écrit le rendez-vous, et `crm`
+   * y juge la fiche — existante, de cet établissement, de rôle `CLIENT` (#465).
    */
   @Post()
-  // Un salon sans abonnement en cours ne prend plus de réservation (ADR 0016).
+  @AuthenticatedClient()
+  // Un salon sans abonnement en cours ne prend plus de réservation (ADR 0016) —
+  // en 409 `SALON_BOOKING_CLOSED`, et non en 402, d'où l'`@AllowUnpaidTenant()`
+  // que porte le décorateur ci-dessus. Voir {@link AuthenticatedClient}.
   @RequireBookableSalon()
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
-  @ApiOperation({ summary: 'Réserver un créneau, sans compte' })
+  @ApiOperation({ summary: 'Réserver un créneau — cliente authentifiée' })
   // Déclaré explicitement : le corps est validé par le contrat partagé et le
   // paramètre est typé par un alias de type, dont `@nestjs/swagger` ne peut plus
   // rien déduire. `BookAppointmentDto` ne sert plus qu'à cela (ADR 0008).
@@ -221,24 +258,25 @@ export class PublicAppointmentsController {
   @ApiCreatedResponse({ type: AppointmentDto })
   @ApiBadRequestResponse({ description: 'Corps invalide — le champ fautif est nommé.' })
   @ApiNotFoundResponse({
-    description: 'Établissement ou prestation introuvable, ou prestation retirée du catalogue.',
+    description:
+      'Établissement ou prestation introuvable, prestation retirée du catalogue, ' +
+      'ou compte de la cliente introuvable dans cet établissement — les quatre sont ' +
+      'indiscernables à dessein (tenant-isolation §4).',
   })
   @ApiConflictResponse({
     description:
-      'Deux refus distincts, que le champ `code` sépare. ' +
-      '`SLOT_NO_LONGER_AVAILABLE` : le créneau n’est pas — ou n’est plus — réservable. ' +
-      '`CLIENT_EMAIL_NOT_BOOKABLE` : l’adresse envoyée est celle d’un compte du personnel ' +
-      'de cet établissement, à laquelle une réservation en ligne ne se rattache jamais ' +
-      '(#313). Le second est définitif : réessayer avec le même corps rendra le même refus, ' +
-      'et c’est une autre adresse qu’il faut proposer à la cliente.',
+      'Le créneau n’est pas — ou n’est plus — réservable (`SLOT_NO_LONGER_AVAILABLE`), ' +
+      'ou le salon ne prend plus de rendez-vous faute d’abonnement en cours ' +
+      '(`SALON_BOOKING_CLOSED`, ADR 0016).',
   })
-  @ApiTooManyRequestsResponse({ description: 'Quota de réservations dépassé pour cette adresse.' })
+  @ApiTooManyRequestsResponse({ description: 'Quota de réservations dépassé pour cet appelant.' })
   public async book(
     // Le type est celui **du contrat**, jamais `BookAppointmentDto` : la classe
     // n'a plus de décorateur `class-validator`, et la typer ici ferait rejouer
     // le `ValidationPipe` global, dont le `whitelist` viderait le corps de tous
     // ses champs (ADR 0008).
     @Body(BookAppointmentBodyPipe) body: BookAppointmentBody,
+    @CurrentUser() user: AuthenticatedUser,
   ): Promise<AppointmentDto> {
     return this.appointments.book({
       serviceId: body.serviceId,
@@ -249,7 +287,11 @@ export class PublicAppointmentsController {
       // `new Date` ne peut plus produire ici de date invalide ni de date-heure
       // interprétée dans le fuseau de la machine.
       startsAt: new Date(body.startsAt),
-      client: toGuestContact(body.client),
+      // Du jeton vérifié, jamais du corps ni du chemin (#1136). `body.client`
+      // ne désigne plus personne : le type d'entrée du service n'accepte pas de
+      // coordonnées, et c'est ce qui rend impossible — plutôt qu'interdit — de
+      // réserver au nom d'une cliente dont on connaîtrait l'adresse.
+      client: { userId: user.userId },
       clientNote: body.clientNote ?? null,
       // L'accord passe tel quel — un booléen, jamais une date (#790). Le
       // contrat l'a déjà jugé : `dataConsentSchema` refuse `false` comme il

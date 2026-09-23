@@ -4,7 +4,6 @@ import {
   APPOINTMENT_REFERENCE_PATTERN,
   type BookGuestAppointmentRequest,
   EMAIL_ADDRESS_MAX_LENGTH,
-  type GuestContact as GuestContactRequest,
   LOCALES,
   LONG_TEXT_MAX_LENGTH,
   NAME_MAX_LENGTH,
@@ -18,7 +17,7 @@ import type { z } from 'zod';
 import { tenantCountryValidationPipe } from '../../../common/validation';
 import type { AppointmentCancelledBy, AppointmentStatus } from '../appointment-status';
 import { CANCELLATION_AUTHORS } from '../appointment-status';
-import type { AppointmentView, GuestContact, Money } from '../appointments.types';
+import type { AppointmentView, Money } from '../appointments.types';
 
 /**
  * La réservation publique (#37), **validée par le contrat partagé** (#404).
@@ -234,13 +233,25 @@ export class BookAppointmentDto {
   })
   public startsAt!: string;
 
-  @ApiProperty({
+  /**
+   * **Obsolète depuis #1136.** La cliente du rendez-vous est celle du jeton, et
+   * ces coordonnées n'entrent dans aucune décision du serveur.
+   *
+   * `deprecated` plutôt qu'une suppression : le tunnel les poste encore depuis
+   * son étape « Coordonnées », et les refuser en 400 ajouterait un refus de
+   * plus à une route qui rend déjà 401 à qui n'a pas de jeton. Le champ part
+   * avec cette étape-là, hors de l'empreinte de #1136.
+   */
+  @ApiPropertyOptional({
     type: GuestContactDto,
+    deprecated: true,
     description:
-      'Les coordonnées de la cliente. **Obligatoires** : sans elles, le serveur ' +
-      'n’a personne à ficher ni personne à qui confirmer.',
+      'Coordonnées saisies. **Sans effet depuis #1136** : la cliente du ' +
+      'rendez-vous est celle du jeton d’accès, et aucun champ du corps ne peut ' +
+      'la désigner. Accepté — et validé s’il est présent — le temps que le ' +
+      'tunnel cesse de l’envoyer.',
   })
-  public client!: GuestContactDto;
+  public client?: GuestContactDto;
 
   @ApiPropertyOptional({
     description: 'Mot de la cliente au salon — allergie, préférence, retard annoncé.',
@@ -434,18 +445,10 @@ type _GuestContactDtoHasTheContractKeys = AssertNever<
   | Exclude<keyof z.input<typeof guestContactSchema>, keyof GuestContactDto>
 >;
 
-/** Les coordonnées validées, sous la forme que le service attend. */
-export function toGuestContact(contact: GuestContactRequest): GuestContact {
-  return {
-    firstName: contact.firstName,
-    lastName: contact.lastName,
-    email: contact.email,
-    // Le contrat distingue « absent » de « vide » ; le domaine, lui, ne connaît
-    // que `null` — c'est ce que la colonne `users.phone` accepte.
-    phone: contact.phone ?? null,
-    // Même conversion, et même raison, pour la langue (#844) : `null` se lit
-    // « la visiteuse n'a pas dit dans quelle langue elle lisait », ce qui laisse
-    // la fiche sans préférence.
-    locale: contact.locale ?? null,
-  };
-}
+/*
+ * `toGuestContact` a disparu avec #1136, et son absence est le propos : elle
+ * convertissait les coordonnées du corps en `GuestContact` pour que le service
+ * en tire la fiche cliente — c'est-à-dire pour que l'adresse e-mail d'un corps
+ * de requête désigne un compte. `AppointmentsService.book` n'a plus de
+ * paramètre où mettre son résultat : il prend la cliente du jeton vérifié.
+ */

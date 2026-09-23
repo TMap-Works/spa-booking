@@ -320,6 +320,15 @@ export type CreateAppointmentRequest = z.infer<typeof createAppointmentRequestSc
  * C'est ce schéma, et lui seul, que le formulaire de coordonnées du parcours
  * public valide : le front ne redéclare pas la règle, il importe celle-ci.
  *
+ * ## Ce qu'il ne décide plus, depuis #1136
+ *
+ * **La cliente du rendez-vous.** Ces coordonnées ont servi à retrouver une
+ * fiche par son adresse e-mail tant que réserver n'exigeait pas de compte ;
+ * elles ne le font plus, et le champ `client` de
+ * `bookGuestAppointmentRequestSchemaFor` est devenu facultatif et sans effet.
+ * Ce schéma garde son emploi propre — valider une saisie de coordonnées — et
+ * c'est le formulaire du tunnel qui le lui donne.
+ *
  * ## Une **fabrique**, parce que le pays est une donnée de requête (#1028)
  *
  * `guestContactSchemaFor(pays)` plutôt qu'une constante : la septième porte du
@@ -432,25 +441,43 @@ export const dataConsentSchema = z.boolean().refine((accepted) => accepted, {
 });
 
 /**
- * Prise de rendez-vous depuis le **parcours public**, par une cliente sans
- * compte.
+ * Prise de rendez-vous depuis le **parcours public**, par une cliente
+ * **authentifiée** (#1136).
  *
- * C'est la variante « invité » de `createAppointmentRequestSchema`, et la
- * différence tient en un champ : là où la forme de back-office désigne une
- * fiche existante par `clientId`, celle-ci porte les `client` — coordonnées
- * saisies au moment de réserver, à partir desquelles le serveur crée ou
- * retrouve la fiche.
+ * C'est la variante « tunnel » de `createAppointmentRequestSchema`, et la
+ * différence ne tient plus à un champ du corps mais à la **porte** : là où la
+ * forme de back-office désigne une fiche existante par `clientId`, celle-ci ne
+ * désigne personne du tout — la cliente du rendez-vous est celle du jeton, et
+ * `POST /api/v1/public/{slug}/appointments` exige ce jeton depuis #1136.
  *
- * Les deux ne se fondent pas en un seul schéma à `clientId` **ou** `client` :
- * une union laisserait passer les deux à la fois, et un tunnel public qui
- * poserait un `clientId` réserverait au nom de quelqu'un d'autre.
+ * ## Ce que #1136 a retiré à ce schéma, et pourquoi
  *
- * C'est le `.strict()` des deux schémas qui rend la séparation effective, et il
- * y faut les **deux sens** : celui-ci refuse un `clientId`, et
- * `createAppointmentRequestSchema` refuse un `client`. Un seul des deux suffit à
- * fermer la porte qu'on regarde, et laisse l'autre ouverte — un `client` glissé
- * dans une demande de back-office ferait créer une fiche là où le comptoir en
- * avait désigné une. `guest-booking.spec.ts` exerce les deux (#314).
+ * `client` portait les coordonnées saisies au moment de réserver, « à partir
+ * desquelles le serveur crée ou retrouve la fiche ». Retrouver une fiche
+ * **par son adresse e-mail** sur une route ouverte, c'était laisser n'importe
+ * qui poser un rendez-vous dans le compte d'une cliente existante et repartir
+ * avec son `clientId` : c'est le défaut que la campagne de QA du 22/09/2026 a
+ * relevé, et il ne se corrige pas par une garde seule — une cliente
+ * authentifiée aurait encore pu réserver au nom d'une autre en donnant son
+ * adresse.
+ *
+ * Le champ est donc devenu **facultatif et sans effet**. Il n'entre plus dans
+ * aucune décision du serveur : `AppointmentsService.book` prend un compte de
+ * jeton vérifié (`AppointmentClientPrincipal`) et n'a plus de type pour
+ * recevoir des coordonnées. Il reste accepté — et validé, quand il est là — le
+ * temps que le tunnel cesse de l'envoyer : `apps/web` le poste encore depuis son
+ * étape « Coordonnées », et le refuser en 400 n'apprendrait rien à personne que
+ * le 401 de la route ne dise déjà. Sa suppression appartient au même diff que
+ * cette étape-là, hors de l'empreinte de #1136.
+ *
+ * ## Ce que le `.strict()` continue de tenir
+ *
+ * La séparation d'avec la forme de back-office, et dans les **deux sens** :
+ * celui-ci refuse un `clientId`, et `createAppointmentRequestSchema` refuse un
+ * `client`. Un seul des deux suffirait à fermer la porte qu'on regarde et
+ * laisserait l'autre ouverte — un `client` glissé dans une demande de
+ * back-office ferait créer une fiche là où le comptoir en avait désigné une.
+ * `guest-booking.spec.ts` exerce les deux (#314).
  *
  * ## Une fabrique, pour la seule raison qui vaut pour `guestContactSchemaFor`
  *
@@ -468,7 +495,12 @@ export function bookGuestAppointmentRequestSchemaFor(defaultCountry?: string | n
       staffId: uuidSchema.optional(),
       /** Début du soin, ISO 8601 avec offset explicite — normalisé en UTC ici. */
       startsAt: offsetDateTimeSchema,
-      client: guestContactSchemaFor(defaultCountry),
+      /**
+       * **Obsolète depuis #1136, et sans effet.** La cliente du rendez-vous est
+       * celle du jeton ; ces coordonnées-là ne rattachent plus rien à personne.
+       * Voir l'en-tête de ce schéma.
+       */
+      client: guestContactSchemaFor(defaultCountry).optional(),
       clientNote: longTextSchema.optional(),
       /**
        * L'accord au traitement des données, **obligatoire** (#790).

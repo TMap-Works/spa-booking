@@ -9,7 +9,7 @@ réservation, est tenu.
 | Ticket | Ce qu'il pose |
 |---|---|
 | #31 | La contrainte d'exclusion, le verrou consultatif d'agenda et la traduction du refus en 409 |
-| #37 | La réservation publique sans compte — fiche cliente, intervalle occupé, prix figé |
+| #37 | La réservation publique — intervalle occupé, prix figé. Elle exige un compte depuis #1136 |
 | #39 | Le report — annulation et création liées dans une seule transaction |
 | #40 | L'annulation des deux côtés du comptoir — trace écrite, créneau libéré |
 | #36 | **L'option « premier disponible »** — `staffId` facultatif, et la règle d'affectation |
@@ -20,13 +20,15 @@ réservation, est tenu.
 | #444 | L'agenda du back-office — `GET /appointments`, une plage de jours et les trois *summaries* imbriquées |
 | #461 | **Les trois écritures de comptoir** — poser, déplacer et solder un rendez-vous depuis le planning (#50) |
 | #465 | **Le `clientId` du comptoir est jugé sur son rôle** — la porte `crm` refuse un compte du personnel, dans la transaction d'insertion |
+| #1135 | **Annuler et reporter exigent la cliente du rendez-vous** — jeton vérifié, propriété jugée sur la ligne, refus en 404 |
+| #1136 | **Réserver exige la cliente authentifiée** — le rendez-vous se rattache au compte du jeton, et plus à ce qu'une adresse e-mail du corps désignerait |
 | temps réel | **Le flux des rendez-vous** — `GET /appointments/stream` (SSE), relayé entre instances par Redis, et `appointment.status_changed` pour « honoré » / « non présenté » (demande du PO du 21/09) |
 
 ## Les routes
 
 | Méthode | Chemin | Rang | Rend |
 |---|---|---|---|
-| `POST` | `/api/v1/public/:tenantSlug/appointments` | — (ouverte) | `bookedAppointmentSchema` |
+| `POST` | `/api/v1/public/:tenantSlug/appointments` | `CLIENT` — le rendez-vous est posé pour **elle** (#1136) | `bookedAppointmentSchema` |
 | `POST` | `/api/v1/public/:tenantSlug/appointments/:id/reschedule` | `CLIENT` — et le rendez-vous doit être le sien (#1135) | `bookedAppointmentSchema` |
 | `POST` | `/api/v1/public/:tenantSlug/appointments/:id/cancel` | `CLIENT` — et le rendez-vous doit être le sien (#1135) | `bookedAppointmentSchema` |
 | `GET` | `/api/v1/appointments/mine` | toute identité vérifiée | `bookedAppointmentSchema[]` |
@@ -37,23 +39,44 @@ réservation, est tenu.
 | `POST` | `/api/v1/appointments/:id/cancel` | `STAFF` | `bookedAppointmentSchema` |
 | `GET` | `/api/v1/appointments/stream` | toute identité vérifiée | `text/event-stream` de `appointmentFeedEventSchema` |
 
-Seule `POST /public/:tenantSlug/appointments` reste ouverte, et c'est le
-quatrième critère de #37 : on réserve sans compte. Ce qui la tient est le
-`ValidationPipe` global, le contrôle de disponibilité, la contrainte
-d'exclusion, et un quota par adresse.
+**Aucune route de ce module n'est ouverte**, depuis #1136. Le tunnel public l'a
+été jusqu'à la décision produit du 22/09/2026 — « on réserve sans compte », le
+quatrième critère de #37 — et les trois routes de `/public/:tenantSlug` exigent
+désormais le jeton d'une cliente. `public` y garde son sens d'origine : la route
+est servie sous le **slug** de l'établissement, et non derrière le contexte de
+tenant d'un back-office.
 
-Le report et l'annulation publics, eux, sont gardés depuis #1135 : `@Auth('CLIENT')`
-— 401 sans jeton, 403 sur un jeton de personnel — puis, dans le service, la
-**propriété du rendez-vous**, dont le refus est un 404 indiscernable d'un
-identifiant inconnu. La doctrine d'origine — « on réserve sans compte, donc on
-annule sans compte » — tenait tant que l'identifiant était un secret de la
-cliente ; un praticien lit ceux de ses collègues dans le journal des envois, et
-la route publique lui rouvrait sans jeton ce que le back-office lui refusait en
-403 `OWN_SCOPE_ONLY` (#812), en l'inscrivant `cancelledBy: CLIENT`.
+Le report et l'annulation ont été fermés les premiers, par #1135 : la doctrine
+« on réserve sans compte, donc on annule sans compte » tenait tant que
+l'identifiant du rendez-vous était un secret de la cliente ; un praticien lit
+ceux de ses collègues dans le journal des envois, et la route publique lui
+rouvrait sans jeton ce que le back-office lui refusait en 403 `OWN_SCOPE_ONLY`
+(#812), en l'inscrivant `cancelledBy: CLIENT`.
+
+La réservation a suivi, par #1136, et pour un défaut de la même famille : elle
+rattachait le rendez-vous à la fiche que l'**adresse e-mail du corps** désignait.
+Un appelant anonyme posait donc un rendez-vous dans le compte d'une cliente
+existante — il apparaissait dans ses « mes rendez-vous » — et la réponse lui
+rendait son `clientId`. L'interface exigeait déjà un compte depuis #1119 ; le
+contrat d'API, non, et le portail se contournait d'un `curl`.
+
+Le régime est le même pour les trois : `@Auth('CLIENT')` — 401 sans jeton, 403
+sur un jeton de personnel, 401 sur un jeton du salon voisin présenté sous ce
+slug — puis, dans le service, la cliente du jeton. Sur `reschedule` et `cancel`
+c'est la **propriété du rendez-vous** qui est jugée, en 404 indiscernable d'un
+identifiant inconnu ; sur `book`, c'est le compte lui-même, jugé par
+`crm.assertBookableWithin` (#465) — existant, de cet établissement, de rôle
+`CLIENT` —, avec le même 404.
+
+Ce qui tenait la réservation avant la garde la tient encore : le `.strict()` du
+contrat partagé, le contrôle de disponibilité, la contrainte d'exclusion, et le
+quota par appelant.
 
 Aucune route de back-office n'a de quota, et c'est délibéré : l'appelant a un
 jeton signé, un établissement et un rôle — le quota utile est l'authentification
-elle-même. Un comptoir qui traite une matinée d'appels enchaîne légitimement les
+elle-même. Le tunnel garde le sien malgré sa garde : un jeton de cliente
+s'obtient en s'inscrivant, et cette route occupe l'agenda dès la création du
+rendez-vous. Un comptoir qui traite une matinée d'appels enchaîne légitimement les
 écritures, et un plafond par adresse pénaliserait le salon dont tout le personnel
 partage la même sortie réseau.
 
@@ -481,11 +504,20 @@ gardée par un rôle — jamais un champ de plus sur la vue publique.
 
 ## La fiche cliente ne s'écrit plus ici (#313)
 
-Réserver sans compte suppose une ligne `users` — `appointments.client_id` est
-`NOT NULL`. `AppointmentsRepository.findOrCreateClient` l'écrivait lui-même
-depuis #37, faute de porte : `crm` n'existait pas, et `identity` n'exporte ni son
-repository ni `UsersService`. C'était la table d'un autre domaine écrite par un
-module qui ne la possède pas (api-module §3).
+Réserver suppose une ligne `users` — `appointments.client_id` est `NOT NULL`.
+`AppointmentsRepository.findOrCreateClient` l'écrivait lui-même depuis #37,
+faute de porte : `crm` n'existait pas, et `identity` n'exporte ni son repository
+ni `UsersService`. C'était la table d'un autre domaine écrite par un module qui
+ne la possède pas (api-module §3).
+
+**Depuis #1136, aucune route de ce module ne crée de fiche.** La réservation
+publique exige un compte, et il n'y a donc plus de fiche à faire naître au
+passage : les deux surfaces — tunnel et comptoir — **désignent** une fiche, et
+`crm` la confirme. La branche de résolution par coordonnées décrite ci-dessous
+subsiste dans le repository, sans appelant, parce que son retrait emporterait la
+porte `crm.resolveWithin`, la création dans la transaction d'insertion et le
+réessai de `ClientRecordRaceError` — un démontage qui touche `crm` et mérite son
+propre diff.
 
 `CrmModule` exporte désormais `ClientDirectoryService`, et c'est le **repository**
 de ce module qui l'appelle — pas le service. La raison est l'atomicité : le seul
@@ -499,14 +531,15 @@ interdit.
 ```
 BEGIN
   pg_advisory_xact_lock(agenda du praticien)     ← ordonne les candidates (ADR 0006)
-  crm.resolveWithin(tx, coordonnées)             ← tunnel public : la fiche, trouvée ou créée
-  crm.assertBookableWithin(tx, clientId)         ← comptoir : la fiche, confirmée sous FOR SHARE (#465)
+  crm.resolveWithin(tx, coordonnées)             ← plus aucun appelant depuis #1136
+  crm.assertBookableWithin(tx, clientId)         ← les deux surfaces : la fiche, confirmée sous FOR SHARE (#465)
   INSERT INTO appointments …                     ← jugé par appointments_no_overlap
 COMMIT   -- ou ROLLBACK, qui emporte les deux
 ```
 
 Les deux lignes du milieu s'excluent : une réservation emprunte l'une ou l'autre,
-selon la forme de sa `ClientReference`.
+selon la forme de sa `ClientReference` — et depuis #1136 toutes empruntent la
+seconde.
 
 Le verrou d'abord : il supprime le cycle d'attente, et une résolution posée avant
 lui ferait attendre sur l'index unique de `users` une transaction qui ne tient pas
