@@ -135,14 +135,18 @@ import { SlotLockService } from './slot-lock.service';
  * distincte** de celle qui pose le rendez-vous — si bien qu'un 409 de créneau
  * laissait la fiche derrière lui.
  *
- * Le brouillon porte désormais les coordonnées, et c'est le repository qui
- * demande la fiche à `crm`, à l'intérieur de sa propre transaction. Ce service
- * n'a plus rien à savoir de la clientèle : ni sa table, ni son rôle, ni son
- * unicité.
+ * Le brouillon porte désormais une **référence** de fiche, et c'est le
+ * repository qui la fait juger par `crm`, à l'intérieur de sa propre
+ * transaction. Ce service n'a plus rien à savoir de la clientèle : ni sa table,
+ * ni son rôle, ni son unicité.
  *
- * Une conséquence visible dans le contrat : une adresse portée par un compte du
- * personnel sort en 409 `CLIENT_EMAIL_NOT_BOOKABLE`, décision de `crm` que ce
- * service laisse passer telle quelle.
+ * **Et il n'y a plus de coordonnées du tout depuis #1136** : les deux surfaces —
+ * tunnel public et comptoir — désignent une fiche par son identifiant, celui du
+ * jeton vérifié pour la première, celui que l'opérateur a choisi pour la
+ * seconde. La conséquence visible dans le contrat a changé avec elles : le 409
+ * `CLIENT_EMAIL_NOT_BOOKABLE`, qui refusait l'adresse d'un compte du personnel,
+ * n'est plus atteint par aucune route de ce module — c'est `assertBookableWithin`
+ * qui juge le rôle, et son refus est un 404 (#465).
  *
  * ## Les trois écritures de comptoir, ajoutées par #461
  *
@@ -181,11 +185,27 @@ export class AppointmentsService {
   ) {}
 
   /**
-   * Pose un rendez-vous `PENDING` dans l'établissement courant.
+   * Pose un rendez-vous `PENDING` dans l'établissement courant, **au nom de la
+   * cliente du jeton** (#1136).
    *
    * `now` est un paramètre plutôt qu'un `new Date()` enfoui, pour la même raison
    * que dans `AvailabilityService.slotsFor` : le filtrage du passé et du préavis
    * se teste en décalant l'horloge de l'appelant, jamais celle de la machine.
+   *
+   * ## La cliente vient du jeton, et de nulle part ailleurs (#1136)
+   *
+   * `input.client` porte le compte d'un jeton vérifié, jamais des coordonnées
+   * saisies. C'est la correction du défaut relevé par la campagne de QA du
+   * 22/09/2026 : la surface publique rattachait le rendez-vous à la fiche que
+   * l'**adresse e-mail du corps** désignait, si bien qu'un appelant anonyme
+   * posait un rendez-vous dans le compte d'une cliente existante — visible dans
+   * ses « mes rendez-vous » — et recevait son `clientId` en réponse.
+   *
+   * Rien n'est vérifié ici pour l'obtenir : c'est le **type d'entrée** qui ne
+   * laisse plus nommer personne d'autre, et la porte (`@Auth('CLIENT')`) qui
+   * établit le compte. Le rôle de la fiche, lui, est jugé dans la transaction
+   * par `assertBookableWithin` — un compte du personnel ne devient pas la
+   * cliente d'un rendez-vous parce qu'il porte un jeton (#465).
    *
    * ## L'option « premier disponible », et la règle qui l'applique (#36)
    *
@@ -235,19 +255,21 @@ export class AppointmentsService {
    * **après** l'avoir reçu — quatrième critère de #36.
    *
    * @throws {NotFoundError} prestation inconnue, hors de l'établissement, ou
-   * retirée du catalogue.
+   * retirée du catalogue — et, depuis #1136, compte de la cliente qui n'est pas
+   * une fiche `CLIENT` de cet établissement (`crm.assertBookableWithin`, #465).
+   * Le même 404 dans tous les cas, délibérément (tenant-isolation §4).
    * @throws {SlotNoLongerAvailableError} le créneau n'est pas — ou n'est plus —
    * proposable, ou la contrainte d'exclusion l'a refusé chez tous les praticiens
    * qui le proposaient.
    */
   public async book(input: BookAppointmentInput, now: Date = new Date()): Promise<AppointmentView> {
     const { view } = await this.place(
-      // Les coordonnées, et non un identifiant de fiche : la résolution a lieu
-      // dans la transaction d'insertion, chez `crm` (#313). C'est ce qui fait
-      // qu'un créneau refusé ne laisse aucune fiche au fichier du salon.
+      // La fiche du jeton, et non des coordonnées à résoudre (#1136) : il n'y a
+      // plus de fiche à créer au passage — la cliente en a une, c'est son
+      // compte —, donc plus d'adresse e-mail par laquelle en désigner une autre.
       {
         ...input,
-        client: { contact: input.client },
+        client: { clientId: input.client.userId },
         // L'accord devient un **instant**, ici et nulle part ailleurs (#790) :
         // c'est l'horloge du service qui date la preuve, jamais celle de
         // l'appelant (RGPD art. 7.1), et `now` est déjà le paramètre par lequel
