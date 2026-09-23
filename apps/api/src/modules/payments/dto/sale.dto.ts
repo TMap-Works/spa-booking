@@ -437,7 +437,10 @@ export class ListSalesQueryDto extends PageQueryDto {
       'Restreindre aux tickets **réglés par ce moyen** — sixième critère de ' +
       '#834. `CARD_TERMINAL` posé sur une journée rend les tickets passés au ' +
       'TPE du salon, dont le total se compare au relevé de fin de journée du ' +
-      'terminal. Un ticket réglé en partie en espèces et en partie au terminal ' +
+      'terminal. La journée, pour cette relève, se borne par ' +
+      '`settledFrom`/`settledTo` et non par `from`/`to` : c’est l’instant de ' +
+      'capture qui figure sur le relevé, pas celui de l’ouverture du ticket. ' +
+      'Un ticket réglé en partie en espèces et en partie au terminal ' +
       'apparaît sous les deux : il *a* été réglé par les deux, et son `total` ' +
       'reste celui du ticket entier — la part de chaque moyen se lit sur les ' +
       'lignes de `GET /payments`. Seuls les encaissements aboutis comptent.',
@@ -445,6 +448,27 @@ export class ListSalesQueryDto extends PageQueryDto {
   @IsOptional()
   @IsIn(SETTLEMENT_MEANS, { message: `method : une valeur parmi ${SETTLEMENT_MEANS.join(', ')}` })
   public method?: SettlementMean;
+
+  @ApiPropertyOptional({
+    example: '2026-09-18T00:00:00+02:00',
+    description:
+      'Borne basse **incluse** de l’instant de **capture** du règlement — ' +
+      '#1027. Une fenêtre distincte de `from`/`to`, qui bornent l’ouverture du ' +
+      'ticket : un ticket ouvert le 17 à 23 h 55 et réglé le 18 à 00 h 05 ' +
+      'figure sur le relevé du 18, et c’est cette fenêtre-ci qui le rend. ' +
+      'Combinée à `method`, elle porte sur le **même** encaissement.',
+  })
+  @IsOptional()
+  @IsOffsetDateTime()
+  public settledFrom?: string;
+
+  @ApiPropertyOptional({
+    example: '2026-09-19T00:00:00+02:00',
+    description: 'Borne haute **exclue** de l’instant de capture du règlement — #1027.',
+  })
+  @IsOptional()
+  @IsOffsetDateTime()
+  public settledTo?: string;
 }
 
 /**
@@ -458,6 +482,16 @@ export class ListSalesQueryDto extends PageQueryDto {
 export function toSaleHistoryFilter(dto: ListSalesQueryDto): SaleHistoryFilter {
   const from = toWindowBound(dto.from);
   const to = toWindowBound(dto.to);
+  const settledFrom = toWindowBound(dto.settledFrom);
+  const settledTo = toWindowBound(dto.settledTo);
+  // La fenêtre de capture est un objet à part et non deux champs de plus —
+  // #1027. C'est ce qui permet à `assertOrderedWindow` et à `withinWindow` de
+  // la juger exactement comme l'autre, sans une seconde écriture de la même
+  // convention de bornes.
+  const settledWithin = {
+    ...(settledFrom === undefined ? {} : { from: settledFrom }),
+    ...(settledTo === undefined ? {} : { to: settledTo }),
+  };
 
   return {
     ...(from === undefined ? {} : { from }),
@@ -465,6 +499,7 @@ export function toSaleHistoryFilter(dto: ListSalesQueryDto): SaleHistoryFilter {
     ...(dto.cashierUserId === undefined ? {} : { cashierUserId: dto.cashierUserId }),
     ...(dto.appointmentId === undefined ? {} : { appointmentId: dto.appointmentId }),
     ...(dto.method === undefined ? {} : { mean: dto.method }),
+    ...(settledFrom === undefined && settledTo === undefined ? {} : { settledWithin }),
     ...toPageBounds(dto),
   };
 }

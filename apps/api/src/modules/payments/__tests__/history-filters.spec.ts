@@ -111,6 +111,59 @@ describe('toSaleHistoryFilter', () => {
 
     expect(filter).toMatchObject({ cashierUserId, appointmentId });
   });
+
+  /**
+   * **#1027, deuxième point.** La relève du TPE se borne sur l'instant de
+   * **capture** du règlement, et non sur l'ouverture du ticket : les deux
+   * fenêtres sont donc deux couples de paramètres distincts, et `from`/`to`
+   * gardent le sens qu'ils ont déjà sur `GET /payments`.
+   */
+  it('reporte la fenêtre de capture dans une fenêtre à part', () => {
+    const filter = toSaleHistoryFilter(
+      assign(new ListSalesQueryDto(), {
+        from: '2026-09-01T00:00:00+02:00',
+        settledFrom: '2026-09-18T00:00:00+02:00',
+        settledTo: '2026-09-19T00:00:00+02:00',
+        method: 'CARD_TERMINAL',
+      }),
+    );
+
+    expect(filter).toMatchObject({
+      from: new Date('2026-08-31T22:00:00.000Z'),
+      mean: 'CARD_TERMINAL',
+      settledWithin: {
+        from: new Date('2026-09-17T22:00:00.000Z'),
+        to: new Date('2026-09-18T22:00:00.000Z'),
+      },
+    });
+    // La fenêtre d'ouverture n'est pas touchée : sans `to`, elle reste ouverte
+    // d'un côté, et la borne de capture ne vient pas la refermer.
+    expect(filter).not.toHaveProperty('to');
+  });
+
+  it('n’ajoute pas de fenêtre de capture quand aucune de ses deux bornes n’est là', () => {
+    const filter = toSaleHistoryFilter(
+      assign(new ListSalesQueryDto(), { method: 'CARD_TERMINAL' }),
+    );
+
+    expect(filter).not.toHaveProperty('settledWithin');
+  });
+
+  it('accepte une fenêtre de capture ouverte d’un seul côté', () => {
+    const filter = toSaleHistoryFilter(
+      assign(new ListSalesQueryDto(), { settledTo: '2026-09-19T00:00:00+02:00' }),
+    );
+
+    expect(filter.settledWithin).toEqual({ to: new Date('2026-09-18T22:00:00.000Z') });
+  });
+
+  it('refuse une borne de capture sans offset, en nommant le champ', async () => {
+    const dto = assign(new ListSalesQueryDto(), { settledFrom: '2026-09-18T00:00:00' });
+
+    const errors = await validate(dto);
+
+    expect(errors.map((error) => error.property)).toEqual(['settledFrom']);
+  });
 });
 
 describe('les plafonds de pagination sont ceux du serveur', () => {

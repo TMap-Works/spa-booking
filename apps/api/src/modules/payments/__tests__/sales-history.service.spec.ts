@@ -115,6 +115,39 @@ describe('SalesService — historique des ventes', () => {
         page({ from: instant('2026-09-02T00:00:00.000Z'), to: instant('2026-09-01T00:00:00.000Z') }),
       ).rejects.toBeInstanceOf(HistoryWindowInvalidError);
     });
+
+    /**
+     * **#1027, deuxième point.** La fenêtre de **capture** est jugée sur la
+     * même règle, et par la même fonction : une relève à l'envers est aussi
+     * vide qu'une journée à l'envers, et rendre une page vide ferait conclure à
+     * une caisse sans règlement.
+     */
+    it('refuse une fenêtre de capture à l’envers, comme celle de l’ouverture', async () => {
+      await expect(
+        page({
+          settledWithin: {
+            from: instant('2026-09-19T00:00:00.000Z'),
+            to: instant('2026-09-18T00:00:00.000Z'),
+          },
+        }),
+      ).rejects.toBeInstanceOf(HistoryWindowInvalidError);
+    });
+
+    it('accepte une fenêtre de capture ordonnée, fût-elle hors de celle de l’ouverture', async () => {
+      // Les deux fenêtres sont indépendantes : c'est tout l'objet du ticket. Un
+      // ticket ouvert le 17 au soir et réglé le 18 au matin est une relève du
+      // 18, et cette combinaison ne doit pas être refusée à la frontière.
+      await expect(
+        page({
+          from: instant('2026-09-17T00:00:00.000Z'),
+          to: instant('2026-09-18T00:00:00.000Z'),
+          settledWithin: {
+            from: instant('2026-09-18T00:00:00.000Z'),
+            to: instant('2026-09-19T00:00:00.000Z'),
+          },
+        }),
+      ).resolves.toMatchObject({ page: 1 });
+    });
   });
 
   describe('les deux filtres du back-office', () => {

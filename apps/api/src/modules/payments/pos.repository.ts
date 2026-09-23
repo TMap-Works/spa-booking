@@ -2,7 +2,7 @@ import { Inject, Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 
 import { PRISMA, type ScopedPrismaClient } from '../../infrastructure/database/prisma-clients';
-import { createdAtWithin } from './history';
+import { withinWindow } from './history';
 import { isUniqueViolation } from './payments.repository';
 import { SETTLED_PAYMENT_STATUSES, storedSettlementOf } from './payments.types';
 import type { SettlementMean } from './payments.types';
@@ -212,21 +212,70 @@ function toSale(row: SaleRow): Sale {
  * Le `where` de l'historique des ventes — **sans `tenantId`**, que l'extension
  * ajoute.
  *
- * La fenêtre vient de `createdAtWithin` — la **même fonction** que
+ * Les fenêtres viennent de `withinWindow` — la **même fonction** que
  * `transactionWhere` de `payments.repository.ts`, et non une copie qu'il
  * faudrait tenir en regard : la borne haute y est exclue, ce qui permet de poser
  * deux journées de caisse bout à bout sans compter deux fois le ticket de
  * minuit, et les deux historiques du même ticket ne peuvent pas avoir deux idées
  * d'un jour de caisse.
+ *
+ * ## Deux fenêtres, deux colonnes — #1027
+ *
+ * `from`/`to` bornent l'**ouverture** du ticket (`sales.created_at`).
+ * `settledWithin` borne l'instant de **capture** du règlement
+ * (`payments.captured_at`) : c'est ce que la relève du TPE demande, et un ticket
+ * ouvert le 17 à 23 h 55 puis réglé le 18 à 00 h 05 ne manque plus à la journée
+ * du 18. Les deux se cumulent, et chacune dit ce qu'elle borne.
+ *
+ * **Exportée pour être exercée** : c'est une fonction pure — un filtre entre, un
+ * `where` sort —, et la seule autre façon de prouver que le moyen et la fenêtre
+ * de capture tombent dans le **même** `some` serait de monter une base. Même
+ * régime que `taxBreakdownOf` et `refundsOf` chez `receipt.service.ts`.
  */
-function saleWhere(filter: SaleHistoryFilter): Prisma.SaleWhereInput {
-  const createdAt = createdAtWithin(filter);
+export function saleWhere(filter: SaleHistoryFilter): Prisma.SaleWhereInput {
+  const createdAt = withinWindow(filter);
+  const settlement = settlementWhere(filter);
 
   return {
     ...(filter.cashierUserId === undefined ? {} : { cashierUserId: filter.cashierUserId }),
     ...(filter.appointmentId === undefined ? {} : { appointmentId: filter.appointmentId }),
     ...(createdAt === undefined ? {} : { createdAt }),
-    ...(filter.mean === undefined ? {} : { payments: { some: settledBy(filter.mean) } }),
+    ...(settlement === undefined ? {} : { payments: { some: settlement } }),
+  };
+}
+
+/**
+ * Le prédicat de règlement du ticket, moyen **et** fenêtre de capture réunis —
+ * ou **rien** quand ni l'un ni l'autre n'est demandé.
+ *
+ * ## Un seul `some`, et c'est ce qui compte
+ *
+ * Les deux critères désignent le **même** encaissement. Deux conditions
+ * séparées — `payments: { some: moyen }` puis `payments: { some: fenêtre }` —
+ * auraient rendu un ticket réglé en espèces le 18 et au terminal le 17 sous
+ * « terminal, journée du 18 » : deux règlements distincts satisfaisant chacun
+ * une moitié de la question. Le relevé du terminal ne porte pas cette ligne, et
+ * le rapprochement ne tomberait jamais juste.
+ *
+ * Qu'un moyen soit demandé ou non, seuls les encaissements **aboutis** entrent
+ * dans le prédicat : une intention en vol n'a rien capturé, et une carte refusée
+ * n'est pas un règlement. Le statut est donc posé **une fois**, ici, et le moyen
+ * s'étale par-dessus — `settledBy` le redit à l'identique, et l'écrire deux fois
+ * de ce côté-ci aurait laissé les deux relèves, avec moyen et sans moyen, cesser
+ * un jour d'avoir la même idée d'un encaissement abouti.
+ */
+function settlementWhere(filter: SaleHistoryFilter): Prisma.PaymentWhereInput | undefined {
+  const capturedAt =
+    filter.settledWithin === undefined ? undefined : withinWindow(filter.settledWithin);
+
+  if (filter.mean === undefined && capturedAt === undefined) {
+    return undefined;
+  }
+
+  return {
+    status: { in: [...SETTLED_PAYMENT_STATUSES] },
+    ...(filter.mean === undefined ? {} : settledBy(filter.mean)),
+    ...(capturedAt === undefined ? {} : { capturedAt }),
   };
 }
 

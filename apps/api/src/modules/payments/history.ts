@@ -57,8 +57,8 @@ export function totalPagesOf(totalItems: number, pageSize: number): number {
 }
 
 /**
- * Le critère `created_at` d'une fenêtre — ou **rien** quand elle est ouverte des
- * deux côtés.
+ * Le critère de date d'une fenêtre — ou **rien** quand elle est ouverte des deux
+ * côtés.
  *
  * `gte` sur `from`, `lt` sur `to` : la borne haute est exclue, ce qui permet de
  * poser deux journées de caisse bout à bout sans compter deux fois l'écriture de
@@ -67,12 +67,21 @@ export function totalPagesOf(totalItems: number, pageSize: number): number {
  * `saleWhere` doivent rester des jumeaux, et deux copies finiraient par ne plus
  * avoir la même idée d'un jour de caisse.
  *
+ * ## Le nom ne dit plus `created_at`, et c'est voulu — #1027
+ *
+ * La fonction ne connaît que deux instants et leur relation ; la **colonne** sur
+ * laquelle le critère se pose est l'affaire de l'appelant. `saleWhere` le pose
+ * désormais sur deux colonnes différentes : `sales.created_at` pour la fenêtre
+ * d'ouverture du ticket, `payments.captured_at` pour celle de la relève. Une
+ * seconde copie nommée `capturedAtWithin` aurait été le deuxième endroit où la
+ * borne haute pourrait cesser d'être exclue.
+ *
  * `undefined` plutôt qu'un objet vide : un `createdAt: {}` porté jusqu'au `where`
  * de Prisma s'y lirait comme un filtre à composer plutôt que comme l'absence de
  * filtre. La forme rendue est celle d'un filtre de date de Prisma, sans en
  * importer le type — ce fichier reste pur.
  */
-export function createdAtWithin(
+export function withinWindow(
   window: HistoryWindow,
 ): { gte?: Date; lt?: Date } | undefined {
   if (window.from === undefined && window.to === undefined) {

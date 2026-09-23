@@ -1,3 +1,4 @@
+import type { HistoryWindow } from './history';
 import type { Money, SettlementMean } from './payments.types';
 
 /**
@@ -278,12 +279,46 @@ export interface SaleHistoryFilter {
    * `total` reste celui du ticket entier — la part passée au terminal se lit sur
    * les lignes de `GET /payments`, qui portent un montant par encaissement.
    *
-   * La **journée**, elle, est le couple `from`/`to` déjà présent : borne basse
-   * incluse, borne haute exclue, à offset explicite. C'est la convention qui
-   * permet de poser deux journées bout à bout sans compter le ticket de minuit
-   * deux fois, et c'est ce qui dit « par jour » ici.
+   * La **journée**, elle, est le couple `settledWithin` ci-dessous, et non
+   * `from`/`to` : la relève se lit sur l'instant de **capture** du règlement,
+   * pas sur l'ouverture du ticket (#1027).
    */
   readonly mean?: SettlementMean;
+  /**
+   * La fenêtre de l'instant de **capture** du règlement — #1027, deuxième point.
+   *
+   * ## Pourquoi une seconde fenêtre, et non un autre sens donné à la première
+   *
+   * `from`/`to` bornent l'ouverture du ticket — `sales.created_at` —, et c'est
+   * la même convention que l'historique des transactions, qui lit la même
+   * journée de caisse. Un ticket ouvert le 17 à 23 h 55 et réglé au TPE le 18 à
+   * 00 h 05 manquait donc à la requête du 18, alors qu'il figure sur le relevé
+   * que le terminal imprime le 18 — c'est-à-dire précisément l'usage auquel le
+   * sixième critère de #834 destine `mean`.
+   *
+   * Le choix était entre deux paramètres distincts et une fenêtre dont le sens
+   * suit le filtre. C'est la **première** branche qui est retenue, pour la
+   * raison que l'ADR 0015 développe déjà à propos de `PaymentCardChannel` : on
+   * ne change pas en silence le sens d'un filtre que des consommateurs lisent
+   * déjà. `from`/`to` gardent le leur, et la relève se demande par la fenêtre
+   * qui dit ce qu'elle borne.
+   *
+   * ## Les deux critères portent sur le **même** encaissement
+   *
+   * `mean` et cette fenêtre se posent sur une seule condition d'existence : le
+   * ticket doit porter un règlement qui soit **à la fois** de ce moyen et
+   * capturé dans cette fenêtre. Deux conditions séparées auraient rendu un
+   * ticket réglé en espèces le 18 et au terminal le 17 sous
+   * `mean=CARD_TERMINAL` + la journée du 18 — une ligne que le relevé du
+   * terminal ne porte pas.
+   *
+   * Utilisable seule : sans `mean`, elle rend les tickets dont un encaissement
+   * abouti a été capturé dans la fenêtre, tous moyens confondus.
+   *
+   * L'index est déjà là : `payments(tenant_id, status, captured_at)`, posé par
+   * #74 pour cette lecture exacte.
+   */
+  readonly settledWithin?: HistoryWindow;
   readonly page: number;
   readonly pageSize: number;
 }
