@@ -43,13 +43,25 @@ vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: vi.fn(), refresh, replace }),
 }));
 
-vi.mock('@/lib/admin/payment-stripe', () => ({
-  loadStripeSdk: () =>
-    Promise.resolve({
-      elements: () => ({ create: () => ({ mount, unmount: vi.fn(), destroy }) }),
-      confirmPayment: (...args: unknown[]) => confirmPayment(...args),
-    }),
-}));
+// Le module réel est conservé et seul `loadStripeSdk` est doublé : le
+// formulaire de carte importe aussi `StripeLoadError` — une **valeur**, dont il
+// se sert pour classer un échec de chargement — et une doublure qui ne
+// l'exporterait pas ferait échouer l'accès plutôt que le chargement (#850).
+vi.mock('@/lib/admin/payment-stripe', async () => {
+  const actual =
+    await vi.importActual<typeof import('@/lib/admin/payment-stripe')>(
+      '@/lib/admin/payment-stripe',
+    );
+
+  return {
+    ...actual,
+    loadStripeSdk: () =>
+      Promise.resolve({
+        elements: () => ({ create: () => ({ mount, unmount: vi.fn(), destroy }) }),
+        confirmPayment: (...args: unknown[]) => confirmPayment(...args),
+      }),
+  };
+});
 
 const SLUG = 'maison-lotus';
 const TIMEZONE = 'Indian/Antananarivo';
