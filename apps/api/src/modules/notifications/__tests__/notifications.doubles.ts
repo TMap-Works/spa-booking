@@ -482,6 +482,19 @@ export interface StoredNotification {
   readonly sentAt?: Date | null;
   readonly failureReason?: string | null;
   readonly createdAt: Date;
+  /**
+   * Le **compte** du praticien à qui ce rendez-vous revient — #1200.
+   *
+   * C'est ce que le prédicat du dépôt traverse en base
+   * (`notifications → appointment → staff → userId`) ; le double le porte à plat
+   * plutôt que de rejouer deux jointures qu'il n'a pas.
+   *
+   * Facultatif : une graine qui ne le déclare pas ne relève du périmètre de
+   * personne, et sort donc du journal dès qu'une portée `:own` est posée. C'est
+   * la conduite sûre — rien, plutôt que le salon entier — et c'est aussi celle
+   * que la base tient pour un envoi sans rendez-vous.
+   */
+  readonly staffUserId?: string | null;
 }
 
 /**
@@ -511,9 +524,24 @@ export class FakeMissingTenantContextError extends Error {
  *
  * Il reproduit aussi l'ordre (du plus récent au plus ancien) et le plafond,
  * parce que ce sont des promesses du contrat que la suite d'intégration vérifie.
+ *
+ * Depuis #1200 il reproduit une troisième propriété : la **portée de lecture**,
+ * `ownedByUserId`. Un double qui l'ignorerait rendrait le salon entier à un
+ * praticien tout en laissant la suite verte — précisément le faux vert qu'une
+ * suite d'autorisation ne peut pas se permettre.
  */
 export class FakeNotificationsJournal {
   private readonly stored: StoredNotification[] = [];
+
+  /**
+   * La dernière requête reçue — ce qui permet à une suite d'affirmer *quelle*
+   * portée la route a posée, et pas seulement ce qu'elle a rendu.
+   *
+   * Utile parce que le harnais signe ses jetons sur un compte tiré au hasard :
+   * sans cela, aucune suite ne saurait dire si la liste vide qu'elle observe
+   * vient d'une portée correctement bornée ou d'une graine mal posée.
+   */
+  public lastQuery: NotificationListQuery | null = null;
 
   public seed(notification: StoredNotification): void {
     this.stored.push(notification);
@@ -522,8 +550,20 @@ export class FakeNotificationsJournal {
   public list(query: NotificationListQuery): Promise<readonly NotificationTrace[]> {
     const tenantId = this.requireScope('notification.findMany');
 
+    this.lastQuery = query;
+
     const matches = this.stored
       .filter((row) => row.tenantId === tenantId)
+      // La portée `:own` d'abord : elle ne se surcharge pas d'un filtre de
+      // requête, elle les borne tous. Un envoi sans rendez-vous — donc sans
+      // praticien — en sort, comme le `is` du prédicat réel l'écarte en base.
+      .filter(
+        (row) =>
+          query.ownedByUserId === null ||
+          (row.staffUserId !== undefined &&
+            row.staffUserId !== null &&
+            row.staffUserId === query.ownedByUserId),
+      )
       .filter((row) => query.appointmentId === undefined || row.appointmentId === query.appointmentId)
       .filter((row) => query.type === undefined || row.type === query.type)
       .filter((row) => query.channel === undefined || row.channel === query.channel)

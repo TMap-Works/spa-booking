@@ -176,7 +176,7 @@ describe('notifications — le plafond de lecture est une règle du service', ()
     // établissement actif.
     const { queries, service } = build();
 
-    await service.list({});
+    await service.list({ ownedByUserId: null });
 
     expect(queries[0]?.limit).toBe(NOTIFICATION_LIST_MAX);
   });
@@ -184,7 +184,7 @@ describe('notifications — le plafond de lecture est une règle du service', ()
   it('honore une demande plus étroite', async () => {
     const { queries, service } = build();
 
-    await service.list({ limit: 5 });
+    await service.list({ limit: 5, ownedByUserId: null });
 
     expect(queries[0]?.limit).toBe(5);
   });
@@ -192,8 +192,60 @@ describe('notifications — le plafond de lecture est une règle du service', ()
   it('ne laisse pas l’appelant dépasser le plafond', async () => {
     const { queries, service } = build();
 
-    await service.list({ limit: 10_000 });
+    await service.list({ limit: 10_000, ownedByUserId: null });
 
     expect(queries[0]?.limit).toBe(NOTIFICATION_LIST_MAX);
+  });
+});
+
+/**
+ * La portée de lecture traverse le service **sans qu'il en décide** — #1200.
+ *
+ * Ces trois cas ne prouvent pas l'autorisation, qui se joue au contrôleur
+ * (`notifications.own-scope.spec.ts`) : ils prouvent que le service ne la
+ * réinterprète pas en chemin. C'est la propriété qui rend inutile toute lecture
+ * de rôle ici, et qu'ADR 0013 demande — le filtre ne doit pas se réécrire dans
+ * chaque service.
+ */
+describe('notifications — le service transmet la portée, il ne la décide pas', () => {
+  function build() {
+    const queries: NotificationListQuery[] = [];
+    const repository = {
+      list: (query: NotificationListQuery) => {
+        queries.push(query);
+        return Promise.resolve([]);
+      },
+    } as unknown as NotificationsRepository;
+
+    return { queries, service: new NotificationsService(repository) };
+  }
+
+  it('transmet « tout l’établissement » tel quel', async () => {
+    const { queries, service } = build();
+
+    await service.list({ ownedByUserId: null });
+
+    expect(queries[0]?.ownedByUserId).toBeNull();
+  });
+
+  it('transmet le compte de l’appelant tel quel', async () => {
+    const { queries, service } = build();
+
+    await service.list({ ownedByUserId: 'user-42' });
+
+    expect(queries[0]?.ownedByUserId).toBe('user-42');
+  });
+
+  it('ne laisse pas un filtre de requête écraser la portée', async () => {
+    // Le cas du ticket : `?appointmentId=<celui d'une collègue>` ne doit pas
+    // relâcher la borne, il doit s'y ajouter.
+    const { queries, service } = build();
+
+    await service.list({ appointmentId: 'rdv-d-une-collegue', ownedByUserId: 'user-42' });
+
+    expect(queries[0]).toMatchObject({
+      appointmentId: 'rdv-d-une-collegue',
+      ownedByUserId: 'user-42',
+    });
   });
 });

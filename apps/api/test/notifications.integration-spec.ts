@@ -16,6 +16,18 @@ import { createNotificationsHarness, type NotificationsHarness } from './notific
  * | les champs nuls sont **omis** | le contrat les déclare `.optional()`, un `null` y échouerait |
  * | ni coordonnée ni contenu de message | CDC §5.1, notifications §7 |
  * | un filtre inconnu tombe en 400 avec le champ nommé | api-module §5 |
+ *
+ * ## Pourquoi `MANAGER` porte désormais les cas de contrat — #1200
+ *
+ * Ces cas-là parlent de la **forme** de la réponse : vocabulaire, instants,
+ * champs omis, motif d'échec. Ils ont besoin que la réponse porte des lignes, et
+ * depuis #1200 le journal d'un praticien ne porte que les envois de ses propres
+ * rendez-vous. Les faire passer par un jeton `STAFF` aurait confondu deux
+ * questions — « la réponse a-t-elle la bonne forme ? » et « l'appelant a-t-il le
+ * droit de la lire ? » — et la première serait devenue verte sur une liste vide.
+ *
+ * La seconde a donc son propre `describe`, en fin de fichier, et c'est là que la
+ * frontière de #1200 se prouve.
  */
 
 const BASE = '/api/v1/notifications';
@@ -94,7 +106,7 @@ describe('GET /api/v1/notifications — le journal d’envois', () => {
   it('rend les traces du plus récent au plus ancien, avec le plafond appliqué', async () => {
     const response = await request(server())
       .get(BASE)
-      .set('Authorization', await harness.bearer('STAFF'))
+      .set('Authorization', await harness.bearer('MANAGER'))
       .expect(200);
 
     const body = response.body as ListBody;
@@ -109,7 +121,7 @@ describe('GET /api/v1/notifications — le journal d’envois', () => {
     // validation côté front, sans que rien ne le dise ici.
     const response = await request(server())
       .get(`${BASE}?appointmentId=${RDV}&channel=email`)
-      .set('Authorization', await harness.bearer('STAFF'))
+      .set('Authorization', await harness.bearer('MANAGER'))
       .expect(200);
 
     const body = response.body as ListBody;
@@ -124,7 +136,7 @@ describe('GET /api/v1/notifications — le journal d’envois', () => {
   it('rend les instants en ISO 8601 UTC suffixés `Z`', async () => {
     const response = await request(server())
       .get(`${BASE}?appointmentId=${RDV}&channel=email`)
-      .set('Authorization', await harness.bearer('STAFF'))
+      .set('Authorization', await harness.bearer('MANAGER'))
       .expect(200);
 
     const [trace] = (response.body as ListBody).items;
@@ -138,7 +150,7 @@ describe('GET /api/v1/notifications — le journal d’envois', () => {
     // validation Zod côté front.
     const response = await request(server())
       .get(`${BASE}?appointmentId=${RDV}&channel=email`)
-      .set('Authorization', await harness.bearer('STAFF'))
+      .set('Authorization', await harness.bearer('MANAGER'))
       .expect(200);
 
     const [trace] = (response.body as ListBody).items;
@@ -152,7 +164,7 @@ describe('GET /api/v1/notifications — le journal d’envois', () => {
     // vient pas » — l'en-tête de `packages/shared/src/schemas/notification.ts`.
     const response = await request(server())
       .get(`${BASE}?statuses=failed`)
-      .set('Authorization', await harness.bearer('STAFF'))
+      .set('Authorization', await harness.bearer('MANAGER'))
       .expect(200);
 
     const body = response.body as ListBody;
@@ -164,7 +176,7 @@ describe('GET /api/v1/notifications — le journal d’envois', () => {
   it('accepte plusieurs statuts d’un coup', async () => {
     const response = await request(server())
       .get(`${BASE}?statuses=failed&statuses=pending`)
-      .set('Authorization', await harness.bearer('STAFF'))
+      .set('Authorization', await harness.bearer('MANAGER'))
       .expect(200);
 
     expect((response.body as ListBody).items).toHaveLength(2);
@@ -173,7 +185,7 @@ describe('GET /api/v1/notifications — le journal d’envois', () => {
   it('filtre par rendez-vous — l’usage du tiroir du back-office', async () => {
     const response = await request(server())
       .get(`${BASE}?appointmentId=${RDV}`)
-      .set('Authorization', await harness.bearer('STAFF'))
+      .set('Authorization', await harness.bearer('MANAGER'))
       .expect(200);
 
     const body = response.body as ListBody;
@@ -187,7 +199,7 @@ describe('GET /api/v1/notifications — le journal d’envois', () => {
     // quelqu'un élargissait la projection un jour.
     const response = await request(server())
       .get(BASE)
-      .set('Authorization', await harness.bearer('STAFF'))
+      .set('Authorization', await harness.bearer('MANAGER'))
       .expect(200);
 
     const serialized = JSON.stringify(response.body);
@@ -200,7 +212,7 @@ describe('GET /api/v1/notifications — le journal d’envois', () => {
   it('refuse un filtre inconnu en 400, et nomme le champ fautif', async () => {
     const response = await request(server())
       .get(`${BASE}?statuses=perdu`)
-      .set('Authorization', await harness.bearer('STAFF'))
+      .set('Authorization', await harness.bearer('MANAGER'))
       .expect(400);
 
     const body = response.body as { code: string; message: string; details: unknown };
@@ -213,7 +225,7 @@ describe('GET /api/v1/notifications — le journal d’envois', () => {
   it('refuse un `appointmentId` mal formé en 400, avant toute lecture', async () => {
     await request(server())
       .get(`${BASE}?appointmentId=pas-un-uuid`)
-      .set('Authorization', await harness.bearer('STAFF'))
+      .set('Authorization', await harness.bearer('MANAGER'))
       .expect(400);
   });
 
@@ -224,5 +236,147 @@ describe('GET /api/v1/notifications — le journal d’envois', () => {
       .get(BASE)
       .set('Authorization', await harness.bearer('MANAGER'))
       .expect(200);
+  });
+});
+
+/**
+ * **Le journal d'un praticien s'arrête à ses rendez-vous** — #1200.
+ *
+ * Le constat de la campagne QA `20260922-complet` : `GET /api/v1/notifications`
+ * rendait à Sam les 89 lignes du salon, dont 32 rendez-vous de Marc, avec leurs
+ * `appointmentId` et leurs `recipientUserId`. Ce sont ces identifiants-là qui
+ * ont servi à monter le contournement de #1135 — lequel a fermé la conséquence,
+ * pas l'exposition.
+ *
+ * Trois cas, et le troisième est celui qui empêche les deux premiers d'être
+ * verts pour une mauvaise raison : un journal qui ne rendrait plus jamais rien
+ * satisferait « Sam ne voit pas Marc » sans rendre le produit utilisable.
+ */
+describe('GET /api/v1/notifications — la portée du praticien', () => {
+  let harness: NotificationsHarness;
+
+  const server = (): ReturnType<INestApplication['getHttpServer']> => harness.app.getHttpServer();
+
+  /** L'envoi d'un rendez-vous de Marc — celui que Sam ne doit jamais lire. */
+  const TRACE_DE_MARC = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
+  const RDV_DE_MARC = '44444444-4444-4444-8444-444444444444';
+  const MARC = '55555555-5555-4555-8555-555555555555';
+
+  /**
+   * Le compte sur lequel le jeton de Sam est signé.
+   *
+   * Le harnais le tire au hasard à chaque jeton : on le relit sur la portée que
+   * la route vient de poser, ce qui est aussi une façon d'affirmer qu'elle en
+   * pose bien une.
+   */
+  async function scopeOf(bearer: string): Promise<string> {
+    await request(server()).get(BASE).set('Authorization', bearer).expect(200);
+
+    const compte = harness.journal.lastQuery?.ownedByUserId;
+
+    expect(typeof compte).toBe('string');
+
+    return compte as string;
+  }
+
+  beforeEach(async () => {
+    harness = await createNotificationsHarness();
+
+    harness.seed({
+      tenantId: harness.tenantId,
+      id: TRACE_DE_MARC,
+      appointmentId: RDV_DE_MARC,
+      recipientUserId: CLIENTE,
+      staffUserId: MARC,
+      type: 'BOOKING_CONFIRMATION',
+      channel: 'SMS',
+      status: 'SENT',
+      createdAt: new Date('2026-09-06T08:00:00Z'),
+    });
+  });
+
+  afterEach(async () => {
+    await harness.close();
+  });
+
+  it('ne livre à Sam ni le rendez-vous ni le destinataire de Marc', async () => {
+    const response = await request(server())
+      .get(BASE)
+      .set('Authorization', await harness.bearer('STAFF'))
+      .expect(200);
+
+    const body = response.body as ListBody;
+
+    expect(body.items).toEqual([]);
+
+    // L'assertion du ticket, mot pour mot : « en aucun cas la réponse ne lui
+    // livre les `appointmentId` et les `recipientUserId` des rendez-vous de ses
+    // collègues ». Sur le corps entier, pas seulement sur les champs qu'on
+    // pense à regarder.
+    const serialized = JSON.stringify(body);
+
+    expect(serialized).not.toContain(RDV_DE_MARC);
+    expect(serialized).not.toContain(CLIENTE);
+    expect(serialized).not.toContain(TRACE_DE_MARC);
+  });
+
+  it('ne se laisse pas rouvrir par le filtre `appointmentId` — le vecteur de #1135', async () => {
+    // L'appel exact du ticket. Une liste vide, et non un 403 : distinguer « ce
+    // rendez-vous existe mais n'est pas le vôtre » de « ce rendez-vous n'existe
+    // pas » ferait de la route un oracle sur l'agenda du salon.
+    const response = await request(server())
+      .get(`${BASE}?appointmentId=${RDV_DE_MARC}`)
+      .set('Authorization', await harness.bearer('STAFF'))
+      .expect(200);
+
+    const body = response.body as ListBody;
+
+    expect(body.items).toEqual([]);
+    expect(JSON.stringify(body)).not.toContain(CLIENTE);
+  });
+
+  it('lui rend les siens, identifiants compris — le journal reste utile', async () => {
+    // Sans ce cas, fermer la route entièrement suffirait à faire verdir les deux
+    // précédents. Ce que #1200 borne, c'est l'étendue, pas l'usage : Sam doit
+    // toujours pouvoir répondre à « ma cliente dit n'avoir rien reçu ».
+    const sam = await harness.bearer('STAFF');
+    const compte = await scopeOf(sam);
+
+    harness.seed({
+      tenantId: harness.tenantId,
+      id: 'ffffffff-ffff-4fff-8fff-ffffffffffff',
+      appointmentId: RDV,
+      recipientUserId: CLIENTE,
+      staffUserId: compte,
+      type: 'REMINDER_24H',
+      channel: 'EMAIL',
+      status: 'FAILED',
+      failureReason: 'SES throttling',
+      createdAt: new Date('2026-09-06T10:00:00Z'),
+    });
+
+    const response = await request(server()).get(BASE).set('Authorization', sam).expect(200);
+
+    const body = response.body as ListBody;
+
+    expect(body.items).toHaveLength(1);
+    expect(body.items[0]).toMatchObject({
+      appointmentId: RDV,
+      recipientUserId: CLIENTE,
+      status: 'failed',
+      failureReason: 'SES throttling',
+    });
+  });
+
+  it('ouvre le journal entier à l’encadrement, comme avant', async () => {
+    const response = await request(server())
+      .get(BASE)
+      .set('Authorization', await harness.bearer('MANAGER'))
+      .expect(200);
+
+    const body = response.body as ListBody;
+
+    expect(body.items.map((item) => item.id)).toEqual([TRACE_DE_MARC]);
+    expect(harness.journal.lastQuery?.ownedByUserId).toBeNull();
   });
 });

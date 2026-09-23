@@ -575,3 +575,77 @@ describe('NotificationsRepository.loadAppointmentContext — l’heure annoncée
     expect(JSON.stringify(context)).not.toContain('@');
   });
 });
+
+/**
+ * **Le `where` que la portée de lecture produit réellement** — #1200.
+ *
+ * Ces cas existent parce qu'aucun autre ne les couvrait : les suites de
+ * `apps/api/test/` substituent `NotificationsRepository` par
+ * `FakeNotificationsJournal`, qui **réécrit** la borne en TypeScript au lieu de
+ * l'exécuter. Neutraliser `ownedByPredicate` dans `list()` — c'est-à-dire
+ * rouvrir à chaque praticien le journal entier du salon, le défaut même que
+ * #1200 ferme — les laissait toutes vertes.
+ *
+ * C'est le mode de défaillance le plus coûteux d'une correction d'autorisation :
+ * elle ne casse rien en tombant. Le dépôt est donc interrogé ici pour ce qu'il
+ * est — le seul endroit qui traduise la portée en requête — et c'est la
+ * **forme** du prédicat qui est affirmée, la seule chose qu'une suite unitaire
+ * puisse tenir sans base.
+ */
+describe('notifications — la portée de lecture, telle que le dépôt l’écrit', () => {
+  function listRepository(): {
+    calls: { where: Record<string, unknown> }[];
+    repository: NotificationsRepository;
+  } {
+    const calls: { where: Record<string, unknown> }[] = [];
+
+    const repository = new NotificationsRepository({
+      notification: {
+        findMany: (args: { where: Record<string, unknown> }) => {
+          calls.push(args);
+          return Promise.resolve([]);
+        },
+      },
+    } as unknown as ScopedPrismaClient);
+
+    return { calls, repository };
+  }
+
+  it('borne la lecture au praticien par la traversée `appointment → staff → userId`', async () => {
+    // Le **compte** et non la fiche praticien : c'est ce que l'appelant tient du
+    // jeton vérifié, et c'est ce qui évite une seconde lecture de `staff`.
+    const { calls, repository } = listRepository();
+
+    await repository.list({ limit: 50, ownedByUserId: 'compte-de-sam' });
+
+    expect(calls[0]?.where).toMatchObject({
+      appointment: { is: { staff: { userId: 'compte-de-sam' } } },
+    });
+  });
+
+  it('n’écrit aucune borne quand l’appelant lit tout l’établissement', async () => {
+    const { calls, repository } = listRepository();
+
+    await repository.list({ limit: 50, ownedByUserId: null });
+
+    expect(calls[0]?.where).not.toHaveProperty('appointment');
+  });
+
+  it('ajoute la borne au filtre de requête au lieu de s’y substituer', async () => {
+    // Le vecteur du ticket : `?appointmentId=<celui d'une collègue>` ne doit pas
+    // relâcher la portée. Les deux clés coexistent dans le `where`, et Prisma
+    // les conjugue.
+    const { calls, repository } = listRepository();
+
+    await repository.list({
+      limit: 50,
+      appointmentId: 'rdv-d-une-collegue',
+      ownedByUserId: 'compte-de-sam',
+    });
+
+    expect(calls[0]?.where).toMatchObject({
+      appointmentId: 'rdv-d-une-collegue',
+      appointment: { is: { staff: { userId: 'compte-de-sam' } } },
+    });
+  });
+});
