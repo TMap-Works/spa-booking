@@ -4,6 +4,7 @@ import {
   PaymentStatus as PrismaPaymentStatus,
   RefundStatus as PrismaRefundStatus,
 } from '@prisma/client';
+import { counterSettlementMeanSchema, paymentCardChannelSchema } from '@spa/shared';
 
 import {
   COUNTER_SETTLEMENT_MEANS,
@@ -112,6 +113,24 @@ describe('payments — le moyen et ses deux colonnes', () => {
   it('n’en laisse que deux au comptoir — Stripe n’y est plus, premier critère', () => {
     expect(COUNTER_SETTLEMENT_MEANS).toEqual(['CASH', 'CARD_TERMINAL']);
     expect(COUNTER_SETTLEMENT_MEANS).not.toContain('CARD_ONLINE');
+  });
+
+  /**
+   * Le troisième maillon de la chaîne — #1026.
+   *
+   * Les témoins ci-dessus relient `payments.types.ts` aux **colonnes**. Celui-ci
+   * le relie au **contrat partagé**, et c'est le maillon qui manquait : `@spa/shared`
+   * décrivait la route de règlement telle qu'elle était avant #834 — `CASH`/`CARD`,
+   * sans canal ni référence —, et rien ne l'a signalé, parce qu'aucun test ne
+   * comparait les deux listes.
+   *
+   * La chaîne est désormais close : énumération PostgreSQL → vocabulaire du
+   * module → vocabulaire du fil. Une valeur ajoutée à l'un des trois sans l'être
+   * aux deux autres rougit ici.
+   */
+  it('dit la même chose que le contrat partagé — le fil et le module', () => {
+    expect([...COUNTER_SETTLEMENT_MEANS]).toEqual(counterSettlementMeanSchema.options);
+    expect([...PAYMENT_CARD_CHANNELS]).toEqual(paymentCardChannelSchema.options);
   });
 
   it.each([
