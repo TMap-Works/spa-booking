@@ -1,3 +1,5 @@
+import { REPORT_EXPORT_FALLBACK_LOCALE, type Locale } from '@spa/shared';
+
 import { netOf } from '../../payments/pos.totals';
 import type {
   AppointmentVolumeReport,
@@ -5,6 +7,7 @@ import type {
   NoShowReport,
   ReportWindow,
 } from '../reporting.types';
+import { reportExportVocabulary, type ReportExportVocabulary } from './report-export.vocabulary';
 
 /**
  * Sérialisation CSV des trois rapports — le fichier que l'export dépose dans le
@@ -116,17 +119,31 @@ import type {
  * de répartition pour une vente réglée en deux fois. C'est une décision de
  * conception, pas une correction de revue.
  *
- * ## Le point-virgule, et l'assumer
+ * ## La langue décide des mots et des signes — #851
  *
- * RFC 4180 ne normalise que la virgule. Mais ce fichier s'ouvre dans le tableur
- * d'une gérante en locale française, où la virgule est le séparateur décimal et
- * où un CSV à virgules atterrit en une seule colonne. L'échappement, lui, reste
- * celui de la RFC : guillemets doublés, champ encadré dès qu'il contient un
- * séparateur, un guillemet ou un saut de ligne.
+ * Jusqu'à ce ticket, le fichier était français en dur : en-tête `section;cle;…`,
+ * libellés en français, point-virgule de colonnes. Il suit désormais la langue
+ * de l'interface **au moment de l'export**, transmise dans la demande et validée
+ * par `reportExportLocaleSchema` du contrat partagé.
+ *
+ * Ce que cela change, et ce que cela ne change pas, est décrit une fois pour
+ * toutes dans `report-export.vocabulary.ts` : la ligne d'en-tête et la colonne
+ * `libelle` se traduisent, les colonnes `section` et `mesure` restent des
+ * **identifiants** stables — c'est ce qui permet à deux exports de langues
+ * différentes de s'empiler dans le même tableau croisé.
+ *
+ * Le séparateur de colonnes en dépend aussi, et il ne va jamais seul : `;` avec
+ * la virgule décimale en français, `,` avec le point décimal en anglais. RFC 4180
+ * ne normalise que la virgule, mais un CSV à virgules atterrit en une seule
+ * colonne dans un tableur français, où la virgule est le séparateur décimal.
+ * L'échappement, lui, reste celui de la RFC dans les deux cas : guillemets
+ * doublés, champ encadré dès qu'il contient **le séparateur en vigueur**, un
+ * guillemet ou un saut de ligne.
+ *
+ * Les montants, eux, ne changent pas d'un iota : entiers, en plus petite unité
+ * monétaire, quelle que soit la langue. Le seul nombre fractionnaire du fichier
+ * est le taux de no-show, et c'est le seul que le séparateur décimal concerne.
  */
-
-/** Le séparateur de colonnes — voir l'en-tête du module. */
-const SEPARATOR = ';';
 
 /** Fin de ligne, telle que RFC 4180 la définit. */
 const LINE_BREAK = '\r\n';
@@ -141,20 +158,34 @@ const LINE_BREAK = '\r\n';
  */
 const BYTE_ORDER_MARK = '\uFEFF';
 
-/** L'en-tête, écrit une fois. Toute ligne du fichier a ces six colonnes. */
-export const REPORT_EXPORT_CSV_HEADER = [
-  'section',
-  'cle',
-  'libelle',
-  'mesure',
-  'valeur',
-  'devise',
-] as const;
+/**
+ * L'en-tête, écrit une fois. Toute ligne du fichier a ces six colonnes.
+ *
+ * Rendu par langue depuis #851 — voir `report-export.vocabulary.ts`. Les six
+ * colonnes, elles, sont les mêmes dans les deux langues : c'est leur **nom** qui
+ * se traduit, pas leur nombre ni leur ordre.
+ */
+export function reportExportCsvHeader(locale: Locale): readonly string[] {
+  return reportExportVocabulary(locale).header;
+}
 
 /** Les rapports d'une même fenêtre, tels que l'export les sérialise. */
 export interface ReportExportContent {
   readonly window: ReportWindow;
   readonly timeZone: string;
+  /**
+   * La langue de l'interface au moment de l'export — #851, troisième critère.
+   *
+   * Facultative, et le repli est celui du contrat partagé
+   * (`REPORT_EXPORT_FALLBACK_LOCALE`, le français) : c'est ce que le fichier
+   * contenait avant ce ticket, donc ce qu'un appelant qui ne demande rien doit
+   * continuer de recevoir.
+   *
+   * Elle ne touche **ni** aux chiffres **ni** au fuseau : le fuseau de découpage
+   * des journées reste celui de l'établissement, et un export anglais d'un salon
+   * de Papeete compte les mêmes journées que son jumeau français.
+   */
+  readonly locale?: Locale;
   /**
    * Le taux de taxe de l'établissement exporté, en points de base — `2000` vaut
    * 20 % (#891, troisième critère).
@@ -197,16 +228,20 @@ interface CsvRow {
  * puis les no-shows.
  */
 export function buildReportExportCsv(content: ReportExportContent): string {
+  const words = reportExportVocabulary(content.locale ?? REPORT_EXPORT_FALLBACK_LOCALE);
   const rows: CsvRow[] = [
-    ...periodRows(content),
+    ...periodRows(content, words),
     ...revenueRows(content.revenue, content.taxRateBps),
-    ...content.volumes.flatMap(volumeRows),
-    ...noShowRows(content.noShows),
+    ...content.volumes.flatMap((volume) => volumeRows(volume, words)),
+    ...noShowRows(content.noShows, words),
   ];
 
   return (
     BYTE_ORDER_MARK +
-    [REPORT_EXPORT_CSV_HEADER.join(SEPARATOR), ...rows.map(toCsvLine)].join(LINE_BREAK) +
+    [
+      words.header.map((column) => escapeField(column, words)).join(words.columnSeparator),
+      ...rows.map((line) => toCsvLine(line, words)),
+    ].join(LINE_BREAK) +
     LINE_BREAK
   );
 }
@@ -219,11 +254,11 @@ export function buildReportExportCsv(content: ReportExportContent): string {
  * pas rejouable. Les deux bornes sortent en ISO 8601 UTC, telles que l'API les
  * a reçues — la borne haute reste **exclue**, comme partout dans ce module.
  */
-function periodRows(content: ReportExportContent): CsvRow[] {
+function periodRows(content: ReportExportContent, words: ReportExportVocabulary): CsvRow[] {
   return [
-    row('periode', '', 'Début de la fenêtre (inclus)', 'debut_utc', content.window.from.toISOString()),
-    row('periode', '', 'Fin de la fenêtre (exclue)', 'fin_utc', content.window.to.toISOString()),
-    row('periode', '', 'Fuseau de découpage des journées', 'fuseau', content.timeZone),
+    row('periode', '', words.labels.windowStart, 'debut_utc', content.window.from.toISOString()),
+    row('periode', '', words.labels.windowEnd, 'fin_utc', content.window.to.toISOString()),
+    row('periode', '', words.labels.timeZone, 'fuseau', content.timeZone),
   ];
 }
 
@@ -313,7 +348,10 @@ function revenueRows(revenue: DailyRevenueReport, taxRateBps: number): CsvRow[] 
  * trois totaux différents qui se contredisent. Ici, chaque section porte le sien,
  * et il vaut bien la somme de ses lignes.
  */
-function volumeRows(volume: AppointmentVolumeReport): CsvRow[] {
+function volumeRows(
+  volume: AppointmentVolumeReport,
+  words: ReportExportVocabulary,
+): CsvRow[] {
   const rows: CsvRow[] = [];
   const section = `volume_${volume.groupBy}`;
 
@@ -327,7 +365,7 @@ function volumeRows(volume: AppointmentVolumeReport): CsvRow[] {
     }
   }
 
-  rows.push(row(section, '', 'Tous groupes confondus', 'rendez_vous', String(volume.total)));
+  rows.push(row(section, '', words.labels.allGroups, 'rendez_vous', String(volume.total)));
 
   return rows;
 }
@@ -339,22 +377,40 @@ function volumeRows(volume: AppointmentVolumeReport): CsvRow[] {
  * écrit alors une **cellule vide** plutôt qu'un `0`. « Rien à honorer » n'est pas
  * « aucun no-show », et un `0` dans un tableur se moyenne, se somme et finit par
  * ressembler à une performance.
+ *
+ * C'est la **seule valeur fractionnaire du fichier**, donc la seule que le
+ * séparateur décimal de la langue concerne — « 0,3333 » en français, « 0.3333 »
+ * en anglais (#851). Les montants, eux, restent des entiers en plus petite unité
+ * monétaire et n'ont pas de décimale à séparer.
  */
-function noShowRows(noShows: NoShowReport): CsvRow[] {
+function noShowRows(noShows: NoShowReport, words: ReportExportVocabulary): CsvRow[] {
   return [
-    row('no_shows', '', 'Rendez-vous honorés', 'honores', String(noShows.honored)),
-    row('no_shows', '', 'Rendez-vous non honorés', 'no_shows', String(noShows.noShows)),
-    row('no_shows', '', 'Rendez-vous annulés', 'annules', String(noShows.cancelled)),
-    row('no_shows', '', 'Rendez-vous pas encore jugés', 'a_venir', String(noShows.pending)),
-    row('no_shows', '', 'Tous statuts confondus', 'total', String(noShows.total)),
+    row('no_shows', '', words.labels.honored, 'honores', String(noShows.honored)),
+    row('no_shows', '', words.labels.noShows, 'no_shows', String(noShows.noShows)),
+    row('no_shows', '', words.labels.cancelled, 'annules', String(noShows.cancelled)),
+    row('no_shows', '', words.labels.pending, 'a_venir', String(noShows.pending)),
+    row('no_shows', '', words.labels.allStatuses, 'total', String(noShows.total)),
     row(
       'no_shows',
       '',
-      'Taux de no-show sur les rendez-vous arrivés à échéance',
+      words.labels.rate,
       'taux',
-      noShows.rate === null ? '' : String(noShows.rate),
+      noShows.rate === null ? '' : decimal(noShows.rate, words),
     ),
   ];
+}
+
+/**
+ * Un nombre fractionnaire écrit avec le séparateur décimal de la langue.
+ *
+ * `String(value).replace('.', …)` plutôt qu'`Intl.NumberFormat` : le formateur
+ * poserait aussi des séparateurs de **milliers** — une espace insécable en
+ * français — et arrondirait à trois décimales par défaut, là où le taux en porte
+ * quatre que le service a déjà calculées. Un tableur relit « 0,3333 » ; il ne
+ * relit pas « 0,333 » sans perdre ce que la colonne annonce.
+ */
+function decimal(value: number, words: ReportExportVocabulary): string {
+  return String(value).replace('.', words.decimalSeparator);
 }
 
 /** Une ligne sans devise — un compte, une date, un libellé. */
@@ -382,10 +438,10 @@ function money(
 }
 
 /** Les six champs d'une ligne, échappés et joints. */
-function toCsvLine(line: CsvRow): string {
+function toCsvLine(line: CsvRow, words: ReportExportVocabulary): string {
   return [line.section, line.key, line.label, line.measure, line.value, line.currency]
-    .map(escapeField)
-    .join(SEPARATOR);
+    .map((field) => escapeField(field, words))
+    .join(words.columnSeparator);
 }
 
 /**
@@ -395,9 +451,17 @@ function toCsvLine(line: CsvRow): string {
  * Le nom d'une prestation ou d'un praticien passe par ici — « Massage 60 min ;
  * dos » ou un patronyme à apostrophe typographique sont des valeurs légitimes, et
  * c'est le seul endroit du fichier où une donnée saisie par un humain entre.
+ *
+ * Le séparateur qui déclenche l'encadrement est **celui de la langue** (#851) :
+ * une prestation nommée « Forfait duo, 90 min » couperait une ligne anglaise en
+ * deux sans cela, alors qu'elle ne gênait pas le fichier français. Une comparaison
+ * de caractère plutôt qu'une expression régulière construite à la volée — le
+ * séparateur viendrait d'une table, mais une `RegExp` recomposée à chaque champ
+ * est un coût inutile sur un fichier qui compte des milliers de lignes, et il
+ * aurait fallu en échapper les métacaractères.
  */
-function escapeField(value: string): string {
-  if (!/[";\r\n]/.test(value)) {
+function escapeField(value: string, words: ReportExportVocabulary): string {
+  if (!/["\r\n]/.test(value) && !value.includes(words.columnSeparator)) {
     return value;
   }
 

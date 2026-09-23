@@ -80,10 +80,10 @@ describe('Isolation inter-tenant — export du reporting', () => {
   });
 
   /** Produit l'export de l'établissement voulu, sous un jeton `MANAGER`. */
-  async function creerPour(tenantId: string): Promise<request.Response> {
+  async function creerPour(tenantId: string, locale?: string): Promise<request.Response> {
     return request(harness.app.getHttpServer())
       .post(EXPORT)
-      .query({ from: FROM, to: TO })
+      .query(locale === undefined ? { from: FROM, to: TO } : { from: FROM, to: TO, locale })
       .set('Authorization', await harness.bearer('MANAGER', tenantId))
       .expect(201);
   }
@@ -159,6 +159,24 @@ describe('Isolation inter-tenant — export du reporting', () => {
     // gonflé ressemble exactement à un salon qui aurait fait plus de chiffre.
     expect(fichier).not.toContain('50000');
     expect(fichier).not.toContain('CASH');
+  });
+
+  it('garde la frontière quand la demande porte une langue — #851', async () => {
+    // Le paramètre `?locale=` ajouté par #851 est le seul champ neuf de la route
+    // d'export : il décide des **mots** du fichier, et il ne doit rien décider
+    // d'autre. Un paramètre qui traverserait jusqu'au scoping se verrait ici —
+    // le fichier de A porterait la recette de B, ou la clé changerait de
+    // préfixe.
+    const chezA = await creerPour(a, 'en');
+    const fichier = harness.storage.objects.get(`exports/${a}/${String(chezA.body.id)}.csv`)?.body;
+
+    expect(fichier).toContain('section,key,label,measure,value,currency');
+    expect(fichier).toContain('12000');
+    expect(fichier).not.toContain('50000');
+    expect(fichier).not.toContain('CASH');
+
+    // Et la ressource reste tout aussi inaccessible au voisin.
+    await resignerPour(b, String(chezA.body.id), 404);
   });
 
   it('nomme le fichier de chacun d’après **son** slug, et son fuseau', async () => {

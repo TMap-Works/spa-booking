@@ -20,7 +20,9 @@ import { NoShowReportDto, toNoShowReportDto } from './dto/no-show-report.dto';
 import {
   ReportExportDto,
   ReportExportParamsDto,
+  ReportExportQueryDto,
   toReportExportDto,
+  toReportExportLocale,
 } from './dto/report-export.dto';
 import { ReportWindowQueryDto, toReportWindow } from './dto/report-window.dto';
 import { DailyRevenueReportDto, toDailyRevenueReportDto } from './dto/revenue-report.dto';
@@ -36,7 +38,7 @@ import { ReportingService } from './reporting.service';
  * | `GET /reports/revenue` | `MANAGER` | le revenu quotidien, ventilé par moyen de paiement |
  * | `GET /reports/appointments` | `MANAGER` | le volume, par jour, par praticien ou par prestation |
  * | `GET /reports/no-shows` | `MANAGER` | le nombre et le taux de no-shows |
- * | `POST /reports/export` | `MANAGER` | produit le CSV des trois rapports et rend son URL présignée |
+ * | `POST /reports/export` | `MANAGER` | produit le CSV des trois rapports, dans la langue demandée, et rend son URL présignée |
  * | `GET /reports/export/:exportId` | `MANAGER` | re-signe un export déjà produit |
  *
  * ## Pourquoi `MANAGER` et non `STAFF`
@@ -183,20 +185,37 @@ export class ReportingController {
    * `{ id, url, expiresAt, filename }` — pas de clé, pas de bucket, pas de
    * `tenant_id`. L'URL est un **porteur** valable au plus quinze minutes ; un
    * écran l'ouvre et l'oublie.
+   *
+   * ## `?locale=` — la langue du fichier, pas celle du salon (#851)
+   *
+   * Le CSV est écrit par le serveur : c'est donc lui qui choisit la ligne
+   * d'en-tête, les libellés et les deux séparateurs. La langue vient de
+   * l'**interface au moment de l'export**, passée en paramètre et validée par
+   * `reportExportLocaleSchema` du contrat partagé — ni de `Accept-Language`, qui
+   * est la préférence du navigateur, ni de `tenants.default_locale`, qui est la
+   * langue des notifications envoyées aux clientes.
+   *
+   * Elle ne touche ni aux chiffres, ni aux devises, ni au fuseau de découpage
+   * des journées : deux exports de la même fenêtre dans deux langues portent les
+   * mêmes valeurs.
    */
   @Post('export')
   @HttpCode(HttpStatus.CREATED)
   @AuthAtLeast('MANAGER')
   @ApiOperation({ summary: 'Produit l’export CSV du reporting et rend son URL présignée' })
   @ApiCreatedResponse({ type: ReportExportDto })
-  @ApiBadRequestResponse({ description: 'Borne mal formée — le champ fautif est nommé.' })
+  @ApiBadRequestResponse({
+    description: 'Borne ou langue mal formée — le champ fautif est nommé.',
+  })
   @ApiUnprocessableEntityResponse({ description: 'Fenêtre inversée, vide, ou de plus d’un an.' })
   @ApiNotFoundResponse({ description: 'Établissement introuvable.' })
   @ApiServiceUnavailableResponse({
     description: 'Aucun entrepôt d’export n’est branché sur cet environnement.',
   })
-  public async createExport(@Query() query: ReportWindowQueryDto): Promise<ReportExportDto> {
-    return toReportExportDto(await this.exports.create(toReportWindow(query)));
+  public async createExport(@Query() query: ReportExportQueryDto): Promise<ReportExportDto> {
+    return toReportExportDto(
+      await this.exports.create(toReportWindow(query), toReportExportLocale(query)),
+    );
   }
 
   /**
