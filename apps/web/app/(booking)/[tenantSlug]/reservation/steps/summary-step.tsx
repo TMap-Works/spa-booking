@@ -15,7 +15,7 @@ import { Button } from '@/components/ui/button';
 import { Notification, type NotificationTone } from '@/components/ui/notification';
 import type { ContactDraft } from '@/lib/booking/draft';
 
-import { bookAppointmentAction } from '../actions';
+import { requestBooking } from '../booking-request';
 
 import { BookingAppointmentCard, endOfBooking } from './appointment-card';
 import { ContactRecap } from './recap';
@@ -158,27 +158,38 @@ export function SummaryStep({
     setSubmitting(true);
     setRefusal(null);
 
-    const result = await bookAppointmentAction(tenant.slug, {
-      serviceId: service.id,
-      ...(staffId === null ? {} : { staffId }),
-      startsAt,
-      client: {
-        firstName: contact.firstName,
-        lastName: contact.lastName,
-        email: contact.email,
-        ...(contact.phone === '' ? {} : { phone: contact.phone }),
+    // La demande part sur `/{slug}/compte/reservation` et non sur une action
+    // serveur de cette page : c'est la seule adresse du front à laquelle le
+    // navigateur joint les cookies de session, et `POST
+    // /public/{slug}/appointments` exige le jeton de la cliente depuis #1136
+    // (#1207 — voir `booking-request.ts`).
+    const result = await requestBooking(
+      tenant.slug,
+      {
+        serviceId: service.id,
+        ...(staffId === null ? {} : { staffId }),
+        startsAt,
+        client: {
+          firstName: contact.firstName,
+          lastName: contact.lastName,
+          email: contact.email,
+          ...(contact.phone === '' ? {} : { phone: contact.phone }),
+        },
+        ...(contact.clientNote === '' ? {} : { clientNote: contact.clientNote }),
+        // L'accord coché à l'étape « Coordonnées », transporté jusqu'à l'API
+        // (#790). Il vient du brouillon et non d'une constante : c'est ce qui
+        // relie la case que la cliente a cochée à la ligne que le salon
+        // conservera. Envoyé tel quel, y compris `false` — la validation de la
+        // route le refusera alors, et c'est ce qu'on veut : un récapitulatif
+        // atteint sans consentement est un état que le tunnel ne doit pas savoir
+        // réparer tout seul, et `draft.ts` interdit déjà d'y arriver.
+        dataConsent: contact.consent,
       },
-      ...(contact.clientNote === '' ? {} : { clientNote: contact.clientNote }),
-      // L'accord coché à l'étape « Coordonnées », transporté jusqu'à l'API
-      // (#790). Il vient du brouillon et non d'une constante : c'est ce qui
-      // relie la case que la cliente a cochée à la ligne que le salon
-      // conservera. Envoyé tel quel, y compris `false` — la validation de
-      // l'action serveur le refusera alors, et c'est ce qu'on veut : un
-      // récapitulatif atteint sans consentement est un état que le tunnel ne
-      // doit pas savoir réparer tout seul, et `draft.ts` interdit déjà d'y
-      // arriver.
-      dataConsent: contact.consent,
-    });
+      // La phrase de repli, quand la route ne rend rien d'affichable — réseau
+      // coupé, passerelle qui rend du HTML. Elle est écrite ici parce que c'est
+      // ici qu'on a le catalogue traduit sous la main.
+      t('tunnel.actions.unexpectedError'),
+    );
 
     if (result.ok) {
       onBooked(result.data);

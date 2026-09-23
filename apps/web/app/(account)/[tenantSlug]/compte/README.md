@@ -214,7 +214,7 @@ par la page. Le `next` de la route est revalidé à l'arrivée, et borné à l'e
 client de l'établissement : sans quoi `?next=https://exemple.test` ferait de
 cette route une redirection ouverte.
 
-## Le tunnel annule par une adresse de cet espace
+## Le tunnel réserve et annule par des adresses de cet espace
 
 Le `path` borné à `/{slug}/compte` a une conséquence que l'on paie ailleurs : le
 navigateur ne joint les cookies de session qu'aux requêtes de ce chemin-là. Une
@@ -238,6 +238,18 @@ qui fait voyager la session. Le tunnel l'appelle par
 Ce que la route n'ouvre pas : aucun choix de cible — l'identifiant est dans le
 chemin, et c'est l'API qui tranche la propriété de la ligne, en **404** —, et
 aucune écriture d'origine tierce, les cookies étant `sameSite: 'lax'`.
+
+La **prise** de rendez-vous suit depuis #1207, et pour la même raison :
+`POST /public/{slug}/appointments` exige à son tour le jeton de la cliente
+(#1136), que `bookAppointmentAction` — servie depuis `/{slug}/reservation` — ne
+recevait pas. Elle est donc servie ici par `reservation/route.ts`, appelée du
+tunnel par `booking-request.ts`. Aucun choix de compte non plus : le jeton est lu
+des cookies et jamais du corps.
+
+Les trois adresses que le tunnel vise dans cet espace — le flux, l'annulation, la
+réservation — sont écrites dans `paths.ts` et nulle part ailleurs : c'est la
+portée des cookies qui les décide, et une seconde écriture survivrait au
+renommage du segment `compte` en reposant hors de portée.
 
 ## La langue : l'espace la lit, et il l'enregistre
 

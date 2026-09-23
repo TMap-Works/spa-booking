@@ -48,6 +48,24 @@ export function cancellationPath(tenantSlug: string, appointmentId: string): str
 }
 
 /**
+ * La prise de rendez-vous, appelable **depuis le tunnel** (#1207) —
+ * `reservation/route.ts`.
+ *
+ * Sous `accountPath` pour la raison exacte qui y met l'annulation ci-dessus :
+ * `POST /public/{slug}/appointments` exige le jeton de la cliente (#1136), et
+ * une action serveur appelée depuis `/{slug}/reservation` n'en reçoit aucun.
+ *
+ * Écrite ici et non côté tunnel parce que c'est la **portée des cookies** qui
+ * décide de cette adresse : une seconde écriture survivrait au renommage du
+ * segment `compte`, et le tunnel reposterait hors de portée — 401 à l'étape
+ * « Confirmation ». Voir `(booking)/…/reservation/booking-request.ts`, qui la
+ * lit.
+ */
+export function bookingRequestPath(tenantSlug: string): string {
+  return accountPath(tenantSlug, '/reservation');
+}
+
+/**
  * La vitrine publique de l'établissement — son catalogue et ses tarifs.
  *
  * ## Pourquoi l'espace client construit ces deux chemins lui-même
