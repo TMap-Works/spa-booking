@@ -177,18 +177,6 @@ export interface AppointmentRecord {
 }
 
 /**
- * Ce qu'une annulation demande, telle que le **service** la reçoit (#40).
- *
- * Ni statut, ni horodatage : le premier est la destination fixe de cette
- * opération, le second est posé par le serveur. Les laisser entrer par le corps
- * de la requête ferait d'une annulation une écriture d'agenda arbitraire.
- *
- * `cancelledBy` ne vient **jamais** du corps non plus : c'est la surface qui le
- * détermine — la route publique dit `CLIENT`, la route de back-office dit
- * `STAFF`. Un champ de requête l'aurait laissé à la main de l'appelant, et une
- * cliente aurait pu inscrire au registre du salon que le salon l'avait annulée.
- */
-/**
  * Qui agit, quand la portée du geste dépend de lui — #812, troisième critère.
  *
  * ## Pourquoi cette forme entre dans le domaine plutôt que de rester à la porte
@@ -218,18 +206,104 @@ export interface AppointmentActor {
   readonly role: UserRole;
 }
 
-export interface CancelAppointmentInput {
+/**
+ * La **cliente** au nom de qui le tunnel public agit — #1135.
+ *
+ * ## Pourquoi cette forme existe, alors qu'`AppointmentActor` existait déjà
+ *
+ * Parce que les deux ne répondent pas à la même question.
+ * `AppointmentActor` répond « ce rendez-vous est-il dans le périmètre de ce
+ * membre du personnel ? », et la réponse se lit dans la matrice de permissions.
+ * Celle-ci répond « ce rendez-vous est-il **le sien** ? », et la réponse se lit
+ * sur la ligne : `appointments.client_id`. Les confondre aurait fait juger une
+ * cliente par une matrice où `CLIENT` n'a, délibérément, aucune permission
+ * (`identity/permissions.ts`) — c'est-à-dire par une table qui répond toujours
+ * non, pour une question qu'elle ne pose pas.
+ *
+ * ## Ce que ce type remplace, et ce qu'il corrige
+ *
+ * Jusqu'à #1135, annuler ou reporter par la surface publique n'exigeait que la
+ * **connaissance de l'identifiant** — la doctrine de #40, « on réserve sans
+ * compte, donc on annule sans compte ». Deux faits l'ont périmée :
+ *
+ * 1. réserver exige un compte depuis la décision PO du 22/09/2026 (#1136) : il
+ *    n'y a plus de cliente sans identité à ménager ;
+ * 2. l'identifiant n'est plus un secret de la cliente. Un praticien lit les
+ *    `appointmentId` de ses collègues par le journal des envois, et le back-
+ *    office lui refusait pourtant le geste (403 `OWN_SCOPE_ONLY`, #812). La
+ *    route publique rouvrait donc, sans jeton, exactement ce que la route gardée
+ *    fermait — et l'inscrivait `cancelledBy: CLIENT`, au nom de la cliente.
+ *
+ * `userId` et non `clientId` : la cliente **est** un compte de `users`, et c'est
+ * `users.id` que `appointments.client_id` référence. Le nommer d'après sa
+ * provenance — le `sub` d'un jeton vérifié — est ce qui rappelle qu'aucun corps
+ * de requête ne peut le poser.
+ */
+export interface AppointmentClientPrincipal {
+  /** Le compte du jeton vérifié, jamais un identifiant reçu de l'appelant. */
+  readonly userId: string;
+}
+
+/** Ce que toute annulation demande, quelle que soit la porte. */
+interface CancelAppointmentBase {
   /** Le rendez-vous à annuler, dans l'établissement courant. */
   readonly appointmentId: string;
-  readonly cancelledBy: AppointmentCancelledBy;
   /** Motif saisi, ou `null` — le CDC ne le rend obligatoire d'aucun côté. */
   readonly reason: string | null;
-  /**
-   * L'auteur, quand la porte en impose un — le back-office. Absent sur le tunnel
-   * public : voir {@link AppointmentActor}.
-   */
-  readonly actor?: AppointmentActor;
 }
+
+/**
+ * Ce qu'une annulation demande, telle que le **service** la reçoit (#40, #1135).
+ *
+ * Ni statut, ni horodatage : le premier est la destination fixe de cette
+ * opération, le second est posé par le serveur. Les laisser entrer par le corps
+ * de la requête ferait d'une annulation une écriture d'agenda arbitraire.
+ *
+ * `cancelledBy` ne vient **jamais** du corps non plus : c'est la surface qui le
+ * détermine — la route publique dit `CLIENT`, la route de back-office dit
+ * `STAFF`. Un champ de requête l'aurait laissé à la main de l'appelant, et une
+ * cliente aurait pu inscrire au registre du salon que le salon l'avait annulée.
+ *
+ * ## Une union, et non un champ de plus
+ *
+ * Le second défaut de #1135 est une annulation inscrite `cancelledBy: CLIENT`
+ * alors qu'elle ne venait pas de la cliente. Un `client?: …` facultatif à côté
+ * de `cancelledBy` aurait laissé la faute exprimable — et une faute exprimable
+ * finit par être écrite. L'union la rend **impossible à compiler** :
+ * `cancelledBy: 'CLIENT'` exige de nommer la cliente du jeton, et le service
+ * refuse ensuite en 404 le rendez-vous qui n'est pas le sien.
+ *
+ * Les deux autres branches sont inchangées : le comptoir dit `STAFF` et décline
+ * son acteur quand la portée dépend de lui (#812), le système dit `SYSTEM`.
+ * Aucune des deux ne peut nommer de cliente — il n'y a pas de champ pour cela.
+ */
+export type CancelAppointmentInput =
+  | (CancelAppointmentBase & {
+      /**
+       * Fixé par la **porte** publique. Vrai par construction depuis #1135 : la
+       * branche exige la cliente ci-dessous, et il n'y a aucun autre moyen
+       * d'écrire cette valeur.
+       */
+      readonly cancelledBy: 'CLIENT';
+      /**
+       * La cliente du jeton vérifié. Le service exige que le rendez-vous soit le
+       * sien — sinon 404, indiscernable d'un identifiant inconnu
+       * (tenant-isolation §4).
+       */
+      readonly client: AppointmentClientPrincipal;
+      readonly actor?: never;
+    })
+  | (CancelAppointmentBase & {
+      /** Fixé par la porte de back-office, ou par un traitement automatique. */
+      readonly cancelledBy: 'STAFF' | 'SYSTEM';
+      /**
+       * L'auteur, quand la porte en impose un — le back-office. Absent des
+       * annulations que le service se fait à lui-même : voir
+       * {@link AppointmentActor}.
+       */
+      readonly actor?: AppointmentActor;
+      readonly client?: never;
+    });
 
 /**
  * Ce que le repository écrit lors d'une annulation — la trace, et rien d'autre.
@@ -406,6 +480,24 @@ export interface RescheduleAppointmentInput {
   readonly staffId: string | null;
   /** L'auteur, quand la porte en impose un — voir {@link AppointmentActor}. */
   readonly actor?: AppointmentActor;
+  /**
+   * La cliente du jeton vérifié quand la porte est **publique**, `null` quand
+   * elle est celle du comptoir — #1135.
+   *
+   * ## Obligatoire, et nullable : les deux à la fois, volontairement
+   *
+   * Un champ facultatif aurait fait de l'oubli le cas par défaut, et l'oubli est
+   * exactement le défaut que ce ticket corrige : la surface publique déplaçait
+   * le rendez-vous de n'importe qui sur la seule foi d'un UUID. Obligatoire, il
+   * force **chaque** appelant à dire de quelle porte il vient ; nullable, il
+   * laisse le comptoir dire « pas de cliente à comparer ici » sans mentir.
+   *
+   * Le service exige alors que le rendez-vous soit le sien — sinon 404,
+   * indiscernable d'un identifiant inconnu (tenant-isolation §4). Il n'y a rien
+   * à ajouter sur le créneau d'arrivée : un report ne change ni la cliente, ni
+   * la prestation, ni le prix.
+   */
+  readonly client: AppointmentClientPrincipal | null;
 }
 
 /**

@@ -44,6 +44,18 @@ const TENANT = randomUUID();
 const SERVICE_ID = randomUUID();
 const STAFF_ID = randomUUID();
 
+/**
+ * La cliente des rendez-vous que ces suites sèment — nommée depuis #1135.
+ *
+ * `appointments.client_id` était jusque-là un UUID semé au hasard, personne
+ * n'ayant à le comparer. La porte publique le compare désormais au compte du
+ * jeton, et une annulation `cancelledBy: 'CLIENT'` ne s'écrit qu'en nommant
+ * cette cliente-là. Ce que ces suites exercent reste le **mécanisme** — la
+ * trace, le créneau libéré, le cache chassé — ; la garde, elle, a sa suite,
+ * `appointments.own-scope.spec.ts`.
+ */
+const CLIENTE = randomUUID();
+
 /** Le créneau que le calendrier affiche : le soin commence à 10:00 UTC. */
 const BILLED_START = new Date('2026-09-01T10:00:00.000Z');
 
@@ -813,6 +825,7 @@ describe('AppointmentsService.reschedule', () => {
     return repository.seedAppointment({
       tenantId: TENANT,
       staffId: STAFF_ID,
+      clientId: CLIENTE,
       serviceId: SERVICE_ID,
       startsAt: new Date('2026-09-01T09:50:00.000Z'),
       endsAt: new Date('2026-09-01T11:10:00.000Z'),
@@ -825,7 +838,10 @@ describe('AppointmentsService.reschedule', () => {
     const previous = seedBooked(repository);
 
     const view = await runWithTenant(TENANT, () =>
-      service.reschedule({ appointmentId: previous.id, startsAt: MOVED_START, staffId: null }, NOW),
+      service.reschedule(
+        { appointmentId: previous.id, startsAt: MOVED_START, staffId: null, client: null },
+        NOW,
+      ),
     );
 
     // Deux lignes, pas une : l'historique montre les deux rendez-vous et leur
@@ -844,7 +860,10 @@ describe('AppointmentsService.reschedule', () => {
     const previous = seedBooked(repository, { staffNote: STAFF_NOTE });
 
     const view = await runWithTenant(TENANT, () =>
-      service.reschedule({ appointmentId: previous.id, startsAt: MOVED_START, staffId: null }, NOW),
+      service.reschedule(
+        { appointmentId: previous.id, startsAt: MOVED_START, staffId: null, client: null },
+        NOW,
+      ),
     );
 
     // Un côté : la note suit le rendez-vous. Elle est ce qu'un praticien a pris
@@ -863,7 +882,10 @@ describe('AppointmentsService.reschedule', () => {
     const previous = seedBooked(repository);
 
     await runWithTenant(TENANT, () =>
-      service.reschedule({ appointmentId: previous.id, startsAt: MOVED_START, staffId: null }, NOW),
+      service.reschedule(
+        { appointmentId: previous.id, startsAt: MOVED_START, staffId: null, client: null },
+        NOW,
+      ),
     );
 
     const created = repository.appointments[1];
@@ -887,7 +909,7 @@ describe('AppointmentsService.reschedule', () => {
 
       await runWithTenant(TENANT, () =>
         service.reschedule(
-          { appointmentId: previous.id, startsAt: MOVED_START, staffId: null },
+          { appointmentId: previous.id, startsAt: MOVED_START, staffId: null, client: null },
           NOW,
         ),
       );
@@ -912,7 +934,7 @@ describe('AppointmentsService.reschedule', () => {
 
       const view = await runWithTenant(TENANT, () =>
         service.reschedule(
-          { appointmentId: previous.id, startsAt: NUDGED_START, staffId: null },
+          { appointmentId: previous.id, startsAt: NUDGED_START, staffId: null, client: null },
           NOW,
         ),
       );
@@ -932,7 +954,7 @@ describe('AppointmentsService.reschedule', () => {
       await expect(
         runWithTenant(TENANT, () =>
           service.reschedule(
-            { appointmentId: previous.id, startsAt: MOVED_START, staffId: null },
+            { appointmentId: previous.id, startsAt: MOVED_START, staffId: null, client: null },
             NOW,
           ),
         ),
@@ -947,7 +969,10 @@ describe('AppointmentsService.reschedule', () => {
     const booked = await runWithTenant(TENANT, () => service.book(bookingInput(), NOW));
 
     const view = await runWithTenant(TENANT, () =>
-      service.reschedule({ appointmentId: booked.id, startsAt: MOVED_START, staffId: null }, NOW),
+      service.reschedule(
+        { appointmentId: booked.id, startsAt: MOVED_START, staffId: null, client: null },
+        NOW,
+      ),
     );
 
     expect(view.clientId).toBe(booked.clientId);
@@ -962,7 +987,10 @@ describe('AppointmentsService.reschedule', () => {
     const previous = seedBooked(repository, { status: 'CONFIRMED' });
 
     const view = await runWithTenant(TENANT, () =>
-      service.reschedule({ appointmentId: previous.id, startsAt: MOVED_START, staffId: null }, NOW),
+      service.reschedule(
+        { appointmentId: previous.id, startsAt: MOVED_START, staffId: null, client: null },
+        NOW,
+      ),
     );
 
     // Déplacer un créneau n'annule pas une confirmation déjà obtenue.
@@ -976,7 +1004,7 @@ describe('AppointmentsService.reschedule', () => {
 
     const view = await runWithTenant(TENANT, () =>
       service.reschedule(
-        { appointmentId: previous.id, startsAt: MOVED_START, staffId: other },
+        { appointmentId: previous.id, startsAt: MOVED_START, staffId: other, client: null },
         NOW,
       ),
     );
@@ -996,7 +1024,10 @@ describe('AppointmentsService.reschedule', () => {
     });
 
     const rejected = runWithTenant(TENANT, () =>
-      service.reschedule({ appointmentId: previous.id, startsAt: MOVED_START, staffId: null }, NOW),
+      service.reschedule(
+        { appointmentId: previous.id, startsAt: MOVED_START, staffId: null, client: null },
+        NOW,
+      ),
     );
 
     await expect(rejected).rejects.toThrow(SlotNoLongerAvailableError);
@@ -1018,7 +1049,10 @@ describe('AppointmentsService.reschedule', () => {
     });
 
     const rejected = runWithTenant(TENANT, () =>
-      service.reschedule({ appointmentId: previous.id, startsAt: MOVED_START, staffId: null }, NOW),
+      service.reschedule(
+        { appointmentId: previous.id, startsAt: MOVED_START, staffId: null, client: null },
+        NOW,
+      ),
     );
 
     await expect(rejected).rejects.toMatchObject({
@@ -1032,7 +1066,12 @@ describe('AppointmentsService.reschedule', () => {
 
     const rejected = runWithTenant(TENANT, () =>
       service.reschedule(
-        { appointmentId: previous.id, startsAt: new Date('2026-09-01T14:07:00.000Z'), staffId: null },
+        {
+          appointmentId: previous.id,
+          startsAt: new Date('2026-09-01T14:07:00.000Z'),
+          staffId: null,
+          client: null,
+        },
         NOW,
       ),
     );
@@ -1046,7 +1085,10 @@ describe('AppointmentsService.reschedule', () => {
     const { service, repository } = movableHarness();
 
     const rejected = runWithTenant(TENANT, () =>
-      service.reschedule({ appointmentId: randomUUID(), startsAt: MOVED_START, staffId: null }, NOW),
+      service.reschedule(
+        { appointmentId: randomUUID(), startsAt: MOVED_START, staffId: null, client: null },
+        NOW,
+      ),
     );
 
     await expect(rejected).rejects.toThrow(NotFoundError);
@@ -1058,7 +1100,10 @@ describe('AppointmentsService.reschedule', () => {
     const previous = seedBooked(repository, { status: 'CANCELLED' });
 
     const rejected = runWithTenant(TENANT, () =>
-      service.reschedule({ appointmentId: previous.id, startsAt: MOVED_START, staffId: null }, NOW),
+      service.reschedule(
+        { appointmentId: previous.id, startsAt: MOVED_START, staffId: null, client: null },
+        NOW,
+      ),
     );
 
     // Terminé, annulé ou no-show : il n'y a plus de créneau à déplacer, et en
@@ -1074,7 +1119,10 @@ describe('AppointmentsService.reschedule', () => {
     const previous = seedBooked(repository);
 
     const view = await runWithTenant(TENANT, () =>
-      service.reschedule({ appointmentId: previous.id, startsAt: MOVED_START, staffId: null }, NOW),
+      service.reschedule(
+        { appointmentId: previous.id, startsAt: MOVED_START, staffId: null, client: null },
+        NOW,
+      ),
     );
 
     expect(received).toHaveLength(1);
@@ -1102,7 +1150,10 @@ describe('AppointmentsService.reschedule', () => {
     const previous = seedBooked(repository);
 
     await runWithTenant(TENANT, () =>
-      service.reschedule({ appointmentId: previous.id, startsAt: MOVED_START, staffId: null }, NOW),
+      service.reschedule(
+        { appointmentId: previous.id, startsAt: MOVED_START, staffId: null, client: null },
+        NOW,
+      ),
     );
 
     // L'aval n'enverrait pas la même chose : une création demande une
@@ -1126,7 +1177,7 @@ describe('AppointmentsService.reschedule', () => {
     await expect(
       runWithTenant(TENANT, () =>
         service.reschedule(
-          { appointmentId: previous.id, startsAt: MOVED_START, staffId: null },
+          { appointmentId: previous.id, startsAt: MOVED_START, staffId: null, client: null },
           NOW,
         ),
       ),
@@ -1139,7 +1190,10 @@ describe('AppointmentsService.reschedule', () => {
     const { service } = movableHarness();
 
     await expect(
-      service.reschedule({ appointmentId: randomUUID(), startsAt: MOVED_START, staffId: null }, NOW),
+      service.reschedule(
+        { appointmentId: randomUUID(), startsAt: MOVED_START, staffId: null, client: null },
+        NOW,
+      ),
     ).rejects.toThrow(/tenant/i);
   });
 });
@@ -1175,6 +1229,7 @@ describe('AppointmentsService.cancel', () => {
     return repository.seedAppointment({
       tenantId: TENANT,
       staffId: STAFF_ID,
+      clientId: CLIENTE,
       serviceId: SERVICE_ID,
       startsAt: new Date('2026-09-01T09:50:00.000Z'),
       endsAt: new Date('2026-09-01T11:10:00.000Z'),
@@ -1188,7 +1243,12 @@ describe('AppointmentsService.cancel', () => {
 
     const view = await runWithTenant(TENANT, () =>
       service.cancel(
-        { appointmentId: booked.id, cancelledBy: 'CLIENT', reason: 'Empêchement' },
+        {
+          appointmentId: booked.id,
+          cancelledBy: 'CLIENT',
+          reason: 'Empêchement',
+          client: { userId: CLIENTE },
+        },
         CANCELLED_AT,
       ),
     );
@@ -1208,7 +1268,15 @@ describe('AppointmentsService.cancel', () => {
     const booked = seedBooked(repository);
 
     await runWithTenant(TENANT, () =>
-      service.cancel({ appointmentId: booked.id, cancelledBy: 'CLIENT', reason: null }, CANCELLED_AT),
+      service.cancel(
+        {
+          appointmentId: booked.id,
+          cancelledBy: 'CLIENT',
+          reason: null,
+          client: { userId: CLIENTE },
+        },
+        CANCELLED_AT,
+      ),
     );
 
     // Le CDC n'exige de motif d'aucun côté : l'imposer ferait abandonner des
@@ -1262,7 +1330,15 @@ describe('AppointmentsService.cancel', () => {
     );
 
     await runWithTenant(TENANT, () =>
-      service.cancel({ appointmentId: booked.id, cancelledBy: 'CLIENT', reason: null }, CANCELLED_AT),
+      service.cancel(
+        {
+          appointmentId: booked.id,
+          cancelledBy: 'CLIENT',
+          reason: null,
+          client: { userId: CLIENTE },
+        },
+        CANCELLED_AT,
+      ),
     );
 
     // …et dès qu'il n'occupe plus, il l'est. Troisième critère de #40 — tenu par
@@ -1277,7 +1353,15 @@ describe('AppointmentsService.cancel', () => {
     const booked = seedBooked(repository);
 
     await runWithTenant(TENANT, () =>
-      service.cancel({ appointmentId: booked.id, cancelledBy: 'CLIENT', reason: null }, CANCELLED_AT),
+      service.cancel(
+        {
+          appointmentId: booked.id,
+          cancelledBy: 'CLIENT',
+          reason: null,
+          client: { userId: CLIENTE },
+        },
+        CANCELLED_AT,
+      ),
     );
     await runWithTenant(TENANT, () => service.book(bookingInput(), NOW));
 
@@ -1294,7 +1378,12 @@ describe('AppointmentsService.cancel', () => {
     await expect(
       runWithTenant(TENANT, () =>
         service.cancel(
-          { appointmentId: randomUUID(), cancelledBy: 'CLIENT', reason: null },
+          {
+            appointmentId: randomUUID(),
+            cancelledBy: 'CLIENT',
+            reason: null,
+            client: { userId: CLIENTE },
+          },
           CANCELLED_AT,
         ),
       ),
@@ -1335,7 +1424,12 @@ describe('AppointmentsService.cancel', () => {
 
     const view = await runWithTenant(TENANT, () =>
       service.cancel(
-        { appointmentId: booked.id, cancelledBy: 'CLIENT', reason: 'Grippe' },
+        {
+          appointmentId: booked.id,
+          cancelledBy: 'CLIENT',
+          reason: 'Grippe',
+          client: { userId: CLIENTE },
+        },
         CANCELLED_AT,
       ),
     );
@@ -1387,7 +1481,12 @@ describe('AppointmentsService.cancel', () => {
     await expect(
       runWithTenant(TENANT, () =>
         service.cancel(
-          { appointmentId: booked.id, cancelledBy: 'CLIENT', reason: null },
+          {
+            appointmentId: booked.id,
+            cancelledBy: 'CLIENT',
+            reason: null,
+            client: { userId: CLIENTE },
+          },
           CANCELLED_AT,
         ),
       ),
@@ -1405,7 +1504,15 @@ describe('AppointmentsService.cancel', () => {
     const booked = seedBooked(repository);
 
     await runWithTenant(TENANT, () =>
-      service.cancel({ appointmentId: booked.id, cancelledBy: 'CLIENT', reason: null }, CANCELLED_AT),
+      service.cancel(
+        {
+          appointmentId: booked.id,
+          cancelledBy: 'CLIENT',
+          reason: null,
+          client: { userId: CLIENTE },
+        },
+        CANCELLED_AT,
+      ),
     );
 
     // L'aval n'enverrait pas la même chose : une annulation demande un avis
@@ -1419,7 +1526,12 @@ describe('AppointmentsService.cancel', () => {
 
     await expect(
       service.cancel(
-        { appointmentId: randomUUID(), cancelledBy: 'CLIENT', reason: null },
+        {
+          appointmentId: randomUUID(),
+          cancelledBy: 'CLIENT',
+          reason: null,
+          client: { userId: CLIENTE },
+        },
         CANCELLED_AT,
       ),
     ).rejects.toThrow(/tenant/i);
@@ -1448,6 +1560,7 @@ describe('AppointmentsService — invalidation du cache de disponibilité', () =
     return repository.seedAppointment({
       tenantId: TENANT,
       staffId: STAFF_ID,
+      clientId: CLIENTE,
       serviceId: SERVICE_ID,
       startsAt: new Date('2026-09-01T09:50:00.000Z'),
       endsAt: new Date('2026-09-01T11:10:00.000Z'),
@@ -1471,7 +1584,10 @@ describe('AppointmentsService — invalidation du cache de disponibilité', () =
     const previous = seedBooked(repository);
 
     await runWithTenant(TENANT, () =>
-      service.reschedule({ appointmentId: previous.id, startsAt: MOVED_START, staffId: null }, NOW),
+      service.reschedule(
+        { appointmentId: previous.id, startsAt: MOVED_START, staffId: null, client: null },
+        NOW,
+      ),
     );
 
     expect(cache.calls).toBe(1);
@@ -1485,7 +1601,12 @@ describe('AppointmentsService — invalidation du cache de disponibilité', () =
 
     await runWithTenant(TENANT, () =>
       service.cancel(
-        { appointmentId: booked.id, cancelledBy: 'CLIENT', reason: null },
+        {
+          appointmentId: booked.id,
+          cancelledBy: 'CLIENT',
+          reason: null,
+          client: { userId: CLIENTE },
+        },
         CANCELLED_AT,
       ),
     );
@@ -1525,6 +1646,7 @@ describe('AppointmentsService — verrou Redis de créneau (#38)', () => {
     return repository.seedAppointment({
       tenantId: TENANT,
       staffId: STAFF_ID,
+      clientId: CLIENTE,
       serviceId: SERVICE_ID,
       startsAt: new Date('2026-09-01T09:50:00.000Z'),
       endsAt: new Date('2026-09-01T11:10:00.000Z'),
@@ -1580,7 +1702,10 @@ describe('AppointmentsService — verrou Redis de créneau (#38)', () => {
     const previous = seedBooked(repository);
 
     const view = await runWithTenant(TENANT, () =>
-      service.reschedule({ appointmentId: previous.id, startsAt: MOVED_START, staffId: null }, NOW),
+      service.reschedule(
+        { appointmentId: previous.id, startsAt: MOVED_START, staffId: null, client: null },
+        NOW,
+      ),
     );
 
     expect(view.startsAt).toBe('2026-09-01T14:00:00.000Z');
@@ -1639,7 +1764,15 @@ describe('AppointmentsService — verrou Redis de créneau (#38)', () => {
     const booked = seedBooked(repository);
 
     await runWithTenant(TENANT, () =>
-      service.cancel({ appointmentId: booked.id, cancelledBy: 'CLIENT', reason: null }, NOW),
+      service.cancel(
+        {
+          appointmentId: booked.id,
+          cancelledBy: 'CLIENT',
+          reason: null,
+          client: { userId: CLIENTE },
+        },
+        NOW,
+      ),
     );
 
     expect(locks.releases).toEqual([]);

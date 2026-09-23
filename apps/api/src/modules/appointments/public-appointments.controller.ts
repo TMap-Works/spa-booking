@@ -1,4 +1,13 @@
-import { Body, Controller, HttpCode, Param, ParseUUIDPipe, Post, UseGuards } from '@nestjs/common';
+import {
+  applyDecorators,
+  Body,
+  Controller,
+  HttpCode,
+  Param,
+  ParseUUIDPipe,
+  Post,
+  UseGuards,
+} from '@nestjs/common';
 import {
   ApiBadRequestResponse,
   ApiBody,
@@ -14,6 +23,9 @@ import {
 } from '@nestjs/swagger';
 import { Throttle, ThrottlerGuard } from '@nestjs/throttler';
 
+import { Auth } from '../identity/auth.decorator';
+import type { AuthenticatedUser } from '../identity/identity.types';
+import { CurrentUser } from '../identity/jwt-auth.guard';
 import { AppointmentsService } from './appointments.service';
 import {
   AppointmentDto,
@@ -33,7 +45,38 @@ import {
   RescheduleAppointmentDto,
   rescheduleAppointmentBody,
 } from './dto/reschedule-appointment.dto';
-import { RequireBookableSalon } from '../identity/tenant-billing.guard';
+import { AllowUnpaidTenant, RequireBookableSalon } from '../identity/tenant-billing.guard';
+
+/**
+ * Le régime d'accès des deux gestes que la cliente exerce **sur un rendez-vous
+ * existant** — annuler et reporter (#1135).
+ *
+ * `@Auth('CLIENT')` seul, sans permission : la matrice de l'ADR 0013 n'en donne
+ * aucune au rôle `CLIENT`, délibérément (`identity/permissions.ts`), et c'est
+ * juste — une cliente n'a pas de périmètre d'agenda, elle a **ses** rendez-vous.
+ * Ce que la garde tranche ici est donc la porte ; ce qui reste à trancher, « ce
+ * rendez-vous est-il le sien ? », se lit sur la ligne et se juge dans le
+ * service, en 404.
+ *
+ * Ce que ce couple ferme, et que #1135 avait laissé ouvert :
+ *
+ * | Appelant | Avant | Après |
+ * |---|---|---|
+ * | anonyme qui connaît l'UUID | 200 | **401** |
+ * | praticien, sur le rendez-vous d'une collègue | 200, `cancelledBy: CLIENT` | **403** — le rôle n'est pas `CLIENT` |
+ * | cliente, sur le rendez-vous d'une autre | 200 | **404** — indiscernable d'un inconnu |
+ * | cliente, sur le sien | 200 | 200 |
+ *
+ * `@AllowUnpaidTenant()` neutralise `TenantBillingGuard`, que `@Auth` monte.
+ * Sans lui, ces deux routes se seraient mises à rendre 402 chez un salon dont
+ * l'abonnement a expiré — un changement que ce ticket n'a pas à faire, et qui
+ * retiendrait une cliente de **libérer** un créneau qu'elle n'honorera pas.
+ * L'ADR 0016 ferme la prise de rendez-vous d'un salon impayé, ce que porte
+ * `@RequireBookableSalon()` sur `book` ; il ne ferme pas la tenue des
+ * rendez-vous déjà pris.
+ */
+const AuthenticatedClient = (): MethodDecorator & ClassDecorator =>
+  applyDecorators(Auth('CLIENT'), AllowUnpaidTenant());
 
 /**
  * Le tunnel public du rendez-vous — le point d'entrée du revenu (#37), son
@@ -59,7 +102,26 @@ import { RequireBookableSalon } from '../identity/tenant-billing.guard';
  * numéro de téléphone national. Là encore, rien ne vient du chemin : le pays est
  * celui de l'établissement **résolu**, pas d'une chaîne d'URL.
  *
- * ## Pas de garde, et c'est le propos
+ * ## Deux régimes d'accès, et non plus un seul (#1135)
+ *
+ * | Route | Qui peut l'appeler |
+ * |---|---|
+ * | `POST /public/{slug}/appointments` | tout le monde — voir ci-dessous |
+ * | `POST …/{id}/reschedule` | la **cliente du rendez-vous**, jeton vérifié |
+ * | `POST …/{id}/cancel` | la **cliente du rendez-vous**, jeton vérifié |
+ *
+ * La doctrine d'origine était uniforme — « on réserve sans compte, donc on
+ * annule sans compte » (#40) — et elle tenait tant que l'identifiant du
+ * rendez-vous était un secret de la cliente. Il ne l'est plus : un praticien
+ * lit les `appointmentId` de ses collègues par le journal des envois, et la
+ * route publique lui rouvrait sans jeton ce que le back-office lui refusait
+ * (403 `OWN_SCOPE_ONLY`, #812) — en l'inscrivant `cancelledBy: CLIENT`, c'est-à-
+ * dire au nom de la cliente. Voir {@link AuthenticatedClient}.
+ *
+ * `book` garde son régime : c'est #1136 qui tranche la réservation sans compte,
+ * et le faire ici aurait mêlé deux décisions dans un même diff.
+ *
+ * ## Pas de garde sur `book`, et c'est le propos
  *
  * Le quatrième critère de #37 est « un client peut réserver sans compte, avec
  * seulement ses coordonnées » : exiger un jeton le contredirait mot pour mot.
@@ -224,21 +286,23 @@ export class PublicAppointmentsController {
    * **429** au-delà de dix reports par minute et par adresse, même quota et même
    * raison que la réservation : cette route écrit dans l'agenda du salon.
    *
-   * ## Pourquoi aucune garde, ici non plus
+   * ## La garde, depuis #1135
    *
-   * Pour la raison qui vaut sur toute cette surface : on réserve sans compte,
-   * donc on reporte sans compte. Ce qui autorise l'appel est la **connaissance
-   * de l'identifiant** du rendez-vous — un UUID v4, remis à la cliente sur son
-   * écran de confirmation et dans son e-mail, et à personne d'autre. C'est le
-   * même régime que le lien d'annulation d'une confirmation, et le même que
-   * celui de tout le tunnel.
+   * **401** sans jeton, **403** avec un jeton qui n'est pas celui d'une cliente,
+   * **404** quand le rendez-vous n'est pas le sien — indiscernable d'un
+   * identifiant inconnu (tenant-isolation §4). Voir {@link AuthenticatedClient}.
    *
-   * Ce que cette route ne permet donc pas, et c'est ce qui la borne : elle ne
-   * change ni la prestation, ni la cliente, ni le prix. Un identifiant deviné —
-   * ce qu'un UUID v4 rend impraticable — ne permettrait que de déplacer un
-   * rendez-vous vers un créneau que le calendrier propose déjà publiquement.
+   * La doctrine précédente autorisait l'appel sur la seule **connaissance de
+   * l'identifiant**, au motif qu'un UUID v4 ne se devine pas. C'est vrai, et
+   * c'est hors sujet : les identifiants qui ont servi à contourner cette route
+   * n'ont pas été devinés, ils ont été **lus** — par un praticien, dans le
+   * journal des envois de son salon.
+   *
+   * Ce que cette route ne permet toujours pas, et c'est ce qui la borne : elle
+   * ne change ni la prestation, ni la cliente, ni le prix.
    */
   @Post(':appointmentId/reschedule')
+  @AuthenticatedClient()
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @ApiOperation({ summary: 'Reporter un rendez-vous vers un autre créneau' })
   @ApiParam({
@@ -253,7 +317,10 @@ export class PublicAppointmentsController {
   @ApiCreatedResponse({ type: AppointmentDto })
   @ApiBadRequestResponse({ description: 'Corps invalide — le champ fautif est nommé.' })
   @ApiNotFoundResponse({
-    description: 'Établissement ou rendez-vous introuvable, ou prestation retirée du catalogue.',
+    description:
+      'Établissement ou rendez-vous introuvable, prestation retirée du catalogue, ' +
+      'ou rendez-vous qui n’est pas celui de la cliente authentifiée — les quatre ' +
+      'sont indiscernables à dessein (#1135).',
   })
   @ApiConflictResponse({
     description:
@@ -276,9 +343,14 @@ export class PublicAppointmentsController {
     // rejouer le `ValidationPipe` global, dont le `whitelist` viderait le corps
     // de ses deux champs (ADR 0008).
     @Body(rescheduleAppointmentBody) body: RescheduleAppointmentBody,
+    @CurrentUser() user: AuthenticatedUser,
   ): Promise<AppointmentDto> {
     return this.appointments.reschedule({
       appointmentId,
+      // Du jeton vérifié, jamais du chemin ni du corps : il n'y a aucun champ
+      // par lequel désigner une autre cliente, et c'est ce qui rend l'omission
+      // exécutoire (tenant-isolation §2).
+      client: { userId: user.userId },
       // La chaîne a été validée **et normalisée en UTC** par
       // `offsetDateTimeSchema` : `new Date` ne peut donc produire ici ni une
       // date invalide, ni un instant lu dans le fuseau de la machine.
@@ -320,25 +392,36 @@ export class PublicAppointmentsController {
    * un script qui annulerait en boucle les rendez-vous dont il aurait deviné les
    * identifiants ferait bien plus de dégâts qu'un script qui réserve.
    *
-   * ## Pourquoi aucune garde, ici non plus
+   * ## La garde, depuis #1135
    *
-   * Pour la raison qui vaut sur toute cette surface : on réserve sans compte,
-   * donc on annule sans compte. Ce qui autorise l'appel est la **connaissance de
-   * l'identifiant** du rendez-vous — un UUID v4, remis à la cliente sur son écran
-   * de confirmation et dans son e-mail, et à personne d'autre. C'est exactement
-   * le régime du lien d'annulation que porte toute confirmation de rendez-vous,
-   * et le même que celui du report.
+   * **401** sans jeton, **403** avec un jeton qui n'est pas celui d'une cliente,
+   * **404** quand le rendez-vous n'est pas le sien. Voir
+   * {@link AuthenticatedClient}.
    *
-   * Ce que cette route ne permet donc pas, et c'est ce qui la borne : elle
-   * n'apprend **rien** à qui ne connaît pas déjà l'identifiant — un identifiant
-   * inconnu et celui d'un autre salon rendent le même 404 — et elle n'écrit que
-   * `CANCELLED`, un état dont on ne revient pas mais qui ne déplace ni argent ni
-   * donnée personnelle.
+   * C'est le défaut que ce ticket corrige, et il avait deux moitiés. La première
+   * est un contournement de périmètre : un praticien relevait dans le journal
+   * des envois de son salon les `appointmentId` de ses collègues, et annulait
+   * par ici ce que `POST /appointments/{id}/cancel` lui refusait en 403
+   * `OWN_SCOPE_ONLY` (#812). La seconde est une **trace fausse** : l'annulation
+   * s'inscrivait `cancelledBy: CLIENT`, et le registre du salon accusait donc la
+   * cliente d'un geste qu'elle n'avait pas fait — en faussant du même coup le
+   * seul chiffre que cette colonne existe pour établir (CDC §1.4).
+   *
+   * La valeur `CLIENT` est désormais vraie **par construction** : le type
+   * d'entrée du service ne la laisse écrire qu'en nommant la cliente d'un jeton
+   * vérifié, et le service refuse le rendez-vous qui n'est pas le sien.
+   *
+   * Ce que cette route ne permet donc toujours pas : elle n'apprend **rien** à
+   * qui n'est pas la cliente du rendez-vous — un identifiant inconnu, celui
+   * d'un autre salon et celui d'une autre cliente rendent le même 404 — et elle
+   * n'écrit que `CANCELLED`, un état dont on ne revient pas mais qui ne déplace
+   * ni argent ni donnée personnelle.
    */
   @Post(':appointmentId/cancel')
+  @AuthenticatedClient()
   @HttpCode(200)
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
-  @ApiOperation({ summary: 'Annuler son rendez-vous, sans compte' })
+  @ApiOperation({ summary: 'Annuler son rendez-vous' })
   @ApiParam({
     name: 'appointmentId',
     format: 'uuid',
@@ -346,7 +429,11 @@ export class PublicAppointmentsController {
   })
   @ApiOkResponse({ type: AppointmentDto })
   @ApiBadRequestResponse({ description: 'Corps invalide — le champ fautif est nommé.' })
-  @ApiNotFoundResponse({ description: 'Établissement ou rendez-vous introuvable.' })
+  @ApiNotFoundResponse({
+    description:
+      'Établissement ou rendez-vous introuvable, ou rendez-vous qui n’est pas celui ' +
+      'de la cliente authentifiée — les trois sont indiscernables à dessein (#1135).',
+  })
   @ApiConflictResponse({
     description: 'Le rendez-vous vient d’être modifié par ailleurs (`CONFLICT`).',
   })
@@ -360,12 +447,19 @@ export class PublicAppointmentsController {
   public async cancel(
     @Param('appointmentId', ParseUUIDPipe) appointmentId: string,
     @Body(cancelAppointmentBody) body: CancelAppointmentBody,
+    @CurrentUser() user: AuthenticatedUser,
   ): Promise<AppointmentDto> {
     return this.appointments.cancel({
       appointmentId,
       // Fixé par la **porte**, jamais lu du corps : c'est la cliente qui annule
-      // ici, et rien de ce qu'elle envoie ne peut le dire autrement.
+      // ici, et rien de ce qu'elle envoie ne peut le dire autrement. Depuis
+      // #1135, la valeur ne s'écrit qu'en nommant la cliente ci-dessous — le
+      // type d'entrée du service en fait une union, et la branche `CLIENT`
+      // exige `client`.
       cancelledBy: 'CLIENT',
+      // Du jeton vérifié, jamais du chemin ni du corps. Le service refuse en
+      // 404 le rendez-vous qui n'est pas le sien.
+      client: { userId: user.userId },
       // Le contrat distingue « absent » de « vide » ; le domaine ne connaît que
       // `null`, qui se lit « aucun motif donné ». Un motif réduit à rien par
       // l'élagage compte pour absent — voir `toCancellationReason`.

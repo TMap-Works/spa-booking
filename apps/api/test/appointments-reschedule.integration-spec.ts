@@ -4,6 +4,8 @@ import request from 'supertest';
 
 import type { AppointmentCreatedEvent } from '../src/modules/appointments/events/appointment-created.event';
 import type { AppointmentRescheduledEvent } from '../src/modules/appointments/events/appointment-rescheduled.event';
+import type { UserRole } from '../src/modules/identity/roles';
+import { TokenService } from '../src/modules/identity/token.service';
 import {
   bookableSlot,
   createAppointmentsHarness,
@@ -32,7 +34,10 @@ import {
  *    `appointment.created` **ne part pas** ;
  * 7. un créneau d'arrivée qui **chevauche** celui d'origine aboutit (#316), sans
  *    que l'agenda s'ouvre pour autant : un rendez-vous voisin qui recouvre
- *    l'arrivée rend toujours 409.
+ *    l'arrivée rend toujours 409 ;
+ * 8. la route est **gardée** depuis #1135 : 401 sans jeton, 403 sur un jeton de
+ *    praticien, 404 sur le rendez-vous d'une autre cliente. La connaissance de
+ *    l'identifiant ne suffit plus.
  *
  * L'isolation inter-tenant a sa suite propre —
  * `appointments-tenant.isolation-spec.ts` ; l'atomicité de la transaction, la
@@ -68,8 +73,29 @@ describe('POST /api/v1/public/:tenantSlug/appointments/:appointmentId/reschedule
     await harness.close();
   });
 
-  /** Réserve le créneau d'origine et rend le rendez-vous obtenu. */
-  async function book(): Promise<{ id: string; clientId: string }> {
+  /**
+   * Un porteur signé par le **vrai** `TokenService`, pour l'établissement du
+   * harnais — ce que `JwtAuthGuard` lira.
+   */
+  async function bearerFor(userId: string, role: UserRole): Promise<string> {
+    const tokens = harness.app.get(TokenService);
+    const token = await tokens.signAccessToken({
+      userId,
+      tenantId: harness.a.tenant.id,
+      role,
+    });
+    return `Bearer ${token}`;
+  }
+
+  /**
+   * Réserve le créneau d'origine et rend le rendez-vous obtenu, **avec le
+   * porteur de sa cliente** (#1135).
+   *
+   * Le report public n'est plus ouvert à la seule connaissance de l'identifiant.
+   * Les cas ci-dessous parlent du mécanisme — deux lignes, intervalle occupé,
+   * chevauchement, événement — et la garde a les siens, plus bas.
+   */
+  async function book(): Promise<{ id: string; clientId: string; authorization: string }> {
     const response = await request(harness.server())
       .post(BOOKING_PATH(harness.a.tenant.slug))
       .send({
@@ -81,7 +107,12 @@ describe('POST /api/v1/public/:tenantSlug/appointments/:appointmentId/reschedule
       });
 
     expect(response.status).toBe(201);
-    return { id: String(response.body.id), clientId: String(response.body.clientId) };
+    const clientId = String(response.body.clientId);
+    return {
+      id: String(response.body.id),
+      clientId,
+      authorization: await bearerFor(clientId, 'CLIENT'),
+    };
   }
 
   it('reporte un rendez-vous et rend 201 avec un rendez-vous neuf, lié au précédent', async () => {
@@ -89,6 +120,7 @@ describe('POST /api/v1/public/:tenantSlug/appointments/:appointmentId/reschedule
 
     const response = await request(harness.server())
       .post(RESCHEDULE_PATH(harness.a.tenant.slug, booked.id))
+      .set('Authorization', booked.authorization)
       .send({ startsAt: to.startsAt.toISOString() });
 
     expect(response.status).toBe(201);
@@ -111,6 +143,7 @@ describe('POST /api/v1/public/:tenantSlug/appointments/:appointmentId/reschedule
 
     await request(harness.server())
       .post(RESCHEDULE_PATH(harness.a.tenant.slug, booked.id))
+      .set('Authorization', booked.authorization)
       .send({ startsAt: to.startsAt.toISOString() });
 
     // Deux lignes, pas une : c'est ce qui distingue un report d'un `UPDATE` des
@@ -131,6 +164,7 @@ describe('POST /api/v1/public/:tenantSlug/appointments/:appointmentId/reschedule
 
     await request(harness.server())
       .post(RESCHEDULE_PATH(harness.a.tenant.slug, booked.id))
+      .set('Authorization', booked.authorization)
       .send({ startsAt: to.startsAt.toISOString() });
 
     const created = harness.appointments.appointments.find(
@@ -147,6 +181,7 @@ describe('POST /api/v1/public/:tenantSlug/appointments/:appointmentId/reschedule
 
     const response = await request(harness.server())
       .post(RESCHEDULE_PATH(harness.a.tenant.slug, booked.id))
+      .set('Authorization', booked.authorization)
       .send({ startsAt: to.startsAt.toISOString(), staffId: other });
 
     expect(response.status).toBe(201);
@@ -154,10 +189,15 @@ describe('POST /api/v1/public/:tenantSlug/appointments/:appointmentId/reschedule
   });
 
   it('refuse en 422 un rendez-vous qui n’occupe plus son créneau', async () => {
+    // La cliente est **nommée** sur la ligne semée : sans cela le refus serait
+    // le 404 de propriété de #1135, et ce cas ne dirait plus rien du cycle de
+    // vie qu'il existe pour exercer.
+    const clientId = randomUUID();
     const seeded = harness.appointments.seedAppointment({
       tenantId: harness.a.tenant.id,
       staffId: harness.a.staffId,
       serviceId: harness.a.serviceId,
+      clientId,
       startsAt: from.occupiedStartsAt,
       // L'intervalle occupé : soin de soixante minutes, plus les deux tampons.
       endsAt: new Date(from.occupiedStartsAt.getTime() + 80 * 60_000),
@@ -166,6 +206,7 @@ describe('POST /api/v1/public/:tenantSlug/appointments/:appointmentId/reschedule
 
     const response = await request(harness.server())
       .post(RESCHEDULE_PATH(harness.a.tenant.slug, seeded.id))
+      .set('Authorization', await bearerFor(clientId, 'CLIENT'))
       .send({ startsAt: to.startsAt.toISOString() });
 
     expect(response.status).toBe(422);
@@ -177,6 +218,7 @@ describe('POST /api/v1/public/:tenantSlug/appointments/:appointmentId/reschedule
 
     const response = await request(harness.server())
       .post(RESCHEDULE_PATH(harness.a.tenant.slug, booked.id))
+      .set('Authorization', booked.authorization)
       // Sept minutes après l'ouverture : hors de la grille de quinze minutes.
       .send({ startsAt: new Date(to.startsAt.getTime() + 7 * 60_000).toISOString() });
 
@@ -187,9 +229,54 @@ describe('POST /api/v1/public/:tenantSlug/appointments/:appointmentId/reschedule
   it('refuse en 404 un rendez-vous inconnu', async () => {
     const response = await request(harness.server())
       .post(RESCHEDULE_PATH(harness.a.tenant.slug, randomUUID()))
+      .set('Authorization', await bearerFor(randomUUID(), 'CLIENT'))
       .send({ startsAt: to.startsAt.toISOString() });
 
     expect(response.status).toBe(404);
+  });
+
+  describe('la garde de la cliente — #1135', () => {
+    it('refuse en 401 un report sans jeton, fût-il sur le bon identifiant', async () => {
+      const booked = await book();
+
+      const response = await request(harness.server())
+        .post(RESCHEDULE_PATH(harness.a.tenant.slug, booked.id))
+        .send({ startsAt: to.startsAt.toISOString() });
+
+      expect(response.status).toBe(401);
+      // Une seule ligne : aucun successeur n'a été créé, l'original n'a pas été
+      // annulé.
+      expect(harness.appointments.appointments).toHaveLength(1);
+      expect(harness.appointments.appointments[0]?.status).toBe('PENDING');
+    });
+
+    it('refuse en 403 le jeton d’un praticien sur cette route', async () => {
+      const booked = await book();
+
+      const response = await request(harness.server())
+        .post(RESCHEDULE_PATH(harness.a.tenant.slug, booked.id))
+        .set('Authorization', await bearerFor(randomUUID(), 'STAFF'))
+        .send({ startsAt: to.startsAt.toISOString() });
+
+      // Le comptoir a sa route — `POST /appointments/:id/reschedule` —, où la
+      // portée du praticien est jugée (#812). Celle-ci est celle de la cliente.
+      expect(response.status).toBe(403);
+      expect(harness.appointments.appointments).toHaveLength(1);
+    });
+
+    it('refuse en 404 le rendez-vous d’une autre cliente du même salon', async () => {
+      const booked = await book();
+
+      const response = await request(harness.server())
+        .post(RESCHEDULE_PATH(harness.a.tenant.slug, booked.id))
+        .set('Authorization', await bearerFor(randomUUID(), 'CLIENT'))
+        .send({ startsAt: to.startsAt.toISOString() });
+
+      // 404 et non 403 : indiscernable d'un identifiant inconnu
+      // (tenant-isolation §4).
+      expect(response.status).toBe(404);
+      expect(harness.appointments.appointments).toHaveLength(1);
+    });
   });
 
   /**
@@ -240,6 +327,7 @@ describe('POST /api/v1/public/:tenantSlug/appointments/:appointmentId/reschedule
 
       const response = await request(harness.server())
         .post(RESCHEDULE_PATH(harness.a.tenant.slug, booked.id))
+        .set('Authorization', booked.authorization)
         .send({ startsAt: nudged().toISOString() });
 
       // Le geste le plus courant du comptoir, et un 409 jusqu'à #316.
@@ -261,6 +349,7 @@ describe('POST /api/v1/public/:tenantSlug/appointments/:appointmentId/reschedule
 
       const response = await request(harness.server())
         .post(RESCHEDULE_PATH(harness.a.tenant.slug, booked.id))
+        .set('Authorization', booked.authorization)
         .send({ startsAt: nudged().toISOString() });
 
       expect(response.status).toBe(409);
@@ -276,6 +365,7 @@ describe('POST /api/v1/public/:tenantSlug/appointments/:appointmentId/reschedule
 
       const response = await request(harness.server())
         .post(RESCHEDULE_PATH(harness.a.tenant.slug, booked.id))
+        .set('Authorization', booked.authorization)
         .send({ startsAt: from.startsAt.toISOString() });
       off();
 
@@ -300,6 +390,7 @@ describe('POST /api/v1/public/:tenantSlug/appointments/:appointmentId/reschedule
     it('refuse en 400 un identifiant de rendez-vous mal formé', async () => {
       const response = await request(harness.server())
         .post(RESCHEDULE_PATH(harness.a.tenant.slug, 'pas-un-uuid'))
+        .set('Authorization', await bearerFor(randomUUID(), 'CLIENT'))
         .send({ startsAt: to.startsAt.toISOString() });
 
       // `ParseUUIDPipe` : la requête ne descend jamais jusqu'au pilote
@@ -312,6 +403,7 @@ describe('POST /api/v1/public/:tenantSlug/appointments/:appointmentId/reschedule
 
       const response = await request(harness.server())
         .post(RESCHEDULE_PATH(harness.a.tenant.slug, booked.id))
+        .set('Authorization', booked.authorization)
         .send({ startsAt: '2026-09-01T10:00:00' });
 
       expect(response.status).toBe(400);
@@ -323,6 +415,7 @@ describe('POST /api/v1/public/:tenantSlug/appointments/:appointmentId/reschedule
 
       const response = await request(harness.server())
         .post(RESCHEDULE_PATH(harness.a.tenant.slug, booked.id))
+        .set('Authorization', booked.authorization)
         .send({});
 
       expect(response.status).toBe(400);
@@ -333,6 +426,7 @@ describe('POST /api/v1/public/:tenantSlug/appointments/:appointmentId/reschedule
 
       const response = await request(harness.server())
         .post(RESCHEDULE_PATH(harness.a.tenant.slug, booked.id))
+        .set('Authorization', booked.authorization)
         .send({ startsAt: to.startsAt.toISOString(), serviceId: harness.b.serviceId });
 
       // `forbidNonWhitelisted` : reporter ne change pas la prestation, et le
@@ -346,6 +440,7 @@ describe('POST /api/v1/public/:tenantSlug/appointments/:appointmentId/reschedule
 
       const response = await request(harness.server())
         .post(RESCHEDULE_PATH(harness.a.tenant.slug, booked.id))
+        .set('Authorization', booked.authorization)
         .send({ startsAt: to.startsAt.toISOString(), price: { amountMinor: 1, currency: 'EUR' } });
 
       expect(response.status).toBe(400);
@@ -356,6 +451,7 @@ describe('POST /api/v1/public/:tenantSlug/appointments/:appointmentId/reschedule
 
       const response = await request(harness.server())
         .post(RESCHEDULE_PATH(harness.a.tenant.slug, booked.id))
+        .set('Authorization', booked.authorization)
         .send({ startsAt: to.startsAt.toISOString(), status: 'CONFIRMED' });
 
       expect(response.status).toBe(400);
@@ -370,6 +466,7 @@ describe('POST /api/v1/public/:tenantSlug/appointments/:appointmentId/reschedule
 
       const response = await request(harness.server())
         .post(RESCHEDULE_PATH(harness.a.tenant.slug, booked.id))
+        .set('Authorization', booked.authorization)
         .send({ startsAt: to.startsAt.toISOString() });
       off();
 
@@ -392,6 +489,7 @@ describe('POST /api/v1/public/:tenantSlug/appointments/:appointmentId/reschedule
 
       await request(harness.server())
         .post(RESCHEDULE_PATH(harness.a.tenant.slug, booked.id))
+        .set('Authorization', booked.authorization)
         .send({ startsAt: to.startsAt.toISOString() });
       off();
 
