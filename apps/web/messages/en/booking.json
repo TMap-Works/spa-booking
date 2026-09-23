@@ -101,7 +101,7 @@
         "title": "For clients",
         "services": "Services, their duration and their price, before choosing",
         "practitioner": "The practitioner of your choice, or the first one available",
-        "noAccount": "A booking without an account, in seconds",
+        "noAccount": "An account created in seconds, then your booking",
         "history": "Your upcoming and past appointments, in your own area",
         "reschedule": "Rescheduling or cancelling online, without a phone call",
         "link": "Find my salon"
@@ -165,7 +165,7 @@
       },
       "account": {
         "question": "Do I need an account to book?",
-        "answer": "No: your contact details are enough. An account then lets you find all your appointments, and reschedule or cancel them online."
+        "answer": "Yes. You are free to browse services and availability; the account is created when you book, in seconds. It is what then lets you find all your appointments, and reschedule or cancel them online."
       },
       "reschedule": {
         "question": "How do I reschedule or cancel an appointment?",

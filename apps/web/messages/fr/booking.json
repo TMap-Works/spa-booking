@@ -101,7 +101,7 @@
         "title": "Pour la clientèle",
         "services": "Les prestations, leur durée et leur prix, avant de choisir",
         "practitioner": "Le praticien de votre choix, ou le premier disponible",
-        "noAccount": "Une réservation sans compte, en quelques secondes",
+        "noAccount": "Un compte créé en quelques secondes, puis la réservation",
         "history": "Vos rendez-vous à venir et passés, dans votre espace",
         "reschedule": "Un report ou une annulation en ligne, sans appeler",
         "link": "Trouver mon salon"
@@ -165,7 +165,7 @@
       },
       "account": {
         "question": "Faut-il créer un compte pour réserver ?",
-        "answer": "Non : vos coordonnées suffisent. Un compte vous permet ensuite de retrouver tous vos rendez-vous, et de les reporter ou de les annuler en ligne."
+        "answer": "Oui. Vous choisissez librement votre prestation et votre créneau ; le compte se crée au moment de réserver, en quelques secondes. C’est lui qui vous permet ensuite de retrouver tous vos rendez-vous, et de les reporter ou de les annuler en ligne."
       },
       "reschedule": {
         "question": "Comment reporter ou annuler un rendez-vous ?",
