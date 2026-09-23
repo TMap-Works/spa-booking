@@ -153,8 +153,18 @@ export class ListNotificationsQueryDto {
   public statuses?: string[];
 }
 
-/** Les filtres de la requête, dans le vocabulaire du domaine. */
-export function toNotificationSearch(dto: ListNotificationsQueryDto): NotificationSearch {
+/**
+ * Les filtres de la requête, dans le vocabulaire du domaine.
+ *
+ * **Sans `ownedByUserId`**, et le type le dit : la portée de lecture ne se
+ * déduit pas de la chaîne de requête mais du jeton vérifié, et c'est le
+ * contrôleur qui la pose (#1200). Si elle sortait d'ici, un praticien pourrait
+ * la choisir — ce que le `whitelist` du `ValidationPipe` interdit déjà, mais une
+ * frontière qui tient par deux raisons vaut mieux qu'une.
+ */
+export function toNotificationSearch(
+  dto: ListNotificationsQueryDto,
+): Omit<NotificationSearch, 'ownedByUserId'> {
   return {
     ...(dto.appointmentId === undefined ? {} : { appointmentId: dto.appointmentId }),
     ...(dto.type === undefined ? {} : { type: toDomainType(dto.type) }),

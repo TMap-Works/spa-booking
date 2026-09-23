@@ -228,6 +228,50 @@ interface NotificationTraceRow {
   createdAt: Date;
 }
 
+/**
+ * Le prédicat « les envois de ses rendez-vous à lui », ou rien du tout — #1200.
+ *
+ * ## Ce qu'il traverse, et pourquoi en une seule requête
+ *
+ * `notifications` → `appointment` → `staff` → `userId`. Les deux relations sont
+ * celles que le schéma déclare, et le filtre s'écrit donc sans jointure
+ * explicite ni seconde lecture. Résoudre d'abord la fiche praticien du compte
+ * aurait ajouté une requête **et** une lecture de `staff` là où le module n'en
+ * a besoin que pour expédier — c'est le parti qu'a pris `crm` en #812
+ * (`ownedByPredicate` de `crm.repository.ts`), et il n'y a aucune raison d'en
+ * prendre un autre ici.
+ *
+ * ## `is`, et ce qu'il écarte au passage
+ *
+ * `appointment` est une relation **facultative** : le journal porte aussi des
+ * envois qui n'annoncent aucun rendez-vous — la réinitialisation de mot de passe
+ * (#809). `is` ne retient que les lignes dont le rendez-vous existe *et*
+ * satisfait le filtre, si bien que ces envois-là sortent du journal d'un
+ * praticien. C'est la bonne réponse : ils ne relèvent pas de son périmètre, et
+ * ils ne lui apprendraient que le va-et-vient des comptes de ses collègues.
+ *
+ * ## Aucun `tenantId` ici, et ce n'est pas un oubli
+ *
+ * L'extension de scoping le pose sur le `where` de la lecture principale, et les
+ * clés étrangères composites `(tenant_id, id)` du schéma interdisent qu'une
+ * notification d'un salon désigne le rendez-vous d'un autre : la traversée ne
+ * peut pas sortir de l'établissement courant (tenant-isolation §1 et §3).
+ *
+ * ## Tous les statuts comptent, annulations comprises
+ *
+ * La question à laquelle ce prédicat répond est « cet envoi concerne-t-il un de
+ * mes rendez-vous ? », et une annulation ne le retire pas de la journée de qui
+ * devait le donner — l'avis d'annulation est précisément l'envoi dont le
+ * praticien a besoin de vérifier qu'il est parti.
+ */
+function ownedByPredicate(userId: string | null): Prisma.NotificationWhereInput {
+  if (userId === null) {
+    return {};
+  }
+
+  return { appointment: { is: { staff: { userId } } } };
+}
+
 function toNotificationTrace(row: NotificationTraceRow): NotificationTrace {
   return {
     id: row.id,
@@ -425,6 +469,7 @@ export class NotificationsRepository {
         ...(query.type === undefined ? {} : { type: query.type }),
         ...(query.channel === undefined ? {} : { channel: query.channel }),
         ...(query.statuses === undefined ? {} : { status: { in: [...query.statuses] } }),
+        ...ownedByPredicate(query.ownedByUserId),
       },
       select: NOTIFICATION_TRACE_SELECT,
       orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
