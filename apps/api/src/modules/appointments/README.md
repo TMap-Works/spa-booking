@@ -27,8 +27,8 @@ réservation, est tenu.
 | Méthode | Chemin | Rang | Rend |
 |---|---|---|---|
 | `POST` | `/api/v1/public/:tenantSlug/appointments` | — (ouverte) | `bookedAppointmentSchema` |
-| `POST` | `/api/v1/public/:tenantSlug/appointments/:id/reschedule` | — (ouverte) | `bookedAppointmentSchema` |
-| `POST` | `/api/v1/public/:tenantSlug/appointments/:id/cancel` | — (ouverte) | `bookedAppointmentSchema` |
+| `POST` | `/api/v1/public/:tenantSlug/appointments/:id/reschedule` | `CLIENT` — et le rendez-vous doit être le sien (#1135) | `bookedAppointmentSchema` |
+| `POST` | `/api/v1/public/:tenantSlug/appointments/:id/cancel` | `CLIENT` — et le rendez-vous doit être le sien (#1135) | `bookedAppointmentSchema` |
 | `GET` | `/api/v1/appointments/mine` | toute identité vérifiée | `bookedAppointmentSchema[]` |
 | `GET` | `/api/v1/appointments` | `STAFF` | `appointmentSchema[]` |
 | `POST` | `/api/v1/appointments` | `STAFF` | `appointmentSchema` |
@@ -37,9 +37,19 @@ réservation, est tenu.
 | `POST` | `/api/v1/appointments/:id/cancel` | `STAFF` | `bookedAppointmentSchema` |
 | `GET` | `/api/v1/appointments/stream` | toute identité vérifiée | `text/event-stream` de `appointmentFeedEventSchema` |
 
-Les trois routes publiques ne sont pas gardées, et c'est le quatrième critère de
-#37 : on réserve sans compte. Ce qui les tient est le `ValidationPipe` global, le
-contrôle de disponibilité, la contrainte d'exclusion, et un quota par adresse.
+Seule `POST /public/:tenantSlug/appointments` reste ouverte, et c'est le
+quatrième critère de #37 : on réserve sans compte. Ce qui la tient est le
+`ValidationPipe` global, le contrôle de disponibilité, la contrainte
+d'exclusion, et un quota par adresse.
+
+Le report et l'annulation publics, eux, sont gardés depuis #1135 : `@Auth('CLIENT')`
+— 401 sans jeton, 403 sur un jeton de personnel — puis, dans le service, la
+**propriété du rendez-vous**, dont le refus est un 404 indiscernable d'un
+identifiant inconnu. La doctrine d'origine — « on réserve sans compte, donc on
+annule sans compte » — tenait tant que l'identifiant était un secret de la
+cliente ; un praticien lit ceux de ses collègues dans le journal des envois, et
+la route publique lui rouvrait sans jeton ce que le back-office lui refusait en
+403 `OWN_SCOPE_ONLY` (#812), en l'inscrivant `cancelledBy: CLIENT`.
 
 Aucune route de back-office n'a de quota, et c'est délibéré : l'appelant a un
 jeton signé, un établissement et un rôle — le quota utile est l'authentification

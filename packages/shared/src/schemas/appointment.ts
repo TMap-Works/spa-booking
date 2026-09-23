@@ -518,6 +518,15 @@ export type BookGuestAppointmentRequest = z.infer<typeof bookGuestAppointmentReq
  * front remplace celui qu'il gardait. `staffId` permet de changer de praticien
  * au passage, ce que le comptoir fait couramment ; absent, le praticien reste le
  * même.
+ *
+ * ## Le corps n'a pas changé ; la **porte**, si (#1135)
+ *
+ * `POST /public/{slug}/appointments/{id}/reschedule` exigeait la seule
+ * connaissance de l'identifiant. Elle exige désormais le **jeton de la cliente
+ * du rendez-vous** : 401 sans jeton, 403 sur un jeton de personnel, 404 sur le
+ * rendez-vous d'une autre cliente. Même régime que l'annulation, et pour la même
+ * raison — l'identifiant n'est plus un secret de la cliente. La route de
+ * back-office, `POST /appointments/{id}/reschedule`, est inchangée.
  */
 export const rescheduleAppointmentRequestSchema = z
   .object({
@@ -540,6 +549,19 @@ export type RescheduleAppointmentRequest = z.infer<typeof rescheduleAppointmentR
  *
  * `actor` n'est pas fourni par le client : le serveur le déduit du rôle de
  * l'appelant. Il n'apparaît donc pas ici — le motif, si.
+ *
+ * ## Le corps n'a pas changé ; la **porte**, si (#1135)
+ *
+ * `POST /public/{slug}/appointments/{id}/cancel` exigeait la seule connaissance
+ * de l'identifiant du rendez-vous. Elle exige désormais le **jeton de la cliente
+ * du rendez-vous** : 401 sans jeton, 403 sur un jeton de personnel, 404 sur le
+ * rendez-vous d'une autre cliente — indiscernable d'un identifiant inconnu. Un
+ * appelant qui envoyait ce corps sans en-tête `Authorization` doit donc en
+ * ajouter un ; rien d'autre ne bouge.
+ *
+ * La route de back-office, `POST /appointments/{id}/cancel`, est inchangée :
+ * même corps, mêmes permissions `appointment:write:own|all`, et la portée du
+ * praticien y reste jugée en 403 `OWN_SCOPE_ONLY` (#812).
  */
 export const cancelAppointmentRequestSchema = z
   .object({
