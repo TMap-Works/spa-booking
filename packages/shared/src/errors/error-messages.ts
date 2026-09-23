@@ -29,8 +29,6 @@
  * mot pour mot ici :
  *
  * - `INVALID_CREDENTIALS` ne distingue jamais l'adresse du mot de passe ;
- * - `CLIENT_EMAIL_NOT_BOOKABLE` ne qualifie pas l'adresse refusée — l'écrire
- *   ferait de ce refus un oracle sur l'annuaire du personnel ;
  * - `NOT_FOUND` ne dit pas « cet identifiant n'existe nulle part » : il couvre la
  *   ressource d'un autre établissement (tenant-isolation §4) ;
  * - aucun message ne cite Stripe, ni ne porte de donnée de carte.
@@ -112,8 +110,6 @@ const FR: Readonly<Record<ErrorCode, string>> = {
 
   /* --- crm ---------------------------------------------------------------- */
   CUSTOMER_EMAIL_TAKEN: 'Une fiche de ce salon porte déjà cette adresse e-mail.',
-  CLIENT_EMAIL_NOT_BOOKABLE:
-    'Cette adresse e-mail ne peut pas porter de réservation en ligne. Saisissez-en une autre.',
   CUSTOMER_HAS_UPCOMING_APPOINTMENTS:
     'Cette fiche a encore des rendez-vous à venir : honorez-les ou annulez-les d’abord.',
 
@@ -215,8 +211,6 @@ const EN: Readonly<Record<ErrorCode, string>> = {
 
   /* --- crm ---------------------------------------------------------------- */
   CUSTOMER_EMAIL_TAKEN: 'A record in this salon already uses this email address.',
-  CLIENT_EMAIL_NOT_BOOKABLE:
-    'This email address cannot carry an online booking. Please enter another one.',
   CUSTOMER_HAS_UPCOMING_APPOINTMENTS:
     'This record still has upcoming appointments: complete or cancel them first.',
 

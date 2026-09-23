@@ -384,38 +384,6 @@ export const CRM_ERROR_CODES = {
    */
   CUSTOMER_EMAIL_TAKEN: 'CUSTOMER_EMAIL_TAKEN',
   /**
-   * L'adresse envoyée ne peut pas porter une réservation **en ligne** dans cet
-   * établissement (#313). **409**.
-   *
-   * ## Pourquoi le front doit le distinguer
-   *
-   * C'est l'autre 409 du parcours public, et il n'a de commun avec
-   * `SLOT_NO_LONGER_AVAILABLE` que son statut. Le créneau perdu est **passager** :
-   * un autre horaire le lève. Celui-ci est **définitif pour cette adresse** —
-   * aucun créneau ne le lèvera jamais. Un front qui les confondrait renverrait la
-   * visiteuse au calendrier pour se heurter au même refus à chaque essai (#452).
-   *
-   * ## Pourquoi dans la famille `crm`
-   *
-   * Il est levé par `crm`, qui résout la fiche cliente, mais il sort par une
-   * route d'`appointments` — la réservation publique. Il a longtemps vécu dans
-   * `DOMAIN_ERROR_CODES` pour cette raison, avec la note que sa place définitive
-   * suivrait le regroupement par domaine ; c'est fait ici (#536). Le module qui
-   * le **lève** est celui qui le porte : c'est la seule règle qui ne dépende pas
-   * de la route par laquelle il se trouve sortir aujourd'hui.
-   *
-   * ## Ce que le message affiché n'a pas le droit de dire
-   *
-   * *Pourquoi* l'adresse est refusée. La cause, côté serveur, est qu'elle porte
-   * un compte non client de l'établissement ; l'écrire à l'écran ferait de ce
-   * refus un **oracle sur l'annuaire du personnel**, interrogeable adresse par
-   * adresse depuis une route publique et non authentifiée. Le front constate le
-   * refus et invite à en saisir une autre, sans qualifier celle-ci.
-   *
-   * `details` est vide, et le reste.
-   */
-  CLIENT_EMAIL_NOT_BOOKABLE: 'CLIENT_EMAIL_NOT_BOOKABLE',
-  /**
    * La fiche a encore des rendez-vous à venir : elle ne peut pas être anonymisée
    * maintenant (#81). **422** — la voie est ouverte, honorer ou annuler.
    * `details` ne porte que leur **nombre**, ni date, ni prestation, ni praticien.
