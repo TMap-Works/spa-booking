@@ -23,6 +23,7 @@ import { statusModifier } from '@/lib/admin/calendar-grid';
 import {
   MY_PLANNING_VIEWS,
   UPCOMING_DAYS,
+  agendaDate,
   appointmentsByDay,
   bookedCount,
   clientLabel,
@@ -78,7 +79,14 @@ import { adminCalendarPath, adminMyPlanningPath } from '../paths';
  *
  * ## La reprise de conception
  *
- * L'écran dessinait sa propre barre de période et son propre libellé de
+ * L'écran empilait trois niveaux de cadre — barre en carte, journée en carte,
+ * rendez-vous en carte — et la vue semaine rangeait sept boîtes de hauteurs
+ * inégales en deux colonnes : on y voyait des boîtes, pas une semaine. Il est
+ * désormais **un agenda** : une seule surface (`.spa-my-agenda`), où une
+ * journée est une section à colonne de date et un rendez-vous une ligne séparée
+ * par un filet. Le détail s'y déplie dans la ligne, qui devient un bloc teinté.
+ *
+ * Il dessinait aussi sa propre barre de période et son propre libellé de
  * semaine ; il emprunte désormais ceux du reste du back-office — `PeriodNav`
  * dans une `.spa-admin-toolbar`, `rangeLabel` pour la période. Trois conséquences
  * qui se voient :
@@ -91,8 +99,9 @@ import { adminCalendarPath, adminMyPlanningPath } from '../paths';
  *     de journée — mais une fois, entre les deux chevrons ;
  *   - la barre dit ce que la période pèse, annulés exclus.
  *
- * Le reste est dans `styles/admin/my-planning.css`, qui porte le détail des
- * trois défauts de mise en page relevés en prenant l'écran en main.
+ * Le reste est dans `styles/admin/my-planning.css`, qui porte le détail de la
+ * mise en page et la discipline de l'accent — il était sur chaque ligne, il ne
+ * reste que là où il désigne (BM-VISUEL-01).
  *
  * ## La langue (#1104)
  *
@@ -237,10 +246,7 @@ export default async function MyPlanningPage({ params, searchParams }: MyPlannin
   const next = nextAppointment(shown, now);
 
   return (
-    <section
-      aria-labelledby="mon-planning-titre"
-      className={`spa-my-planning${view === 'jour' ? ' spa-my-planning--day' : ''}`}
-    >
+    <section aria-labelledby="mon-planning-titre" className="spa-my-planning">
       <MyPlanningAutoRefresh />
 
       <header className="spa-my-planning__head">
@@ -313,7 +319,7 @@ export default async function MyPlanningPage({ params, searchParams }: MyPlannin
           </p>
         </div>
       ) : (
-        <div className="spa-my-planning__days">
+        <div className="spa-my-agenda">
           {days.map((day) => (
             <MyDay
               appointments={byDay.get(day) ?? []}
@@ -363,24 +369,45 @@ function MyDay({
   const bounds = dayBoundsInTimeZone(day, schedule.timezone);
   const work = workingDay(schedule, day, bounds.start, bounds.end, display);
   const headingId = `jour-${day}`;
+  const date = agendaDate(day, display);
 
   return (
     <section
       aria-labelledby={headingId}
       className={`spa-my-day${day === today ? ' spa-my-day--today' : ''}`}
     >
-      <header className="spa-my-day__head">
-        <h2 className="spa-my-day__title" id={headingId}>
-          {formatCalendarDate(day, display)}
-          {day === today ? <span className="spa-my-day__today">{t('day.today')}</span> : null}
+      {/* La colonne de date — une bande au-dessus des lignes sur téléphone, une
+          colonne à leur gauche dès 48 rem. Elle porte tout ce qui vaut pour la
+          journée entière : sa date, ses horaires, ses absences. */}
+      <div className="spa-my-day__rail">
+        <h2 className="spa-my-day__date" id={headingId}>
+          {/* La date entière pour qui écoute l'écran, les abréviations pour qui le
+              regarde : « mer. 23 sept. » ne s'annonce pas, il se lit. */}
+          <span className="spa-visually-hidden">{formatCalendarDate(day, display)}</span>
+          <span aria-hidden="true" className="spa-my-day__weekday">
+            {date.weekday}
+          </span>
+          <span aria-hidden="true" className="spa-my-day__number">
+            {date.number}
+          </span>
+          <span aria-hidden="true" className="spa-my-day__month">
+            {date.month}
+          </span>
         </h2>
+        {day === today ? <span className="spa-my-day__today">{t('day.today')}</span> : null}
         {showSchedule ? (
           <p className="spa-my-day__hours">
+            {/* Une plage par élément, et non une chaîne jointe par un point
+                médian : dans une colonne de neuf rem, « 09:00 – 13:00 · 14:00 –
+                19:00 » se coupait entre le tiret et l'heure de fin. Ce sont les
+                plages qui se rangent l'une sous l'autre, pas les heures. */}
             {work.closed
               ? t('day.closed')
               : work.hours.length === 0
                 ? t('day.noShift')
-                : work.hours.join(' · ')}
+                : work.hours.map((range, rank) => (
+                    <span key={`${day}-${String(rank)}`}>{range}</span>
+                  ))}
           </p>
         ) : null}
         {/* La clé est le rang et non le texte : deux absences du même praticien
@@ -392,7 +419,7 @@ function MyDay({
             {t('day.absence', { span: absence })}
           </p>
         ))}
-      </header>
+      </div>
 
       {appointments.length === 0 ? (
         <p className="spa-my-day__empty">{t('day.empty')}</p>

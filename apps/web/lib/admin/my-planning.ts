@@ -9,7 +9,7 @@ import {
 } from '@spa/shared';
 
 import { addCalendarDays, calendarDateInTimeZone } from '@/lib/booking/calendar';
-import { formatTimeInTimeZone, type DisplayLocale } from '@/lib/format';
+import { formatTimeInTimeZone, formattingLocale, type DisplayLocale } from '@/lib/format';
 import en from '@/messages/en/admin-my-planning.json';
 import fr from '@/messages/fr/admin-my-planning.json';
 
@@ -154,6 +154,52 @@ export function upcomingOnly(
     (appointment) =>
       STILL_EXPECTED.has(appointment.status) && Date.parse(appointment.endsAt) > now.getTime(),
   );
+}
+
+/** Les trois morceaux d'une date, tels que la colonne de gauche les empile. */
+export interface AgendaDate {
+  /** « mer. » — le jour de la semaine, abrégé. */
+  readonly weekday: string;
+  /** « 23 » — le quantième, en chiffres tabulaires à l'écran. */
+  readonly number: string;
+  /** « sept. » — le mois, abrégé. */
+  readonly month: string;
+}
+
+/**
+ * La date d'une journée découpée pour la colonne de gauche de l'agenda.
+ *
+ * Trois morceaux plutôt qu'une phrase : c'est ce qui permet de peindre le
+ * quantième plus gros que le reste, et de tenir une colonne de neuf rem au lieu
+ * des trois lignes qu'occupait « mercredi 23 septembre 2026 ». L'année n'y est
+ * pas — la barre de période la porte déjà, et la répéter à chaque journée d'une
+ * semaine n'apprend rien.
+ *
+ * Le nom complet de la journée n'est pas perdu pour autant : l'écran le pose en
+ * texte masqué dans le titre de la section, et ce sont ces abréviations qui
+ * portent `aria-hidden` — un lecteur d'écran annoncerait « mer. » sans rien en
+ * faire.
+ *
+ * Mise en forme **en UTC**, pour la raison qui vaut pour `formatCalendarDate` :
+ * une date civile est déjà celle de l'établissement, et la reprojeter dans son
+ * fuseau la décalerait d'un jour à l'est de Greenwich.
+ */
+export function agendaDate(
+  day: CalendarDate,
+  display: DisplayLocale = { locale: FALLBACK_LOCALE },
+): AgendaDate {
+  const midnight = new Date(`${day}T00:00:00Z`);
+  const part = (options: Intl.DateTimeFormatOptions): string =>
+    new Intl.DateTimeFormat(formattingLocale(display.locale, display.countryCode), {
+      timeZone: 'UTC',
+      ...options,
+    }).format(midnight);
+
+  return {
+    weekday: part({ weekday: 'short' }),
+    number: part({ day: 'numeric' }),
+    month: part({ month: 'short' }),
+  };
 }
 
 /**

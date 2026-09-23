@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { MyAppointmentActions } from '@/app/(admin)/[tenantSlug]/admin/components/my-planning-client';
 import {
+  agendaDate,
   appointmentsByDay,
   bookedCount,
   clientLabel,
@@ -183,6 +184,37 @@ describe('les rendez-vous', () => {
         appointment({ id: 'x3', status: 'cancelled' }),
       ]),
     ).toBe(2);
+  });
+});
+
+describe('la colonne de date de l’agenda', () => {
+  it('découpe la journée en jour, quantième et mois, sans l’année', () => {
+    // Trois morceaux pour que le quantième se peigne plus gros que le reste, et
+    // pour tenir une colonne de neuf rem : « mercredi 23 septembre 2026 » y
+    // prenait trois lignes. L'année est portée par la barre de période.
+    expect(agendaDate('2026-09-23', { locale: 'fr', countryCode: 'FR' })).toEqual({
+      weekday: 'mer.',
+      number: '23',
+      month: 'sept.',
+    });
+    expect(agendaDate('2026-09-23', { locale: 'en', countryCode: 'US' })).toEqual({
+      weekday: 'Wed',
+      number: '23',
+      month: 'Sep',
+    });
+  });
+
+  it('lit la date civile en UTC, pour qu’aucun fuseau ne la décale d’un jour', () => {
+    // Le piège de `formatCalendarDate`, repris ici : une date civile est déjà
+    // celle de l'établissement. Reprojetée, le 1er septembre lu à Auckland
+    // serait déjà le 2, et la colonne annoncerait un jour de plus que les
+    // rendez-vous qu'elle coiffe.
+    expect(agendaDate('2026-09-01', { locale: 'fr' }).number).toBe('1');
+    expect(agendaDate('2026-12-31', { locale: 'fr' })).toEqual({
+      weekday: 'jeu.',
+      number: '31',
+      month: 'déc.',
+    });
   });
 });
 
