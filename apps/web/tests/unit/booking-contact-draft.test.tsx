@@ -39,7 +39,6 @@ import { contact, presence, service, tenant } from './fixtures';
 vi.mock('@/app/(booking)/[tenantSlug]/reservation/actions', () => ({
   loadAvailabilityAction: vi.fn(),
   bookAppointmentAction: vi.fn(),
-  cancelAppointmentAction: vi.fn(),
 }));
 
 /** Le mot laissé au salon, celui que le rechargement emportait. */

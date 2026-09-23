@@ -33,7 +33,6 @@ const loadAvailabilityAction = vi.fn();
 vi.mock('@/app/(booking)/[tenantSlug]/reservation/actions', () => ({
   loadAvailabilityAction: (...args: unknown[]) => loadAvailabilityAction(...args),
   bookAppointmentAction: vi.fn(),
-  cancelAppointmentAction: vi.fn(),
 }));
 
 /**
