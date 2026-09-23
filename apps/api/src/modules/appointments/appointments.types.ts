@@ -96,8 +96,23 @@ export interface AppointmentDraft {
  *
  * | Forme | Surface | Ce que le repository en fait |
  * |---|---|---|
- * | `{ contact }` | tunnel public (#37) | demande la fiche à `crm`, qui la crée si elle manque |
- * | `{ clientId }` | comptoir (#461) | l'écrit telle quelle, et laisse la clé étrangère la juger |
+ * | `{ contact }` | **plus aucune depuis #1136** | demande la fiche à `crm`, qui la crée si elle manque |
+ * | `{ clientId }` | comptoir (#461) **et tunnel public** (#1136) | l'écrit telle quelle, après que `crm` a jugé son rôle |
+ *
+ * ## Pourquoi le tunnel public a changé de forme (#1136)
+ *
+ * Parce que résoudre la fiche depuis des **coordonnées** revient à laisser
+ * l'appelant désigner une cliente par son adresse e-mail : réserver exige un
+ * compte depuis la décision PO du 22/09/2026, et le rendez-vous se rattache
+ * désormais au compte du jeton vérifié, comme au comptoir. La cliente est jugée
+ * par `assertBookableWithin` — elle existe, elle est de cet établissement, et
+ * son rôle est bien `CLIENT`.
+ *
+ * `{ contact }` n'est donc plus atteint par aucune route. Il subsiste parce que
+ * le retirer emporterait la porte `crm.resolveWithin`, la fiche créée dans la
+ * transaction d'insertion (#313) et le réessai de `ClientRecordRaceError` qui va
+ * avec — un démontage qui touche `crm`, hors de l'empreinte de ce ticket, et qui
+ * mérite son propre diff plutôt qu'une rallonge de celui-ci.
  *
  * C'est la même frontière que `packages/shared` tient par le `.strict()` de ses
  * deux schémas — `bookGuestAppointmentRequestSchema` refuse un `clientId`,
@@ -364,13 +379,29 @@ export interface GuestContact {
  * `null` — le DTO, lui, distingue « absent » de « vide ». L'affectation du
  * praticien revient alors au service, jamais à l'appelant : voir la règle
  * documentée dans `AppointmentsService.book`.
+ *
+ * ## `client` est un **principal**, et non plus des coordonnées (#1136)
+ *
+ * Jusqu'ici ce champ portait un `GuestContact`, et le rendez-vous se rattachait
+ * à la fiche que l'**adresse e-mail** du corps désignait — celle d'une cliente
+ * existante s'il s'en trouvait une. Un appelant anonyme écrivait donc dans le
+ * compte d'autrui sur la seule foi d'une adresse, et repartait avec le
+ * `clientId` de sa victime.
+ *
+ * Le champ porte désormais le compte d'un **jeton vérifié**, et c'est ce
+ * changement de type — non un contrôle ajouté quelque part — qui referme le
+ * défaut : il n'existe plus de valeur par laquelle nommer une cliente qu'on ne
+ * serait pas. Même conduite que {@link CancelAppointmentInput} depuis #1135, et pour
+ * la même raison : un défaut rendu **incompilable** ne se rouvre pas à la
+ * prochaine relecture distraite.
  */
 export interface BookAppointmentInput {
   readonly serviceId: string;
   /** Praticien désigné, ou `null` pour « premier disponible ». */
   readonly staffId: string | null;
   readonly startsAt: Date;
-  readonly client: GuestContact;
+  /** La cliente du jeton — voir {@link AppointmentClientPrincipal}. */
+  readonly client: AppointmentClientPrincipal;
   readonly clientNote: string | null;
   /**
    * L'accord au traitement des données personnelles — le seul champ de cette
