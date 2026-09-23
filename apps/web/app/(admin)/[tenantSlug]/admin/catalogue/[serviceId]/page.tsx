@@ -1,12 +1,14 @@
 import {
   hasAtLeastRole,
   uuidSchema,
+  type Locale,
   type Service,
   type ServiceCategory,
   type ServiceStaffMember,
   type SessionUser,
   type StaffMember,
 } from '@spa/shared';
+import { getLocale, getTranslations } from 'next-intl/server';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 
@@ -91,6 +93,10 @@ interface ServicePageProps {
 
 export default async function ServicePage({ params }: ServicePageProps) {
   const { tenantSlug, serviceId } = await params;
+  const t = await getTranslations('admin-catalog');
+  // Voir la liste du catalogue : la région n'est pas lue ici non plus, la
+  // langue suffit à dire comment une durée s'écrit (#849).
+  const locale = (await getLocale()) as Locale;
   const accessToken = await requireAdminAccessToken(
     tenantSlug,
     adminServicePath(tenantSlug, serviceId),
@@ -148,9 +154,9 @@ export default async function ServicePage({ params }: ServicePageProps) {
     }
 
     return adminLoadFailure(error, tenantSlug, {
-      deniedTitle: 'Accès réservé',
-      deniedHint: 'La modification du catalogue est réservée aux gérantes et aux administrateurs.',
-      failedTitle: 'Prestation indisponible',
+      deniedTitle: t('denied.title'),
+      deniedHint: t('denied.service'),
+      failedTitle: t('failure.service'),
     });
   }
 
@@ -198,6 +204,8 @@ export default async function ServicePage({ params }: ServicePageProps) {
 
   return (
     <section aria-labelledby="prestation-titre">
+      {/* Le titre de l'écran est le nom que le salon a saisi : il n'est pas
+          traduit (#849). */}
       <h1 className="spa-admin__title" id="prestation-titre">
         {service.name}
       </h1>
@@ -206,19 +214,21 @@ export default async function ServicePage({ params }: ServicePageProps) {
         <div className="spa-admin-toolbar__group">
           <CatalogStatusBadge isActive={service.isActive} />
           <span className="spa-admin-toolbar__hint">
-            Bloque {formatDuration(service.occupiedMinutes)} sur l’agenda, tampons compris.
+            {t('service.occupiedHint', {
+              duration: formatDuration(service.occupiedMinutes, { locale }),
+            })}
           </span>
         </div>
         <span className="spa-admin-toolbar__spacer" />
         <div className="spa-admin-toolbar__group">
           <Link className="spa-button spa-button--quiet" href={adminCatalogPath(tenantSlug)}>
-            Retour au catalogue
+            {t('service.backToCatalog')}
           </Link>
           <Link
             className="spa-button spa-button--neutral"
             href={`${adminCatalogPreviewPath(tenantSlug)}#${service.slug}`}
           >
-            Voir le rendu public
+            {t('service.publicView')}
           </Link>
         </div>
       </div>

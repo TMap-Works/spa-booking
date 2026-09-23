@@ -1,4 +1,5 @@
 import { hasAtLeastRole, type ServiceCategory, type SessionUser } from '@spa/shared';
+import { getTranslations } from 'next-intl/server';
 import Link from 'next/link';
 
 import { fetchOwnProfile, fetchServiceCategories } from '@/lib/api-client';
@@ -37,6 +38,7 @@ interface CategoriesPageProps {
 
 export default async function ServiceCategoriesPage({ params }: CategoriesPageProps) {
   const { tenantSlug } = await params;
+  const t = await getTranslations('admin-catalog');
   const accessToken = await requireAdminAccessToken(
     tenantSlug,
     adminServiceCategoriesPath(tenantSlug),
@@ -51,28 +53,24 @@ export default async function ServiceCategoriesPage({ params }: CategoriesPagePr
     ]);
   } catch (error) {
     return adminLoadFailure(error, tenantSlug, {
-      deniedTitle: 'Accès réservé',
-      deniedHint: 'Les rubriques du catalogue sont réservées aux comptes du salon.',
-      failedTitle: 'Rubriques indisponibles',
+      deniedTitle: t('denied.title'),
+      deniedHint: t('denied.categories'),
+      failedTitle: t('failure.categories'),
     });
   }
 
   return (
     <section aria-labelledby="rubriques-titre">
       <h1 className="spa-admin__title" id="rubriques-titre">
-        Rubriques du catalogue
+        {t('categories.title')}
       </h1>
 
       <div className="spa-admin-toolbar">
         <Link className="spa-button spa-button--quiet" href={adminCatalogPath(tenantSlug)}>
-          Retour au catalogue
+          {t('categories.backToCatalog')}
         </Link>
         <span className="spa-admin-toolbar__spacer" />
-        <p className="spa-admin-toolbar__hint">
-          Une rubrique regroupe les prestations sur la page publique. Elle se désactive, elle ne se
-          supprime pas — le reporting doit continuer à savoir sous quelle rubrique une vente a été
-          faite.
-        </p>
+        <p className="spa-admin-toolbar__hint">{t('categories.hint')}</p>
       </div>
 
       <CategoryManager

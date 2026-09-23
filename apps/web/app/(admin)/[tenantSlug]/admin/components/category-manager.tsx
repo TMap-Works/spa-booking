@@ -2,15 +2,19 @@
 
 import { zodResolver } from '@hookform/resolvers/zod';
 import {
+  DISPLAY_NAME_MAX_LENGTH,
   ERROR_CODES,
-  displayNameSchema,
+  SLUG_MAX_LENGTH,
   longTextSchema,
   slugSchema,
+  zodErrorMap,
+  type Locale,
   type ServiceCategory,
 } from '@spa/shared';
+import { useLocale, useTranslations } from 'next-intl';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { useState, useTransition } from 'react';
+import { useMemo, useState, useTransition } from 'react';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
 
@@ -70,13 +74,76 @@ import { useAdminSessionRenewal } from './use-admin-session-renewal';
  * bascule d'activité, et le tableau retrouve son rôle de tableau.
  */
 
-const categoryFormSchema = z.object({
-  name: displayNameSchema,
-  slug: z.union([z.literal(''), slugSchema]),
-  description: longTextSchema,
-});
+/**
+ * Les phrases que ce formulaire écrit lui-même, dans la langue de l'écran (#849).
+ *
+ * Elles existent pour la raison exposée dans `service-form.tsx` : `zodErrorMap`
+ * ne traduit **pas** les messages qu'un schéma du contrat écrit lui-même
+ * (`zod-messages.ts` le dit, et c'est voulu), si bien que « ce champ est
+ * obligatoire » et « slug attendu en minuscules… » s'affichaient en français
+ * sous un formulaire anglais. La règle reste celle du contrat — les bornes du
+ * nom sont les siennes, l'adresse est validée par `slugSchema` lui-même ; seule
+ * la phrase vient de l'écran.
+ */
+interface CategoryFormMessages {
+  readonly nameRequired: string;
+  readonly nameTooLong: string;
+  readonly slug: string;
+  readonly slugReserved: string;
+  readonly slugTooLong: string;
+}
 
-type CategoryFormValues = z.input<typeof categoryFormSchema>;
+/**
+ * Pourquoi `slugSchema` a refusé cette adresse — même écriture, et même raison,
+ * que `slugRefusal` de `service-form.tsx` : une phrase unique dirait « minuscules,
+ * chiffres et tirets simples » d'un `tarifs` qui n'a que des minuscules, et la
+ * gérante n'aurait aucun moyen d'apprendre que c'est un nom réservé.
+ */
+function slugRefusal(
+  value: string,
+  messages: Pick<CategoryFormMessages, 'slug' | 'slugReserved' | 'slugTooLong'>,
+): string | null {
+  const parsed = slugSchema.safeParse(value);
+
+  if (parsed.success) {
+    return null;
+  }
+
+  const codes = new Set(parsed.error.issues.map((issue) => issue.code));
+
+  if (codes.has('too_big')) {
+    return messages.slugTooLong;
+  }
+
+  return codes.has('custom') ? messages.slugReserved : messages.slug;
+}
+
+function categoryFormSchema(messages: CategoryFormMessages) {
+  return z.object({
+    name: z
+      .string()
+      .trim()
+      .min(1, { message: messages.nameRequired })
+      .max(DISPLAY_NAME_MAX_LENGTH, { message: messages.nameTooLong }),
+    // Même branchement que `service-form.tsx` : vide vaut « dérive-la du nom »,
+    // sinon c'est `slugSchema` qui tranche.
+    slug: z
+      .string()
+      .trim()
+      .toLowerCase()
+      .superRefine((value, ctx) => {
+        const refusal = value === '' ? null : slugRefusal(value, messages);
+
+        if (refusal !== null) {
+          ctx.addIssue({ code: z.ZodIssueCode.custom, message: refusal });
+        }
+      }),
+    description: longTextSchema,
+  });
+}
+
+type CategoryFormSchema = ReturnType<typeof categoryFormSchema>;
+type CategoryFormValues = z.input<CategoryFormSchema>;
 
 /**
  * Ce que le dernier enregistrement a produit — et non plus un simple « c'est
@@ -209,11 +276,37 @@ export function CategoryForm({
    */
   readonly canManage?: boolean;
 }) {
+  const t = useTranslations('admin-catalog.categoryForm');
+  const locale = useLocale() as Locale;
   const router = useRouter();
   const { renewIfExpired } = useAdminSessionRenewal(tenantSlug);
   const [outcome, setOutcome] = useState<CategoryOutcome | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
   const suffix = category?.id ?? 'nouvelle';
+  /*
+   * Deux sources de refus, et les deux sont dans la langue de l'écran (#849) :
+   * les phrases de la fabrique ci-dessus, et celles que **zod** écrit pour les
+   * bornes du contrat — la description trop longue —, par `zodErrorMap`.
+   *
+   * `path` et `async` ne sont là que pour le **typage** de
+   * `@hookform/resolvers`, qui déclare `ParseParams` entier là où zod n'en lit
+   * qu'une partie : au runtime, `safeParseAsync` force `async: true` et retombe
+   * sur `path: []`.
+   */
+  const resolver = useMemo(
+    () =>
+      zodResolver(
+        categoryFormSchema({
+          nameRequired: t('errors.nameRequired'),
+          nameTooLong: t('errors.nameTooLong', { max: DISPLAY_NAME_MAX_LENGTH }),
+          slug: t('errors.slug'),
+          slugReserved: t('errors.slugReserved'),
+          slugTooLong: t('errors.slugTooLong', { max: SLUG_MAX_LENGTH }),
+        }),
+        { errorMap: zodErrorMap(locale), path: [], async: true },
+      ),
+    [locale, t],
+  );
 
   const {
     register,
@@ -221,8 +314,8 @@ export function CategoryForm({
     reset,
     setError,
     formState: { errors, isSubmitting },
-  } = useForm<CategoryFormValues, unknown, z.output<typeof categoryFormSchema>>({
-    resolver: zodResolver(categoryFormSchema),
+  } = useForm<CategoryFormValues, unknown, z.output<CategoryFormSchema>>({
+    resolver,
     defaultValues: {
       name: category?.name ?? '',
       slug: category?.slug ?? '',
@@ -256,7 +349,7 @@ export function CategoryForm({
           return;
         }
         if (result.code === ERROR_CODES.CONFLICT) {
-          setError('slug', { message: 'une autre rubrique porte déjà cette adresse.' });
+          setError('slug', { message: t('slugTaken') });
           return;
         }
         setFailure(result.message);
@@ -296,7 +389,7 @@ export function CategoryForm({
     >
       {category === undefined ? (
         <h2 className="spa-admin__section-title" id="rubrique-nouvelle">
-          Nouvelle rubrique
+          {t('newTitle')}
         </h2>
       ) : null}
 
@@ -309,59 +402,62 @@ export function CategoryForm({
         aria-atomic="true"
       >
         {outcome === null ? null : outcome.kind === 'created' ? (
-          <Notification tone="success" title={`Rubrique « ${outcome.category.name} » créée`}>
+          // Le nom de la rubrique est la saisie du salon : il est **inséré** dans
+          // la phrase traduite, jamais traduit lui-même.
+          <Notification tone="success" title={t('createdTitle', { name: outcome.category.name })}>
             {/* Au futur, et c'est voulu : la liste est rendue côté serveur et ne
                 rattrape son retard qu'au retour de `router.refresh()`. « Elle
                 figure dans la liste ci-dessous » contredirait, le temps d'un
                 aller-retour, l'état vide « Aucune rubrique » encore affiché sous
                 le bandeau — et une rubrique neuve ne paraît de toute façon en
                 public qu'une fois une prestation classée dessous. */}
+            {/* `t.rich` et non une phrase coupée en deux clés : le lien est au
+                milieu du texte en français comme en anglais, et une découpe
+                figerait l'ordre des morceaux. */}
             <p>
-              Elle regroupera les prestations qu’on lui affecte, et paraîtra sur la page publique du
-              salon.{' '}
-              <Link href={adminServiceCategoryPath(tenantSlug, outcome.category.id)}>
-                Ouvrir la rubrique
-              </Link>
+              {t.rich('createdBody', {
+                link: (parts) => (
+                  <Link href={adminServiceCategoryPath(tenantSlug, outcome.category.id)}>
+                    {parts}
+                  </Link>
+                ),
+              })}
             </p>
           </Notification>
         ) : (
-          <Notification tone="success" title="Rubrique enregistrée">
-            <p>La page publique du salon reflète désormais ces informations.</p>
+          <Notification tone="success" title={t('savedTitle')}>
+            <p>{t('savedBody')}</p>
           </Notification>
         )}
       </div>
 
       {failure === null ? null : (
-        <Notification tone="danger" title="L’enregistrement a échoué">
+        <Notification tone="danger" title={t('failureTitle')}>
           <p>{failure}</p>
         </Notification>
       )}
 
       <Field
         id={`category-name-${suffix}`}
-        label="Nom de la rubrique"
+        label={t('name')}
         required
-        placeholder="Soins du visage"
+        placeholder={t('namePlaceholder')}
         disabled={!canManage}
         error={errors.name?.message}
         {...register('name')}
       />
       <TextArea
         id={`category-description-${suffix}`}
-        label="Description"
-        hint="Facultative."
+        label={t('description')}
+        hint={t('descriptionHint')}
         disabled={!canManage}
         error={errors.description?.message}
         {...register('description')}
       />
       <Field
         id={`category-slug-${suffix}`}
-        label="Adresse publique"
-        hint={
-          category === undefined
-            ? 'Laissez vide : elle sera dérivée du nom.'
-            : 'La changer casse les liens déjà partagés vers cette rubrique.'
-        }
+        label={t('slug')}
+        hint={category === undefined ? t('slugHintNew') : t('slugHintEdit')}
         disabled={!canManage}
         error={errors.slug?.message}
         {...register('slug')}
@@ -373,14 +469,12 @@ export function CategoryForm({
           variant="accent"
           block
           loading={isSubmitting}
-          loadingLabel="Enregistrement…"
+          loadingLabel={t('saving')}
         >
-          {category === undefined ? 'Créer la rubrique' : 'Enregistrer'}
+          {category === undefined ? t('create') : t('save')}
         </Button>
       ) : (
-        <p className="spa-admin-toolbar__hint">
-          La modification des rubriques est réservée au rang gérant.
-        </p>
+        <p className="spa-admin-toolbar__hint">{t('restricted')}</p>
       )}
     </form>
   );
@@ -399,6 +493,7 @@ function CategoryActivationButton({
   readonly tenantSlug: string;
   readonly category: ServiceCategory;
 }) {
+  const t = useTranslations('admin-catalog.activation');
   const router = useRouter();
   const { renewIfExpired } = useAdminSessionRenewal(tenantSlug);
   const [saving, setSaving] = useState(false);
@@ -434,10 +529,12 @@ function CategoryActivationButton({
       <Button
         variant={category.isActive ? 'quiet' : 'neutral'}
         loading={saving || refreshing}
-        loadingLabel="Mise à jour…"
+        loadingLabel={t('updating')}
         onClick={() => void toggle()}
       >
-        {category.isActive ? 'Désactiver' : 'Réactiver'}
+        {category.isActive ? t('deactivate') : t('reactivate')}
+        {/* Le nom de la rubrique n'est pas traduit : c'est lui qui distingue les
+            boutons « Désactiver » d'un tableau pour un lecteur d'écran. */}
         <span className="spa-visually-hidden"> {category.name}</span>
       </Button>
       {failure === null ? null : (
@@ -464,6 +561,8 @@ export function CategoryManager({
    */
   readonly canManage?: boolean;
 }) {
+  const t = useTranslations('admin-catalog.categoryManager');
+
   return (
     <div className="spa-admin__content">
       {canManage ? (
@@ -474,43 +573,36 @@ export function CategoryManager({
         // contiendrait, jamais les champs, qui sont ce qu'il fallait écarter.
         <CategoryForm tenantSlug={tenantSlug} />
       ) : (
-        <p className="spa-admin-toolbar__hint">
-          La création et la modification des rubriques sont réservées au rang gérant.
-        </p>
+        <p className="spa-admin-toolbar__hint">{t('restricted')}</p>
       )}
 
       <section className="spa-admin__section" aria-labelledby="rubriques-existantes">
         <h2 className="spa-admin__section-title" id="rubriques-existantes">
-          Rubriques du catalogue
+          {t('title')}
         </h2>
 
         {categories.length === 0 ? (
           <div className="spa-empty-state">
-            <p className="spa-empty-state__title">Aucune rubrique</p>
-            <p className="spa-empty-state__description">
-              Les prestations restent affichées sans regroupement tant qu’aucune rubrique n’existe.
-              Ce n’est pas une erreur — c’est le cas d’un salon qui vend une poignée de soins.
-            </p>
+            <p className="spa-empty-state__title">{t('emptyTitle')}</p>
+            <p className="spa-empty-state__description">{t('emptyDescription')}</p>
           </div>
         ) : (
           <table className="spa-admin-table">
-            <caption className="spa-visually-hidden">
-              Rubriques du catalogue, actives et désactivées.
-            </caption>
+            <caption className="spa-visually-hidden">{t('caption')}</caption>
             <thead>
               <tr>
                 <th className="spa-admin-table__head" scope="col">
-                  Rubrique
+                  {t('columns.category')}
                 </th>
                 <th className="spa-admin-table__head" scope="col">
-                  Adresse publique
+                  {t('columns.slug')}
                 </th>
                 <th className="spa-admin-table__head" scope="col">
-                  État
+                  {t('columns.state')}
                 </th>
                 {canManage ? (
                   <th className="spa-admin-table__head" scope="col">
-                    Actions
+                    {t('columns.actions')}
                   </th>
                 ) : null}
               </tr>

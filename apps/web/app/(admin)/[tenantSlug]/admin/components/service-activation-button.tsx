@@ -1,6 +1,7 @@
 'use client';
 
 import type { Service } from '@spa/shared';
+import { useTranslations } from 'next-intl';
 import { useRouter } from 'next/navigation';
 import { useState, useTransition } from 'react';
 
@@ -50,6 +51,7 @@ export function ServiceActivationButton({
   readonly tenantSlug: string;
   readonly service: Service;
 }) {
+  const t = useTranslations('admin-catalog');
   const router = useRouter();
   const { renewIfExpired } = useAdminSessionRenewal(tenantSlug);
   const [saving, setSaving] = useState(false);
@@ -85,10 +87,13 @@ export function ServiceActivationButton({
       <Button
         variant={service.isActive ? 'quiet' : 'neutral'}
         loading={saving || refreshing}
-        loadingLabel="Mise à jour…"
+        loadingLabel={t('activation.updating')}
         onClick={() => void toggle()}
       >
-        {service.isActive ? 'Désactiver' : 'Réactiver'}
+        {service.isActive ? t('activation.deactivate') : t('activation.reactivate')}
+        {/* Le nom de la prestation n'est **pas** traduit : c'est la saisie du
+            salon, et c'est ce qui distingue les vingt boutons « Désactiver »
+            d'une liste pour un lecteur d'écran. */}
         <span className="spa-visually-hidden"> {service.name}</span>
       </Button>
       {failure === null ? null : (

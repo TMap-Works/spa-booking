@@ -1,7 +1,8 @@
 import type { PublicService } from '@spa/shared';
+import { getTranslations } from 'next-intl/server';
 import Link from 'next/link';
 
-import { ServiceCatalog, UNSTAFFED_SERVICE_LABEL } from '@/components/salon/service-catalog';
+import { ServiceCatalog } from '@/components/salon/service-catalog';
 import { Notification } from '@/components/ui/notification';
 import { fetchPublicServices } from '@/lib/api-client';
 
@@ -19,6 +20,22 @@ import { adminCatalogPath, adminCatalogPreviewPath } from '../../paths';
  * l'aperçu se mettrait à mentir précisément quand on compte dessus. Il en va de
  * même de la source : les données viennent du point d'entrée **public**, si bien
  * que ce qui manque ici manque aussi à la cliente.
+ *
+ * ## La langue de l'aperçu est celle de l'écran (#849)
+ *
+ * `ServiceCatalog` lit `useLocale()` et son propre namespace `booking` : il se
+ * rend donc dans la langue de la session, sans que cette page lui passe quoi que
+ * ce soit. C'est la même mécanique que sur la vitrine, et c'est ce qui fait que
+ * l'aperçu montre ce que verrait une cliente **dans cette langue** — prix et
+ * durées mis en forme comprises.
+ *
+ * L'encart, lui, cite deux libellés qui ne sont pas les siens : la mention de la
+ * prestation sans praticien, lue sur le catalogue `booking` — la **même** clé que
+ * la ligne du catalogue public —, et « Compte désactivé », lue sur le namespace de
+ * ce ticket, où la fiche de la prestation l'écrit déjà. Les deux sont lues et non
+ * recopiées : deux écrans qui décrivent le même état avec deux phrases
+ * différentes est exactement l'écart que cet écran doit éviter. La constante
+ * `UNSTAFFED_SERVICE_LABEL`, figée en français, n'est donc plus importée ici.
  *
  * ## Ce que l'aperçu ne montre pas, et pourquoi c'est le sujet
  *
@@ -72,6 +89,10 @@ interface CatalogPreviewPageProps {
 
 export default async function CatalogPreviewPage({ params }: CatalogPreviewPageProps) {
   const { tenantSlug } = await params;
+  const t = await getTranslations('admin-catalog');
+  // Le vocabulaire de la vitrine, lu là où il est écrit : la ligne du catalogue
+  // public rend cette même clé.
+  const publicWords = await getTranslations('booking');
   await requireAdminAccessToken(tenantSlug, adminCatalogPreviewPath(tenantSlug));
 
   let services: PublicService[];
@@ -79,38 +100,33 @@ export default async function CatalogPreviewPage({ params }: CatalogPreviewPageP
     services = await fetchPublicServices(tenantSlug);
   } catch (error) {
     return adminLoadFailure(error, tenantSlug, {
-      deniedTitle: 'Aperçu indisponible',
-      deniedHint: 'La page publique du salon n’a pas pu être lue.',
-      failedTitle: 'Aperçu indisponible',
+      deniedTitle: t('preview.unavailable'),
+      deniedHint: t('preview.unavailableHint'),
+      failedTitle: t('preview.unavailable'),
     });
   }
 
   return (
     <>
-      <h1 className="spa-admin__title">Aperçu du rendu public</h1>
+      <h1 className="spa-admin__title">{t('preview.title')}</h1>
 
       <div className="spa-admin-toolbar">
         <Link className="spa-button spa-button--quiet" href={adminCatalogPath(tenantSlug)}>
-          Retour au catalogue
+          {t('preview.backToCatalog')}
         </Link>
         <span className="spa-admin-toolbar__spacer" />
         <Link className="spa-button spa-button--neutral" href={`/${tenantSlug}`}>
-          Ouvrir la page du salon
+          {t('preview.openSalonPage')}
         </Link>
       </div>
 
-      <Notification tone="info" title="Ce que voit la cliente">
+      <Notification tone="info" title={t('preview.noticeTitle')}>
+        <p>{t('preview.noticeScope')}</p>
         <p>
-          Seules les prestations actives, classées sous une rubrique active, apparaissent ici. Les
-          tampons de préparation et de remise en état n’y figurent pas : ils décrivent la cadence
-          interne du salon.
-        </p>
-        <p>
-          Une prestation active qu’aucun praticien ne pratique y figure quand même, avec la mention
-          « {UNSTAFFED_SERVICE_LABEL} » à la place des noms : le moteur de disponibilité ne
-          proposera aucun créneau pour elle. La carte ne compte que les praticiens dont le compte
-          est actif — affectez-lui un praticien depuis sa fiche, ou réactivez celui qui y figure
-          déjà sous la mention « Compte désactivé ».
+          {t('preview.noticeUnstaffed', {
+            unstaffed: publicWords('salon.catalog.unstaffed'),
+            disabled: t('staffPanel.disabledAccount'),
+          })}
         </p>
       </Notification>
 

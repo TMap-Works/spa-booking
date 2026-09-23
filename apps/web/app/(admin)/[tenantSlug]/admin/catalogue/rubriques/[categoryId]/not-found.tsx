@@ -1,5 +1,6 @@
 'use client';
 
+import { useTranslations } from 'next-intl';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 
@@ -29,6 +30,7 @@ import { adminServiceCategoriesPath } from '../../../paths';
  * `adminServiceCategoriesPath` réencoderait un slug déjà encodé.
  */
 export default function ServiceCategoryNotFound() {
+  const t = useTranslations('admin-catalog.categories');
   const tenantSlug = tenantSlugFromPathname(usePathname());
 
   /*
@@ -41,14 +43,13 @@ export default function ServiceCategoryNotFound() {
    * back-office, lui, tient son slug des `params` du layout et reste une issue.
    */
   return (
-    <Notification tone="warning" title="Rubrique introuvable">
+    <Notification tone="warning" title={t('notFoundTitle')}>
       <p>
-        Aucune rubrique de ce salon ne porte cet identifiant. Elle a pu être créée dans un autre
-        établissement.
+        {t('notFoundBody')}
         {tenantSlug === null ? null : (
           <>
             {' '}
-            <Link href={adminServiceCategoriesPath(tenantSlug)}>Revenir aux rubriques</Link>.
+            <Link href={adminServiceCategoriesPath(tenantSlug)}>{t('notFoundLink')}</Link>.
           </>
         )}
       </p>
