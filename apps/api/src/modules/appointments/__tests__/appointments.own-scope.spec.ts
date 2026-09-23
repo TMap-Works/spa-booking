@@ -71,6 +71,17 @@ const OCCUPIED_START = new Date('2026-09-01T10:00:00.000Z');
 const OCCUPIED_END = new Date('2026-09-01T11:00:00.000Z');
 const NOW = new Date('2026-08-31T08:00:00.000Z');
 
+/**
+ * Le soin a commencé — l'horloge qu'exigent « honoré » et « non présenté »
+ * depuis #1137.
+ *
+ * Les cas de portée qui s'arrêtent avant le cycle de vie — 403 du praticien,
+ * 404 du voisin — gardent `NOW`, et c'est voulu : leur refus doit tomber
+ * *quelle que soit* l'heure, et l'y laisser prouve que l'ordre des
+ * vérifications n'a pas bougé.
+ */
+const PENDANT_LE_SOIN = new Date('2026-09-01T10:30:00.000Z');
+
 const PRATICIENNE: AppointmentActor = { userId: CLAIRE_USER, role: 'STAFF' };
 const GERANTE: AppointmentActor = { userId: GERANTE_USER, role: 'MANAGER' };
 
@@ -176,7 +187,7 @@ describe('changement de statut — « honoré », « non présenté »', () => {
     const view = await runWithTenant(TENANT, () =>
       service.changeStatus(
         { appointmentId: mien, status: 'COMPLETED', reason: null, actor: PRATICIENNE },
-        NOW,
+        PENDANT_LE_SOIN,
       ),
     );
 
@@ -217,7 +228,7 @@ describe('changement de statut — « honoré », « non présenté »', () => {
     const view = await runWithTenant(TENANT, () =>
       service.changeStatus(
         { appointmentId: deLaCollegue, status: 'COMPLETED', reason: null, actor: GERANTE },
-        NOW,
+        PENDANT_LE_SOIN,
       ),
     );
 

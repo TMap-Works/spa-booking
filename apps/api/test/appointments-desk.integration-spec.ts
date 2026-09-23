@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import request from 'supertest';
 
+import { OCCUPYING_STATUSES } from '../src/modules/appointments/appointment-status';
 import type { UserRole } from '../src/modules/identity/roles';
 import { TokenService } from '../src/modules/identity/token.service';
 import {
@@ -416,6 +417,29 @@ describe('Écritures de rendez-vous au comptoir', () => {
       return response.body as AgendaRow;
     }
 
+    /**
+     * Un rendez-vous confirmé **déjà commencé**, semé directement (#1137).
+     *
+     * « Honoré » et « non présenté » constatent ce qui s'est passé : le cycle de
+     * vie les refuse tant que `startsAt` n'est pas atteint. Ces deux cas-là ne
+     * peuvent donc plus partir de `createAtDesk()`, qui pose un rendez-vous à
+     * J+14 — et la porte de comptoir ne sait pas en poser un dans le passé, le
+     * filtrage du préavis l'en empêche, à juste titre.
+     */
+    function commencé(): string {
+      const startsAt = new Date(Date.now() - 30 * MINUTE_MS);
+
+      return harness.appointments.seedAppointment({
+        tenantId: harness.a.tenant.id,
+        staffId: harness.a.staffId,
+        clientId,
+        serviceId: harness.a.serviceId,
+        startsAt,
+        endsAt: new Date(startsAt.getTime() + SERVICE_DURATION_MINUTES * MINUTE_MS),
+        status: 'CONFIRMED',
+      }).id;
+    }
+
     it('confirme un rendez-vous et rend sa ligne d’agenda en 200', async () => {
       const posé = await createAtDesk();
 
@@ -427,12 +451,11 @@ describe('Écritures de rendez-vous au comptoir', () => {
       expect(row.status).toBe('CONFIRMED');
     });
 
-    it('solde un rendez-vous confirmé en `completed`, puis n’en fait plus rien', async () => {
-      const posé = await createAtDesk();
-      await confirm(posé.id);
+    it('solde un rendez-vous commencé en `completed`, puis n’en fait plus rien', async () => {
+      const id = commencé();
 
       const soldé = await request(harness.server())
-        .post(STATUS_PATH(posé.id))
+        .post(STATUS_PATH(id))
         .set('Authorization', await bearer('MANAGER'))
         .send({ status: 'completed' });
 
@@ -442,7 +465,7 @@ describe('Écritures de rendez-vous au comptoir', () => {
       // `COMPLETED` est terminal : tout retour en arrière est refusé, y compris
       // vers l'annulation (booking-engine §5).
       const retour = await request(harness.server())
-        .post(STATUS_PATH(posé.id))
+        .post(STATUS_PATH(id))
         .set('Authorization', await bearer('MANAGER'))
         .send({ status: 'cancelled' });
 
@@ -450,27 +473,58 @@ describe('Écritures de rendez-vous au comptoir', () => {
       expect(retour.body).toMatchObject({ code: 'INVALID_STATE_TRANSITION' });
     });
 
-    it('marque un no-show et libère le créneau', async () => {
-      const posé = await createAtDesk();
-      await confirm(posé.id);
+    it('marque un no-show sur un rendez-vous commencé, et le sort du filtre d’exclusion', async () => {
+      const id = commencé();
 
       const absent = await request(harness.server())
-        .post(STATUS_PATH(posé.id))
+        .post(STATUS_PATH(id))
         .set('Authorization', await bearer('MANAGER'))
         .send({ status: 'no_show' });
 
       expect(absent.status).toBe(200);
       expect((absent.body as AgendaRow).status).toBe('NO_SHOW');
 
-      // `NO_SHOW` sort du filtre partiel de la contrainte : le créneau est
-      // vendable, et c'est tout l'intérêt de le marquer plutôt que de l'effacer.
-      const repris = await request(harness.server())
-        .post(DESK_PATH)
-        .set('Authorization', await bearer('MANAGER'))
-        .send(creation());
-
-      expect(repris.status).toBe(201);
+      // `NO_SHOW` sort du filtre partiel de `appointments_no_overlap` : le
+      // créneau est vendable, et c'est tout l'intérêt de le marquer plutôt que
+      // de l'effacer. La preuve par re-réservation appartient désormais à
+      // l'annulation (`appointments-cancel.integration-spec.ts`) : un créneau
+      // *passé* n'est de toute façon plus réservable, et depuis #1137 il n'y a
+      // plus de no-show possible sur un créneau à venir. Ce que ce cas garde,
+      // c'est que la ligne a bien quitté les statuts occupants — l'égalité de
+      // cette liste et de la clause `WHERE` de la migration est, elle, le témoin
+      // d'`appointment-status.spec.ts`.
+      const stockée = harness.appointments.appointments.find((line) => line.id === id);
+      expect(stockée?.status).toBe('NO_SHOW');
+      expect(OCCUPYING_STATUSES as readonly string[]).not.toContain(stockée?.status);
     });
+
+    it.each([['completed'], ['no_show']])(
+      'refuse « %s » en 422 tant que le rendez-vous n’a pas commencé',
+      async (visé) => {
+        // #1137 : les deux statuts sont terminaux et libèrent le créneau. Un clic
+        // de trop sur la ligne d'un rendez-vous du mois prochain le marquait
+        // « client absent » sans retour possible, et le taux de no-show du
+        // CDC §1.4 comptait des absences à des soins qui n'avaient pas eu lieu.
+        const posé = await createAtDesk();
+        await confirm(posé.id);
+
+        const response = await request(harness.server())
+          .post(STATUS_PATH(posé.id))
+          .set('Authorization', await bearer('MANAGER'))
+          .send({ status: visé });
+
+        expect(response.status).toBe(422);
+        expect(response.body).toMatchObject({
+          code: 'INVALID_STATE_TRANSITION',
+          details: { from: 'CONFIRMED', notStarted: true },
+        });
+
+        // Rien n'a été écrit : c'est ce qui compte, puisque le geste aurait été
+        // sans retour.
+        const stockée = harness.appointments.appointments.find((line) => line.id === posé.id);
+        expect(stockée?.status).toBe('CONFIRMED');
+      },
+    );
 
     it('refuse `pending → completed` en 422, en nommant les deux statuts', async () => {
       const posé = await createAtDesk();

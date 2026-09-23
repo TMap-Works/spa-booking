@@ -40,6 +40,14 @@ const STARTS = new Date('2026-09-01T10:00:00.000Z');
 const ENDS = new Date('2026-09-01T11:00:00.000Z');
 const NOW = new Date('2026-08-31T08:00:00.000Z');
 
+/**
+ * Le soin a commencé. « Honoré » et « non présenté » constatent ce qui s'est
+ * passé, et le cycle de vie les refuse avant l'heure du rendez-vous (#1137) :
+ * les cas qui les exercent ont donc besoin d'une horloge qui l'a dépassée.
+ * La confirmation, elle, garde `NOW` — elle précède toujours le soin.
+ */
+const PENDANT_LE_SOIN = new Date('2026-09-01T10:30:00.000Z');
+
 const GERANTE: AppointmentActor = { userId: randomUUID(), role: 'MANAGER' };
 const PRATICIENNE: AppointmentActor = { userId: CLAIRE_USER, role: 'STAFF' };
 
@@ -57,7 +65,17 @@ function createHarness() {
 
   const service = new AppointmentsService(
     repository.asRepository(),
-    { byId: async () => ({ id: SERVICE_ID }) as unknown as ServiceView } as unknown as ServicesService,
+    // Les deux tampons et la durée, et non le seul identifiant : le début du
+    // soin s'en déduit (`billed-interval.ts`), et c'est lui que la règle
+    // d'horloge de #1137 compare à l'instant du geste.
+    {
+      byId: async () =>
+        ({
+          id: SERVICE_ID,
+          durationMinutes: 60,
+          bufferBeforeMinutes: 0,
+        }) as unknown as ServiceView,
+    } as unknown as ServicesService,
     { forService: async () => ({ slots: [] }) } as unknown as AvailabilityService,
     events,
     new AppointmentLifecycleService(),
@@ -130,7 +148,7 @@ describe('appointment.confirmed — la confirmation du salon est annoncée', () 
     await runWithTenant(TENANT, () =>
       service.changeStatus(
         { appointmentId: id, status: 'COMPLETED', reason: null, actor: GERANTE },
-        NOW,
+        PENDANT_LE_SOIN,
       ),
     );
 
@@ -179,7 +197,10 @@ describe('appointment.status_changed — honoré et non présenté sont annoncé
       const id = seed('CONFIRMED');
 
       await runWithTenant(TENANT, () =>
-        service.changeStatus({ appointmentId: id, status, reason: null, actor: GERANTE }, NOW),
+        service.changeStatus(
+          { appointmentId: id, status, reason: null, actor: GERANTE },
+          PENDANT_LE_SOIN,
+        ),
       );
 
       expect(changed).toHaveLength(1);
