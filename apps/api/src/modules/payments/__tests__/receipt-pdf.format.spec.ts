@@ -99,25 +99,67 @@ describe('les dates', () => {
 });
 
 describe('formatSettlementMethod', () => {
+  /** Un règlement réduit à ce dont le libellé a besoin. */
+  const settlement = (
+    method: 'CASH' | 'CARD',
+    cardChannel: 'STRIPE' | 'TERMINAL' | null,
+    terminalReference: string | null = null,
+  ): Parameters<typeof formatSettlementMethod>[0] => ({ method, cardChannel, terminalReference });
+
   it('nomme les espèces', () => {
-    expect(formatSettlementMethod('CASH')).toBe('Espèces');
+    expect(formatSettlementMethod(settlement('CASH', null))).toBe('Espèces');
+  });
+
+  /** **Septième critère.** Le libellé ne porte aucune donnée de carte. */
+  it('nomme la carte sans aucune donnée de carte', () => {
+    for (const channel of ['TERMINAL', 'STRIPE', null] as const) {
+      const label = formatSettlementMethod(settlement('CARD', channel));
+
+      expect(label).toMatch(/^Carte bancaire /);
+      expect(label).not.toMatch(/\d{4}/);
+      expect(label).not.toMatch(/visa|mastercard|cb|\*{4}/i);
+    }
   });
 
   /**
-   * **Septième critère.** La référence du ticket TPE est l'objet de #834, qui
-   * n'est pas traitée : aucun règlement n'en porte, et la ligne s'imprime seule.
+   * **#1027, premier point.** Le libellé se décide sur le **canal**, jamais sur
+   * le seul moyen : une carte en ligne libellée « TPE » envoie le rapprochement
+   * chercher sur le relevé du terminal une ligne qui n'y est pas.
    */
-  it('nomme la carte sans aucune donnée de carte', () => {
-    const label = formatSettlementMethod('CARD');
-
-    expect(label).toBe('Carte bancaire (TPE)');
-    expect(label).not.toMatch(/\d{4}/);
-    expect(label).not.toMatch(/visa|mastercard|cb|\*{4}/i);
+  it('ne nomme le terminal que sur un passage au terminal', () => {
+    expect(formatSettlementMethod(settlement('CARD', 'TERMINAL'))).toBe('Carte bancaire (TPE)');
+    expect(formatSettlementMethod(settlement('CARD', 'STRIPE'))).toBe('Carte bancaire (en ligne)');
+    expect(formatSettlementMethod(settlement('CARD', 'STRIPE'))).not.toMatch(/TPE|terminal/i);
   });
 
-  it('porte la référence TPE le jour où le caissier la saisira (#834)', () => {
-    expect(formatSettlementMethod('CARD', 'A0000123')).toBe('Carte bancaire (TPE) — réf. A0000123');
-    expect(formatSettlementMethod('CARD', '   ')).toBe('Carte bancaire (TPE)');
+  /**
+   * Une carte sans canal est **antérieure à #834** : le TPE n'existait pas, elle
+   * ne peut être qu'une intention du tunnel public. Elle s'imprime donc comme
+   * telle, et surtout pas comme un passage au terminal.
+   */
+  it('imprime une carte au canal nul comme une carte en ligne', () => {
+    expect(formatSettlementMethod(settlement('CARD', null))).toBe('Carte bancaire (en ligne)');
+  });
+
+  it('porte la référence TPE quand le caissier l’a saisie (#834)', () => {
+    expect(formatSettlementMethod(settlement('CARD', 'TERMINAL', 'A0000123'))).toBe(
+      'Carte bancaire (TPE) — réf. A0000123',
+    );
+    expect(formatSettlementMethod(settlement('CARD', 'TERMINAL', '   '))).toBe(
+      'Carte bancaire (TPE)',
+    );
+  });
+
+  /**
+   * `payments_terminal_reference_check` interdit déjà qu'une carte en ligne en
+   * porte une. Le libellé ne s'y fie pas moins : une reprise de données qui
+   * poserait l'une sans l'autre imprimerait sinon « en ligne — réf. … ».
+   */
+  it('n’accroche pas de référence à un règlement qui n’est pas passé au terminal', () => {
+    expect(formatSettlementMethod(settlement('CARD', 'STRIPE', 'A0000123'))).toBe(
+      'Carte bancaire (en ligne)',
+    );
+    expect(formatSettlementMethod(settlement('CASH', null, 'A0000123'))).toBe('Espèces');
   });
 });
 

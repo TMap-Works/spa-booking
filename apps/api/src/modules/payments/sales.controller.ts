@@ -1,5 +1,4 @@
 import {
-  BadRequestException,
   Body,
   Controller,
   Get,
@@ -25,6 +24,7 @@ import {
   ApiUnprocessableEntityResponse,
 } from '@nestjs/swagger';
 
+import { IDEMPOTENCY_HEADER, readIdempotencyKey } from '../../common/validation';
 import { AuthWith } from '../identity/auth.decorator';
 import type { AuthenticatedUser } from '../identity/identity.types';
 import { CurrentUser } from '../identity/jwt-auth.guard';
@@ -51,20 +51,6 @@ import { ReceiptPdfService } from './receipt-pdf/receipt-pdf.service';
 import { ReceiptService } from './receipt.service';
 import { SalesService } from './sales.service';
 import { SettlementService } from './settlement.service';
-
-/**
- * Le nom de l'en-tête d'idempotence, écrit une fois — #834, quatrième critère.
- *
- * Même en-tête, mêmes bornes et même refus que la console de l'éditeur
- * (`identity/platform`), mais les constantes sont **redéclarées ici** : un
- * module n'atteint pas les internes d'un autre (api-module §3), et les
- * remonter dans le tronc commun serait un mouvement hors de l'empreinte de ce
- * ticket. La valeur des bornes est un détail de forme ; ce qui compte est
- * qu'elles soient écrites à côté de la route qu'elles gardent.
- */
-const IDEMPOTENCY_HEADER = 'Idempotency-Key';
-const IDEMPOTENCY_KEY_MIN_LENGTH = 8;
-const IDEMPOTENCY_KEY_MAX_LENGTH = 128;
 
 /**
  * La caisse du comptoir — CDC §1.4, « POS de base » (#60).
@@ -182,16 +168,38 @@ export class SalesController {
    * d'une vente : l'**opérateur** qui l'a composée, son **horodatage** et ses
    * **montants**. Les lignes, elles, ne sont pas rendues ici.
    *
-   * **422** si la fenêtre est à l'envers (`from` postérieur ou égal à `to`) : la
-   * borne haute étant exclue, elle ne contiendrait aucun instant, et rendre une
-   * page vide ferait conclure à une journée sans vente.
+   * **422** si l'une des deux fenêtres est à l'envers (borne basse postérieure
+   * ou égale à la borne haute) : la borne haute étant exclue, elle ne
+   * contiendrait aucun instant, et rendre une page vide ferait conclure à une
+   * journée sans vente.
+   *
+   * ## Deux fenêtres, parce qu'il y a deux instants — #1027
+   *
+   * `from`/`to` bornent l'**ouverture** du ticket. `settledFrom`/`settledTo`
+   * bornent l'instant de **capture** du règlement, et c'est celle-là que la
+   * relève du TPE demande : un ticket ouvert le 17 à 23 h 55 puis réglé au
+   * terminal le 18 à 00 h 05 figure sur le relevé du 18 que le terminal
+   * imprime, et manquait à la requête du 18 tant que seule l'ouverture était
+   * bornée. Posée avec `method`, la fenêtre de capture porte sur le **même**
+   * encaissement : un ticket réglé en espèces le 18 et au terminal le 17 ne
+   * ressort pas sous « terminal, journée du 18 ».
+   *
+   * Les deux paramètres sont distincts plutôt qu'une fenêtre dont le sens
+   * suivrait `method` : on ne change pas en silence le sens d'un filtre que des
+   * consommateurs lisent déjà, et `from`/`to` gardent ici le sens qu'ils ont
+   * sur `GET /payments`.
    */
   @Get()
   @AuthWith('checkout:collect')
   @ApiOperation({ summary: 'Lister les tickets de caisse' })
   @ApiOkResponse({ type: SalePageDto })
   @ApiBadRequestResponse({ description: 'Paramètre invalide — le champ fautif est nommé.' })
-  @ApiUnprocessableEntityResponse({ description: 'Fenêtre vide — `to` doit suivre `from`.' })
+  @ApiUnprocessableEntityResponse({
+    description:
+      'Fenêtre vide — la borne haute doit suivre la borne basse. Les deux ' +
+      'fenêtres sont jugées sur la même règle : `to` doit suivre `from`, et ' +
+      '`settledTo` doit suivre `settledFrom`.',
+  })
   public async history(@Query() query: ListSalesQueryDto): Promise<SalePageDto> {
     const page = await this.sales.history(toSaleHistoryFilter(query));
 
@@ -399,32 +407,4 @@ export class SalesController {
       ),
     );
   }
-}
-
-/**
- * Lit l'en-tête d'idempotence, ou refuse la requête — #834, quatrième critère.
- *
- * **Obligatoire**, et ce n'est pas un excès de zèle : le règlement d'un ticket
- * inscrit une pièce comptable à chaque appel, et une clé facultative aurait
- * rendu la garantie du critère conditionnelle au soin de l'appelant — c'est-à-
- * dire inexistante le jour où un réseau coupe entre la requête et sa réponse.
- *
- * Le refus prend la forme d'un rapport de validation — `message` en tableau —
- * pour que `DomainExceptionFilter` le rende sous le même
- * `{ code: "VALIDATION_ERROR", details.violations }` que n'importe quel champ de
- * corps invalide.
- */
-function readIdempotencyKey(raw: string | undefined): string {
-  const key = (raw ?? '').trim();
-
-  if (key.length < IDEMPOTENCY_KEY_MIN_LENGTH || key.length > IDEMPOTENCY_KEY_MAX_LENGTH) {
-    throw new BadRequestException({
-      message: [
-        `${IDEMPOTENCY_HEADER} : en-tête obligatoire, de ` +
-          `${String(IDEMPOTENCY_KEY_MIN_LENGTH)} à ${String(IDEMPOTENCY_KEY_MAX_LENGTH)} caractères`,
-      ],
-    });
-  }
-
-  return key;
 }

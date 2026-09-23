@@ -17,6 +17,7 @@ notre périmètre PCI en SAQ A.
 | #410 | La consolidation de #57 et #58 : une seule `StripeConfig`, un seul fichier d’erreurs, un critère de découpage des dépôts, et la marque d’idempotence conditionnée à l’effet |
 | #816 | Les prix du catalogue sont **TTC** : la TVA s’en extrait au lieu de s’y ajouter, la ligne de taxe devient une ventilation, et un script reprend les tickets composés avant |
 | #834 | La **carte au comptoir par TPE** — canal de carte, référence de terminal, clé d’idempotence exigée, filtre par moyen sur l’historique des ventes ([ADR 0015](../../../../../docs/adr/0015-carte-au-comptoir-par-tpe.md)) |
+| #1027 | Les deux canaux de carte cessent de se confondre : le **libellé du reçu se décide sur le canal**, la relève se borne sur l’instant de **capture** (`settledFrom`/`settledTo`), et `readIdempotencyKey` passe sous `common/validation` |
 
 À venir : le montage d’Elements côté tunnel (#59), et la reprise de l’écran
 d’encaissement du back-office, qui appelle encore l’intention Stripe (#834,
@@ -832,11 +833,18 @@ transaction, sous le verrou de la ligne `sales`, et **avant tout refus** — une
 double soumission ne doit pas recevoir le 409 « déjà soldé » que son propre
 premier appel a provoqué.
 
+La **lecture de l'en-tête** vit depuis #1027 dans `common/validation/idempotency-key.ts`,
+et non plus ici : la console de l'éditeur (`identity/platform`) en avait la même
+copie, mot pour mot — même nom d'en-tête, mêmes bornes, même message. Deux
+écritures d'une même borne, c'est un jour où l'une passe à 256 et l'autre non. Le
+tronc commun est ce qu'api-module §3 laisse ouvert : `common/` ne connaît aucun
+module, et les deux contrôleurs l'appellent sans se connaître.
+
 ### La relève du terminal
 
-`GET /api/v1/sales?method=CARD_TERMINAL&from=…&to=…` rend les tickets réglés au
-terminal sur la journée — `from` inclus, `to` exclu, à offset explicite, comme
-les deux autres historiques.
+`GET /api/v1/sales?method=CARD_TERMINAL&settledFrom=…&settledTo=…` rend les
+tickets réglés au terminal sur la journée — borne basse incluse, borne haute
+exclue, à offset explicite, comme les deux autres historiques.
 
 Ce que le filtre retient exactement : un ticket portant **au moins un**
 encaissement abouti par ce moyen. C'est la seule sémantique tenable avec le
@@ -846,8 +854,56 @@ celui du ticket entier ; **la part passée au terminal se lit sur les lignes de
 `GET /payments`**, qui portent un montant par encaissement. La gestion de caisse
 — clôture, écarts — reste hors MVP (CDC §1.3).
 
+#### Deux fenêtres, parce qu'il y a deux instants — #1027
+
+`from`/`to` bornent l'**ouverture** du ticket (`sales.created_at`) ;
+`settledFrom`/`settledTo` bornent l'instant de **capture** du règlement
+(`payments.captured_at`). C'est la seconde que la relève demande : un ticket
+ouvert le 17 à 23 h 55 et réglé au TPE le 18 à 00 h 05 figure sur le relevé que
+le terminal imprime le 18, et manquait à la requête du 18 tant que seule
+l'ouverture était bornée. L'index qu'il faut était déjà là —
+`payments(tenant_id, status, captured_at)`, posé par #74.
+
+Deux paramètres distincts, et non une fenêtre dont le sens suivrait `method` :
+on ne change pas en silence le sens d'un filtre que des consommateurs lisent
+déjà — c'est le raisonnement que l'ADR 0015 tient déjà pour `PaymentCardChannel`
+face à `PaymentMethod`. Posées ensemble, `method` et la fenêtre de capture
+portent sur le **même** encaissement : un ticket réglé en espèces le 18 et au
+terminal le 17 ne ressort pas sous « terminal, journée du 18 ».
+
+### Le reçu nomme le canal, jamais le moyen seul — #1027
+
+`formatSettlementMethod` libellait toute carte « Carte bancaire (TPE) », canal
+compris : un règlement Stripe **en ligne** s'imprimait comme un passage au
+terminal, et le rapprochement allait chercher sur le relevé du TPE une ligne qui
+n'y est pas. Ce n'était pas une régression de #834 — le comportement date de
+#819, quand le canal n'existait pas —, et la `terminalReference` de #834 ne le
+levait pas : elle est facultative, et un passage au terminal sans référence
+relevée restait indiscernable d'une carte en ligne.
+
+`ReceiptSettlement` porte donc le canal, de la colonne jusqu'au contrat
+(`receiptSettlementSchema`), et le libellé s'y décide :
+
+| Canal | Ce qui s'imprime |
+|---|---|
+| `TERMINAL` | « Carte bancaire (TPE) », suivie de la référence si elle est là |
+| `STRIPE` | « Carte bancaire (en ligne) » |
+| `null` | « Carte bancaire (en ligne) » — une carte antérieure à #834, donc une intention du tunnel |
+
+Le canal n'est **pas** une donnée de carte : ni marque, ni porteur, ni chiffre.
+C'est le nom d'un tuyau, et c'est ce qui permet de rapprocher la pièce du bon
+relevé (payments-stripe §1).
+
 ## Dette connue
 
+- **Le libellé du reçu **côté web** confond encore les deux cartes** —
+  `apps/web/lib/admin/receipt-ticket.ts`, `settlementLabel`. L'API sert
+  désormais `cardChannel` sur chaque règlement du reçu (#1027) ; la page, elle,
+  décide encore sur `method` seul et libelle « Carte bancaire » tout court, sans
+  jamais nommer le tuyau : le ticket imprimé depuis le back-office ne dit donc
+  pas de quel relevé rapprocher la ligne, là où le PDF le dit. Deux rendus de la
+  même pièce qui ne portent pas la même mention — et c'est hors de l'empreinte
+  `api/payments` de #1027. Une issue de suivi la porte.
 - **Une écriture de #816 est restée hors de l'empreinte `api/payments`**, et elle
   porte son issue de suivi : `apps/api/src/modules/reporting/export/` — le
   sixième critère demande que l'export du reporting fournisse **aussi** le

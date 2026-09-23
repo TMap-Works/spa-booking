@@ -12,8 +12,8 @@
  *
  * Ni `tenantId` — la vitrine est celle du salon qui sert la requête
  * (tenant-isolation §4) —, ni la moindre donnée de carte : un règlement porte
- * son moyen et son montant, jamais une marque, un porteur ou quatre chiffres
- * (payments-stripe §1). Ni l'adresse ou le téléphone de la cliente : un reçu la
+ * son moyen, le **canal** par lequel il est passé et son montant, jamais une
+ * marque, un porteur ou quatre chiffres (payments-stripe §1). Ni l'adresse ou le téléphone de la cliente : un reçu la
  * **nomme**, il ne recopie pas sa fiche (CDC §5.1).
  */
 
@@ -23,7 +23,7 @@ import { displayNameSchema, emailSchema, storedPhoneSchema, uuidSchema } from '.
 import { moneySchema, nonNegativeMoneySchema } from '../common/money';
 import { timeZoneSchema, utcInstantSchema } from '../common/time';
 import { MAX_TAX_RATE_BPS } from '../constants/receipt';
-import { counterPaymentMethodSchema } from './payment';
+import { counterPaymentMethodSchema, paymentCardChannelSchema } from './payment';
 import {
   legalIdSchema,
   legalIdTypeSchema,
@@ -147,11 +147,42 @@ export const receiptSettlementSchema = z.object({
   // Le moyen est celui du comptoir, repris de `counterPaymentMethodSchema` et
   // non redéclaré : deux énumérations pour une seule valeur de colonne auraient
   // fini par diverger. Ce n'est en revanche plus celle que
-  // `settleSaleRequestSchema` accepte — la pièce imprime `CASH` ou `CARD`, l'aller
-  // attend `CASH` ou `CARD_TERMINAL` (#834). La référence du terminal ci-dessous
-  // est ce qui distingue les deux cartes sur le papier, et elle suffit : le reçu
-  // dit « Carte bancaire (TPE) — réf. A0000123 ».
+  // `settleSaleRequestSchema` accepte — la pièce imprime `CASH` ou `CARD`,
+  // l'aller attend `CASH` ou `CARD_TERMINAL` (#834). Ce qui distingue les deux
+  // cartes sur le papier est le **canal** ci-dessous, et non la référence du
+  // terminal : celle-ci est facultative, et un reçu qui n'en porte pas ne dit
+  // alors plus par quel tuyau la carte est passée (#1027).
   method: counterPaymentMethodSchema,
+  /**
+   * Par quel tuyau la carte est passée — `payments.card_channel` (#1027).
+   *
+   * C'est **ce champ, et non `method`, qui décide du libellé** de la ligne :
+   * `TERMINAL` s'imprime « Carte bancaire (TPE) », `STRIPE` « Carte bancaire
+   * (en ligne) ». Le reçu libellait auparavant toute carte comme un passage au
+   * terminal, canal compris, si bien qu'un règlement Stripe envoyait le
+   * rapprochement chercher sur le relevé du TPE une ligne qui n'y est pas.
+   *
+   * `null` dans deux cas, et ce n'est pas la même chose :
+   *
+   * - un règlement **en espèces** — `payments_card_channel_check` interdit
+   *   qu'un billet porte un tuyau ;
+   * - une carte **antérieure à #834**, que la migration n'a pas reprise. Elle
+   *   ne peut être qu'une intention Stripe, le TPE n'existant pas alors, et
+   *   s'imprime donc comme une carte en ligne — jamais comme un passage au
+   *   terminal.
+   *
+   * Ce n'est en rien une donnée de carte : ni marque, ni porteur, ni chiffre.
+   * C'est le nom du tuyau, et c'est ce qui permet de rapprocher la pièce du bon
+   * relevé (payments-stripe §1 et §6).
+   *
+   * `optional` **en plus** de `nullable`, pour la raison exacte qui vaut déjà
+   * pour {@link paymentSchema}`.cardChannel` : un champ ajouté à une réponse
+   * s'ajoute de façon **additive** (api-module §6), et le déclarer exigé
+   * d'emblée ferait échouer à la compilation tout consommateur qui construit un
+   * règlement de reçu — fixtures du back-office comprises. L'API, elle, ne
+   * l'omet jamais : `ReceiptSettlementDto` le sert toujours, `null` compris.
+   */
+  cardChannel: paymentCardChannelSchema.nullable().optional(),
   amount: nonNegativeMoneySchema,
   /** Ce que la cliente a tendu, espèces seulement. */
   tendered: nonNegativeMoneySchema.optional(),

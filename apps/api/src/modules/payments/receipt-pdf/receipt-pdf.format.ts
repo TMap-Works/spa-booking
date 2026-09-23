@@ -119,29 +119,54 @@ export function formatDateTime(instant: Date, timeZone: string): string {
  * n'y a donc rien ici à filtrer. C'est la seule forme de garantie qui tienne —
  * un masquage se contourne, une donnée absente non (payments-stripe §1).
  *
+ * ## Le libellé se décide sur le **canal**, pas sur le moyen — #1027
+ *
+ * `method` ne dit que « carte » ; il ne dit pas par quel tuyau elle est passée.
+ * La fonction libellait pourtant toute carte « Carte bancaire (TPE) », canal
+ * compris, si bien qu'un règlement Stripe **en ligne** s'imprimait comme un
+ * passage au terminal — et le rapprochement allait chercher sur le relevé du
+ * TPE une ligne qui n'y est pas.
+ *
+ * Ce n'était pas une régression de #834 : le comportement date de #819, quand
+ * le canal n'existait pas. Et la `terminalReference` que #834 a ajoutée ne
+ * suffisait pas à le lever — elle est facultative, et un passage au terminal
+ * dont le caissier n'a pas relevé la référence restait indiscernable d'une
+ * carte en ligne.
+ *
+ * | Canal | Ce qui s'imprime |
+ * |---|---|
+ * | `TERMINAL` | « Carte bancaire (TPE) », suivie de la référence si elle est là |
+ * | `STRIPE` | « Carte bancaire (en ligne) » |
+ * | `null` | « Carte bancaire (en ligne) » — une carte antérieure à #834, donc une intention du tunnel : le TPE n'existait pas |
+ *
  * ## La référence du ticket TPE
  *
- * Le critère la veut « suivie de la référence du ticket TPE si le caissier l'a
- * saisie ». Cette saisie est l'objet de **#834**, qui n'est pas traitée : la
- * colonne n'existe pas, et aucun règlement n'en porte. La ligne s'imprime donc
- * « Carte bancaire (TPE) » seule — ce que le critère prévoit explicitement comme
- * le cas où rien n'a été saisi.
+ * Le septième critère de #819 la veut « suivie de la référence du ticket TPE si
+ * le caissier l'a saisie ». Elle n'est lue **que** sur le canal `TERMINAL` :
+ * `payments_terminal_reference_check` interdit déjà d'en porter une ailleurs, et
+ * ne pas s'y fier ici éviterait d'imprimer « en ligne — réf. … » le jour où une
+ * reprise de données poserait l'une sans l'autre. La chaîne blanche est absorbée
+ * — une référence vide et une référence absente sont le même fait sur le papier.
  *
- * Le paramètre `reference` est le point de couture laissé à #834 : lui passer la
- * colonne le jour où elle existe suffit, et le test qui suit fige déjà le rendu
- * attendu des deux côtés. Il n'est **pas** lu d'un champ spéculatif de
- * `ReceiptSettlement` — un champ toujours nul n'aurait été qu'une colonne morte
- * de plus à faire traverser au dépôt, au domaine et au DTO.
+ * ## Ni PAN, ni quatre derniers chiffres, ici non plus
+ *
+ * Le canal est le nom d'un tuyau, pas une donnée de carte : ni marque, ni
+ * porteur, ni chiffre (payments-stripe §1). Ce qu'il ajoute à la pièce est ce
+ * qui permet de la rapprocher du **bon** relevé.
  */
 export function formatSettlementMethod(
-  method: ReceiptSettlement['method'],
-  reference: string | null = null,
+  settlement: Pick<ReceiptSettlement, 'method' | 'cardChannel' | 'terminalReference'>,
 ): string {
-  if (method === 'CASH') {
+  if (settlement.method === 'CASH') {
     return 'Espèces';
   }
 
+  if (settlement.cardChannel !== 'TERMINAL') {
+    return 'Carte bancaire (en ligne)';
+  }
+
   const label = 'Carte bancaire (TPE)';
+  const reference = settlement.terminalReference;
 
   return reference === null || reference.trim() === '' ? label : `${label} — réf. ${reference}`;
 }

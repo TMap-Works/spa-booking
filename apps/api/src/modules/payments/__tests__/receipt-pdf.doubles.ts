@@ -165,6 +165,7 @@ export function receiptFixture(overrides: Partial<SaleReceipt> = {}): SaleReceip
     settlements: [
       {
         method: 'CASH',
+        cardChannel: null,
         amount: { amountMinor: 5000, currency },
         tendered: { amountMinor: 6000, currency },
         change: { amountMinor: 1000, currency },
@@ -173,6 +174,9 @@ export function receiptFixture(overrides: Partial<SaleReceipt> = {}): SaleReceip
       },
       {
         method: 'CARD',
+        // Le tuyau, et non le seul moyen : c'est lui qui décide du libellé
+        // depuis #1027. Ce ticket-ci est passé au TPE du salon.
+        cardChannel: 'TERMINAL',
         amount: { amountMinor: 4600, currency },
         tendered: null,
         change: null,
@@ -272,6 +276,7 @@ export function ariaryReceiptFixture(): SaleReceipt {
     settlements: [
       {
         method: 'CASH',
+        cardChannel: null,
         amount: { amountMinor: 24_000, currency },
         tendered: { amountMinor: 25_000, currency },
         change: { amountMinor: 1000, currency },

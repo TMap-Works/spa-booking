@@ -9,6 +9,7 @@ import {
 } from '@spa/shared';
 import type { z } from 'zod';
 
+import { PAYMENT_CARD_CHANNELS, type PaymentCardChannel } from '../payments.types';
 import { SALE_ITEM_KINDS, type SaleItemKind } from '../pos.types';
 import type {
   ReceiptLine,
@@ -146,6 +147,19 @@ export class ReceiptTaxLineDto {
 export class ReceiptSettlementDto {
   @ApiProperty({ enum: ['CASH', 'CARD'] })
   public method!: 'CASH' | 'CARD';
+
+  @ApiProperty({
+    enum: PAYMENT_CARD_CHANNELS,
+    nullable: true,
+    type: String,
+    description:
+      'Par quel tuyau la carte est passée — #1027. C’est **ce champ, et non ' +
+      '`method`, qui décide du libellé** de la ligne : `TERMINAL` s’imprime ' +
+      '« Carte bancaire (TPE) », `STRIPE` « Carte bancaire (en ligne) ». `null` ' +
+      'sur un règlement en espèces, et sur une carte antérieure à #834 — qui ne ' +
+      'peut être qu’une intention en ligne. Toujours servi, `null` compris.',
+  })
+  public cardChannel!: PaymentCardChannel | null;
 
   @ApiProperty({ type: MoneyDto })
   public amount!: MoneyDto;
@@ -387,6 +401,9 @@ function toTaxLineDto(tax: ReceiptTaxLine): ReceiptTaxLineDto {
 function toSettlementDto(settlement: ReceiptSettlement): ReceiptSettlementDto {
   return {
     method: settlement.method,
+    // Servi toujours, `null` compris : le contrat le déclare facultatif pour
+    // rester additif, l'API ne l'omet jamais (`receiptSettlementSchema`).
+    cardChannel: settlement.cardChannel,
     amount: toMoneyDto(settlement.amount),
     ...(settlement.tendered === null ? {} : { tendered: toMoneyDto(settlement.tendered) }),
     ...(settlement.change === null ? {} : { change: toMoneyDto(settlement.change) }),

@@ -2,7 +2,7 @@ import { Inject, Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 
 import { PRISMA, type ScopedPrismaClient } from '../../infrastructure/database/prisma-clients';
-import { createdAtWithin } from './history';
+import { withinWindow } from './history';
 import type {
   CardPaymentDraft,
   PayableAppointment,
@@ -382,7 +382,7 @@ export class PaymentsRepository {
 /**
  * Le `where` de l'historique — **sans `tenantId`**, que l'extension ajoute.
  *
- * La fenêtre vient de `createdAtWithin`, partagée avec `saleWhere` : la borne
+ * La fenêtre vient de `withinWindow`, partagée avec `saleWhere` : la borne
  * haute y est exclue, ce qui permet de poser deux journées de caisse bout à bout
  * sans compter deux fois l'encaissement de minuit — et les deux historiques du
  * même ticket ne peuvent pas avoir deux idées d'un jour de caisse.
@@ -392,7 +392,7 @@ export class PaymentsRepository {
  * réellement se lit — et se journalise — sans avoir à déduire ce qui est actif.
  */
 function transactionWhere(filter: PaymentHistoryFilter): Prisma.PaymentWhereInput {
-  const createdAt = createdAtWithin(filter);
+  const createdAt = withinWindow(filter);
 
   return {
     ...(filter.method === undefined ? {} : { method: filter.method }),

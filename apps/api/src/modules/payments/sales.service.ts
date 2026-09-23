@@ -383,10 +383,17 @@ export class SalesService {
    * ticket se demande par `byId`.
    *
    * @throws {HistoryWindowInvalidError} `from` postérieur ou égal à `to` — la
-   * borne haute étant exclue, une telle fenêtre ne contient aucun instant.
+   * borne haute étant exclue, une telle fenêtre ne contient aucun instant. La
+   * fenêtre de **capture** (#1027) est jugée sur la même règle, et par la même
+   * fonction : une relève à l'envers est aussi vide qu'une journée à l'envers,
+   * et rendre une page vide ferait conclure à une caisse sans règlement.
    */
   public async history(filter: SaleHistoryFilter): Promise<SalePage> {
     assertOrderedWindow(filter);
+
+    if (filter.settledWithin !== undefined) {
+      assertOrderedWindow(filter.settledWithin);
+    }
 
     return toHistoryPage(filter, await this.repository.listSales(filter));
   }

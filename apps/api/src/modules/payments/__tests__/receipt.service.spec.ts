@@ -147,6 +147,7 @@ describe('La ventilation de la taxe — cinquième critère', () => {
 describe('Les règlements — moyen, montant, monnaie rendue', () => {
   const settlement = (overrides: Partial<ReceiptRow['payments'][number]> = {}) => ({
     method: 'CASH',
+    cardChannel: null,
     amountMinor: 6500,
     currency: EUR,
     tenderedAmountMinor: null,
@@ -164,6 +165,7 @@ describe('Les règlements — moyen, montant, monnaie rendue', () => {
     expect(receipt.settlements).toEqual([
       {
         method: 'CASH',
+        cardChannel: null,
         amount: { amountMinor: 6500, currency: EUR },
         tendered: { amountMinor: 10_000, currency: EUR },
         change: { amountMinor: 3500, currency: EUR },
@@ -175,19 +177,44 @@ describe('Les règlements — moyen, montant, monnaie rendue', () => {
 
   it('ne parle ni de billet ni de monnaie sur un passage au terminal', async () => {
     const receipt = await serviceFor(
-      row({ payments: [settlement({ method: 'CARD' })] }),
+      row({ payments: [settlement({ method: 'CARD', cardChannel: 'TERMINAL' })] }),
     ).bySaleId(SALE_ID);
 
     expect(receipt.settlements[0]).toMatchObject({ method: 'CARD', tendered: null, change: null });
   });
 
-  it('omet les deux clés du reçu servi plutôt que de rendre `null`', async () => {
-    const receipt = await serviceFor(
+  /**
+   * **#1027, premier point.** Le canal est recopié tel que la colonne le porte,
+   * sans repli : c'est lui qui distingue le TPE du salon de l'intention du
+   * tunnel public, et le reçu ne peut pas libeller sa ligne sans lui. Une carte
+   * antérieure à #834 porte un canal nul, et se lit telle quelle.
+   */
+  it('porte le canal de la carte, canal nul compris', async () => {
+    const terminal = await serviceFor(
+      row({ payments: [settlement({ method: 'CARD', cardChannel: 'TERMINAL' })] }),
+    ).bySaleId(SALE_ID);
+    const online = await serviceFor(
+      row({ payments: [settlement({ method: 'CARD', cardChannel: 'STRIPE' })] }),
+    ).bySaleId(SALE_ID);
+    const legacy = await serviceFor(
       row({ payments: [settlement({ method: 'CARD' })] }),
     ).bySaleId(SALE_ID);
 
+    expect(terminal.settlements[0]?.cardChannel).toBe('TERMINAL');
+    expect(online.settlements[0]?.cardChannel).toBe('STRIPE');
+    expect(legacy.settlements[0]?.cardChannel).toBeNull();
+  });
+
+  it('omet les deux clés du reçu servi plutôt que de rendre `null`', async () => {
+    const receipt = await serviceFor(
+      row({ payments: [settlement({ method: 'CARD', cardChannel: 'STRIPE' })] }),
+    ).bySaleId(SALE_ID);
+
+    // Le canal, lui, est **toujours** servi — `null` compris : le contrat le
+    // déclare facultatif pour rester additif, l'API ne l'omet jamais.
     expect(toSaleReceiptDto(receipt).settlements[0]).toEqual({
       method: 'CARD',
+      cardChannel: 'STRIPE',
       amount: { amountMinor: 6500, currency: EUR },
       capturedAt: '2026-09-17T09:30:00.000Z',
     });
@@ -209,6 +236,7 @@ describe('Les avoirs — sixième critère', () => {
     const payments = [
       {
         method: 'CASH',
+        cardChannel: null,
         amountMinor: 5000,
         currency: EUR,
         tenderedAmountMinor: null,
@@ -218,6 +246,7 @@ describe('Les avoirs — sixième critère', () => {
       },
       {
         method: 'CARD',
+        cardChannel: null,
         amountMinor: 1500,
         currency: EUR,
         tenderedAmountMinor: null,
@@ -237,6 +266,7 @@ describe('Les avoirs — sixième critère', () => {
     const payments = [
       {
         method: 'CASH',
+        cardChannel: null,
         amountMinor: 5000,
         currency: EUR,
         tenderedAmountMinor: null,
@@ -258,6 +288,7 @@ describe('Les avoirs — sixième critère', () => {
         payments: [
           {
             method: 'CASH',
+            cardChannel: null,
             amountMinor: 6500,
             currency: EUR,
             tenderedAmountMinor: null,
