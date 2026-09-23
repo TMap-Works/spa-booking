@@ -1,5 +1,4 @@
 import {
-  BadRequestException,
   Body,
   Controller,
   Get,
@@ -25,11 +24,10 @@ import {
 
 import type { PlatformTenant, PlatformTenantDetail, PlatformTenantEvent } from '@spa/shared';
 
+import { IDEMPOTENCY_HEADER, readIdempotencyKey } from '../../../common/validation';
 import {
   CreatePlatformNoteDto,
   CreateTenantDto,
-  IDEMPOTENCY_KEY_MAX_LENGTH,
-  IDEMPOTENCY_KEY_MIN_LENGTH,
   ListTenantsQueryDto,
   PlatformTenantDetailDto,
   PlatformTenantEventDto,
@@ -49,9 +47,6 @@ import { CurrentOperator, PlatformAuth } from './platform-auth.guard';
 import { PlatformConsoleService } from './platform-console.service';
 import { PlatformService } from './platform.service';
 import type { AuthenticatedOperator } from './platform.types';
-
-/** Le nom de l'en-tête d'idempotence, écrit une fois — critère 6. */
-const IDEMPOTENCY_HEADER = 'Idempotency-Key';
 
 /**
  * La console de l'éditeur — ouvrir un salon, les lister, réinviter un gérant
@@ -261,32 +256,4 @@ export class PlatformTenantsController {
       }),
     );
   }
-}
-
-/**
- * Lit l'en-tête d'idempotence, ou refuse la requête.
- *
- * **Obligatoire**, et ce n'est pas un excès de zèle : ouvrir un salon écrit trois
- * lignes dont l'une porte un compte administrateur, et un appelant qui rejoue
- * sans clé ouvrirait un second salon sur la même adresse e-mail de gérant. Une
- * clé facultative aurait rendu la garantie du critère 6 conditionnelle au soin
- * de l'appelant.
- *
- * Le refus prend la forme d'un rapport de validation — `message` en tableau —
- * pour que `DomainExceptionFilter` le rende sous le même
- * `{ code: "VALIDATION_ERROR", details.violations }` que n'importe quel champ de
- * corps invalide. Un appelant n'a pas à traiter deux formes de 400 selon que la
- * faute est dans le corps ou dans un en-tête.
- */
-function readIdempotencyKey(raw: string | undefined): string {
-  const key = (raw ?? '').trim();
-  if (key.length < IDEMPOTENCY_KEY_MIN_LENGTH || key.length > IDEMPOTENCY_KEY_MAX_LENGTH) {
-    throw new BadRequestException({
-      message: [
-        `${IDEMPOTENCY_HEADER} : en-tête obligatoire, de ` +
-          `${String(IDEMPOTENCY_KEY_MIN_LENGTH)} à ${String(IDEMPOTENCY_KEY_MAX_LENGTH)} caractères`,
-      ],
-    });
-  }
-  return key;
 }
