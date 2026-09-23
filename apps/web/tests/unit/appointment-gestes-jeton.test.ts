@@ -1,17 +1,26 @@
 import type { BookedAppointment } from '@spa/shared';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { cancelAppointment, rescheduleAppointment } from '@/lib/api-client';
+import {
+  bookGuestAppointment,
+  cancelAppointment,
+  rescheduleAppointment,
+} from '@/lib/api-client';
 
 /**
- * Les deux gestes de la cliente sur un rendez-vous pris — ce qui part sur le fil
- * (#1201).
+ * Les trois gestes de la cliente sur le tunnel public — ce qui part sur le fil
+ * (#1201, élargi à la réservation par #1207).
  *
- * Le défaut que ce ticket corrige n'était pas une règle manquante mais un
- * **en-tête** manquant : les deux routes exigent depuis #1135 le jeton de la
- * cliente du rendez-vous, et le front les appelait par le transport du tunnel,
- * qui n'en émet aucun. Ce qui se prouve ici est donc exactement cela — un
- * `Authorization: Bearer` sur le fil, et le chemin que l'API sert.
+ * Le défaut que ces tickets corrigent n'était pas une règle manquante mais un
+ * **en-tête** manquant : les trois routes exigent le jeton de la cliente — #1135
+ * pour l'annulation et le report, #1136 pour la prise de rendez-vous — et le
+ * front les appelait par le transport du tunnel, qui n'en émet aucun. Ce qui se
+ * prouve ici est donc exactement cela — un `Authorization: Bearer` sur le fil,
+ * et le chemin que l'API sert.
+ *
+ * Il n'en reste aucune : c'est le troisième critère d'acceptation de #1207,
+ * *« aucune requête de réservation, d'annulation ni de report ne part sans
+ * `Authorization` »*, et il se vérifie route par route ci-dessous.
  *
  * Ce qui ne s'y prouve pas : que l'API refuse le rendez-vous d'une autre
  * cliente. C'est son travail, et les suites d'isolation d'`apps/api` s'en
@@ -109,6 +118,30 @@ describe('le report par la cliente', () => {
     expect(new URL(url).pathname).toBe(
       `/api/v1/public/${SLUG}/appointments/${RENDEZ_VOUS}/reschedule`,
     );
+    expect(headersOf(init)['authorization']).toBe(`Bearer ${JETON}`);
+  });
+});
+
+describe('la prise de rendez-vous par la cliente', () => {
+  it('porte le jeton de sa session, sans quoi la route rend 401 (#1136)', async () => {
+    fetchMock.mockResolvedValueOnce(
+      reply(201, { ...RENDEZ_VOUS_ANNULE, status: 'pending', cancelledAt: null, cancelledBy: null }),
+    );
+
+    await bookGuestAppointment(SLUG, JETON, {
+      serviceId: '11111111-1111-4111-8111-111111111111',
+      startsAt: '2026-09-01T06:00:00.000Z',
+      client: {
+        firstName: 'Camille',
+        lastName: 'Rakoto',
+        email: 'camille@example.test',
+      },
+      dataConsent: true,
+    });
+
+    const { url, init } = lastCall();
+    expect(new URL(url).pathname).toBe(`/api/v1/public/${SLUG}/appointments`);
+    expect(init.method).toBe('POST');
     expect(headersOf(init)['authorization']).toBe(`Bearer ${JETON}`);
   });
 });

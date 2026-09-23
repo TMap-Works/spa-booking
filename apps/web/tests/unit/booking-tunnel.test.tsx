@@ -28,14 +28,20 @@ import { emptyBookingDraft, readBookingDraft, writeBookingDraft } from '@/lib/bo
 import { contact, presence as connectee, service, tenant } from './fixtures';
 
 const loadAvailabilityAction = vi.fn();
+// Ni la réservation (#1207) ni l'annulation (#1201) ne sont plus des actions de
+// ce tunnel : les deux partent vers une adresse de l'espace client, seule à
+// recevoir les cookies de session. Ce sont leurs modules d'appel qu'on tient
+// ici — `requestBooking` garde le nom `bookAppointmentAction` dans ces suites,
+// parce que ce que chacune vérifie est le **geste**, pas son transport.
 const bookAppointmentAction = vi.fn();
-// L'annulation n'est plus une action de ce tunnel (#1201) : elle part vers une
-// adresse de l'espace client, dont c'est le module d'appel qu'on tient ici.
 const requestCancellation = vi.fn();
 
 vi.mock('@/app/(booking)/[tenantSlug]/reservation/actions', () => ({
   loadAvailabilityAction: (...args: unknown[]) => loadAvailabilityAction(...args),
-  bookAppointmentAction: (...args: unknown[]) => bookAppointmentAction(...args),
+}));
+
+vi.mock('@/app/(booking)/[tenantSlug]/reservation/booking-request', () => ({
+  requestBooking: (...args: unknown[]) => bookAppointmentAction(...args),
 }));
 
 vi.mock(

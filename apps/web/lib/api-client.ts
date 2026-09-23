@@ -399,16 +399,50 @@ export function fetchAvailability(
   });
 }
 
-/** Réservation par une cliente sans compte. */
-export function bookGuestAppointment(
+/**
+ * Prise de rendez-vous depuis le tunnel public, **au nom de la cliente
+ * connectée** (#1207).
+ *
+ * ## Elle porte une session, comme les deux gestes ci-dessous
+ *
+ * Sa route est servie sous `/public/{slug}/appointments`, et elle cessera d'être
+ * publique pour autant : #1136 la gardera par `@Auth('CLIENT')` et rattachera le
+ * rendez-vous au compte du jeton. Passer par `request` — le transport du tunnel,
+ * qui n'émet aucun en-tête `Authorization` — se faisait rendre 401, et c'est
+ * exactement ce qui a mis le parcours critique au rouge sur la PR #1206.
+ *
+ * Cette garde n'est pas encore sur `develop` (#1206 a été fermée) : l'en-tête
+ * joint ici y est donc ignoré, et la réservation aboutit comme avant. Ce ticket
+ * est le prérequis de #1136, pas sa conséquence — il rend le front juste **des
+ * deux côtés du merge**, et c'est la seule façon que le parcours critique ne
+ * casse ni avant ni après.
+ *
+ * Le jeton est **obligatoire** et placé avant le corps, pour la raison écrite
+ * sous `cancelAppointment` : facultatif, il aurait laissé compiler l'appel même
+ * que ce ticket corrige. Les trois routes du tunnel public suivent désormais la
+ * même règle, et il n'en reste aucune qui parte sans session.
+ *
+ * ## Ce qu'elle change pour l'appelant
+ *
+ * Elle ne s'appelle plus depuis une action serveur du tunnel : celui-ci est
+ * servi sur `/{slug}/reservation`, où les cookies de session — bornés à
+ * `/{slug}/compte` — ne voyagent pas. L'appel part de
+ * `compte/reservation/route.ts`, l'adresse d'où la session part. Voir
+ * `booking-request.ts` côté tunnel, qui porte l'arbitrage.
+ */
+export async function bookGuestAppointment(
   tenantSlug: string,
+  accessToken: string,
   body: BookGuestAppointmentRequest,
 ): Promise<BookedAppointment> {
-  return request(publicPath(tenantSlug, '/appointments'), {
+  const { payload } = await authorizedRequest({
     method: 'POST',
+    path: publicPath(tenantSlug, '/appointments'),
+    accessToken,
     body,
     schema: bookedAppointmentSchema,
   });
+  return payload;
 }
 
 /**

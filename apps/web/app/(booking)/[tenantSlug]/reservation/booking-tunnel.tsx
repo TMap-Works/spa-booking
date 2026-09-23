@@ -308,12 +308,16 @@ export function BookingTunnel({
   /** Le titre de l'étape, cible de ce rattrapage. */
   const titleRef = useRef<HTMLHeadingElement | null>(null);
   /**
-   * L'action de réservation a refusé faute de compte — voir `onSignInRequired`.
+   * La réservation a refusé faute de compte — voir `onSignInRequired`.
    *
    * La présence reçue en propriété a été lue au rendu serveur de la page, et
    * elle peut avoir vieilli : une déconnexion dans un autre onglet efface le
-   * cookie sans que cet écran-ci l'apprenne. Le refus de l'action est alors le
-   * seul signal, et ce drapeau le fait prévaloir sur la propriété.
+   * cookie sans que cet écran-ci l'apprenne. Le refus est alors le seul signal,
+   * et ce drapeau le fait prévaloir sur la propriété.
+   *
+   * Depuis #1207, ce refus est celui de la **route** `/{slug}/compte/reservation`
+   * — la session y est lue pour de bon, et non plus devinée d'un cookie de
+   * présence qui n'autorise rien (`booking-request.ts`).
    */
   const [signedOut, setSignedOut] = useState(false);
   /** La cliente connectée, telle que cet écran doit la tenir pour vraie. */
