@@ -39,7 +39,14 @@ import {
   userSchema,
 } from '../schemas/identity';
 import { notificationSchema } from '../schemas/notification';
-import { recordCounterPaymentRequestSchema, refundPaymentRequestSchema } from '../schemas/payment';
+import {
+  paymentSchema,
+  recordCounterPaymentRequestSchema,
+  refundPaymentRequestSchema,
+  saleSettlementSchema,
+  settleSaleRequestSchema,
+} from '../schemas/payment';
+import { receiptSettlementSchema } from '../schemas/receipt';
 import {
   openingHoursOverlap,
   openingHoursSchema,
@@ -926,6 +933,200 @@ describe('payments', () => {
       refundPaymentRequestSchema.safeParse({ amount: { amountMinor: 1000, currency: 'EUR' } })
         .success,
     ).toBe(true);
+  });
+});
+
+/**
+ * Le règlement d'un ticket au comptoir — #1026, suivi de #834.
+ *
+ * ## Pourquoi une réponse recopiée et non fabriquée
+ *
+ * Parce que le défaut que ces tests ferment n'était pas une faute de logique mais
+ * un **désaccord avec ce que la route sert** : `saleSettlementSchema` était
+ * `.strict()` sans `replayed`, si bien qu'un `.parse()` de la réponse réelle
+ * levait `unrecognized_keys`, et `settleSaleRequestSchema` ne savait construire
+ * qu'une requête carte que l'API refuse en 400. Aucun schéma fabriqué à partir du
+ * schéma lui-même ne peut constater cela : il passerait par construction.
+ *
+ * La fixture ci-dessous est donc la réponse **relevée en recette** sur la PR
+ * #1023 — le solde d'un ticket de 78,01 € réglé 50,00 € en espèces puis
+ * 28,01 € au TPE avec référence, puis la même clé d'idempotence rejouée. Les
+ * identifiants sont remplacés par des UUID de test ; les **clés**, leur casse et
+ * leurs formes sont celles du fil, et c'est tout ce que ce test regarde.
+ */
+describe('règlement d’un ticket au comptoir', () => {
+  /**
+   * `POST /v1/sales/{saleId}/payments` — 201, tel que `toSaleSettlementDto` le
+   * compose. `method` et `status` y sont dans la casse de l'énumération
+   * PostgreSQL, `cardChannel` porte le tuyau, et les deux références de
+   * prestataire sont nulles : aucun appel n'a eu lieu pour en produire une.
+   */
+  const SERVED_SETTLEMENT = {
+    payment: {
+      id: UUID,
+      appointmentId: null,
+      saleId: OTHER_UUID,
+      amount: { amountMinor: 2801, currency: 'EUR' },
+      refunded: { amountMinor: 0, currency: 'EUR' },
+      method: 'CARD',
+      cardChannel: 'TERMINAL',
+      terminalReference: 'A0000123',
+      status: 'SUCCEEDED',
+      providerPaymentIntentId: null,
+      providerChargeId: null,
+      capturedAt: '2026-09-16T14:32:07.000Z',
+      createdAt: '2026-09-16T14:32:07.000Z',
+    },
+    saleId: OTHER_UUID,
+    total: { amountMinor: 7801, currency: 'EUR' },
+    settled: { amountMinor: 7801, currency: 'EUR' },
+    remaining: { amountMinor: 0, currency: 'EUR' },
+    change: { amountMinor: 0, currency: 'EUR' },
+    settledAt: '2026-09-16T14:32:07.000Z',
+    replayed: false,
+  };
+
+  it('lit la réponse réellement servie par POST /v1/sales/{saleId}/payments', () => {
+    const parsed = saleSettlementSchema.parse(SERVED_SETTLEMENT);
+
+    expect(parsed.replayed).toBe(false);
+    expect(parsed.payment.cardChannel).toBe('TERMINAL');
+    expect(parsed.payment.terminalReference).toBe('A0000123');
+    // Le moyen et le statut sont ramenés au vocabulaire du contrat, en
+    // minuscules : c'est la normalisation de réception, et elle a lieu ici et
+    // pas dans chaque écran.
+    expect(parsed.payment.method).toBe('card');
+    expect(parsed.payment.status).toBe('succeeded');
+    // Les deux références de prestataire ne sont pas déclarées : un objet Zod non
+    // strict les **retire**, et le comptoir ne les verra donc jamais.
+    expect(parsed.payment).not.toHaveProperty('providerChargeId');
+  });
+
+  it('lit la réponse d’une clé d’idempotence rejouée', () => {
+    const replayed = saleSettlementSchema.parse({
+      ...SERVED_SETTLEMENT,
+      change: { amountMinor: 1000, currency: 'EUR' },
+      replayed: true,
+    });
+
+    expect(replayed.replayed).toBe(true);
+    // La monnaie rendue est celle de la première soumission — elle n'a pas été
+    // encaissée deux fois, elle est relue.
+    expect(replayed.change.amountMinor).toBe(1000);
+  });
+
+  it('ne rejette pas la réponse entière pour un champ qu’elle ne connaît pas', () => {
+    // La régression même de #1026, prise à l'envers : un champ ajouté à la
+    // réponse est retiré, jamais un motif de refus. C'est ce qui permet à l'API
+    // d'ajouter un fait sans fermer l'écran de caisse.
+    const parsed = saleSettlementSchema.parse({ ...SERVED_SETTLEMENT, tipShare: 'à venir' });
+
+    expect(parsed).not.toHaveProperty('tipShare');
+  });
+
+  it('accepte le moyen du fil et refuse celui de la base', () => {
+    expect(settleSaleRequestSchema.safeParse({ method: 'CASH' }).success).toBe(true);
+    expect(
+      settleSaleRequestSchema.safeParse({ method: 'CARD_TERMINAL', terminalReference: 'A0000123' })
+        .success,
+    ).toBe(true);
+    // `CARD` est le vocabulaire de la colonne, pas celui de la route : l'API le
+    // refuse en 400 depuis #834, et le contrat ne doit donc pas savoir le
+    // construire.
+    expect(settleSaleRequestSchema.safeParse({ method: 'CARD' }).success).toBe(false);
+    // Le comptoir n'ouvre plus d'intention Stripe (ADR 0015) — il n'y a pas de
+    // valeur à refuser, il n'y en a pas à taper.
+    expect(settleSaleRequestSchema.safeParse({ method: 'CARD_ONLINE' }).success).toBe(false);
+  });
+
+  it('borne la référence du terminal comme l’API la borne', () => {
+    const settle = (terminalReference: string): boolean =>
+      settleSaleRequestSchema.safeParse({ method: 'CARD_TERMINAL', terminalReference }).success;
+
+    expect(settle('A0000123')).toBe(true);
+    expect(settle('a'.repeat(32))).toBe(true);
+    expect(settle('a'.repeat(33))).toBe(false);
+    // Une référence vide doit être **absente** : présente et vide, « pas saisie »
+    // et « saisie vide » deviendraient deux états d'une même colonne.
+    expect(settle('')).toBe(false);
+    // Les séparateurs sont précisément ce qui rend un numéro de carte
+    // méconnaissable au contrôle de Luhn de l'API.
+    expect(settle('4242 4242 4242 4242')).toBe(false);
+    expect(settle('A0000123-2')).toBe(false);
+  });
+
+  it('refuse toute donnée de carte dans un règlement de ticket', () => {
+    const base = { method: 'CARD_TERMINAL' as const, terminalReference: 'A0000123' };
+
+    expect(
+      settleSaleRequestSchema.safeParse({ ...base, cardNumber: '4242424242424242' }).success,
+    ).toBe(false);
+    expect(settleSaleRequestSchema.safeParse({ ...base, cvc: '123' }).success).toBe(false);
+    // Ni le ticket ni l'établissement ne se désignent dans le corps : l'un est
+    // dans l'URL, l'autre dans le jeton (tenant-isolation §2).
+    expect(settleSaleRequestSchema.safeParse({ ...base, saleId: UUID }).success).toBe(false);
+    expect(settleSaleRequestSchema.safeParse({ ...base, tenantId: UUID }).success).toBe(false);
+  });
+
+  it('lit un encaissement de TPE dans le journal des transactions', () => {
+    // `GET /v1/payments` sert les deux champs depuis #834 ; `paymentSchema` les
+    // ignorait, et le rapprochement du terminal était donc illisible par le
+    // contrat.
+    const parsed = paymentSchema.parse(SERVED_SETTLEMENT.payment);
+
+    expect(parsed.cardChannel).toBe('TERMINAL');
+    expect(parsed.terminalReference).toBe('A0000123');
+
+    // Un règlement en espèces sert `null` aux deux, et non l'absence.
+    const cash = paymentSchema.parse({
+      ...SERVED_SETTLEMENT.payment,
+      method: 'CASH',
+      cardChannel: null,
+      terminalReference: null,
+    });
+
+    expect(cash.cardChannel).toBeNull();
+    expect(cash.terminalReference).toBeNull();
+  });
+
+  it('lit une référence hors format plutôt que de refuser la réponse entière', () => {
+    // La borne de forme est celle de l'**aller** : elle empêche une référence
+    // douteuse d'entrer. L'appliquer au retour ferait tomber le journal des
+    // transactions au complet sur une valeur déjà en base — une reprise de
+    // données, un import, ou la chaîne blanche que `receipt-pdf.format.ts` sait
+    // déjà absorber. Un champ douteux s'affiche ; une liste qui ne se lit plus,
+    // non.
+    expect(
+      paymentSchema.parse({ ...SERVED_SETTLEMENT.payment, terminalReference: '   ' })
+        .terminalReference,
+    ).toBe('   ');
+    expect(
+      settleSaleRequestSchema.safeParse({ method: 'CARD_TERMINAL', terminalReference: '   ' })
+        .success,
+    ).toBe(false);
+  });
+
+  it('lit la ligne de règlement du reçu, référence du TPE comprise', () => {
+    // `GET /v1/sales/{id}/receipt` **omet** la clé quand la colonne est nulle,
+    // au lieu d'émettre `null` : les deux formes sont celles de la route.
+    const terminal = receiptSettlementSchema.parse({
+      method: 'CARD',
+      amount: { amountMinor: 2801, currency: 'EUR' },
+      terminalReference: 'A0000123',
+      capturedAt: '2026-09-16T14:32:07.000Z',
+    });
+
+    expect(terminal.terminalReference).toBe('A0000123');
+
+    const cash = receiptSettlementSchema.parse({
+      method: 'CASH',
+      amount: { amountMinor: 5000, currency: 'EUR' },
+      tendered: { amountMinor: 6000, currency: 'EUR' },
+      change: { amountMinor: 1000, currency: 'EUR' },
+      capturedAt: '2026-09-16T14:28:44.000Z',
+    });
+
+    expect(cash.terminalReference).toBeUndefined();
   });
 });
 

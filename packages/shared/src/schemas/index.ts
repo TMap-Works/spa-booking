@@ -298,21 +298,28 @@ export type {
 
 export {
   counterPaymentMethodSchema,
+  counterSettlementMeanSchema,
   createPaymentIntentRequestSchema,
+  paymentCardChannelSchema,
   paymentIntentSchema,
   paymentListQuerySchema,
   paymentMethodSchema,
   paymentSchema,
   paymentStatusSchema,
+  receivedPaymentMethodSchema,
+  receivedPaymentStatusSchema,
   recordCounterPaymentRequestSchema,
   refundPaymentRequestSchema,
   saleSettlementSchema,
   settleSaleRequestSchema,
+  terminalReferenceSchema,
 } from './payment';
 export type {
   CounterPaymentMethod,
+  CounterSettlementMean,
   CreatePaymentIntentRequest,
   Payment,
+  PaymentCardChannel,
   PaymentIntent,
   PaymentListQuery,
   RecordCounterPaymentRequest,

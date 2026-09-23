@@ -1,3 +1,4 @@
+import { terminalReferenceSchema } from '@spa/shared';
 import { validate } from 'class-validator';
 
 import { SettleSaleDto } from '../dto/settlement.dto';
@@ -99,6 +100,51 @@ describe('judgeTerminalReference — le verdict rendu au DTO', () => {
     // et n'apprend rien de plus à qui sonderait : dire « cela ressemble à une
     // carte » indiquerait qu'il suffit de retirer les tirets pour savoir.
     expect(judgeTerminalReference('4242-4242-4242-4242')).toBe('mal-formee');
+  });
+});
+
+/**
+ * Le **témoin** de la barrière de forme et du contrat partagé — #1026.
+ *
+ * `terminalReferenceSchema` de `@spa/shared` borne la même forme que
+ * `isTerminalReferenceShape` ci-dessus : 32 caractères alphanumériques au plus,
+ * au moins un. Deux écritures d'une même borne, dans deux paquets — c'est
+ * exactement la configuration qui a produit #1026, où le contrat décrivait une
+ * route que l'API ne servait plus.
+ *
+ * Le témoin est ici plutôt qu'à la place de l'une des deux, parce qu'elles ne
+ * jouent pas le même rôle : le contrat empêche un appelant de **construire** une
+ * référence hors format, le validateur rend un **message** nommé à la frontière
+ * HTTP et ordonne ses deux verdicts. Ce que ce test garantit est qu'elles ne
+ * divergeront pas en silence.
+ *
+ * Il ne couvre pas la clé de Luhn : elle n'a **qu'une** écriture, dans ce
+ * fichier-ci, et le contrat dit explicitement pourquoi il ne la reprend pas.
+ */
+describe('témoin — la forme du contrat et celle du validateur coïncident', () => {
+  const shapeOfContract = (value: string): boolean =>
+    terminalReferenceSchema.safeParse(value).success;
+
+  it.each([
+    ...TERMINAL_REFERENCES,
+    ...CARD_NUMBERS,
+    'A'.repeat(MAX_TERMINAL_REFERENCE_LENGTH),
+    `${'A'.repeat(MAX_TERMINAL_REFERENCE_LENGTH)}A`,
+    '',
+    '4242 4242 4242 4242',
+    '4242-4242-4242-4242',
+    'Mme Dupont',
+    'A0000123/2',
+  ])('rendent le même verdict sur « %s »', (value) => {
+    expect(shapeOfContract(value)).toBe(isTerminalReferenceShape(value));
+  });
+
+  it('accepte le maximum du contrat et refuse le caractère de trop', () => {
+    // La borne est celle de la colonne — `payments.terminal_reference
+    // VARCHAR(32)`. Un contrat plus permissif ferait construire au front une
+    // valeur que la base refuse.
+    expect(shapeOfContract('A'.repeat(MAX_TERMINAL_REFERENCE_LENGTH))).toBe(true);
+    expect(shapeOfContract(`${'A'.repeat(MAX_TERMINAL_REFERENCE_LENGTH)}A`)).toBe(false);
   });
 });
 

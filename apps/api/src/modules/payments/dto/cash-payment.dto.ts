@@ -1,4 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { paymentSchema } from '@spa/shared';
 import { Type } from 'class-transformer';
 import {
   ArrayMaxSize,
@@ -9,6 +10,7 @@ import {
   Validate,
   ValidateNested,
 } from 'class-validator';
+import type { z } from 'zod';
 
 import { PAYMENT_CARD_CHANNELS, PAYMENT_METHODS, PAYMENT_STATUSES } from '../payments.types';
 import type { PaymentHistoryFilter, PaymentTransaction } from '../payments.types';
@@ -308,3 +310,32 @@ export function toPaymentTransactionDto(
     createdAt: transaction.createdAt.toISOString(),
   };
 }
+
+type AssertNever<T extends never> = T;
+
+/**
+ * Tout ce que le contrat déclare de l'encaissement, cette classe le sert —
+ * #1026.
+ *
+ * ## Une seule direction, et c'est la bonne
+ *
+ * `paymentSchema` est délibérément un **sous-ensemble** de cette classe : les
+ * deux références de prestataire n'y figurent pas, parce qu'un objet Zod non
+ * strict les retire et que le comptoir n'a pas à porter la référence Stripe d'une
+ * vente sur son écran (`apps/web/lib/admin/payment-contract.ts`). Une garde
+ * symétrique casserait donc la compilation pour un écart voulu. Ce qui ne doit
+ * jamais arriver est l'inverse : un champ que le contrat **annonce** et que la
+ * route ne sert pas, c'est-à-dire un consommateur qui compile en lisant une clé
+ * absente à l'exécution.
+ *
+ * C'est la garde que #1026 a trouvée manquante. `cardChannel` et
+ * `terminalReference` étaient servis par cette classe depuis #834 sans être
+ * déclarés au contrat, et rien ne l'a signalé pendant deux jalons — le seul signe
+ * eût été l'écran de caisse de #1025 découvrant que le rapprochement du terminal
+ * n'est pas lisible.
+ */
+type PaymentWire = z.input<typeof paymentSchema>;
+
+type _PaymentTransactionDtoServesTheContractKeys = AssertNever<
+  Exclude<keyof PaymentWire, keyof PaymentTransactionDto>
+>;

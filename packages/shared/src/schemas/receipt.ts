@@ -146,13 +146,32 @@ export type ReceiptTaxLine = z.infer<typeof receiptTaxLineSchema>;
 export const receiptSettlementSchema = z.object({
   // Le moyen est celui du comptoir, repris de `counterPaymentMethodSchema` et
   // non redéclaré : deux énumérations pour une seule valeur de colonne auraient
-  // fini par diverger, et c'est la même que `settleSaleRequestSchema` accepte.
+  // fini par diverger. Ce n'est en revanche plus celle que
+  // `settleSaleRequestSchema` accepte — la pièce imprime `CASH` ou `CARD`, l'aller
+  // attend `CASH` ou `CARD_TERMINAL` (#834). La référence du terminal ci-dessous
+  // est ce qui distingue les deux cartes sur le papier, et elle suffit : le reçu
+  // dit « Carte bancaire (TPE) — réf. A0000123 ».
   method: counterPaymentMethodSchema,
   amount: nonNegativeMoneySchema,
   /** Ce que la cliente a tendu, espèces seulement. */
   tendered: nonNegativeMoneySchema.optional(),
   /** `tendered − amount` — la monnaie rendue, jamais encaissée. */
   change: nonNegativeMoneySchema.optional(),
+  /**
+   * Le numéro du ticket du TPE, quand le caissier l'a saisi — #834.
+   *
+   * `optional` et non `nullable` : `ReceiptSettlementDto` **omet** la clé quand
+   * la colonne est nulle, au lieu d'émettre `null`. « Absent » et « nul » ne sont
+   * pas la même chose pour Zod, et le contrat suit ce que la route sert (#554).
+   * Absent partout ailleurs qu'au terminal, et **jamais une donnée de carte**.
+   *
+   * Une chaîne, sans la borne de forme de l'aller : c'est une **lecture**, et
+   * `formatSettlementMethod` (`receipt-pdf.format.ts`) absorbe déjà la référence
+   * blanche. Un reçu entier qui refuserait de se lire pour une référence hors
+   * format serait un ticket de caisse qu'on ne peut plus imprimer — voir la même
+   * décision sur `paymentSchema.terminalReference`.
+   */
+  terminalReference: z.string().optional(),
   capturedAt: utcInstantSchema.nullable(),
 });
 
