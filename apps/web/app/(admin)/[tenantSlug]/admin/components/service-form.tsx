@@ -2,15 +2,19 @@
 
 import { zodResolver } from '@hookform/resolvers/zod';
 import {
+  DISPLAY_NAME_MAX_LENGTH,
   ERROR_CODES,
-  displayNameSchema,
+  SLUG_MAX_LENGTH,
   longTextSchema,
   slugSchema,
+  zodErrorMap,
   type CreateServiceRequest,
+  type Locale,
   type Service,
   type ServiceCategory,
   type UpdateServiceRequest,
 } from '@spa/shared';
+import { useLocale, useTranslations } from 'next-intl';
 import { useRouter } from 'next/navigation';
 import { useMemo, useState } from 'react';
 import { useForm } from 'react-hook-form';
@@ -77,27 +81,131 @@ import { useAdminSessionRenewal } from './use-admin-session-renewal';
  * écrit dans l'éditeur d'horaires du personnel, et il vaut mieux que la fiche
  * disparaisse : une praticienne a besoin de lire la durée et le prix de ce
  * qu'elle pratique.
+ *
+ * ## Les deux sources de refus sont dans la langue de l'écran (#849)
+ *
+ * - les messages **du schéma** ci-dessous, ceux que ce formulaire écrit
+ *   lui-même, passés à sa fabrique depuis le catalogue `admin-catalog` ;
+ * - ceux que **zod** écrit pour les bornes des schémas du contrat — « saisissez
+ *   au moins 3 caractères » —, par `zodErrorMap` de `@spa/shared`. Sans lui, la
+ *   description trop longue se refusait en anglais brut de zod sous un
+ *   formulaire français, et l'inverse sous un formulaire anglais.
+ *
+ * ## Pourquoi le nom et l'adresse ne sont plus `displayNameSchema` ni `slugSchema`
+ *
+ * Parce que `zodErrorMap` ne traduit **pas** les messages qu'un schéma écrit
+ * lui-même — c'est écrit noir sur blanc dans `zod-messages.ts`, et c'est voulu :
+ * ces phrases-là nomment une valeur attendue du contrat, et leur place est
+ * auprès du schéma qui la déclare. Elles sont en français littéral, si bien que
+ * « ce champ est obligatoire » et « slug attendu en minuscules… » s'affichaient
+ * tels quels sous un formulaire anglais — constat fait au navigateur, phase de
+ * recette de #849.
+ *
+ * **La règle reste celle du contrat** : les bornes du nom sont les siennes
+ * (`DISPLAY_NAME_MAX_LENGTH`), et l'adresse est validée par `slugSchema`
+ * lui-même, appelé ici. Seule la **phrase** change de main. Traduire les
+ * littéraux du contrat serait la vraie correction, mais elle vit dans
+ * `packages/shared` et concerne tous les écrans déjà traduits : elle fait l'objet
+ * d'un suivi, pas de ce ticket.
+ *
+ * Ce que la gérante **saisit**, en revanche, ne se traduit jamais : le nom, la
+ * description et le nom des rubriques du `<select>` sont rendus tels qu'ils sont
+ * enregistrés.
  */
 
-/** Chaîne d'entiers positifs — le contrôle le plus proche de la saisie réelle. */
-const digitsSchema = z.string().trim().regex(/^\d+$/, { message: 'nombre entier de minutes attendu' });
+/**
+ * Les phrases que ce formulaire écrit lui-même, dans la langue de l'écran.
+ *
+ * Un objet et non six paramètres positionnels : la fabrique est appelée à un
+ * seul endroit, et un message ajouté un jour n'obligera pas à relire l'ordre des
+ * arguments.
+ */
+interface ServiceFormMessages {
+  readonly nameRequired: string;
+  readonly nameTooLong: string;
+  readonly slug: string;
+  readonly slugReserved: string;
+  readonly slugTooLong: string;
+  readonly minutes: string;
+  readonly positiveDuration: string;
+  readonly amount: string;
+}
 
 /**
- * Le schéma de la **saisie**, construit autour de la devise du salon.
+ * Pourquoi `slugSchema` a refusé cette adresse, dit dans la langue de l'écran.
+ *
+ * Une seule phrase pour les trois causes serait **fausse** dans deux cas sur
+ * trois : « minuscules, chiffres et tirets simples » sous `www`, qui n'a rien
+ * d'autre que des minuscules, ne dit pas à la gérante ce qu'elle doit corriger —
+ * et c'est un nom réservé de la plateforme qu'elle vient de saisir. Le verdict
+ * reste celui du contrat ; on ne fait que lire **quel** de ses contrôles a
+ * échoué. Les codes sont ceux de zod : `custom` pour le refus de nom réservé,
+ * `too_big` pour la borne de longueur, `invalid_string` pour le motif.
+ *
+ * Même écriture dans `category-manager.tsx` : ce qui serait mis en commun n'est
+ * pas la règle — elle est déjà partagée — mais un branchement de formulaire.
+ */
+function slugRefusal(
+  value: string,
+  messages: Pick<ServiceFormMessages, 'slug' | 'slugReserved' | 'slugTooLong'>,
+): string | null {
+  const parsed = slugSchema.safeParse(value);
+
+  if (parsed.success) {
+    return null;
+  }
+
+  const codes = new Set(parsed.error.issues.map((issue) => issue.code));
+
+  if (codes.has('too_big')) {
+    return messages.slugTooLong;
+  }
+
+  return codes.has('custom') ? messages.slugReserved : messages.slug;
+}
+
+/**
+ * Le schéma de la **saisie**, construit autour de la devise du salon et des
+ * phrases de sa langue.
  *
  * Il diffère des contrats de `@spa/shared` sur un point : la chaîne vide y est
  * licite là où un champ est facultatif, parce qu'un champ de formulaire vidé est
  * vide et non absent. La conversion se fait à l'envoi, et l'action serveur
  * revalide derrière avec le vrai contrat.
  */
-function serviceFormSchema(currency: string) {
+function serviceFormSchema(currency: string, messages: ServiceFormMessages) {
+  /** Chaîne d'entiers positifs — le contrôle le plus proche de la saisie réelle. */
+  const digitsSchema = z.string().trim().regex(/^\d+$/, { message: messages.minutes });
+
   return z.object({
-    name: displayNameSchema,
-    slug: z.union([z.literal(''), slugSchema]),
+    // Les bornes de `displayNameSchema`, ses phrases en moins — voir l'en-tête.
+    name: z
+      .string()
+      .trim()
+      .min(1, { message: messages.nameRequired })
+      .max(DISPLAY_NAME_MAX_LENGTH, { message: messages.nameTooLong }),
+    // Vide vaut « laisse le serveur dériver l'adresse du nom ». Sinon, c'est
+    // `slugSchema` qui tranche — la règle reste celle du contrat, seule sa
+    // phrase vient de l'écran. Le `trim`/`toLowerCase` est celui que
+    // `slugSchema` applique : sans lui, une adresse saisie en capitales partirait
+    // telle quelle vers l'API. Même écriture dans `category-manager.tsx`, à
+    // cinq lignes près : ce qui y serait mis en commun n'est pas la règle —
+    // elle est déjà partagée — mais un branchement de formulaire.
+    slug: z
+      .string()
+      .trim()
+      .toLowerCase()
+      .superRefine((value, ctx) => {
+        const refusal = value === '' ? null : slugRefusal(value, messages);
+
+        if (refusal !== null) {
+          ctx.addIssue({ code: z.ZodIssueCode.custom, message: refusal });
+        }
+      }),
     description: longTextSchema,
     categoryId: z.string(),
     durationMinutes: digitsSchema.refine((value) => Number(value) >= 1, {
-      message: 'une durée doit être strictement positive',
+      message: messages.positiveDuration,
     }),
     // Zéro est le cas courant — un soin sans temps de préparation — et le champ
     // vide vaut zéro. Négatif n'existe pas : un tampon négatif rendrait la
@@ -105,7 +213,7 @@ function serviceFormSchema(currency: string) {
     bufferBeforeMinutes: z.union([z.literal(''), digitsSchema]),
     bufferAfterMinutes: z.union([z.literal(''), digitsSchema]),
     price: z.string().refine((value) => parseAmountInput(value, currency) !== null, {
-      message: 'montant attendu dans la devise du salon (« 35,00 »)',
+      message: messages.amount,
     }),
   });
 }
@@ -150,12 +258,48 @@ export function ServiceForm({
   service,
   canManage = true,
 }: ServiceFormProps) {
+  const t = useTranslations('admin-catalog.form');
+  const locale = useLocale() as Locale;
   const router = useRouter();
   const announce = useAdminAnnouncement();
   const { renewIfExpired } = useAdminSessionRenewal(tenantSlug);
   const [saved, setSaved] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
-  const schema = useMemo(() => serviceFormSchema(currency), [currency]);
+  /**
+   * L'exemple de montant, une fois — il sert au gabarit du champ **et** à la
+   * phrase qui refuse une saisie hors devise. Deux écritures finiraient par
+   * diverger, et l'écran proposerait un séparateur pour en refuser un autre.
+   *
+   * La **valeur** pré-remplie, elle, reste écrite avec la virgule décimale du
+   * français (`formatAmountInput`) : c'est l'objet de #1123, hors de l'empreinte
+   * de ce ticket. Rien ne se perd au passage — `parseAmountInput` accepte les
+   * deux séparateurs, et rend le même entier de plus petite unité.
+   */
+  const priceExample = t('priceExample');
+  const amountMessage = t('errors.amount', { example: priceExample });
+  /*
+   * `path` et `async` ne sont là que pour le **typage** de
+   * `@hookform/resolvers`, qui déclare `ParseParams` entier là où zod n'en lit
+   * qu'une partie : au runtime, `safeParseAsync` force `async: true` et retombe
+   * sur `path: []`. Même écriture que `AdminLoginForm` et `TenantSettingsForm`.
+   */
+  const resolver = useMemo(
+    () =>
+      zodResolver(
+        serviceFormSchema(currency, {
+          nameRequired: t('errors.nameRequired'),
+          nameTooLong: t('errors.nameTooLong', { max: DISPLAY_NAME_MAX_LENGTH }),
+          slug: t('errors.slug'),
+          slugReserved: t('errors.slugReserved'),
+          slugTooLong: t('errors.slugTooLong', { max: SLUG_MAX_LENGTH }),
+          minutes: t('errors.minutes'),
+          positiveDuration: t('errors.positiveDuration'),
+          amount: amountMessage,
+        }),
+        { errorMap: zodErrorMap(locale), path: [], async: true },
+      ),
+    [amountMessage, currency, locale, t],
+  );
 
   const {
     register,
@@ -164,7 +308,7 @@ export function ServiceForm({
     watch,
     formState: { errors, isSubmitting },
   } = useForm<ServiceFormValues, unknown, z.output<ReturnType<typeof serviceFormSchema>>>({
-    resolver: zodResolver(schema),
+    resolver,
     defaultValues: {
       name: service?.name ?? '',
       slug: service?.slug ?? '',
@@ -199,7 +343,7 @@ export function ServiceForm({
       // levée dans ce rappel remonterait telle quelle depuis `handleSubmit` —
       // l'écran n'afficherait rien, le bouton reprendrait son état de repos, et
       // rien n'aurait été enregistré. Un échec muet est la pire des réponses.
-      setError('price', { message: 'montant attendu dans la devise du salon (« 35,00 »)' });
+      setError('price', { message: amountMessage });
       return;
     }
 
@@ -238,7 +382,7 @@ export function ServiceForm({
         // Le conflit ne peut venir que du slug : c'est la seule unicité que
         // porte la table. Le message se pose donc sur le champ qui se corrige,
         // pas en bandeau au-dessus du formulaire.
-        setError('slug', { message: 'une autre prestation porte déjà cette adresse.' });
+        setError('slug', { message: t('errors.slugTaken') });
         return;
       }
       setFailure(result.message);
@@ -267,20 +411,20 @@ export function ServiceForm({
   return (
     <form className="spa-admin__section" onSubmit={(event) => void submit(event)} noValidate>
       {saved ? (
-        <Notification tone="success" title="Prestation enregistrée">
-          <p>Le catalogue public reflète désormais ces informations.</p>
+        <Notification tone="success" title={t('savedTitle')}>
+          <p>{t('savedBody')}</p>
         </Notification>
       ) : null}
 
       {failure === null ? null : (
-        <Notification tone="danger" title="L’enregistrement a échoué">
+        <Notification tone="danger" title={t('failureTitle')}>
           <p>{failure}</p>
         </Notification>
       )}
 
       <Field
         id="service-name"
-        label="Nom de la prestation"
+        label={t('name')}
         required
         disabled={!canManage}
         error={errors.name?.message}
@@ -289,8 +433,8 @@ export function ServiceForm({
 
       <TextArea
         id="service-description"
-        label="Description"
-        hint="Affichée sur la page publique, sous le nom de la prestation. Facultative."
+        label={t('description')}
+        hint={t('descriptionHint')}
         disabled={!canManage}
         error={errors.description?.message}
         {...register('description')}
@@ -298,13 +442,14 @@ export function ServiceForm({
 
       <Select
         id="service-category"
-        label="Rubrique"
-        hint="Regroupe la prestation sur la page publique. « Non classée » est un choix valide."
+        label={t('category')}
+        hint={t('categoryHint')}
         disabled={!canManage}
         error={errors.categoryId?.message}
         {...register('categoryId')}
       >
-        <option value="">Non classée</option>
+        <option value="">{t('unclassified')}</option>
+        {/* Le nom d'une rubrique est la saisie du salon : il n'est pas traduit. */}
         {categories.map((category) => (
           <option key={category.id} value={category.id}>
             {category.name}
@@ -314,11 +459,11 @@ export function ServiceForm({
 
       <Field
         id="service-duration"
-        label="Durée du soin (minutes)"
+        label={t('duration')}
         required
         inputMode="numeric"
         placeholder="60"
-        hint="Ce que la cliente voit et paie, tampons exclus."
+        hint={t('durationHint')}
         disabled={!canManage}
         error={errors.durationMinutes?.message}
         {...register('durationMinutes')}
@@ -326,10 +471,10 @@ export function ServiceForm({
 
       <Field
         id="service-buffer-before"
-        label="Tampon avant (minutes)"
+        label={t('bufferBefore')}
         inputMode="numeric"
         placeholder="0"
-        hint="Préparation de la cabine. Invisible de la cliente, occupée sur l’agenda."
+        hint={t('bufferBeforeHint')}
         disabled={!canManage}
         error={errors.bufferBeforeMinutes?.message}
         {...register('bufferBeforeMinutes')}
@@ -337,27 +482,36 @@ export function ServiceForm({
 
       <Field
         id="service-buffer-after"
-        label="Tampon après (minutes)"
+        label={t('bufferAfter')}
         inputMode="numeric"
         placeholder="0"
-        hint="Remise en état. Invisible de la cliente, occupée sur l’agenda."
+        hint={t('bufferAfterHint')}
         disabled={!canManage}
         error={errors.bufferAfterMinutes?.message}
         {...register('bufferAfterMinutes')}
       />
 
+      {/* La durée est mise en forme par `lib/format.ts`, dans la langue de
+          l'écran : « 1 h 15 » en français, « 1 hr 15 » en anglais
+          (`messages/<langue>/format.json`). Le relief reste sur la valeur, et
+          non sur la phrase : d'où `t.rich` plutôt qu'une phrase coupée en trois
+          clés, qu'aucun traducteur ne pourrait réordonner. */}
       <p className="spa-admin-toolbar__hint">
-        Durée bloquée sur l’agenda : <strong>{formatDuration(occupied)}</strong> — durée du soin et
-        tampons compris.
+        {t.rich('occupied', {
+          duration: formatDuration(occupied, { locale }),
+          strong: (parts) => <strong>{parts}</strong>,
+        })}
       </p>
 
+      {/* Le code devise est explicite dans l'étiquette, et le montant reste un
+          entier de plus petite unité de bout en bout (`parseAmountInput`). */}
       <Field
         id="service-price"
-        label={`Prix (${currency})`}
+        label={t('price', { currency })}
         required
         inputMode="decimal"
-        placeholder="35,00"
-        hint="Devise de l’établissement. Un soin offert vaut 0."
+        placeholder={priceExample}
+        hint={t('priceHint')}
         disabled={!canManage}
         error={errors.price?.message}
         {...register('price')}
@@ -365,12 +519,8 @@ export function ServiceForm({
 
       <Field
         id="service-slug"
-        label="Adresse publique"
-        hint={
-          service === undefined
-            ? 'Laissez vide : elle sera dérivée du nom. Utile à renseigner pour figer un lien déjà partagé.'
-            : 'Le lien profond vers cette prestation. La changer casse les liens déjà partagés.'
-        }
+        label={t('slug')}
+        hint={service === undefined ? t('slugHintNew') : t('slugHintEdit')}
         disabled={!canManage}
         error={errors.slug?.message}
         {...register('slug')}
@@ -382,14 +532,12 @@ export function ServiceForm({
           variant="accent"
           block
           loading={isSubmitting}
-          loadingLabel="Enregistrement…"
+          loadingLabel={t('saving')}
         >
-          {service === undefined ? 'Créer la prestation' : 'Enregistrer'}
+          {service === undefined ? t('create') : t('save')}
         </Button>
       ) : (
-        <p className="spa-admin-toolbar__hint">
-          La modification du catalogue est réservée au rang gérant.
-        </p>
+        <p className="spa-admin-toolbar__hint">{t('restricted')}</p>
       )}
     </form>
   );

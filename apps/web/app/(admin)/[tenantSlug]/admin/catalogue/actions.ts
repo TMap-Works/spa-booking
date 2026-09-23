@@ -20,6 +20,14 @@
  * - **aucun `tenantId` ne circule.** L'établissement vient du jeton vérifié, et
  *   le slug qu'on passe ici ne sert qu'à retrouver le cookie et à recalculer les
  *   chemins de revalidation.
+ *
+ * ## Les refus se disent dans la langue de la requête (#849)
+ *
+ * `getTranslations('admin-catalog')` et non des littéraux : ces messages
+ * remontent tels quels dans le bandeau d'un formulaire, et une phrase française
+ * sous un formulaire anglais est exactement ce que l'épique #843 referme. C'est
+ * l'écriture qu'a posée `personnel/actions.ts` (#848), et elle vaut ici pour la
+ * même raison.
  */
 
 import {
@@ -34,6 +42,7 @@ import {
   type ServiceCategory,
   type ServiceStaffMember,
 } from '@spa/shared';
+import { getTranslations } from 'next-intl/server';
 import { revalidatePath } from 'next/cache';
 
 import {
@@ -59,10 +68,11 @@ import { adminActionAccess } from '../session';
 async function openCall(
   tenantSlug: string,
 ): Promise<{ ok: true; accessToken: string; slug: string } | { ok: false; code: string; message: string }> {
+  const t = await getTranslations('admin-catalog.actions');
   const slug = slugSchema.safeParse(tenantSlug);
 
   if (!slug.success) {
-    return invalid('Établissement inconnu.');
+    return invalid(t('unknownTenant'));
   }
 
   const access = await adminActionAccess(slug.data);
@@ -85,16 +95,23 @@ function revalidateCatalog(slug: string, serviceId?: string): void {
   }
 }
 
-/** Le message du premier refus de schéma — celui qui nomme la faute. */
-function firstIssue(issues: readonly { readonly message: string }[], fallback: string): string {
-  return issues[0]?.message ?? fallback;
-}
+/*
+ * Le message du premier refus de schéma a disparu d'ici avec #849.
+ *
+ * Il rendait `issues[0].message`, c'est-à-dire un littéral **français** du
+ * contrat partagé : il aurait posé une phrase française sous un formulaire
+ * anglais. Les refus de forme se disent désormais dans la langue de la session,
+ * par le catalogue `admin-catalog` — le verdict reste celui du schéma, seule la
+ * phrase change de main. C'est la conduite qu'a posée `personnel/actions.ts`
+ * (#848).
+ */
 
 /** Crée une prestation. Le slug est dérivé du nom par le serveur s'il est absent. */
 export async function createServiceAction(
   tenantSlug: string,
   input: unknown,
 ): Promise<AdminActionResult<Service>> {
+  const t = await getTranslations('admin-catalog.actions');
   const call = await openCall(tenantSlug);
   if (!call.ok) {
     return call;
@@ -102,7 +119,7 @@ export async function createServiceAction(
 
   const parsed = createServiceRequestSchema.safeParse(input);
   if (!parsed.success) {
-    return invalid(firstIssue(parsed.error.issues, 'La prestation saisie est invalide.'));
+    return invalid(t('invalidService'));
   }
 
   try {
@@ -128,6 +145,7 @@ export async function updateServiceAction(
   serviceId: string,
   changes: unknown,
 ): Promise<AdminActionResult<Service>> {
+  const t = await getTranslations('admin-catalog.actions');
   const call = await openCall(tenantSlug);
   if (!call.ok) {
     return call;
@@ -137,10 +155,10 @@ export async function updateServiceAction(
   const parsed = updateServiceRequestSchema.safeParse(changes);
 
   if (!id.success) {
-    return invalid('Prestation inconnue.');
+    return invalid(t('unknownService'));
   }
   if (!parsed.success) {
-    return invalid(firstIssue(parsed.error.issues, 'La prestation saisie est invalide.'));
+    return invalid(t('invalidService'));
   }
 
   try {
@@ -156,6 +174,7 @@ export async function createServiceCategoryAction(
   tenantSlug: string,
   input: unknown,
 ): Promise<AdminActionResult<ServiceCategory>> {
+  const t = await getTranslations('admin-catalog.actions');
   const call = await openCall(tenantSlug);
   if (!call.ok) {
     return call;
@@ -163,7 +182,7 @@ export async function createServiceCategoryAction(
 
   const parsed = createServiceCategoryRequestSchema.safeParse(input);
   if (!parsed.success) {
-    return invalid(firstIssue(parsed.error.issues, 'La rubrique saisie est invalide.'));
+    return invalid(t('invalidCategory'));
   }
 
   try {
@@ -187,6 +206,7 @@ export async function updateServiceCategoryAction(
   categoryId: string,
   changes: unknown,
 ): Promise<AdminActionResult<ServiceCategory>> {
+  const t = await getTranslations('admin-catalog.actions');
   const call = await openCall(tenantSlug);
   if (!call.ok) {
     return call;
@@ -196,10 +216,10 @@ export async function updateServiceCategoryAction(
   const parsed = updateServiceCategoryRequestSchema.safeParse(changes);
 
   if (!id.success) {
-    return invalid('Rubrique inconnue.');
+    return invalid(t('unknownCategory'));
   }
   if (!parsed.success) {
-    return invalid(firstIssue(parsed.error.issues, 'La rubrique saisie est invalide.'));
+    return invalid(t('invalidCategory'));
   }
 
   try {
@@ -225,6 +245,7 @@ export async function assignServiceStaffAction(
   serviceId: string,
   input: unknown,
 ): Promise<AdminActionResult<ServiceStaffMember>> {
+  const t = await getTranslations('admin-catalog.actions');
   const call = await openCall(tenantSlug);
   if (!call.ok) {
     return call;
@@ -234,10 +255,10 @@ export async function assignServiceStaffAction(
   const parsed = assignServiceStaffRequestSchema.safeParse(input);
 
   if (!id.success) {
-    return invalid('Prestation inconnue.');
+    return invalid(t('unknownService'));
   }
   if (!parsed.success) {
-    return invalid('Choisissez un praticien à affecter.');
+    return invalid(t('chooseStaff'));
   }
 
   try {
@@ -255,6 +276,7 @@ export async function removeServiceStaffAction(
   serviceId: string,
   staffId: string,
 ): Promise<AdminActionResult<null>> {
+  const t = await getTranslations('admin-catalog.actions');
   const call = await openCall(tenantSlug);
   if (!call.ok) {
     return call;
@@ -264,7 +286,7 @@ export async function removeServiceStaffAction(
   const staff = uuidSchema.safeParse(staffId);
 
   if (!service.success || !staff.success) {
-    return invalid('Affectation inconnue.');
+    return invalid(t('unknownAssignment'));
   }
 
   try {
