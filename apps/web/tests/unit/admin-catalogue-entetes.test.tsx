@@ -27,7 +27,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
  * 3. **plus rien n'est réservé aux seuls lecteurs d'écran** dans ces cellules :
  *    l'information est passée dans l'en-tête, qui se restitue avec la cellule par
  *    `scope="col"` et se lit aussi à l'œil ;
- * 4. **les mots viennent des écrans voisins**, et la suite le vérifie à la source :
+ * 4. **les mots viennent des écrans voisins**, et la suite le vérifie au
+ *    **catalogue de messages** depuis que le module est bilingue (#849) :
  *    « Tampon avant / après » est le vocabulaire du formulaire de prestation,
  *    « Durée bloquée » celui de la fiche — « Bloque 1 h 25 sur l'agenda, tampons
  *    compris. » Trois écrans qui nomment le même temps de trois façons, c'est
@@ -62,16 +63,8 @@ import CatalogPage from '@/app/(admin)/[tenantSlug]/admin/catalogue/(liste)/page
 
 const SLUG = 'salon-lotus';
 
-/** Racine du back-office, d'où partent les chemins d'écrans lus à la source. */
-const adminDir = path.join(
-  path.dirname(fileURLToPath(import.meta.url)),
-  '..',
-  '..',
-  'app',
-  '(admin)',
-  '[tenantSlug]',
-  'admin',
-);
+/** Racine des catalogues de messages, où vivent les libellés depuis #849. */
+const messagesDir = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'messages');
 
 /**
  * Les chiffres sont ceux de la capture de l'audit : 10 et 15 minutes de tampons
@@ -164,21 +157,68 @@ describe('catalogue — chaque en-tête dit ce que sa colonne mesure', () => {
   });
 });
 
+/**
+ * Les mots ne sont plus lus **à la source** mais **au catalogue de messages**,
+ * depuis que le module est bilingue (#849).
+ *
+ * L'ancrage est le même — le libellé d'une colonne doit rester celui du champ
+ * qu'il coiffe et de la phrase de la fiche —, mais les deux vivent désormais dans
+ * `messages/<langue>/admin-catalog.json` et non plus en clair dans le JSX. Lire
+ * le catalogue est même un ancrage **plus** fort : le test de parité garantit que
+ * les deux langues portent les mêmes clés, si bien qu'un renommage en français
+ * sans son pendant anglais échoue de toute façon.
+ */
 describe('catalogue — les en-têtes reprennent le vocabulaire des écrans voisins', () => {
-  it('« Tampons avant / après » est celui du formulaire de prestation', () => {
-    const formulaire = readFileSync(path.join(adminDir, 'components', 'service-form.tsx'), 'utf8');
+  interface CatalogWords {
+    list: { columns: { buffers: string; occupied: string } };
+    form: { bufferBefore: string; bufferAfter: string };
+    service: { occupiedHint: string };
+  }
 
-    // Les libellés du formulaire sont des chaînes littérales, sans constante
-    // partagée à importer : la source est donc le seul point d'ancrage. Le jour
-    // où le formulaire renomme ses deux champs, cette assertion échoue — et
-    // c'est exactement le jour où la colonne doit être renommée avec lui.
-    expect(formulaire).toMatch(/Tampon avant \(minutes\)/);
-    expect(formulaire).toMatch(/Tampon après \(minutes\)/);
-  });
+  const wordsOf = (locale: string): CatalogWords =>
+    JSON.parse(
+      readFileSync(path.join(messagesDir, locale, 'admin-catalog.json'), 'utf8'),
+    ) as CatalogWords;
 
-  it('« Durée bloquée » est ce que la fiche écrit en toutes lettres', () => {
-    const fiche = readFileSync(path.join(adminDir, 'catalogue', '[serviceId]', 'page.tsx'), 'utf8');
+  /*
+   * Les **deux** langues, et pas seulement celle des suites : la parité des clés
+   * n'empêche pas l'anglais de renommer « Buffer before » sans renommer sa
+   * colonne, et l'écart de vocabulaire que ce fichier existe pour interdire est
+   * alors rouvert d'un seul côté.
+   */
+  const expected = {
+    fr: {
+      bufferBefore: 'Tampon avant (minutes)',
+      bufferAfter: 'Tampon après (minutes)',
+      buffers: 'Tampons avant / après',
+      occupied: 'Durée bloquée',
+      occupiedHint: /^Bloque .* sur l’agenda, tampons compris\.$/,
+    },
+    en: {
+      bufferBefore: 'Buffer before (minutes)',
+      bufferAfter: 'Buffer after (minutes)',
+      buffers: 'Buffers before / after',
+      occupied: 'Time blocked',
+      occupiedHint: /^Blocks .* on the agenda, buffers included\.$/,
+    },
+  } as const;
 
-    expect(fiche).toMatch(/Bloque .* sur l’agenda, tampons compris\./);
-  });
+  for (const [locale, attendu] of Object.entries(expected)) {
+    describe(`en ${locale}`, () => {
+      const words = wordsOf(locale);
+
+      it('« Tampons avant / après » est celui du formulaire de prestation', () => {
+        // Le jour où le formulaire renomme ses deux champs, cette assertion échoue —
+        // et c'est exactement le jour où la colonne doit être renommée avec eux.
+        expect(words.form.bufferBefore).toBe(attendu.bufferBefore);
+        expect(words.form.bufferAfter).toBe(attendu.bufferAfter);
+        expect(words.list.columns.buffers).toBe(attendu.buffers);
+      });
+
+      it('« Durée bloquée » est ce que la fiche écrit en toutes lettres', () => {
+        expect(words.service.occupiedHint).toMatch(attendu.occupiedHint);
+        expect(words.list.columns.occupied).toBe(attendu.occupied);
+      });
+    });
+  }
 });
