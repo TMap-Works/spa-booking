@@ -1,16 +1,8 @@
-import type { ExecutionContext } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
-import { JwtService } from '@nestjs/jwt';
 
-import { ForbiddenError } from '../../../common/errors';
-import { runInTenantScope } from '../../../common/tenant';
-import type { AppConfigService } from '../../../config/app-config.service';
 import type { AuthenticatedUser } from '../../identity/identity.types';
-import { JwtAuthGuard } from '../../identity/jwt-auth.guard';
-import { PERMISSIONS_METADATA, PermissionsGuard } from '../../identity/permissions.guard';
-import { permissionsOf, roleHasPermission } from '../../identity/permissions';
-import { USER_ROLES, type UserRole } from '../../identity/roles';
-import { TokenService } from '../../identity/token.service';
+import { PERMISSIONS_METADATA } from '../../identity/permissions.guard';
+import type { UserRole } from '../../identity/roles';
 import { NotificationsController } from '../notifications.controller';
 import type { NotificationsService, NotificationSearch } from '../notifications.service';
 
@@ -22,14 +14,19 @@ import type { NotificationsService, NotificationSearch } from '../notifications.
  * leurs `appointmentId` et leurs `recipientUserId` — les identifiants mêmes par
  * lesquels le contournement de #1135 a été monté.
  *
- * Cette suite tient les deux moitiés de la correction, et elle les tient **là où
- * la décision se prend** :
+ * La correction a deux moitiés, et chacune se prouve **là où la décision se
+ * prend** :
  *
- * 1. la **porte** — la route exige `agenda:read:own` ou `agenda:read:all`, et
- *    plus un rang. C'est une métadonnée, et une métadonnée se relit : une
- *    distraction qui reposerait `@AuthAtLeast('STAFF')` rougirait ici ;
- * 2. la **portée** — `ownScopeOf` traduit cette porte en un critère de
- *    recherche, et c'est le seul endroit du module qui lise un rôle.
+ * 1. la **porte** — « ce rôle peut-il ouvrir la route ? ». Elle ne dépend de rien
+ *    de ce module : c'est la matrice de l'ADR 0013 qui tranche, et le registre
+ *    central `identity/__tests__/route-permissions.spec.ts` qui l'exerce rôle par
+ *    rôle contre les vraies gardes. La route y figure depuis #1204, et il n'en
+ *    reste ici que la relecture de la métadonnée : une distraction qui reposerait
+ *    `@AuthAtLeast('STAFF')` la ferait disparaître, et rougirait aux deux
+ *    endroits ;
+ * 2. la **portée** — `ownScopeOf` traduit cette porte en un critère de recherche,
+ *    et c'est le seul endroit du module qui lise un rôle. Elle reste donc ici,
+ *    avec le reste du module, et c'est l'objet de cette suite.
  *
  * Ce qu'elle ne couvre pas, délibérément : que le dépôt honore ce critère. Cela
  * se prouve contre une vraie base, et c'est l'objet des suites d'intégration et
@@ -72,69 +69,21 @@ function actorOf(role: UserRole, userId = 'compte-de-l-appelant'): Authenticated
   return { userId, tenantId: 'salon-courant', role };
 }
 
-/**
- * La configuration minimale dont `TokenService` a besoin pour signer.
- *
- * Écrite ici plutôt qu'empruntée à `identity/__tests__/identity.doubles` : un
- * module ne dépend pas des doubles d'un autre, pas même en test — c'est la même
- * règle de découplage qu'api-module §3 pose sur les repositories, et elle vaut
- * d'autant plus que ces quatre valeurs n'ont aucune raison de changer.
- */
-const CONFIG = {
-  nodeEnv: 'test',
-  isProduction: false,
-  jwtSecret: 'unit-test-access-key-not-a-secret-000001',
-  jwtRefreshSecret: 'unit-test-refresh-key-not-a-secret-00002',
-  jwtExpiresIn: '15m',
-  refreshTokenExpiresIn: '7d',
-} as AppConfigService;
-
-const tokens = new TokenService(new JwtService(), CONFIG);
-const permissions = new PermissionsGuard(new Reflector());
-
-/**
- * Le parcours réel d'une requête gardée : jeton signé → `JwtAuthGuard` →
- * `PermissionsGuard`. Rend `true`, ou lève ce que la garde a levé.
- *
- * Les **vraies** gardes sur le **vrai** contrôleur : un test qui poserait
- * l'identité sur la requête lui-même validerait un emplacement que la production
- * n'utilise pas, et un test qui relirait la métadonnée sans monter la garde
- * validerait une annotation sans sa conséquence.
- *
- * C'est le montage de `identity/__tests__/route-permissions.spec.ts`, refait
- * ici plutôt que cette route ajoutée là-bas : ce ticket n'écrit pas hors de
- * `modules/notifications`, et le registre central relève du module `identity`.
- * L'y rapatrier vaut la peine — c'est l'objet d'une issue de suivi — mais la
- * couverture, elle, n'attend pas.
- */
-async function authorize(role: UserRole): Promise<boolean> {
-  const token = await tokens.signAccessToken({
-    userId: 'compte-de-l-appelant',
-    tenantId: '11111111-1111-4111-8111-111111111111',
-    role,
-  });
-
-  // Une seule et même requête d'un bout à l'autre : `JwtAuthGuard` y dépose
-  // l'identité vérifiée, `PermissionsGuard` l'y relit. En fabriquer une par
-  // appel ferait perdre l'identité entre les deux gardes, et la seconde
-  // refuserait pour une raison qui n'est pas celle qu'on teste.
-  const request = { headers: { authorization: `Bearer ${token}` } };
-
-  const context = {
-    getHandler: () => NotificationsController.prototype.list,
-    getClass: () => NotificationsController,
-    switchToHttp: () => ({ getRequest: () => request }),
-  } as unknown as ExecutionContext;
-
-  // La portée est ouverte mais vide, comme le fait `TenantScopeMiddleware` :
-  // c'est `JwtAuthGuard` qui la renseigne depuis la revendication signée.
-  return runInTenantScope(async () => {
-    await new JwtAuthGuard(tokens).canActivate(context);
-    return permissions.canActivate(context);
-  });
-}
-
 describe('GET /notifications — la porte', () => {
+  /**
+   * La seule chose qui reste ici de la porte : que la métadonnée soit **posée**.
+   *
+   * Ce qu'elle vaut — quel rôle passe, quel rôle se heurte à un `ForbiddenError` —
+   * n'est plus exercé dans ce module : le registre central le fait pour toutes les
+   * routes à permission d'un seul montage, et le refaire ici en dupliquait le
+   * jeton signé, les deux gardes et la boucle sur `USER_ROLES` (#1204).
+   *
+   * Cette assertion-là, en revanche, ne se déduit pas du registre : son `expected`
+   * est une lecture indépendante, si bien qu'une route qui déclarerait la seule
+   * `agenda:read:own` y resterait verte — les trois rôles servis la portent tous.
+   * C'est la paire exacte que la garde lit et que le document OpenAPI publie, et
+   * c'est ce qu'on fige ici, sans monter quoi que ce soit.
+   */
   it('exige `agenda:read:own` ou `agenda:read:all`, et plus un rang', () => {
     const declared = new Reflector().get<readonly string[]>(
       PERMISSIONS_METADATA,
@@ -142,37 +91,6 @@ describe('GET /notifications — la porte', () => {
     );
 
     expect(declared).toEqual(['agenda:read:own', 'agenda:read:all']);
-  });
-
-  it('s’ouvre à chaque rôle que la matrice sert, et se ferme aux autres', async () => {
-    for (const role of USER_ROLES) {
-      const granted = permissionsOf(role);
-      const shouldPass =
-        granted.includes('agenda:read:own') || granted.includes('agenda:read:all');
-
-      if (shouldPass) {
-        await expect(authorize(role)).resolves.toBe(true);
-      } else {
-        // `ForbiddenError` et non `NotFoundError` : la garde ne consulte aucune
-        // ressource, son refus porte sur la **route**.
-        await expect(authorize(role)).rejects.toBeInstanceOf(ForbiddenError);
-      }
-    }
-  });
-
-  it('reste fermée à une cliente connectée, qui n’a ni l’une ni l’autre', async () => {
-    // Le rang refusait déjà `CLIENT` ; le remplacer par des permissions ne doit
-    // pas rouvrir la route par inadvertance.
-    expect(roleHasPermission('CLIENT', 'agenda:read:own')).toBe(false);
-    expect(roleHasPermission('CLIENT', 'agenda:read:all')).toBe(false);
-    await expect(authorize('CLIENT')).rejects.toBeInstanceOf(ForbiddenError);
-  });
-
-  it('reste ouverte au praticien — le comptoir continue de répondre au téléphone', async () => {
-    // Le ticket borne ce que `STAFF` lit ; il ne lui ferme pas la porte. Fermer
-    // la route à `MANAGER` aurait rendu le journal inaccessible aux personnes
-    // qui décrochent, ce que le CDC range dans les gestes de front-desk.
-    await expect(authorize('STAFF')).resolves.toBe(true);
   });
 });
 
