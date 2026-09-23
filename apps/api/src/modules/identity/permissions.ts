@@ -1,5 +1,6 @@
 import { PERMISSIONS, type Permission } from '@spa/shared';
 
+import type { AuthenticatedUser } from './identity.types';
 import { USER_ROLES, type UserRole } from './roles';
 
 /**
@@ -157,4 +158,76 @@ export function roleHasAnyPermission(
   permissions: readonly Permission[],
 ): boolean {
   return permissions.some((permission) => roleHasPermission(role, permission));
+}
+
+/**
+ * Les permissions **larges** — celles dont le suffixe `:all` ouvre
+ * l'établissement entier.
+ *
+ * ADR 0013 fait du suffixe le porteur de la portée : « c'est la présence du
+ * `:all` qui décide, et rien d'autre ». Ce type l'écrit au lieu de le
+ * commenter, et c'est ce qui rend `ownScopeFor(actor, 'customers:read:own')`
+ * **irreprésentable** — cet appel-là compilerait sans lui et rendrait `null`,
+ * donc le fichier entier, au praticien que #812 venait d'en écarter. La
+ * permission restreinte est justement celle qu'on a sous les yeux trois lignes
+ * plus haut, dans l'`@AuthWith` de la route : la confondre n'est pas une faute
+ * exotique.
+ */
+export type BroadPermission = Extract<Permission, `${string}:all`>;
+
+/** Les mêmes, à l'exécution — ce dont une suite de tests a besoin pour boucler. */
+export const BROAD_PERMISSIONS: readonly BroadPermission[] = PERMISSIONS.filter(
+  (permission): permission is BroadPermission => permission.endsWith(':all'),
+);
+
+/**
+ * La **portée** de lecture d'un appelant déjà entré : `null` pour « tout
+ * l'établissement », son identifiant de compte pour « les siens » (#1205).
+ *
+ * ## L'écriture unique d'une décision déjà tranchée une fois
+ *
+ * ADR 0013 a réglé la question « avec quelle portée cet appelant est-il
+ * entré ? » en mettant le suffixe dans le nom de la permission : c'est la
+ * présence du `:all` qui décide, et rien d'autre. La traduction de ce suffixe
+ * en critère de recherche est donc une seule décision, et elle s'écrit au même
+ * endroit que la matrice qu'elle interroge — comme la matrice elle-même.
+ *
+ * Elle s'écrivait deux fois avant #1205, chez `crm` et chez `notifications`,
+ * identiques à la permission près. Les deux étaient justes ; le défaut n'était
+ * pas dans ce qu'elles faisaient mais dans le fait qu'il y en ait deux, et que
+ * la troisième route à double portée en aurait écrit une troisième. C'est le
+ * raisonnement que #812 a tenu pour la matrice, appliqué à ce qui la lit.
+ *
+ * ## Le nom de la permission large reste chez l'appelant
+ *
+ * `broad` est un paramètre, jamais une déduction : c'est le contrôleur qui sait
+ * par quelle porte on entre — `customers:read:all` pour le fichier client,
+ * `agenda:read:all` pour le journal d'envois — et le passer explicitement rend
+ * la portée lisible à la lecture de la route. Rien de la décision ne quitte donc
+ * le contrôleur ; seule la façon de la calculer est mise en commun.
+ *
+ * Il est typé `BroadPermission` et non `Permission` : un paramètre ouvert
+ * laisserait passer la permission **restreinte** de la même route, qui rendrait
+ * `null` — l'établissement entier — à celui-là même qu'elle borne.
+ *
+ * ## Pourquoi cela n'appartient pas aux services
+ *
+ * Parce que c'est une traduction de la **porte** vers le domaine : la garde a
+ * déjà décidé que l'appelant entre, il reste à dire avec quelle portée. Un
+ * service, lui, ne connaît qu'un critère de recherche — il n'a ni rôle ni
+ * matrice à interroger, et c'est ce qui le laisse testable sans couche
+ * d'autorisation.
+ *
+ * ## La permission large l'emporte quand les deux sont portées
+ *
+ * Une gérante qui donne aussi des soins a `:own` **et** `:all`, et lit tout : la
+ * matrice les lui accorde toutes les deux précisément pour cela, et l'ordre de
+ * ce test est ce qui le dit.
+ *
+ * `actor.userId` vient d'un jeton **vérifié**, et c'est lui qui descend jusqu'au
+ * prédicat du dépôt — jamais un identifiant lu ailleurs, ce qui serait la
+ * définition d'une fuite (tenant-isolation §2).
+ */
+export function ownScopeFor(actor: AuthenticatedUser, broad: BroadPermission): string | null {
+  return roleHasPermission(actor.role, broad) ? null : actor.userId;
 }
