@@ -49,6 +49,7 @@ import {
   appointmentStatusPluralLabelInSentence,
 } from '../appointment-status';
 import { addCalendarDays } from '../booking/calendar';
+import { formattingLocale, type DisplayLocale } from '../format';
 import type {
   AppointmentStatusCounts,
   AppointmentVolumeReport,
@@ -479,11 +480,35 @@ export function volumeQualification(activity: ScopedActivity): string | null {
   return `dont ${setAside.map((part) => `${formatCount(part.count)} ${part.label}`).join(' · ')}`;
 }
 
+/**
+ * ## La langue des deux formateurs de nombres (#1104)
+ *
+ * `formatRate` et `formatCount` sont les deux seules sorties de ce module que le
+ * **tableau de bord** lit — c'est l'empreinte que #1104 a sur ce fichier, le
+ * reste appartenant à l'écran de reporting (#851). Elles prennent donc, en
+ * dernier paramètre, le même contexte d'affichage que `lib/format.ts` : une
+ * langue et le pays de l'établissement, d'où sort l'étiquette `Intl`.
+ *
+ * Le paramètre est **facultatif et le défaut est le français**, comme partout
+ * ailleurs dans l'épique #843 : les appelants de l'écran de reporting sont hors
+ * de l'empreinte de ce ticket et passeront leur langue dans le leur. Le défaut
+ * garde jusque-là l'affichage d'avant le ticket, plutôt que de faire basculer en
+ * anglais un écran dont personne n'a encore relu la traduction.
+ *
+ * Un séparateur de milliers n'est pas un détail : `1 200` s'écrit « 1 200 » en
+ * français et « 1,200 » en anglais, et c'est la même règle que celle des
+ * montants — seule la mise en forme suit la langue, jamais la valeur.
+ */
+const FALLBACK_DISPLAY: DisplayLocale = { locale: 'fr' };
+
 /** Le taux tel que l'écran l'écrit — « 3,3 % », ou « — » faute de dénominateur. */
-export function formatRate(rate: number | null): string {
+export function formatRate(
+  rate: number | null,
+  display: DisplayLocale = FALLBACK_DISPLAY,
+): string {
   return rate === null
     ? '—'
-    : new Intl.NumberFormat('fr-FR', {
+    : new Intl.NumberFormat(formattingLocale(display.locale, display.countryCode), {
         style: 'percent',
         minimumFractionDigits: 1,
         maximumFractionDigits: 1,
@@ -491,8 +516,8 @@ export function formatRate(rate: number | null): string {
 }
 
 /** Un entier tel que l'écran l'écrit — séparateurs de milliers compris. */
-export function formatCount(value: number): string {
-  return new Intl.NumberFormat('fr-FR').format(value);
+export function formatCount(value: number, display: DisplayLocale = FALLBACK_DISPLAY): string {
+  return new Intl.NumberFormat(formattingLocale(display.locale, display.countryCode)).format(value);
 }
 
 /**
