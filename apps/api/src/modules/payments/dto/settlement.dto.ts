@@ -1,4 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { saleSettlementSchema, settleSaleRequestSchema } from '@spa/shared';
 import {
   IsIn,
   IsInt,
@@ -11,6 +12,7 @@ import {
   type ValidationArguments,
   type ValidatorConstraintInterface,
 } from 'class-validator';
+import type { z } from 'zod';
 
 import { COUNTER_SETTLEMENT_MEANS } from '../payments.types';
 import type { CounterSettlementMean, SaleSettlement } from '../payments.types';
@@ -277,6 +279,48 @@ export function toCashSettlementRequest(_dto: CreateCashPaymentDto): SettlementR
 export function toExtraLines(dto: CreateCashPaymentDto): readonly SaleLineRequest[] {
   return dto.lines === undefined ? [] : toSaleLineRequests(dto.lines);
 }
+
+type AssertNever<T extends never> = T;
+
+/**
+ * Le corps de règlement annonce **exactement** les clés que le contrat décrit —
+ * #1026.
+ *
+ * Pris dans les deux sens, parce qu'une entrée n'a pas d'excédent légitime : le
+ * `.strict()` du contrat et le `forbidNonWhitelisted` du `ValidationPipe`
+ * décrivent la même liste blanche, et un champ ajouté ici sans l'être là-bas
+ * serait un champ **documenté comme acceptable** sur le chemin de l'argent. En
+ * sens inverse, un champ que le contrat déclare et que la route refuse est ce que
+ * #1026 a trouvé : `method: 'CARD'` et pas de `terminalReference`, c'est-à-dire un
+ * contrat qui ne savait construire qu'un 400.
+ */
+type SettleSaleWire = z.input<typeof settleSaleRequestSchema>;
+
+type _SettleSaleDtoHasTheContractKeys = AssertNever<
+  | Exclude<keyof SettleSaleDto, keyof SettleSaleWire>
+  | Exclude<keyof SettleSaleWire, keyof SettleSaleDto>
+>;
+
+/**
+ * La réponse du comptoir annonce **exactement** les clés du contrat — #1026.
+ *
+ * Les deux sens ici aussi, et c'est le `replayed` manquant qui le justifie : le
+ * contrat était `.strict()` sans lui, si bien qu'un `.parse()` de cette réponse
+ * levait `unrecognized_keys` et fermait l'écran de caisse pour un champ qu'il ne
+ * lit pas. La garde casse désormais la compilation au lieu de laisser l'écart
+ * atteindre le front.
+ *
+ * Elle ne compare que les **clés**. La lisibilité champ à champ resterait fausse
+ * sur `payment.method` et `payment.status`, que ce module écrit en majuscules et
+ * que le contrat ramène en minuscules à la réception — la normalisation appartient
+ * au schéma partagé, pas à cette classe.
+ */
+type SaleSettlementWire = z.input<typeof saleSettlementSchema>;
+
+type _SaleSettlementDtoHasTheContractKeys = AssertNever<
+  | Exclude<keyof SaleSettlementDto, keyof SaleSettlementWire>
+  | Exclude<keyof SaleSettlementWire, keyof SaleSettlementDto>
+>;
 
 /** L'issue du règlement telle qu'elle franchit la frontière HTTP — instants en UTC. */
 export function toSaleSettlementDto(settlement: SaleSettlement): SaleSettlementDto {
