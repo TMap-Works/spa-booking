@@ -1,0 +1,139 @@
+{
+  "metadata": {
+    "title": "Performance"
+  },
+  "title": "Performance",
+  "denied": {
+    "title": "Restricted access",
+    "storefrontHint": "This salon’s public page could not be read with this account.",
+    "reportsHint": "Performance figures are reserved for salon management. Ask your administrator for access.",
+    "failedTitle": "Performance unavailable"
+  },
+  "impossiblePeriod": {
+    "title": "Impossible period"
+  },
+  "toolbar": {
+    "caption": "{range} · {days, plural, one {# day} other {# days}} · {scope}"
+  },
+  "metrics": {
+    "revenueEmpty": "Net revenue — no payments taken",
+    "revenue": "Net revenue · {transactions, plural, one {# payment} other {# payments}} · refunded {refunded}",
+    "appointments": "Appointments · {scope}",
+    "appointmentsQualified": "Appointments · {scope} · {qualification}",
+    "noShows": "{status} · {noShows} of {due, plural, one {# that came due} other {# that came due}}"
+  },
+  "scopeNotice": {
+    "title": "What a filter cannot break down",
+    "body": "Revenue stays that of the whole salon: the API aggregates payments without tying them to a practitioner or a service, and splitting them pro rata across appointments would invent a figure. Appointment volume and no-shows, however, do apply to “{scope}”."
+  },
+  "chart": {
+    "labelHeader": "Period",
+    "labelHeaderStaff": "Practitioner",
+    "labelHeaderService": "Service"
+  },
+  "revenueChart": {
+    "title": "Net revenue per day",
+    "titleCurrency": "Net revenue per day — {currency}",
+    "series": "Net revenue",
+    "seriesCurrency": "Net revenue ({currency})",
+    "summary": "Net revenue per trading day, {range}.",
+    "summaryCurrency": "Net revenue per trading day in {currency}, {range}, time zone {timeZone}.",
+    "valueHeader": "Net revenue",
+    "empty": "No payments taken over the period."
+  },
+  "volumeChart": {
+    "titleDay": "Appointments per day",
+    "titleStaff": "Appointments per practitioner",
+    "titleService": "Appointments per service",
+    "summaryDay": "Number of appointments per day, including {noShows}, from {from} to {to} inclusive.",
+    "summaryStaff": "Number of appointments per practitioner, including {noShows}, from {from} to {to} inclusive.",
+    "summaryService": "Number of appointments per service, including {noShows}, from {from} to {to} inclusive.",
+    "series": "Appointments",
+    "innerSeries": "of which {noShows}",
+    "innerHeader": "Of which {noShows}",
+    "valueHeader": "Appointments",
+    "valueLabel": "{count, plural, one {# appointment} other {# appointments}}",
+    "empty": "No appointments over the period."
+  },
+  "statuses": {
+    "title": "Status breakdown — {scope}",
+    "caption": "Appointments over the period by status, for {scope}.",
+    "status": "Status",
+    "appointments": "Appointments"
+  },
+  "methods": {
+    "title": "Revenue by payment method",
+    "caption": "Period totals by payment method and currency.",
+    "method": "Method",
+    "transactions": "Payments",
+    "gross": "Gross",
+    "refunded": "Refunded",
+    "net": "Net",
+    "card": "Card",
+    "cash": "Cash"
+  },
+  "filters": {
+    "period": "Period",
+    "from": "From",
+    "to": "To (inclusive)",
+    "timeZoneHint": "Salon days — {timeZone}.",
+    "scope": "Filter",
+    "scopeHint": "A practitioner or a service — the two cannot be combined.",
+    "staffGroup": "Practitioners",
+    "servicesGroup": "Services",
+    "submit": "Show",
+    "loading": "Loading…"
+  },
+  "export": {
+    "label": "Export to CSV",
+    "preparing": "Preparing…",
+    "downloaded": "File downloaded: {filename}",
+    "unavailable": "Export is not available on this environment.",
+    "failed": "The export could not be produced: {message}"
+  },
+  "actions": {
+    "unknownTenant": "Unknown salon.",
+    "invalidWindow": "The period to export is invalid.",
+    "invalidLocale": "The language requested for the export is not supported.",
+    "unknownExport": "Unknown export.",
+    "unreachable": "The export service is temporarily unreachable. Please try again shortly.",
+    "unexpected": "An unexpected error occurred.",
+    "contract": "The API response does not match the reporting export contract."
+  },
+  "window": {
+    "periods": {
+      "sept-jours": "Last 7 days",
+      "trente-jours": "Last 30 days",
+      "mois-courant": "This month",
+      "mois-precedent": "Last month",
+      "personnalisee": "Custom period"
+    },
+    "refusal": {
+      "bounds": "Fill in both ends of the period, as day/month/year.",
+      "inverted": "The end date comes before the start date.",
+      "tooWide": "A period stops at {max} days — this one covers {days}."
+    }
+  },
+  "view": {
+    "wholeTenant": "Whole salon",
+    "unassigned": "Unassigned",
+    "upcoming": "Upcoming",
+    "qualification": {
+      "setAside": "including {parts}",
+      "part": "{count} {label}",
+      "separator": " · ",
+      "allDue": "all came due",
+      "allDueOne": "came due"
+    }
+  },
+  "csv": {
+    "header": {
+      "section": "section",
+      "key": "key",
+      "label": "label",
+      "measure": "measure",
+      "value": "value",
+      "currency": "currency"
+    }
+  }
+}

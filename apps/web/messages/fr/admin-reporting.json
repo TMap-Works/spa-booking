@@ -1,0 +1,139 @@
+{
+  "metadata": {
+    "title": "Indicateurs d’activité"
+  },
+  "title": "Indicateurs d’activité",
+  "denied": {
+    "title": "Accès réservé",
+    "storefrontHint": "La vitrine publique de ce salon n’a pas pu être lue avec ce compte.",
+    "reportsHint": "Les indicateurs d’activité sont réservés à la gestion du salon. Demandez l’accès à l’administrateur.",
+    "failedTitle": "Indicateurs indisponibles"
+  },
+  "impossiblePeriod": {
+    "title": "Période impossible"
+  },
+  "toolbar": {
+    "caption": "{range} · {days, plural, one {# jour} other {# jours}} · {scope}"
+  },
+  "metrics": {
+    "revenueEmpty": "Revenu net — aucun encaissement",
+    "revenue": "Revenu net · {transactions, plural, one {# encaissement} other {# encaissements}} · remboursé {refunded}",
+    "appointments": "Rendez-vous · {scope}",
+    "appointmentsQualified": "Rendez-vous · {scope} · {qualification}",
+    "noShows": "{status} · {noShows} sur {due, plural, one {# arrivé à échéance} other {# arrivés à échéance}}"
+  },
+  "scopeNotice": {
+    "title": "Ce qu’un filtre ne peut pas ventiler",
+    "body": "Le revenu reste celui de l’établissement entier : l’API agrège les encaissements sans les rattacher à un praticien ni à une prestation, et les répartir au prorata des rendez-vous inventerait un chiffre. Le volume et les rendez-vous non honorés, eux, portent bien sur « {scope} »."
+  },
+  "chart": {
+    "labelHeader": "Période",
+    "labelHeaderStaff": "Praticien",
+    "labelHeaderService": "Prestation"
+  },
+  "revenueChart": {
+    "title": "Revenu net par jour",
+    "titleCurrency": "Revenu net par jour — {currency}",
+    "series": "Revenu net",
+    "seriesCurrency": "Revenu net ({currency})",
+    "summary": "Revenu net par journée de caisse, {range}.",
+    "summaryCurrency": "Revenu net par journée de caisse en {currency}, {range}, fuseau {timeZone}.",
+    "valueHeader": "Revenu net",
+    "empty": "Aucun encaissement sur la période."
+  },
+  "volumeChart": {
+    "titleDay": "Rendez-vous par jour",
+    "titleStaff": "Rendez-vous par praticien",
+    "titleService": "Rendez-vous par prestation",
+    "summaryDay": "Nombre de rendez-vous par jour, dont {noShows}, du {from} au {to} inclus.",
+    "summaryStaff": "Nombre de rendez-vous par praticien, dont {noShows}, du {from} au {to} inclus.",
+    "summaryService": "Nombre de rendez-vous par prestation, dont {noShows}, du {from} au {to} inclus.",
+    "series": "Rendez-vous",
+    "innerSeries": "dont {noShows}",
+    "innerHeader": "Dont {noShows}",
+    "valueHeader": "Rendez-vous",
+    "valueLabel": "{count, plural, one {# rendez-vous} other {# rendez-vous}}",
+    "empty": "Aucun rendez-vous sur la période."
+  },
+  "statuses": {
+    "title": "Détail des statuts — {scope}",
+    "caption": "Rendez-vous de la période par statut, pour {scope}.",
+    "status": "Statut",
+    "appointments": "Rendez-vous"
+  },
+  "methods": {
+    "title": "Revenu par moyen d’encaissement",
+    "caption": "Cumul de la période par moyen d’encaissement et par devise.",
+    "method": "Moyen",
+    "transactions": "Encaissements",
+    "gross": "Brut",
+    "refunded": "Remboursé",
+    "net": "Net",
+    "card": "Carte",
+    "cash": "Espèces"
+  },
+  "filters": {
+    "period": "Période",
+    "from": "Du",
+    "to": "Au (inclus)",
+    "timeZoneHint": "Journées du salon — {timeZone}.",
+    "scope": "Filtrer",
+    "scopeHint": "Un praticien ou une prestation — les deux ne se croisent pas.",
+    "staffGroup": "Praticiens",
+    "servicesGroup": "Prestations",
+    "submit": "Afficher",
+    "loading": "Chargement…"
+  },
+  "export": {
+    "label": "Exporter en CSV",
+    "preparing": "Préparation…",
+    "downloaded": "Fichier téléchargé : {filename}",
+    "unavailable": "L’export n’est pas disponible sur cet environnement.",
+    "failed": "L’export n’a pas pu être produit : {message}"
+  },
+  "actions": {
+    "unknownTenant": "Établissement inconnu.",
+    "invalidWindow": "La période à exporter est invalide.",
+    "invalidLocale": "La langue demandée pour l’export n’est pas prise en charge.",
+    "unknownExport": "Export inconnu.",
+    "unreachable": "Le service d’export est momentanément injoignable. Merci de réessayer dans un instant.",
+    "unexpected": "Une erreur inattendue est survenue.",
+    "contract": "La réponse de l’API ne respecte pas le contrat sur l’export du reporting."
+  },
+  "window": {
+    "periods": {
+      "sept-jours": "7 derniers jours",
+      "trente-jours": "30 derniers jours",
+      "mois-courant": "Mois en cours",
+      "mois-precedent": "Mois précédent",
+      "personnalisee": "Période personnalisée"
+    },
+    "refusal": {
+      "bounds": "Renseignez les deux bornes de la période, au format jour/mois/année.",
+      "inverted": "La date de fin précède la date de début.",
+      "tooWide": "Une période s’arrête à {max} jours — celle-ci en compte {days}."
+    }
+  },
+  "view": {
+    "wholeTenant": "Tout l’établissement",
+    "unassigned": "Non attribué",
+    "upcoming": "À venir",
+    "qualification": {
+      "setAside": "dont {parts}",
+      "part": "{count} {label}",
+      "separator": " · ",
+      "allDue": "tous arrivés à échéance",
+      "allDueOne": "arrivé à échéance"
+    }
+  },
+  "csv": {
+    "header": {
+      "section": "section",
+      "key": "cle",
+      "label": "libelle",
+      "measure": "mesure",
+      "value": "valeur",
+      "currency": "devise"
+    }
+  }
+}
