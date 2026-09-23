@@ -95,6 +95,45 @@ function invalid(message: string): Failure {
 }
 
 /**
+ * Ce que l'API a refusé sur **un rendez-vous nommé** — annulation, report —
+ * avec les trois refus de #1135 ramenés à deux (#1201).
+ *
+ * `FORBIDDEN` devient `NOT_FOUND`, code et message compris. Les deux gardes de
+ * `public-appointments.controller.ts` ne disent pas la même chose, et c'est
+ * précisément pour cela qu'il faut les confondre ici :
+ *
+ * | Ce que l'API rend | Ce qu'il faut en comprendre |
+ * |---|---|
+ * | 403 `FORBIDDEN` | le jeton n'est pas celui d'une **cliente** |
+ * | 404 `NOT_FOUND` | le rendez-vous n'existe pas, est chez un autre salon, ou appartient à une autre cliente |
+ *
+ * Rendre le 403 tel quel — « Votre compte n'a pas les droits nécessaires » —
+ * apprendrait à qui l'obtient que **le rendez-vous, lui, existe** : le refus
+ * porterait sur le porteur du jeton et non sur la ligne visée, et cet écran
+ * redeviendrait la sonde d'existence que le 404 de l'API existe pour fermer
+ * (tenant-isolation §4). Le message des deux est donc le même, et il ne nomme
+ * jamais la propriété du rendez-vous — « ce rendez-vous ne vous appartient pas »
+ * dirait par l'écran ce que le 404 tait.
+ *
+ * `UNAUTHORIZED` n'est pas touché : il traverse jusqu'à `renewIfExpired`, qui
+ * renouvelle la session ou mène à la connexion (`lib/session-renewal.ts`). C'est
+ * un refus sur la session, pas sur le rendez-vous.
+ */
+function appointmentFailure(error: unknown, locale: Locale): Failure {
+  const refused = failure(error, locale);
+
+  if (refused.code !== ERROR_CODES.FORBIDDEN) {
+    return refused;
+  }
+
+  return {
+    ok: false,
+    code: ERROR_CODES.NOT_FOUND,
+    message: errorMessage(ERROR_CODES.NOT_FOUND, locale),
+  };
+}
+
+/**
  * Session absente ou impossible à renouveler — l'écran part vers la route de
  * renouvellement, qui tranche et mène à la connexion.
  */
@@ -327,14 +366,14 @@ export async function saveAccountLocaleAction(
 /**
  * Annule un de ses rendez-vous, depuis l'espace client.
  *
- * La route appelée est celle du tunnel public : ce qui l'autorise est la
- * connaissance de l'identifiant du rendez-vous, un UUID v4. Cette action ne
- * l'affaiblit pas — elle ne fait que transmettre un identifiant que l'écran vient
- * de lire dans un historique **authentifié**, donc borné à la cliente du jeton.
- * Une cliente ne peut pas y annuler le rendez-vous d'une autre pour la raison
- * qui vaut sur toute cette surface : elle n'en connaît pas l'identifiant.
+ * La route appelée est servie sous `/public/{slug}/…`, et elle n'est plus
+ * publique pour autant : depuis #1135 elle exige le jeton de la **cliente du
+ * rendez-vous**, et l'action le lui joint (#1201). Ce n'est pas un contrôle de
+ * plus posé ici — c'est l'API qui tranche la propriété de la ligne, en 404 —,
+ * c'est le transport de ce sur quoi elle tranche.
  *
- * `cancelledBy` vaut `CLIENT`, fixé par la route et non par le corps.
+ * `cancelledBy` vaut `CLIENT`, fixé par la route et non par le corps ; et il
+ * n'est vrai que parce que le jeton nomme la cliente.
  */
 export async function cancelOwnAppointmentAction(
   tenantSlug: string,
@@ -353,18 +392,21 @@ export async function cancelOwnAppointmentAction(
     return invalid(t('invalidCancellation'));
   }
 
-  // Non pour autoriser — la route ne l'exige pas — mais pour ne pas laisser un
-  // écran déconnecté écrire dans l'agenda du salon. Une session simplement
-  // expirée se renouvelle sur place ; une session fermée renvoie à la connexion.
+  // Le jeton **autorise** désormais l'appel (#1135) : sans lui, la route rend
+  // 401. Une session simplement expirée se renouvelle sur place ; une session
+  // fermée renvoie à la connexion.
   const access = await sessionAccess(slug.data, locale);
   if (!access.ok) {
     return access;
   }
 
   try {
-    return { ok: true, data: await cancelAppointment(slug.data, id.data, body.data) };
+    return {
+      ok: true,
+      data: await cancelAppointment(slug.data, id.data, access.accessToken, body.data),
+    };
   } catch (error) {
-    return failure(error, locale);
+    return appointmentFailure(error, locale);
   }
 }
 
@@ -390,8 +432,11 @@ export async function rescheduleOwnAppointmentAction(
   }
 
   try {
-    return { ok: true, data: await rescheduleAppointment(slug.data, id.data, body.data) };
+    return {
+      ok: true,
+      data: await rescheduleAppointment(slug.data, id.data, access.accessToken, body.data),
+    };
   } catch (error) {
-    return failure(error, locale);
+    return appointmentFailure(error, locale);
   }
 }
