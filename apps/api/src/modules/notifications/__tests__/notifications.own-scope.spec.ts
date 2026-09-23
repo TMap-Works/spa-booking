@@ -24,9 +24,11 @@ import type { NotificationsService, NotificationSearch } from '../notifications.
  *    reste ici que la relecture de la métadonnée : une distraction qui reposerait
  *    `@AuthAtLeast('STAFF')` la ferait disparaître, et rougirait aux deux
  *    endroits ;
- * 2. la **portée** — `ownScopeOf` traduit cette porte en un critère de recherche,
- *    et c'est le seul endroit du module qui lise un rôle. Elle reste donc ici,
- *    avec le reste du module, et c'est l'objet de cette suite.
+ * 2. la **portée** — `ownScopeFor(actor, 'agenda:read:all')` traduit cette porte
+ *    en un critère de recherche. La traduction elle-même est partagée depuis
+ *    #1205 et couverte par `identity/__tests__/permissions.spec.ts` ; ce qui
+ *    reste propre à ce module, et qui est l'objet de cette suite, c'est **quelle
+ *    permission large** la route y passe et ce qu'elle en fait du critère.
  *
  * Ce qu'elle ne couvre pas, délibérément : que le dépôt honore ce critère. Cela
  * se prouve contre une vraie base, et c'est l'objet des suites d'intégration et

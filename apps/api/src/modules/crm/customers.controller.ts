@@ -25,7 +25,7 @@ import {
 import { AuthAtLeast, AuthWith } from '../identity/auth.decorator';
 import type { AuthenticatedUser } from '../identity/identity.types';
 import { CurrentUser } from '../identity/jwt-auth.guard';
-import { roleHasPermission } from '../identity/permissions';
+import { ownScopeFor } from '../identity/permissions';
 import { CustomerExportService } from './customer-export.service';
 import { CustomerHistoryService } from './customer-history.service';
 import { CustomersService } from './customers.service';
@@ -79,6 +79,10 @@ import {
  * l'appelant a reçues ou doit recevoir ; `customers:read:all` rend le fichier.
  * Aucun `if` sur le rôle dans le service — la portée est un critère de
  * recherche, résolu une fois, à l'entrée (voir `CrmRepository.searchWhere`).
+ * Elle se résout par `ownScopeFor(actor, 'customers:read:all')`, l'écriture
+ * unique de cette traduction depuis #1205 : la permission large reste nommée
+ * ici, parce que c'est la route qui sait par quelle porte on entre, et seul le
+ * calcul est partagé avec les autres routes à double portée.
  *
  * L'**écriture**, elle, part entière au rang gérant (`customers:write`) : créer
  * une fiche, corriger un numéro, la désactiver sont des décisions **sur** le
@@ -167,7 +171,7 @@ export class CustomersController {
   ): Promise<CustomerPageDto> {
     return this.customers.search({
       ...toSearchQuery(query),
-      ownedByUserId: ownScopeOf(actor),
+      ownedByUserId: ownScopeFor(actor, 'customers:read:all'),
     });
   }
 
@@ -194,7 +198,9 @@ export class CustomersController {
     @CurrentUser() actor: AuthenticatedUser,
     @Param('id', ParseUUIDPipe) id: string,
   ): Promise<CustomerDto> {
-    return toCustomerDto(await this.customers.byId(id, ownScopeOf(actor)));
+    return toCustomerDto(
+      await this.customers.byId(id, ownScopeFor(actor, 'customers:read:all')),
+    );
   }
 
   /**
@@ -382,23 +388,4 @@ export class CustomersController {
   ): Promise<CustomerDto> {
     return toCustomerDto(await this.customers.setActive(id, body.isActive));
   }
-}
-
-/**
- * Le périmètre de lecture de l'appelant : `null` pour « tout le fichier »,
- * son identifiant de compte pour « ses clientes à lui » (#812).
- *
- * ## Pourquoi ici et non dans le service
- *
- * Parce que c'est une traduction de la **porte** vers le domaine, comme
- * `cancelledBy` chez `appointments` : la garde a déjà décidé que l'appelant
- * entre, il reste à dire avec quelle portée. Le service, lui, ne connaît qu'un
- * critère de recherche — il n'a ni rôle ni matrice à interroger, et c'est ce qui
- * le laisse testable sans couche d'autorisation.
- *
- * `customers:read:all` l'emporte quand les deux sont portées : un gérant qui
- * donne aussi des soins lit le fichier entier, comme avant.
- */
-function ownScopeOf(actor: AuthenticatedUser): string | null {
-  return roleHasPermission(actor.role, 'customers:read:all') ? null : actor.userId;
 }
