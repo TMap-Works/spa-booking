@@ -20,6 +20,12 @@ import { useState } from 'react';
 // déjà ses deux langues, et la constante n'en est que le repli transitoire.
 import { pendingConfirmationLabel } from '@/lib/appointment-status';
 import { accountPath } from '@/app/(account)/[tenantSlug]/compte/paths';
+// L'annulation part vers une adresse de l'espace client, et non vers une action
+// serveur de ce tunnel (#1201) : les cookies de session sont bornés à
+// `/{slug}/compte`, et une action appelée depuis `/{slug}/reservation` ne
+// recevrait aucun jeton — la route de l'API, gardée depuis #1135, rendrait 401.
+// Voir `cancellation-request.ts`, qui porte l'arbitrage.
+import { requestCancellation } from '@/app/(account)/[tenantSlug]/compte/rendez-vous/[appointmentId]/annulation/cancellation-request';
 import {
   appointmentIcsFilename,
   appointmentIcsHref,
@@ -29,8 +35,6 @@ import { Button } from '@/components/ui/button';
 import { Icon, type IconName } from '@/components/ui/icon';
 import { Notification } from '@/components/ui/notification';
 import type { ContactDraft } from '@/lib/booking/draft';
-
-import { cancelAppointmentAction } from '../actions';
 
 import { BookingAppointmentCard } from './appointment-card';
 
@@ -308,7 +312,11 @@ export function ConfirmationStep({
     setCancelling(true);
     setError(null);
 
-    const result = await cancelAppointmentAction(tenant.slug, appointment.id);
+    const result = await requestCancellation(
+      tenant.slug,
+      appointment.id,
+      t('tunnel.actions.unexpectedError'),
+    );
 
     if (result.ok) {
       onCancelled(result.data);

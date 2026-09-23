@@ -412,43 +412,69 @@ export function bookGuestAppointment(
 }
 
 /**
- * Annulation depuis le lien de l'écran de confirmation.
+ * Les deux gestes que la cliente exerce sur un rendez-vous **déjà pris** —
+ * annuler et reporter.
  *
- * L'autorisation repose sur la connaissance de l'identifiant du rendez-vous —
- * un UUID v4, non énumérable. Aucun jeton n'est exigé : la cliente qui vient de
- * réserver sans compte n'en a pas.
+ * ## Elles portent une session, depuis #1135
+ *
+ * Leurs routes sont servies sous `/public/{slug}/…`, et elles ne sont plus
+ * publiques pour autant : `@Auth('CLIENT')` les garde, et le service refuse en
+ * 404 le rendez-vous qui n'est pas celui du jeton
+ * (`public-appointments.controller.ts`). Elles passent donc par
+ * `authorizedRequest` et non par `request`, le transport du tunnel — qui, lui,
+ * n'émet aucun en-tête `Authorization` et se ferait rendre 401.
+ *
+ * La doctrine d'origine — « on réserve sans compte, donc on annule sans
+ * compte » — reposait sur le secret de l'identifiant. Il ne l'est plus : un
+ * praticien lit les `appointmentId` de ses collègues dans le journal des envois
+ * de son salon, et la route publique lui rouvrait sans jeton ce que le
+ * back-office lui refusait (#1135).
+ *
+ * ## Le jeton est un paramètre **obligatoire**, et positionné avant le corps
+ *
+ * Le rendre facultatif aurait laissé compiler exactement l'appel que ce ticket
+ * corrige (#1201) : trois appelants du front demandaient l'annulation ou le
+ * report sans rien joindre, et n'obtenaient plus que des 401. Obligatoire, une
+ * omission ne se découvre plus à l'exécution mais à la compilation.
  */
-export function cancelAppointment(
+export async function cancelAppointment(
   tenantSlug: string,
   appointmentId: string,
+  accessToken: string,
   body: CancelAppointmentRequest = {},
 ): Promise<BookedAppointment> {
-  return request(
-    publicPath(tenantSlug, `/appointments/${encodeURIComponent(appointmentId)}/cancel`),
-    { method: 'POST', body, schema: bookedAppointmentSchema },
-  );
+  const { payload } = await authorizedRequest({
+    method: 'POST',
+    path: publicPath(tenantSlug, `/appointments/${encodeURIComponent(appointmentId)}/cancel`),
+    accessToken,
+    body,
+    schema: bookedAppointmentSchema,
+  });
+  return payload;
 }
 
 /**
- * Report depuis le lien de l'écran de confirmation, ou depuis l'espace client.
- *
- * Même régime d'autorisation que l'annulation, et pour la même raison : on
- * réserve sans compte, donc on reporte sans compte. Ce qui autorise l'appel est
- * la connaissance de l'identifiant du rendez-vous.
+ * Report d'un rendez-vous par la cliente — même régime d'autorisation que
+ * l'annulation ci-dessus, et pour la même raison.
  *
  * La réponse est un rendez-vous **neuf** — le report est une annulation suivie
  * d'une création liée, jamais une mise à jour des dates en place. L'appelant
  * remplace celui qu'il gardait ; `rescheduledFromId` le relie au précédent.
  */
-export function rescheduleAppointment(
+export async function rescheduleAppointment(
   tenantSlug: string,
   appointmentId: string,
+  accessToken: string,
   body: RescheduleAppointmentRequest,
 ): Promise<BookedAppointment> {
-  return request(
-    publicPath(tenantSlug, `/appointments/${encodeURIComponent(appointmentId)}/reschedule`),
-    { method: 'POST', body, schema: bookedAppointmentSchema },
-  );
+  const { payload } = await authorizedRequest({
+    method: 'POST',
+    path: publicPath(tenantSlug, `/appointments/${encodeURIComponent(appointmentId)}/reschedule`),
+    accessToken,
+    body,
+    schema: bookedAppointmentSchema,
+  });
+  return payload;
 }
 
 // ---------------------------------------------------------------------------

@@ -29,13 +29,19 @@ import { contact, presence as connectee, service, tenant } from './fixtures';
 
 const loadAvailabilityAction = vi.fn();
 const bookAppointmentAction = vi.fn();
-const cancelAppointmentAction = vi.fn();
+// L'annulation n'est plus une action de ce tunnel (#1201) : elle part vers une
+// adresse de l'espace client, dont c'est le module d'appel qu'on tient ici.
+const requestCancellation = vi.fn();
 
 vi.mock('@/app/(booking)/[tenantSlug]/reservation/actions', () => ({
   loadAvailabilityAction: (...args: unknown[]) => loadAvailabilityAction(...args),
   bookAppointmentAction: (...args: unknown[]) => bookAppointmentAction(...args),
-  cancelAppointmentAction: (...args: unknown[]) => cancelAppointmentAction(...args),
 }));
+
+vi.mock(
+  '@/app/(account)/[tenantSlug]/compte/rendez-vous/[appointmentId]/annulation/cancellation-request',
+  () => ({ requestCancellation: (...args: unknown[]) => requestCancellation(...args) }),
+);
 
 /** Le salon est à Antananarivo (UTC+3) : 06:00 UTC s'affiche « 09:00 ». */
 const MATIN = '2026-09-01T06:00:00.000Z' as UtcInstant;
@@ -150,7 +156,7 @@ afterEach(() => {
   cleanup();
   loadAvailabilityAction.mockReset();
   bookAppointmentAction.mockReset();
-  cancelAppointmentAction.mockReset();
+  requestCancellation.mockReset();
 });
 
 /**

@@ -41,27 +41,35 @@
  * `code`, et les trois codes qui deviennent une phrase à l'écran ont chacun la
  * leur (`SLOT_NO_LONGER_AVAILABLE`, `UNAUTHORIZED`,
  * `CLIENT_EMAIL_NOT_BOOKABLE` — voir `booking-tunnel.tsx` et `summary-step.tsx`).
+ *
+ * ## L'annulation n'est plus une action de ce tunnel (#1201)
+ *
+ * `cancelAppointmentAction` vivait ici, et elle ne pouvait plus aboutir : la
+ * route de l'API exige depuis #1135 le jeton de la **cliente du rendez-vous**,
+ * et une action serveur appelée depuis `/{slug}/reservation` n'en reçoit
+ * aucun — les deux cookies de session sont posés sur `/{slug}/compte`
+ * (`compte/session.ts`), et le navigateur ne les joint qu'aux requêtes de ce
+ * chemin-là. Le lien d'annulation de l'écran de confirmation vise donc une
+ * adresse de l'espace client, qui en reçoit la session :
+ * `compte/rendez-vous/{id}/annulation`. Voir `cancellation-request.ts`, qui
+ * porte l'arbitrage.
+ *
+ * Ce qui reste ici est ce que le tunnel fait **sans jeton** : lire des créneaux
+ * et poser une réservation.
  */
 
 import {
   ERROR_CODES,
   availabilityQuerySchema,
   bookGuestAppointmentRequestSchemaFor,
-  cancelAppointmentRequestSchema,
   slugSchema,
-  uuidSchema,
   type AvailabilityResponse,
   type BookedAppointment,
 } from '@spa/shared';
 import { getTranslations } from 'next-intl/server';
 
 import { readAccountPresence } from '@/lib/account-presence';
-import {
-  ApiClientError,
-  bookGuestAppointment,
-  cancelAppointment,
-  fetchAvailability,
-} from '@/lib/api-client';
+import { ApiClientError, bookGuestAppointment, fetchAvailability } from '@/lib/api-client';
 
 import { loadSalonTenant } from '../salon-data';
 
@@ -187,25 +195,3 @@ export async function bookAppointmentAction(
   }
 }
 
-export async function cancelAppointmentAction(
-  tenantSlug: string,
-  appointmentId: string,
-  reason?: string,
-): Promise<ActionResult<BookedAppointment>> {
-  const t = await getTranslations('booking');
-  const slug = slugSchema.safeParse(tenantSlug);
-  const id = uuidSchema.safeParse(appointmentId);
-  const body = cancelAppointmentRequestSchema.safeParse(
-    reason === undefined || reason === '' ? {} : { reason },
-  );
-
-  if (!slug.success || !id.success || !body.success) {
-    return invalid(t('tunnel.actions.cancelIncomplete'));
-  }
-
-  try {
-    return { ok: true, data: await cancelAppointment(slug.data, id.data, body.data) };
-  } catch (error) {
-    return failure(error, t('tunnel.actions.unexpectedError'));
-  }
-}

@@ -35,11 +35,15 @@ import fr from '@/messages/fr/booking.json';
 
 import { contact, service, tenant } from './fixtures';
 
-const cancelAppointmentAction = vi.fn();
+// L'annulation ne passe plus par une action de ce tunnel mais par une adresse de
+// l'espace client (#1201) : c'est cette couture-là qu'il faut tenir ici, sans
+// quoi un clic sur « Confirmer l'annulation » partirait sur le réseau.
+const requestCancellation = vi.fn();
 
-vi.mock('@/app/(booking)/[tenantSlug]/reservation/actions', () => ({
-  cancelAppointmentAction: (...args: unknown[]) => cancelAppointmentAction(...args),
-}));
+vi.mock(
+  '@/app/(account)/[tenantSlug]/compte/rendez-vous/[appointmentId]/annulation/cancellation-request',
+  () => ({ requestCancellation: (...args: unknown[]) => requestCancellation(...args) }),
+);
 
 function appointment(overrides: Partial<BookedAppointment> = {}): BookedAppointment {
   return {
@@ -93,7 +97,7 @@ function renderConfirmation(
 
 afterEach(() => {
   cleanup();
-  cancelAppointmentAction.mockReset();
+  requestCancellation.mockReset();
 });
 
 describe('l’écran terminal est une sortie', () => {
