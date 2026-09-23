@@ -173,6 +173,32 @@ describe('bookGuestAppointmentRequestSchema', () => {
     ).toBe(false);
   });
 
+  /**
+   * Le champ qui désignait la cliente, et qui ne désigne plus personne (#1136).
+   *
+   * Réserver exige un compte depuis la décision produit du 22/09/2026 : la
+   * cliente du rendez-vous est celle du jeton, et `client` est devenu facultatif
+   * et sans effet. Les deux cas ci-dessous tiennent les deux moitiés de cette
+   * phrase — il peut manquer, et il reste validé quand il est là, le temps que
+   * le tunnel cesse de l'envoyer.
+   */
+  describe('les coordonnées, depuis que réserver exige un compte', () => {
+    it('accepte une demande sans coordonnées — la cliente vient du jeton', () => {
+      const { client: _sansCoordonnees, ...request2 } = request;
+
+      expect(bookGuestAppointmentRequestSchema.safeParse(request2).success).toBe(true);
+    });
+
+    it('valide encore les coordonnées présentes, plutôt que de les laisser passer', () => {
+      expect(
+        bookGuestAppointmentRequestSchema.safeParse({
+          ...request,
+          client: { ...request.client, email: 'camille' },
+        }).success,
+      ).toBe(false);
+    });
+  });
+
   it('refuse une date-heure nue, dont le fuseau ne pourrait qu’être deviné', () => {
     expect(
       bookGuestAppointmentRequestSchema.safeParse({ ...request, startsAt: '2026-09-01T11:00:00' })
