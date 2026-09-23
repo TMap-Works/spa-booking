@@ -694,6 +694,456 @@
     ],
     "604": [
       "api/identity"
+    ],
+    "625": [
+      "web/identity",
+      "web/styles"
+    ],
+    "630": [
+      "web/catalog",
+      "web/identity",
+      "web/payments"
+    ],
+    "642": [
+      "apps/web/lib/api-client",
+      "web/availability"
+    ],
+    "683": [
+      "apps/web/tests"
+    ],
+    "684": [
+      "apps/web/mockups/admin",
+      "apps/web/tests/ordered-list-role"
+    ],
+    "694": [
+      "api/availability",
+      "api/catalog",
+      "api/identity",
+      "apps/web/app/(admin)/[tenantSlug]/admin/personnel/actions.ts",
+      "apps/web/app/(admin)/[tenantSlug]/admin/personnel/components",
+      "apps/web/app/(admin)/[tenantSlug]/admin/personnel/page.tsx",
+      "apps/web/lib/admin/staff-directory",
+      "apps/web/lib/api-client",
+      "db:schema",
+      "packages/shared"
+    ],
+    "695": [
+      "api/identity",
+      "apps/web/app/(admin)/[tenantSlug]/admin/personnel/components",
+      "apps/web/app/(admin)/[tenantSlug]/admin/personnel/page.tsx",
+      "apps/web/lib/api-client",
+      "packages/shared"
+    ],
+    "696": [
+      "apps/web/app/(admin)/[tenantSlug]/admin/guard",
+      "apps/web/app/(admin)/[tenantSlug]/admin/personnel/[staffId]"
+    ],
+    "697": [
+      "apps/web/app/(admin)/[tenantSlug]/admin/catalogue/[serviceId]",
+      "apps/web/app/(admin)/[tenantSlug]/admin/guard"
+    ],
+    "698": [
+      "apps/web/app/(account)/[tenantSlug]/compte/components/register-form",
+      "apps/web/lib/account"
+    ],
+    "699": [
+      "apps/web/app/(admin)/[tenantSlug]/admin/components/admin-login-form",
+      "apps/web/app/(admin)/[tenantSlug]/admin/connexion",
+      "apps/web/styles/admin"
+    ],
+    "700": [
+      "apps/web/styles/admin",
+      "apps/web/styles/components/card"
+    ],
+    "701": [
+      "apps/web/app/(admin)/[tenantSlug]/admin/components/admin-rail",
+      "apps/web/styles/admin/shell",
+      "apps/web/tests/unit/admin-rail"
+    ],
+    "705": [
+      "apps/web/app/(admin)/[tenantSlug]/admin/personnel/[staffId]",
+      "apps/web/app/(admin)/[tenantSlug]/admin/personnel/actions",
+      "apps/web/lib/api-client"
+    ],
+    "703": [
+      "apps/web/app/(account)/[tenantSlug]/compte/rendez-vous/[appointmentId]/report",
+      "apps/web/app/(admin)/[tenantSlug]/admin/personnel/[staffId]",
+      "apps/web/lib/tenant-slug"
+    ],
+    "708": [
+      "apps/web/app/(admin)/[tenantSlug]/admin/personnel/actions",
+      "apps/web/lib/admin/staff-contract",
+      "apps/web/tests/unit/admin-staff-directory"
+    ],
+    "710": [
+      "apps/web/app/(admin)/[tenantSlug]/admin/catalogue/[serviceId]",
+      "apps/web/lib/tenant-slug",
+      "apps/web/tests/unit/admin-service-not-found"
+    ],
+    "713": [
+      "apps/web/tests/admin-catalog-rhythm",
+      "apps/web/tests/admin-form-width",
+      "apps/web/tests/admin-login-layout",
+      "apps/web/tests/support/tokens"
+    ],
+    "714": [
+      "apps/web/app/(admin)/[tenantSlug]/admin/personnel/components/staff-member-form",
+      "apps/web/lib/admin/staff-directory",
+      "apps/web/tests/unit/admin-staff-directory"
+    ],
+    "718": [
+      "apps/web/app/(admin)/[tenantSlug]/admin/components/tenant-settings-form",
+      "apps/web/app/(admin)/[tenantSlug]/admin/reglages/page",
+      "apps/web/styles/admin/shell",
+      "apps/web/tests/admin-screen-rhythm",
+      "apps/web/tests/unit/admin-tenant-settings-form"
+    ],
+    "719": [
+      "apps/web/tests/unit/tenant-slug"
+    ],
+    "722": [
+      "apps/web/tests/admin-screen-rhythm",
+      "apps/web/tests/support/tokens"
+    ],
+    "750": [
+      "api/appointments",
+      "api/crm"
+    ],
+    "733": [
+      "web/appointments"
+    ],
+    "738": [
+      "web/availability"
+    ],
+    "734": [
+      "web/compte",
+      "web/tunnel"
+    ],
+    "751": [
+      "web/admin-planning"
+    ],
+    "764": [
+      "web/identity"
+    ],
+    "735": [
+      "web/tunnel"
+    ],
+    "736": [
+      "web/tunnel"
+    ],
+    "737": [
+      "web/tunnel"
+    ],
+    "739": [
+      "web/tunnel",
+      "web/vitrine"
+    ],
+    "740": [
+      "web/tunnel"
+    ],
+    "741": [
+      "web/tunnel"
+    ],
+    "742": [
+      "web/compte",
+      "web/tunnel"
+    ],
+    "743": [
+      "web/compte",
+      "web/tunnel"
+    ],
+    "744": [
+      "web/compte"
+    ],
+    "745": [
+      "web/compte"
+    ],
+    "746": [
+      "web/compte"
+    ],
+    "747": [
+      "web/compte"
+    ],
+    "748": [
+      "web/tunnel"
+    ],
+    "749": [
+      "web/compte",
+      "web/salon-public",
+      "web/tunnel"
+    ],
+    "752": [
+      "web/admin-planning"
+    ],
+    "753": [
+      "web/admin-planning"
+    ],
+    "754": [
+      "web/admin-planning"
+    ],
+    "756": [
+      "web/admin-clients",
+      "web/admin-planning",
+      "web/appointment-status",
+      "web/compte"
+    ],
+    "757": [
+      "web/admin-clients",
+      "web/admin-planning"
+    ],
+    "758": [
+      "web/admin-planning"
+    ],
+    "762": [
+      "web/admin-planning"
+    ],
+    "761": [
+      "web/admin-clients",
+      "web/admin-encaissement",
+      "web/admin-planning"
+    ],
+    "763": [
+      "web/admin-clients"
+    ],
+    "759": [
+      "web/admin-shell"
+    ],
+    "760": [
+      "web/admin-shell"
+    ],
+    "765": [
+      "web/admin-catalogue",
+      "web/vitrine"
+    ],
+    "766": [
+      "web/admin-personnel"
+    ],
+    "767": [
+      "web/admin-personnel"
+    ],
+    "768": [
+      "web/admin-catalogue",
+      "web/admin-personnel"
+    ],
+    "769": [
+      "web/admin-catalogue"
+    ],
+    "770": [
+      "web/admin-catalogue"
+    ],
+    "771": [
+      "api/catalog",
+      "web/admin-personnel"
+    ],
+    "772": [
+      "web/admin-reporting"
+    ],
+    "773": [
+      "web/vitrine"
+    ],
+    "774": [
+      "web/admin-reporting"
+    ],
+    "775": [
+      "web/admin-reporting",
+      "web/admin-shell"
+    ],
+    "776": [
+      "web/admin-catalogue"
+    ],
+    "790": [
+      "api/appointments",
+      "db:schema",
+      "packages/shared/appointments",
+      "web/compte",
+      "web/politique-donnees",
+      "web/tunnel"
+    ],
+    "787": [
+      "web/compte"
+    ],
+    "796": [
+      "api/appointments",
+      "api/notifications",
+      "contracts:shared",
+      "db:schema",
+      "web/admin-clients",
+      "web/admin-planning",
+      "web/appointments"
+    ],
+    "844": [
+      "api/identity",
+      "apps/api/prisma",
+      "packages/shared/src/locale"
+    ],
+    "845": [
+      "apps/web/app/layout",
+      "apps/web/components/auth",
+      "apps/web/components/ui",
+      "apps/web/lib/appointment-status",
+      "apps/web/lib/format",
+      "packages/shared/src/errors",
+      "web/admin-rail",
+      "web/i18n-core"
+    ],
+    "846": [
+      "apps/web/components/booking",
+      "apps/web/components/home",
+      "apps/web/components/salon",
+      "apps/web/lib/booking",
+      "web/booking",
+      "web/politique-donnees"
+    ],
+    "847": [
+      "apps/web/components/account",
+      "apps/web/lib/account",
+      "web/account"
+    ],
+    "848": [
+      "web/admin-personnel",
+      "web/admin-planning"
+    ],
+    "849": [
+      "web/admin-catalogue"
+    ],
+    "850": [
+      "web/admin-encaissement"
+    ],
+    "851": [
+      "api/reporting",
+      "apps/web/lib/admin/reporting-view",
+      "web/admin-reporting"
+    ],
+    "852": [
+      "api/crm",
+      "web/admin-clients"
+    ],
+    "853": [
+      "web/admin-connexion",
+      "web/admin-invitation",
+      "web/admin-reglages"
+    ],
+    "854": [
+      "api/notifications",
+      "apps/api/prisma"
+    ],
+    "827": [
+      "web/compte",
+      "web/tunnel"
+    ],
+    "828": [
+      "web/admin-encaissement"
+    ],
+    "829": [
+      "web/admin-encaissement"
+    ],
+    "870": [
+      "api/crm",
+      "packages/shared/crm",
+      "web/admin-clients"
+    ],
+    "871": [
+      "web/compte",
+      "web/ui"
+    ],
+    "872": [
+      "web/admin-styles"
+    ],
+    "880": [
+      "api/identity",
+      "db:schema",
+      "packages/shared/identity",
+      "web/compte",
+      "web/politique-donnees"
+    ],
+    "877": [
+      "web/admin-encaissement"
+    ],
+    "885": [
+      "api/catalog",
+      "contracts:shared",
+      "web/admin-catalogue"
+    ],
+    "895": [
+      "api/catalog",
+      "contracts:shared",
+      "web/catalog"
+    ],
+    "917": [
+      "api/appointments",
+      "api/crm",
+      "contracts:shared",
+      "web/admin-clients",
+      "web/admin-encaissement",
+      "web/admin-planning",
+      "web/admin-reporting",
+      "web/compte",
+      "web/tunnel"
+    ],
+    "970": [
+      "packages/shared",
+      "web/identity"
+    ],
+    "1002": [
+      "web/appointments",
+      "web/catalog"
+    ],
+    "1103": [
+      "apps/web/lib/salon-presets"
+    ],
+    "1104": [
+      "apps/web/lib/admin/my-planning",
+      "apps/web/lib/admin/reporting-view",
+      "web/admin-mon-planning",
+      "web/admin-tableau-de-bord"
+    ],
+    "1105": [
+      "apps/web/lib/plan",
+      "apps/web/lib/salon-presets",
+      "web/admin-abonnement",
+      "web/inscription"
+    ],
+    "1106": [
+      "apps/web/lib/platform-console",
+      "apps/web/lib/salon-presets",
+      "web/plateforme"
+    ],
+    "1027": [
+      "api/core",
+      "api/identity/platform",
+      "api/payments",
+      "contracts:shared/receipt"
+    ],
+    "1204": [
+      "api/identity",
+      "api/notifications"
+    ],
+    "1205": [
+      "api/crm",
+      "api/identity/permissions",
+      "api/notifications"
+    ],
+    "1201": [
+      "contracts:shared/appointments",
+      "web/appointments"
+    ],
+    "1207": [
+      "web/tunnel",
+      "web/api-client",
+      "contracts:shared"
+    ],
+    "1151": [
+      "web/tunnel"
+    ],
+    "1152": [
+      "web/tunnel"
+    ],
+    "1210": [
+      "web/admin-planning",
+      "contracts:shared"
+    ],
+    "1158": [
+      "web/admin-planning-grille"
     ]
   },
   "depends": {
@@ -765,6 +1215,57 @@
     "83": [
       76,
       77
+    ],
+    "845": [
+      844
+    ],
+    "846": [
+      845
+    ],
+    "848": [
+      845
+    ],
+    "849": [
+      845
+    ],
+    "850": [
+      845
+    ],
+    "851": [
+      845
+    ],
+    "847": [
+      844,
+      845
+    ],
+    "852": [
+      844,
+      845
+    ],
+    "853": [
+      844,
+      845
+    ],
+    "854": [
+      844
+    ],
+    "1105": [
+      1103
+    ],
+    "1106": [
+      1103
+    ],
+    "1027": [
+      1026
+    ],
+    "1136": [
+      1207
+    ],
+    "1137": [
+      1210
+    ],
+    "1207": [
+      1201
     ]
   },
   "why": {
@@ -790,6 +1291,26 @@
     "44": "le socle Next.js d'apps/web n'existe pas encore (ni next, ni app/, ni tsconfig, ni lib/api-client) : #45 le pose, tout autre ecran le reecrirait en conflit",
     "46": "le socle Next.js d'apps/web n'existe pas encore (ni next, ni app/, ni tsconfig, ni lib/api-client) : #45 le pose, tout autre ecran le reecrirait en conflit",
     "47": "le socle Next.js d'apps/web n'existe pas encore (ni next, ni app/, ni tsconfig, ni lib/api-client) : #45 le pose, tout autre ecran le reecrirait en conflit",
-    "83": "la bascule en production de #83 suppose la production multi-AZ livree par #77"
+    "83": "la bascule en production de #83 suppose la production multi-AZ livree par #77",
+    "845": "le front lit le type Locale et Tenant.defaultLocale livrés par la fondation données",
+    "846": "les écrans se traduisent sur le socle i18n du front (catalogues, résolution, format)",
+    "848": "les écrans se traduisent sur le socle i18n du front (catalogues, résolution, format)",
+    "849": "les écrans se traduisent sur le socle i18n du front (catalogues, résolution, format)",
+    "850": "les écrans se traduisent sur le socle i18n du front (catalogues, résolution, format)",
+    "851": "les écrans se traduisent sur le socle i18n du front (catalogues, résolution, format)",
+    "847": "l'écran traduit s'appuie sur le socle i18n et affiche ou modifie un champ de langue",
+    "852": "l'écran traduit s'appuie sur le socle i18n et affiche ou modifie un champ de langue",
+    "853": "l'écran traduit s'appuie sur le socle i18n et affiche ou modifie un champ de langue",
+    "854": "la langue d'envoi se lit sur User.locale et Tenant.defaultLocale",
+    "1105": "le formulaire d'inscription repart des préréglages de pays nord-américains",
+    "1106": "le formulaire d'ouverture d'un salon repart des préréglages de pays nord-américains",
+    "1027": "le canal de carte sur ReceiptSettlement que le §1 de #1027 exige est le livrable de #1026 (paymentCardChannelSchema, receiptSettlementSchema) — le faire d'abord ferait inventer puis dupliquer l'enumeration",
+    "1136": "le front d'abord : la CI de la PR #1206 prouve l'ordre inverse de celui que l'heuristique deduit. Le tunnel appelle bookGuestAppointment() sans jeton (apps/web/lib/api-client.ts:403, seul appelant reservation/actions.ts:184) ; des que la route publique exige @Auth('CLIENT'), l'etape 7 Confirmation rend 401 et 4 scenarios du parcours critique tombent. Merger #1136 avant #1207 casserait 'reserver -> confirmer -> encaisser' sur develop, que CLAUDE.md dit intouchable. #1207 est donc un prerequis dur de #1136, et cette arete coupe la reciproque heuristique qui gelait 11 tickets.",
+    "1137": "meme inversion, prouvee par la CI : la PR #1209 n'a qu'un check rouge, front-desk.e2e.ts:208 'no-show depuis le tiroir', ou le tiroir admin clique 'Marquer non honore' sur un RDV a J+2 que l'API refuse desormais en 422. Le correctif (garde du tiroir, regle mutualisee dans packages/shared, reprise du scenario) est le livrable de #1210 et vit dans apps/web, hors de l'empreinte api/appointments de #1137. #1210 doit donc preceder, et cette arete coupe la reciproque heuristique 'l'ecran consomme l'API du meme module'.",
+    "1207": "prerequis nomme par #1207 lui-meme : les jetons de session sont bornes au chemin /{slug}/compte (apps/web/app/(account)/[tenantSlug]/compte/session.ts) alors que le tunnel est servi sur /{slug}/reservation — une Server Action du tunnel ne recoit donc aucun cookie de session, meme pour une cliente connectee. #1201 tranche cette portee une fois pour les trois routes publiques ; sans elle, #1207 n'a pas de jeton a joindre.",
+    "1151": "brouillon sessionStorage du tunnel + reservation/actions.ts",
+    "1152": "etape confirmation du tunnel",
+    "1210": "admin/components/appointment-panel.tsx + my-planning-client.tsx — tiroir, pas la grille",
+    "1158": "lib/admin/calendar-grid.ts — la grille seule, aucun fichier commun avec le tiroir de #1210"
   }
 }
