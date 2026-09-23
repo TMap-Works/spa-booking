@@ -12,7 +12,7 @@ import { useState } from 'react';
 
 import { BookingActionBar } from '@/components/booking/summary-bar';
 import { Button } from '@/components/ui/button';
-import { Notification, type NotificationTone } from '@/components/ui/notification';
+import { Notification } from '@/components/ui/notification';
 import type { ContactDraft } from '@/lib/booking/draft';
 
 import { requestBooking } from '../booking-request';
@@ -26,7 +26,7 @@ interface SummaryStepProps {
   readonly staffId: string | null;
   readonly startsAt: UtcInstant;
   readonly contact: ContactDraft;
-  /** Rouvre l'étape « Coordonnées » — la correction du bloc, et celle du refus d'adresse. */
+  /** Rouvre l'étape « Coordonnées » — la correction du bloc de récapitulatif. */
   readonly onBack: () => void;
   /** Rouvre l'étape « Créneau » (`BM-TUNNEL-01`). */
   readonly onEditSlot: () => void;
@@ -48,46 +48,19 @@ interface SummaryStepProps {
   readonly onSignInRequired: () => void;
 }
 
-/** Ce qui s'affiche au-dessus du récapitulatif quand la réservation est refusée. */
+/**
+ * Ce qui s'affiche au-dessus du récapitulatif quand la réservation est refusée.
+ *
+ * Un seul ton depuis #1222, et c'est pourquoi il n'est plus porté ici : le
+ * refus d'adresse — `CLIENT_EMAIL_NOT_BOOKABLE`, en `warning` parce qu'il
+ * désignait une correction à un écran d'ici — n'est plus émis par aucune route.
+ * Les deux refus que cet écran **traite** partent ailleurs (`onSlotLost`,
+ * `onSignInRequired`) ; ce qui reste est la panne, et une panne est `danger`.
+ */
 interface Refusal {
-  readonly tone: NotificationTone;
   readonly title: string;
   readonly body: string;
 }
-
-/*
- * Le refus qu'aucun autre créneau ne lèvera — `CLIENT_EMAIL_NOT_BOOKABLE` (#452).
- *
- * ## Pourquoi il ne renvoie pas au calendrier
- *
- * C'est un 409 comme `SLOT_NO_LONGER_AVAILABLE`, et c'est tout ce que les deux
- * ont en commun. Le créneau perdu est **passager** : un autre horaire le résout,
- * d'où le retour à l'étape `creneau`. Celui-ci est **définitif pour cette
- * adresse** — la faire choisir un autre horaire lui ferait reparcourir le tunnel
- * pour se heurter au même mur. La seule action utile est à un écran d'ici :
- * « Corriger mes coordonnées », que ce composant affiche déjà.
- *
- * ## Pourquoi la phrase est écrite ici et ne dit pas la cause
- *
- * Écrite ici, parce que seul le `code` engage l'API : le `message` du contrat
- * s'adresse à un développeur, il est traduisible et peut changer sans préavis
- * (skill web-frontend §2) — même arbitrage que pour `onSlotLost` dans
- * `booking-tunnel.tsx`.
- *
- * Sans la cause, parce que la route est **publique et non authentifiée**. Côté
- * serveur, l'adresse est refusée parce qu'elle porte un compte non client de
- * l'établissement ; l'écrire à l'écran ferait de ce formulaire un oracle sur
- * l'annuaire du personnel, que n'importe qui pourrait interroger adresse par
- * adresse. La phrase constate donc le refus et propose la suite, sans qualifier
- * l'adresse ni confirmer qu'elle appartient à quelqu'un.
- *
- * Elle vit sous `tunnel.summaryStep.emailRefused*` depuis #846 : une constante
- * de module ne peut pas lire le catalogue, et c'est `confirm` qui la compose.
- * Son **ton** reste `warning` et non `danger` — rien n'est cassé, et l'action à
- * mener est claire. Le ton porte de toute façon `role="alert"`, donc l'annonce
- * reste immédiate au lecteur d'écran : le visiteur vient de cliquer, il attend
- * une réponse.
- */
 
 /**
  * Récapitulatif et validation — quatrième critère d'acceptation de #45.
@@ -103,9 +76,10 @@ interface Refusal {
  * réellement des couples libellé / valeur (`ContactRecap`).
  *
  * Un seul bouton plein sur l'écran, « Confirmer la réservation » dans la barre
- * basse (`BM-VISUEL-02`) : les corrections sont des boutons discrets, et la
- * seule autre action nommée — « Corriger mes coordonnées » — n'apparaît qu'avec
- * le refus qui la désigne.
+ * basse (`BM-VISUEL-02`) : les corrections sont des boutons discrets, portés par
+ * les blocs qu'elles rouvrent. Il y avait une action nommée de plus —
+ * « Corriger mes coordonnées », dans le refus d'adresse de #452 —, et elle est
+ * partie avec ce refus (#1222).
  *
  * ## Le bouton se désactive dès le premier clic
  *
@@ -123,13 +97,12 @@ interface Refusal {
  *
  * ## La langue (#846)
  *
- * Les deux codes de refus que cet écran transforme en phrase —
- * `CLIENT_EMAIL_NOT_BOOKABLE` ici, `SLOT_NO_LONGER_AVAILABLE` chez
- * l'orchestrateur — ont chacun leur clé. Le refus générique, lui, affiche
- * encore `result.message` : c'est la phrase que l'action a écrite (traduite
- * depuis `actions.ts`) ou celle que l'API a renvoyée, et la seconde appartient
- * à l'API — la reformuler ici effacerait le seul détail qu'on ait d'une panne
- * qu'aucun code ne nomme.
+ * Le seul code de refus que cet écran transforme encore en phrase est traité
+ * chez l'orchestrateur — `SLOT_NO_LONGER_AVAILABLE` —, et il a sa clé. Le refus
+ * générique, lui, affiche `result.message` : c'est la phrase que la route a
+ * écrite (traduite depuis le catalogue) ou celle que l'API a renvoyée, et la
+ * seconde appartient à l'API — la reformuler ici effacerait le seul détail
+ * qu'on ait d'une panne qu'aucun code ne nomme.
  */
 export function SummaryStep({
   tenant,
@@ -169,12 +142,11 @@ export function SummaryStep({
         serviceId: service.id,
         ...(staffId === null ? {} : { staffId }),
         startsAt,
-        client: {
-          firstName: contact.firstName,
-          lastName: contact.lastName,
-          email: contact.email,
-          ...(contact.phone === '' ? {} : { phone: contact.phone }),
-        },
+        // Aucune coordonnée ne part avec la demande (#1222) : la cliente du
+        // rendez-vous est celle du jeton, et le contrat ne porte plus de champ
+        // par lequel en désigner une autre. Ce que l'étape « Coordonnées »
+        // affiche n'en dépendait pas — elle résume le compte au lieu de le
+        // redemander (#1050, #1086).
         ...(contact.clientNote === '' ? {} : { clientNote: contact.clientNote }),
         // L'accord coché à l'étape « Coordonnées », transporté jusqu'à l'API
         // (#790). Il vient du brouillon et non d'une constante : c'est ce qui
@@ -220,22 +192,11 @@ export function SummaryStep({
       return;
     }
 
-    // L'autre 409 du parcours, et le seul que le calendrier ne résout pas —
-    // voir `EMAIL_NOT_BOOKABLE`. Il reste **sur cette étape** : la correction
-    // est à un écran d'ici, pas cinq.
-    setRefusal(
-      result.code === ERROR_CODES.CLIENT_EMAIL_NOT_BOOKABLE
-        ? {
-            tone: 'warning',
-            title: t('tunnel.summaryStep.emailRefusedTitle'),
-            body: t('tunnel.summaryStep.emailRefusedBody'),
-          }
-        : { tone: 'danger', title: t('tunnel.summaryStep.failureTitle'), body: result.message },
-    );
-    // Le bouton se réarme, dans les deux cas : la panne est peut-être passagère,
-    // et sur le refus d'adresse c'est ce qui rend « Corriger mes coordonnées »
-    // — désactivé tant que la soumission court — de nouveau cliquable. Sans
-    // cela, la seule issue offerte serait le rechargement de la page.
+    // Tout le reste est une panne, et se dit comme telle : aucun autre code ne
+    // désigne de correction que cet écran saurait proposer.
+    setRefusal({ title: t('tunnel.summaryStep.failureTitle'), body: result.message });
+    // Le bouton se réarme : la panne est peut-être passagère, et sans cela la
+    // seule issue offerte serait le rechargement de la page.
     setSubmitting(false);
   };
 
@@ -245,19 +206,12 @@ export function SummaryStep({
           « Tout est-il exact ? » —, et « Vérifiez votre réservation » juste
           au-dessous la redisait en d'autres mots (#1047, BM-TUNNEL-11). */}
       {refusal === null ? null : (
-        <Notification tone={refusal.tone} title={refusal.title}>
+        /* Plus de correction nommée dans le refus depuis #1222 : « Corriger mes
+           coordonnées » n'existait que pour le refus d'adresse, qui n'est plus
+           émis. Une panne ne se corrige pas en changeant de coordonnées, et le
+           « Modifier » du bloc de coordonnées reste à deux lignes d'ici. */
+        <Notification tone="danger" title={refusal.title}>
           <p>{refusal.body}</p>
-          {/* La correction nommée, **dans** le refus qui la désigne (#452,
-              #1051). Elle vivait en rangée permanente au bas de l'étape, où
-              elle doublait le « Modifier » du bloc de coordonnées ; ici, elle
-              n'apparaît qu'au moment où la phrase ci-dessus dit d'y aller, et
-              elle dit ce qu'on va changer, là où « ← Retour » de l'en-tête ne
-              dit que « revenir ». */}
-          <div className="spa-booking__actions">
-            <Button variant="quiet" onClick={onBack} disabled={submitting}>
-              {t('tunnel.summaryStep.fixContact')}
-            </Button>
-          </div>
         </Notification>
       )}
 

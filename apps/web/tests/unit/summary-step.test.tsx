@@ -269,101 +269,28 @@ describe('le bouton de soumission se désactive dès le premier clic', () => {
 
     expect(slug).toBe('maison-lotus');
     expect(request).not.toHaveProperty('staffId');
-    expect(request['client']).toEqual({
-      firstName: 'Camille',
-      lastName: 'Rakoto',
-      email: 'camille@example.test',
-      phone: '+261341234567',
-    });
   });
-});
 
-/**
- * Le second 409 du parcours (#452).
- *
- * `CLIENT_EMAIL_NOT_BOOKABLE` partage son statut avec `SLOT_NO_LONGER_AVAILABLE`
- * et rien d'autre : le créneau perdu se rattrape à l'horaire suivant, celui-ci ne
- * se rattrape qu'en changeant d'adresse. Ce qui se garde ici est donc la
- * **distinction** — et le fait que le message n'apprenne rien de l'annuaire du
- * personnel, la route qui le rend étant publique et non authentifiée.
- */
-describe('adresse refusée par la réservation en ligne', () => {
-  const refusal = {
-    ok: false,
-    code: 'CLIENT_EMAIL_NOT_BOOKABLE',
-    // Le message du serveur : il ne doit **pas** se retrouver à l'écran, seul le
-    // `code` engage l'API (skill web-frontend §2).
-    message: 'Cette adresse e-mail ne peut pas être utilisée pour une réservation en ligne.',
-  };
-
-  async function refuse() {
-    bookAppointmentAction.mockResolvedValue(refusal);
+  /**
+   * Ce que la demande ne porte plus, et pourquoi c'est une garde et non un
+   * détail (#1222).
+   *
+   * `bookGuestAppointmentRequestSchema` est `.strict()` : un `client` réémis
+   * ici ferait rendre 400 `VALIDATION_ERROR` à **toute** réservation du tunnel,
+   * sans qu'aucun type ne le signale — l'objet posté est construit à la main.
+   * La cliente du rendez-vous est celle du jeton, et aucun champ du corps ne
+   * peut en désigner une autre.
+   */
+  it('n’envoie aucune coordonnée — la cliente vient du jeton', async () => {
+    bookAppointmentAction.mockResolvedValue({ ok: true, data: { id: 'x' } });
 
     const user = userEvent.setup();
-    const handles = renderSummary();
+    renderSummary();
 
     await user.click(screen.getByRole('button', { name: /Confirmer la réservation/ }));
 
-    return handles;
-  }
+    const [, request] = bookAppointmentAction.mock.calls[0] as [string, Record<string, unknown>];
 
-  it('ne renvoie pas au calendrier — aucun créneau ne lève ce refus', async () => {
-    const { onSlotLost, onBooked } = await refuse();
-
-    expect(onSlotLost).not.toHaveBeenCalled();
-    expect(onBooked).not.toHaveBeenCalled();
-    // L'étape reste montée : la correction est ici, pas cinq écrans plus loin.
-    expect(screen.getByRole('button', { name: /Confirmer la réservation/ })).toBeDefined();
-  });
-
-  it('invite à saisir une autre adresse, sans proposer un autre horaire', async () => {
-    await refuse();
-
-    const alert = screen.getByRole('alert').textContent ?? '';
-
-    expect(alert).toMatch(/adresse/i);
-    // Ce qui débloque : reprendre ses coordonnées, et le bouton qui y mène est là.
-    expect(alert).toMatch(/coordonnées/i);
-    expect(screen.getByRole('button', { name: /Corriger mes coordonnées/ })).toHaveProperty(
-      'disabled',
-      false,
-    );
-    // Ce qui ne débloque rien, et que le message ne doit donc pas suggérer.
-    expect(alert).not.toMatch(/autre (créneau|horaire)/i);
-    expect(alert).not.toMatch(/choisir un (créneau|horaire)/i);
-  });
-
-  it('n’est pas un oracle sur l’annuaire du personnel', async () => {
-    await refuse();
-
-    const alert = screen.getByRole('alert').textContent ?? '';
-
-    // Le refus ne dit jamais *pourquoi* : le nommer ferait de ce formulaire
-    // public un moyen de tester, adresse par adresse, qui travaille au salon.
-    for (const oracle of [
-      /personnel/i,
-      /équipe/i,
-      /salarié/i,
-      /collaborat/i,
-      /praticien/i,
-      /compte/i,
-      /membre/i,
-      /déjà (utilisée|prise|enregistrée)/i,
-    ]) {
-      expect(alert).not.toMatch(oracle);
-    }
-
-    // Et il ne recopie pas non plus l'adresse saisie, ni le message du serveur.
-    expect(alert).not.toContain('camille@example.test');
-    expect(alert).not.toContain(refusal.message);
-  });
-
-  it('réarme le bouton, faute de quoi rien ne serait cliquable', async () => {
-    await refuse();
-
-    expect(screen.getByRole('button', { name: /Confirmer la réservation/ })).toHaveProperty(
-      'disabled',
-      false,
-    );
+    expect(request).not.toHaveProperty('client');
   });
 });
