@@ -115,6 +115,8 @@ describe('Isolation inter-tenant — flux temps réel des rendez-vous', () => {
     const slot = bookableSlot();
     const response = await request(harness.server())
       .post(BOOKING_PATH(harness.a.tenant.slug))
+      // Réserver exige la cliente authentifiée depuis #1136.
+      .set('Authorization', await harness.bearer(harness.a))
       .send({
         serviceId: harness.a.serviceId,
         staffId: harness.a.staffId,

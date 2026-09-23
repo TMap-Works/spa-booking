@@ -98,6 +98,9 @@ describe('POST /api/v1/public/:tenantSlug/appointments/:appointmentId/reschedule
   async function book(): Promise<{ id: string; clientId: string; authorization: string }> {
     const response = await request(harness.server())
       .post(BOOKING_PATH(harness.a.tenant.slug))
+      // Réserver exige la cliente authentifiée depuis #1136 : c'est la cliente
+      // du harnais qui pose le rendez-vous, et c'est elle que le jeton nomme.
+      .set('Authorization', await harness.bearer(harness.a))
       .send({
         serviceId: harness.a.serviceId,
         staffId: harness.a.staffId,

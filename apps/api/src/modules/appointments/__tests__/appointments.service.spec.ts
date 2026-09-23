@@ -224,6 +224,11 @@ function createHarness(
   } = {},
 ): Harness {
   const repository = new FakeAppointmentsRepository();
+  // La fiche que le jeton du tunnel désigne (#1136). Semée d'office : réserver
+  // exige un compte, et une suite qui l'oublierait exercerait le 404 de fiche
+  // inconnue au lieu du cas passant. Les suites qui veulent l'inverse sèment
+  // leur propre fiche et passent son identifiant par `bookingInput`.
+  repository.seedClient({ tenantId: TENANT, id: CLIENTE, email: 'camille@example.test' });
   const journal = recordingLogger();
   const events = new AppointmentEvents(journal.logger);
   const availability = fakeAvailability(options.offered ?? [BILLED_START], options.candidates);
@@ -265,13 +270,10 @@ function bookingInput(overrides: Partial<BookAppointmentInput> = {}): BookAppoin
     serviceId: SERVICE_ID,
     staffId: STAFF_ID,
     startsAt: BILLED_START,
-    client: {
-      firstName: 'Camille',
-      lastName: 'Rakoto',
-      email: 'camille@example.test',
-      phone: '+261 34 12 345 67',
-      locale: null,
-    },
+    // Le compte du jeton, et non des coordonnées (#1136) : depuis que réserver
+    // exige un compte, il n'existe plus de champ d'entrée par lequel nommer une
+    // cliente qu'on ne serait pas.
+    client: { userId: CLIENTE },
     clientNote: null,
     // La case cochée — le cas normal du tunnel, et le seul que le contrat
     // partagé laisse passer (#790). Les suites qui veulent l'inverse passent par
@@ -314,37 +316,58 @@ describe('AppointmentsService.book', () => {
     expect(repository.appointments[0]?.priceAmountMinor).toBe(7500);
   });
 
-  it('réserve sans compte : la fiche cliente est créée depuis les seules coordonnées', async () => {
+  it('rattache le rendez-vous au compte du jeton, et n’écrit aucune fiche', async () => {
+    // Le premier critère de #1136. La fiche n'est plus *résolue* depuis des
+    // coordonnées — elle est **désignée** par le jeton —, donc la réservation
+    // n'écrit plus dans `users` : la seule fiche du fichier reste celle qui y
+    // était avant l'appel.
     const { service, repository } = createHarness();
 
     const view = await runWithTenant(TENANT, () => service.book(bookingInput(), NOW));
 
+    expect(view.clientId).toBe(CLIENTE);
     expect(repository.clients).toHaveLength(1);
-    const client = repository.clients[0];
-    expect(client?.id).toBe(view.clientId);
-    expect(client?.email).toBe('camille@example.test');
-    expect(client?.tenantId).toBe(TENANT);
+    expect(repository.appointments[0]?.clientId).toBe(CLIENTE);
   });
 
-  it('réutilise la fiche d’une cliente déjà connue, sans l’écraser', async () => {
+  it('ne réserve jamais dans le compte d’une autre cliente du salon', async () => {
+    // Le défaut relevé par la campagne du 22/09/2026, pris par l'autre bout :
+    // une seconde cliente existe, avec sa propre adresse, et rien de ce que
+    // l'appelante envoie ne peut faire pencher le rendez-vous de son côté.
+    // Ce que cette suite peut encore exercer est l'**effet** ; l'impossibilité,
+    // elle, est tenue par le type d'entrée — `BookAppointmentInput.client` n'a
+    // pas de champ où mettre une adresse e-mail, et le compilateur refuse.
     const { service, repository } = createHarness();
-    const known = repository.seedClient({
+    const autre = repository.seedClient({ tenantId: TENANT, email: 'clara@example.test' });
+
+    const view = await runWithTenant(TENANT, () => service.book(bookingInput(), NOW));
+
+    expect(view.clientId).toBe(CLIENTE);
+    expect(view.clientId).not.toBe(autre.id);
+    expect(repository.appointments.filter((row) => row.clientId === autre.id)).toHaveLength(0);
+  });
+
+  it('refuse en 404 un compte qui n’est pas une cliente de cet établissement', async () => {
+    // Trois refus indiscernables, et c'est le propos (tenant-isolation §4) :
+    // fiche inconnue, fiche du salon voisin, compte du personnel. Le jeton a
+    // beau être vérifié, il ne fait pas d'un employé la cliente d'un rendez-vous
+    // (#465) — et un 403 aurait confirmé que l'identifiant désigne quelqu'un.
+    const { service, repository } = createHarness();
+    const employee = repository.seedClient({
       tenantId: TENANT,
-      email: 'camille@example.test',
-      firstName: 'Camille',
-      lastName: 'Rakotoarisoa',
-      phone: '+261 33 00 000 00',
+      email: 'manager@example.test',
+      role: 'MANAGER',
     });
 
-    const view = await runWithTenant(TENANT, () =>
-      service.book(bookingInput({ client: { ...bookingInput().client, lastName: 'Usurpé' } }), NOW),
-    );
+    await expect(
+      runWithTenant(TENANT, () => service.book(bookingInput({ client: { userId: employee.id } }), NOW)),
+    ).rejects.toThrow(NotFoundError);
 
-    expect(view.clientId).toBe(known.id);
-    expect(repository.clients).toHaveLength(1);
-    // Un appel public ne réécrit pas la fiche d'une cliente existante.
-    expect(repository.clients[0]?.lastName).toBe('Rakotoarisoa');
-    expect(repository.clients[0]?.phone).toBe('+261 33 00 000 00');
+    await expect(
+      runWithTenant(TENANT, () => service.book(bookingInput({ client: { userId: randomUUID() } }), NOW)),
+    ).rejects.toThrow(NotFoundError);
+
+    expect(repository.appointments).toHaveLength(0);
   });
 
   it('refuse en 409 le créneau qu’un autre rendez-vous occupe déjà', async () => {
@@ -361,13 +384,13 @@ describe('AppointmentsService.book', () => {
     );
   });
 
-  it('ne laisse aucune fiche cliente derrière un 409 de créneau', async () => {
-    // Le second critère de #313. Le créneau est proposé par le calendrier — le
-    // pré-contrôle passe donc —, et c'est la contrainte d'exclusion qui refuse,
-    // **après** que la fiche a été résolue dans la transaction. Ce qui la fait
-    // disparaître est le `ROLLBACK`, jamais un ordre habile : avant, la
-    // résolution était validée dans une transaction à part et la perdante d'une
-    // course repartait avec un refus et une fiche au fichier du salon.
+  it('laisse le fichier client intact quand le créneau est refusé', async () => {
+    // Le second critère de #313, tel qu'il subsiste depuis #1136 : la
+    // réservation n'écrit plus dans `users` du tout — il n'y a donc plus de
+    // fiche qu'un 409 puisse laisser derrière lui, et plus de fiche
+    // préexistante qu'un `ROLLBACK` puisse emporter. La garantie s'est
+    // déplacée : elle ne tient plus à l'ordre des écritures dans la
+    // transaction, mais au fait qu'il n'y en a qu'une.
     const { service, repository } = createHarness();
     repository.seedAppointment({
       tenantId: TENANT,
@@ -381,52 +404,8 @@ describe('AppointmentsService.book', () => {
     );
 
     expect(repository.appointments).toHaveLength(1);
-    expect(repository.clients).toHaveLength(0);
-  });
-
-  it('laisse intacte la fiche d’une cliente déjà connue quand le créneau est refusé', async () => {
-    // Le pendant du cas précédent : le `ROLLBACK` ne défait que ce que **cette**
-    // transaction a écrit. Une fiche qui préexiste n'est pas une écriture de la
-    // réservation, et l'effacer priverait la cliente de son historique pour une
-    // course qu'elle vient de perdre.
-    const { service, repository } = createHarness();
-    const known = repository.seedClient({ tenantId: TENANT, email: 'camille@example.test' });
-    repository.seedAppointment({
-      tenantId: TENANT,
-      staffId: STAFF_ID,
-      startsAt: new Date('2026-09-01T10:00:00.000Z'),
-      endsAt: new Date('2026-09-01T11:00:00.000Z'),
-    });
-
-    await expect(runWithTenant(TENANT, () => service.book(bookingInput(), NOW))).rejects.toThrow(
-      SlotNoLongerAvailableError,
-    );
-
     expect(repository.clients).toHaveLength(1);
-    expect(repository.clients[0]?.id).toBe(known.id);
-  });
-
-  it('refuse une adresse portée par un compte du personnel, sans rien écrire', async () => {
-    // La décision produit de #313 : la réservation publique ne s'accroche jamais
-    // à un compte `MANAGER`/`ADMIN`. Le refus est un 409 choisi
-    // (`CLIENT_EMAIL_NOT_BOOKABLE`), et non le `P2002` nu — donc le 500 — que
-    // produirait une création sur une adresse déjà prise.
-    const { service, repository } = createHarness();
-    repository.seedClient({
-      tenantId: TENANT,
-      email: 'camille@example.test',
-      role: 'MANAGER',
-    });
-
-    const rejected = runWithTenant(TENANT, () => service.book(bookingInput(), NOW));
-
-    await expect(rejected).rejects.toMatchObject({
-      code: 'CLIENT_EMAIL_NOT_BOOKABLE',
-      status: 409,
-    });
-    // Ni rendez-vous, ni seconde fiche : le compte du personnel reste seul.
-    expect(repository.appointments).toHaveLength(0);
-    expect(repository.clients).toHaveLength(1);
+    expect(repository.clients[0]?.id).toBe(CLIENTE);
   });
 
   it('rend dans le 409 l’heure que l’appelant a envoyée, pas l’heure occupée', async () => {
@@ -457,11 +436,11 @@ describe('AppointmentsService.book', () => {
     );
 
     await expect(rejected).rejects.toThrow(SlotNoLongerAvailableError);
-    // Rien n'a été écrit — ni rendez-vous, ni fiche cliente : le contrôle a lieu
-    // avant la résolution du client, faute de quoi un tir sur des créneaux
-    // impossibles remplirait le fichier clients du salon.
+    // Rien n'a été écrit, et le fichier client est celui d'avant l'appel : la
+    // réservation ne l'alimente plus depuis #1136, un tir sur des créneaux
+    // impossibles ne peut donc plus le remplir.
     expect(repository.appointments).toHaveLength(0);
-    expect(repository.clients).toHaveLength(0);
+    expect(repository.clients).toHaveLength(1);
   });
 
   it('interroge le calendrier sur les trois journées UTC qui encadrent l’instant', async () => {
@@ -730,9 +709,9 @@ describe('AppointmentsService.book — option « premier disponible » (#36)', (
 
     await expect(rejected).rejects.toThrow(SlotNoLongerAvailableError);
     expect(repository.appointments).toHaveLength(0);
-    // Le contrôle a lieu avant la résolution du client : un tir sur des créneaux
-    // impossibles ne remplit pas le fichier clients du salon.
-    expect(repository.clients).toHaveLength(0);
+    // Le fichier client est celui d'avant l'appel — la seule fiche est celle que
+    // le harnais sème, et la réservation n'en écrit plus aucune (#1136).
+    expect(repository.clients).toHaveLength(1);
   });
 
   it('annonce dans l’événement de domaine le praticien réellement affecté', async () => {

@@ -63,6 +63,30 @@ async function accepted(
   return bookAppointmentPipe(countryCode).transform(raw);
 }
 
+/**
+ * Les coordonnées du corps validé — présentes par construction dans cette
+ * suite, qui les envoie toutes.
+ *
+ * `client` est **facultatif** depuis #1136 : il ne désigne plus la cliente du
+ * rendez-vous, qui vient du jeton vérifié. La fabrique du contrat continue
+ * pourtant de le valider quand il est là, et c'est cette validation-là — la
+ * normalisation de l'adresse, la règle du téléphone — que les cas ci-dessous
+ * exercent. L'accesseur tient lieu de rétrécissement de type : une absence
+ * serait un défaut de la frontière, jamais un cas à traiter.
+ */
+async function acceptedContact(
+  raw: Record<string, unknown>,
+  countryCode: string | null = null,
+): Promise<NonNullable<BookAppointmentBody['client']>> {
+  const contact = (await accepted(raw, countryCode)).client;
+
+  if (contact === undefined) {
+    throw new Error('La frontière a laissé tomber les coordonnées du corps.');
+  }
+
+  return contact;
+}
+
 /** `true` si la frontière laisse passer ce corps. */
 async function accepts(
   raw: Record<string, unknown>,
@@ -86,18 +110,18 @@ function withPhone(phone: string): Record<string, unknown> {
 
 describe('la frontière de POST /public/:tenantSlug/appointments', () => {
   it('normalise ce que le contrat normalise — adresse et instant', async () => {
-    const parsed = await accepted(
-      body({
-        client: {
-          firstName: '  Camille ',
-          lastName: 'Rakoto',
-          email: '  Camille@Example.TEST ',
-        },
-      }),
-    );
+    const raw = body({
+      client: {
+        firstName: '  Camille ',
+        lastName: 'Rakoto',
+        email: '  Camille@Example.TEST ',
+      },
+    });
+    const parsed = await accepted(raw);
+    const contact = await acceptedContact(raw);
 
-    expect(parsed.client.firstName).toBe('Camille');
-    expect(parsed.client.email).toBe('camille@example.test');
+    expect(contact.firstName).toBe('Camille');
+    expect(contact.email).toBe('camille@example.test');
     // `offsetDateTimeSchema` ramène l'instant en UTC **à la frontière** : passé
     // ce point, plus aucune couche n'a à se demander dans quel référentiel elle
     // lit un horodatage.
@@ -174,12 +198,12 @@ describe('la frontière de POST /public/:tenantSlug/appointments', () => {
    */
   describe('téléphone — l’E.164 et le pays de l’établissement', () => {
     it('normalise un numéro international écrit avec des séparateurs', async () => {
-      const parsed = await accepted(body(withPhone('+261 34 12 345 67')));
+      const contact = await acceptedContact(body(withPhone('+261 34 12 345 67')));
 
       // Le DTO conservait la saisie. C'est ce numéro-ci que la chaîne SMS
       // compose, et il n'a plus qu'une écriture possible — donc une seule clé de
       // déduplication d'envoi.
-      expect(parsed.client.phone).toBe('+261341234567');
+      expect(contact.phone).toBe('+261341234567');
     });
 
     it('accepte et complète un numéro national avec le pays de l’établissement', async () => {
@@ -187,16 +211,16 @@ describe('la frontière de POST /public/:tenantSlug/appointments', () => {
       // refusé par ce tunnel alors que `/auth/register` l'accepte sur le même
       // établissement. C'est le même numéro qui est désormais enregistré des deux
       // côtés.
-      expect((await accepted(body(withPhone('06 12 34 56 78')), 'FR')).client.phone).toBe(
+      expect((await acceptedContact(body(withPhone('06 12 34 56 78')), 'FR')).phone).toBe(
         '+33612345678',
       );
 
       // Et le salon malgache, d'où vient le cas « refusé » de cette suite : même
       // conduite, autre plan de numérotation.
-      expect((await accepted(body(withPhone('034 12 345 67')), 'MG')).client.phone).toBe(
+      expect((await acceptedContact(body(withPhone('034 12 345 67')), 'MG')).phone).toBe(
         '+261341234567',
       );
-      expect((await accepted(body(withPhone('0341234567')), 'MG')).client.phone).toBe(
+      expect((await acceptedContact(body(withPhone('0341234567')), 'MG')).phone).toBe(
         '+261341234567',
       );
     });
@@ -205,7 +229,7 @@ describe('la frontière de POST /public/:tenantSlug/appointments', () => {
       // Le pays ne **remplace** rien : il ne sert qu'à compléter ce qui n'a pas
       // d'indicatif. Un numéro malgache saisi chez un salon français reste
       // malgache — c'est la cliente en voyage, et son rappel doit lui parvenir.
-      expect((await accepted(body(withPhone('+261341234567')), 'FR')).client.phone).toBe(
+      expect((await acceptedContact(body(withPhone('+261341234567')), 'FR')).phone).toBe(
         '+261341234567',
       );
     });

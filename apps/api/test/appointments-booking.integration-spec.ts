@@ -1,6 +1,9 @@
+import { randomUUID } from 'node:crypto';
+
 import request from 'supertest';
 
 import type { AppointmentCreatedEvent } from '../src/modules/appointments/events/appointment-created.event';
+import { TenantBillingGate } from '../src/modules/identity/tenant-billing.gate';
 import {
   BUFFER_AFTER_MINUTES,
   BUFFER_BEFORE_MINUTES,
@@ -25,9 +28,10 @@ import {
  * 3. la durée **enregistrée** inclut les deux tampons, alors que la réponse rend
  *    l'intervalle facturé ;
  * 4. un créneau déjà pris sort en 409 `SLOT_NO_LONGER_AVAILABLE` ;
- * 5. réserver sans compte crée la fiche cliente, et une seule — et un créneau
- *    refusé n'en laisse aucune derrière lui, tandis qu'une adresse portée par un
- *    compte du personnel sort en 409 nommé plutôt qu'en 500 (#313) ;
+ * 5. réserver **exige le jeton d'une cliente** (#1136) — 401 sans jeton, 403 sur
+ *    un jeton de personnel, 401 sur celui du salon voisin, 404 sur un compte qui
+ *    n'est pas une cliente de ce salon — et le rendez-vous se rattache toujours
+ *    au compte du jeton, jamais à ce que l'adresse e-mail du corps désignerait ;
  * 6. l'événement `appointment.created` part réellement ;
  * 7. le corps rendu porte **exactement** les champs de `bookedAppointmentSchema`
  *    — le contrat partagé décrit ce que cette route sert, et le doublon des deux
@@ -53,10 +57,20 @@ function guest(overrides: Record<string, unknown> = {}): Record<string, unknown>
 describe('POST /api/v1/public/:tenantSlug/appointments', () => {
   let harness: AppointmentsHarness;
   let slot: ReturnType<typeof bookableSlot>;
+  /**
+   * Le porteur de la cliente du salon — exigé depuis #1136.
+   *
+   * Signé une fois par cas plutôt qu'à chaque appel : la chaîne de `supertest`
+   * se construit de façon synchrone, et attendre la signature au milieu aurait
+   * imposé de casser chacun de ces appels en deux. Ce que la garde refuse a ses
+   * propres cas, plus bas.
+   */
+  let auth: string;
 
   beforeEach(async () => {
     harness = await createAppointmentsHarness();
     slot = bookableSlot();
+    auth = await harness.bearer(harness.a);
   });
 
   afterEach(async () => {
@@ -78,6 +92,7 @@ describe('POST /api/v1/public/:tenantSlug/appointments', () => {
   it('réserve un créneau proposé et rend 201 avec l’intervalle facturé', async () => {
     const response = await request(harness.server())
       .post(BOOKING_PATH(harness.a.tenant.slug))
+      .set('Authorization', auth)
       .send(body());
 
     expect(response.status).toBe(201);
@@ -114,6 +129,7 @@ describe('POST /api/v1/public/:tenantSlug/appointments', () => {
   it('rend exactement les champs de `bookedAppointmentSchema`, ni plus ni moins', async () => {
     const response = await request(harness.server())
       .post(BOOKING_PATH(harness.a.tenant.slug))
+      .set('Authorization', auth)
       .send(body());
 
     expect(response.status).toBe(201);
@@ -152,7 +168,10 @@ describe('POST /api/v1/public/:tenantSlug/appointments', () => {
   });
 
   it('enregistre l’intervalle occupé, tampons compris', async () => {
-    await request(harness.server()).post(BOOKING_PATH(harness.a.tenant.slug)).send(body());
+    await request(harness.server())
+      .post(BOOKING_PATH(harness.a.tenant.slug))
+      .set('Authorization', auth)
+      .send(body());
 
     const stored = harness.appointments.appointments[0];
     expect(stored?.startsAt.getTime()).toBe(
@@ -163,104 +182,172 @@ describe('POST /api/v1/public/:tenantSlug/appointments', () => {
     expect(stored?.tenantId).toBe(harness.a.tenant.id);
   });
 
-  it('crée la fiche cliente depuis les seules coordonnées, sans compte', async () => {
+  it('rattache le rendez-vous au compte du jeton, et n’écrit aucune fiche', async () => {
+    // Le premier critère de #1136. La fiche n'est plus créée au passage : la
+    // cliente en a une, c'est son compte, et c'est le jeton qui la nomme. Le
+    // fichier du salon compte donc exactement ce qu'il comptait avant l'appel.
+    const avant = harness.appointments.clients.length;
+
     const response = await request(harness.server())
       .post(BOOKING_PATH(harness.a.tenant.slug))
+      .set('Authorization', auth)
       .send(body());
 
-    expect(harness.appointments.clients).toHaveLength(1);
-    const client = harness.appointments.clients[0];
-    expect(client?.email).toBe('camille@example.test');
-    expect(client?.tenantId).toBe(harness.a.tenant.id);
-    expect(response.body.clientId).toBe(client?.id);
+    expect(response.status).toBe(201);
+    expect(response.body.clientId).toBe(harness.a.clientId);
+    expect(harness.appointments.clients).toHaveLength(avant);
+    expect(harness.appointments.appointments[0]?.clientId).toBe(harness.a.clientId);
   });
 
-  describe('la langue du tunnel sur la fiche cliente — #844', () => {
-    it('la pose sur la fiche qui naît, casse normalisée', async () => {
-      // Le huitième critère de #844 : la langue n'est pas saisie, le tunnel la
-      // constate. `« EN »` et `« en »` désignent la même chose — une étiquette
-      // BCP 47 se recopie d'un sélecteur de navigateur, où rien ne la normalise.
-      await request(harness.server())
-        .post(BOOKING_PATH(harness.a.tenant.slug))
-        .send(body({ client: guest({ locale: ' EN ' }) }))
-        .expect(201);
-
-      expect(harness.appointments.clients[0]?.locale).toBe('en');
+  it('ignore l’adresse du corps — elle ne désigne plus aucune fiche', async () => {
+    // Le cœur du défaut relevé le 22/09/2026 : avec `client.email` = l'adresse
+    // d'une cliente existante, le rendez-vous se posait dans **son** compte et
+    // la réponse livrait son `clientId`. Une seconde cliente est au fichier, et
+    // l'adresse envoyée est la sienne : le rendez-vous reste pourtant celui du
+    // jeton.
+    const autre = harness.appointments.seedClient({
+      tenantId: harness.a.tenant.id,
+      email: 'clara@example.test',
     });
 
-    it('comble une fiche existante qui n’a aucune préférence', async () => {
-      // `NULL` se lit « aucune préférence enregistrée », et la visiteuse vient
-      // d'en exprimer une en réservant. La poser ne remplace rien.
-      const fiche = harness.appointments.seedClient({
-        tenantId: harness.a.tenant.id,
-        email: 'camille@example.test',
-      });
+    const response = await request(harness.server())
+      .post(BOOKING_PATH(harness.a.tenant.slug))
+      .set('Authorization', auth)
+      .send(body({ client: guest({ email: 'clara@example.test' }) }));
 
-      await request(harness.server())
-        .post(BOOKING_PATH(harness.a.tenant.slug))
-        .send(body({ client: guest({ locale: 'fr' }) }))
-        .expect(201);
+    expect(response.status).toBe(201);
+    expect(response.body.clientId).toBe(harness.a.clientId);
+    expect(response.body.clientId).not.toBe(autre.id);
+    expect(
+      harness.appointments.appointments.filter((row) => row.clientId === autre.id),
+    ).toHaveLength(0);
+  });
 
-      expect(fiche.locale).toBe('fr');
-    });
+  it('accepte un corps sans coordonnées du tout — le jeton suffit', async () => {
+    // Le pendant du cas précédent, côté contrat : `client` est devenu facultatif
+    // (#1136), et c'est la forme que le tunnel servira quand son étape
+    // « Coordonnées » aura été reprise. La route doit déjà l'accepter, faute de
+    // quoi la reprise du front serait bloquée par l'API.
+    const { client: _sansCoordonnees, ...sansClient } = body();
 
-    it('n’écrase jamais une préférence déjà enregistrée', async () => {
-      // Sans cette dissymétrie, un appel public suffirait à basculer la langue
-      // des notifications de n'importe quelle cliente dont on connaît l'adresse.
-      // Changer sa langue relève de `PATCH /users/me` ou du back-office.
-      const fiche = harness.appointments.seedClient({
-        tenantId: harness.a.tenant.id,
-        email: 'camille@example.test',
-        locale: 'fr',
-      });
+    const response = await request(harness.server())
+      .post(BOOKING_PATH(harness.a.tenant.slug))
+      .set('Authorization', auth)
+      .send(sansClient);
 
-      await request(harness.server())
-        .post(BOOKING_PATH(harness.a.tenant.slug))
-        .send(body({ client: guest({ locale: 'en' }) }))
-        .expect(201);
+    expect(response.status).toBe(201);
+    expect(response.body.clientId).toBe(harness.a.clientId);
+  });
 
-      expect(fiche.locale).toBe('fr');
-    });
-
-    it('laisse la fiche sans préférence quand le tunnel n’en donne pas', async () => {
-      // Un appelant sans écran n'a aucune langue à déclarer, et l'absence ne se
-      // lit surtout pas « efface ».
-      await request(harness.server())
-        .post(BOOKING_PATH(harness.a.tenant.slug))
-        .send(body())
-        .expect(201);
-
-      expect(harness.appointments.clients[0]?.locale).toBeNull();
-    });
-
-    it('refuse en 400 une langue hors vocabulaire, sans créer de fiche', async () => {
-      // Le neuvième critère : `VALIDATION_ERROR` et le champ nommé, jamais une
-      // violation de `users_locale_check` remontée en 500.
+  /**
+   * La porte, depuis #1136 — ce que le contrat d'API refuse désormais.
+   *
+   * L'interface exigeait déjà un compte (#1119) ; la route, non. Le portail se
+   * contournait d'un `curl`, et c'est ce que ces quatre cas tiennent.
+   */
+  describe('la garde de la réservation', () => {
+    it('refuse en 401 un appel sans jeton', async () => {
       const response = await request(harness.server())
         .post(BOOKING_PATH(harness.a.tenant.slug))
-        .send(body({ client: guest({ locale: 'de' }) }))
-        .expect(400);
+        .send(body());
 
-      expect(response.body).toMatchObject({ code: 'VALIDATION_ERROR' });
-      expect(JSON.stringify(response.body)).toContain('locale');
-      expect(harness.appointments.clients).toHaveLength(0);
+      expect(response.status).toBe(401);
+      expect(harness.appointments.appointments).toHaveLength(0);
+    });
+
+    it('refuse en 403 un jeton qui n’est pas celui d’une cliente', async () => {
+      // Un praticien ne réserve pas par le tunnel public : sa surface est le
+      // comptoir (#50), gardée, et qui inscrit la réservation au nom d'une fiche
+      // désignée plutôt qu'à son propre nom.
+      for (const role of ['STAFF', 'MANAGER', 'ADMIN'] as const) {
+        const response = await request(harness.server())
+          .post(BOOKING_PATH(harness.a.tenant.slug))
+          .set('Authorization', await harness.bearer(harness.a, role, harness.a.staffId))
+          .send(body());
+
+        expect(response.status).toBe(403);
+      }
+
+      expect(harness.appointments.appointments).toHaveLength(0);
+    });
+
+    it('refuse en 401 le jeton du salon voisin présenté sous ce slug', async () => {
+      // Le jeton est vérifié, mais son établissement n'est pas celui du slug :
+      // `JwtAuthGuard` refuse avant tout code métier, et rien du salon A n'a été
+      // lu au passage (tenant-isolation §2).
+      const response = await request(harness.server())
+        .post(BOOKING_PATH(harness.a.tenant.slug))
+        .set('Authorization', await harness.bearer(harness.b))
+        .send(body());
+
+      expect(response.status).toBe(401);
+      expect(harness.appointments.appointments).toHaveLength(0);
+    });
+
+    it('refuse en 404 un jeton dont le compte n’est pas au fichier du salon', async () => {
+      // Le jeton est bien celui de cet établissement, mais il désigne un compte
+      // qui n'existe pas — ou qui n'est pas une cliente. Le refus est le même 404
+      // que pour une fiche inconnue, jamais un 403 qui confirmerait quoi que ce
+      // soit (tenant-isolation §4).
+      const response = await request(harness.server())
+        .post(BOOKING_PATH(harness.a.tenant.slug))
+        .set('Authorization', await harness.bearer(harness.a, 'CLIENT', randomUUID()))
+        .send(body());
+
+      expect(response.status).toBe(404);
+      expect(harness.appointments.appointments).toHaveLength(0);
+    });
+
+    it('garde le 409 du salon fermé, là où la garde aurait pu rendre 402', async () => {
+      // La garde ajoutée par #1136 monte `TenantBillingGuard`, dont le 402
+      // `SUBSCRIPTION_REQUIRED` s'adresse au back-office. Sans
+      // `@AllowUnpaidTenant()`, poser l'authentification aurait donc
+      // silencieusement changé le code d'erreur d'un salon sans abonnement — et
+      // le tunnel aurait cessé d'expliquer pourquoi il ne prend plus de
+      // rendez-vous. C'est `BookableSalonGuard` qui doit parler ici (ADR 0016).
+      jest.spyOn(harness.app.get(TenantBillingGate), 'isOpen').mockResolvedValue(false);
+
+      const response = await request(harness.server())
+        .post(BOOKING_PATH(harness.a.tenant.slug))
+        .set('Authorization', auth)
+        .send(body());
+
+      expect(response.status).toBe(409);
+      expect(response.body).toMatchObject({ code: 'SALON_BOOKING_CLOSED' });
+      expect(harness.appointments.appointments).toHaveLength(0);
     });
   });
 
-  it('ne crée qu’une fiche pour deux réservations de la même adresse', async () => {
+  /**
+   * La langue du tunnel sur la fiche cliente (#844) a quitté cette route avec
+   * #1136, et c'est une conséquence assumée plutôt qu'un oubli.
+   *
+   * Elle **comblait** l'absence de préférence sur la fiche qu'une réservation
+   * publique résolvait depuis des coordonnées. Il n'y a plus de résolution : la
+   * cliente a un compte, et sa préférence de langue s'y écrit par
+   * `/auth/register` puis `PATCH /users/me`. Le seul chemin qui reste à couvrir
+   * est celui-là, et il a ses suites dans `identity`.
+   */
+
+  it('pose deux rendez-vous pour la même cliente sans toucher au fichier', async () => {
     const second = bookableSlot();
     // Le créneau suivant sur la grille : quinze minutes plus loin, donc sans
     // chevauchement avec l'intervalle occupé du premier (80 min à partir de
     // 10:00 occupé) — on décale d'une heure et demie pour être net.
     const later = new Date(second.startsAt.getTime() + 90 * MINUTE_MS).toISOString();
+    const avant = harness.appointments.clients.length;
 
-    await request(harness.server()).post(BOOKING_PATH(harness.a.tenant.slug)).send(body());
+    await request(harness.server())
+      .post(BOOKING_PATH(harness.a.tenant.slug))
+      .set('Authorization', auth)
+      .send(body());
     const response = await request(harness.server())
       .post(BOOKING_PATH(harness.a.tenant.slug))
+      .set('Authorization', auth)
       .send(body({ startsAt: later }));
 
     expect(response.status).toBe(201);
-    expect(harness.appointments.clients).toHaveLength(1);
+    expect(harness.appointments.clients).toHaveLength(avant);
     expect(harness.appointments.appointments).toHaveLength(2);
   });
 
@@ -270,6 +357,7 @@ describe('POST /api/v1/public/:tenantSlug/appointments', () => {
 
     const response = await request(harness.server())
       .post(BOOKING_PATH(harness.a.tenant.slug))
+      .set('Authorization', auth)
       .send(body());
     off();
 
@@ -286,12 +374,21 @@ describe('POST /api/v1/public/:tenantSlug/appointments', () => {
   it('refuse en 409 SLOT_NO_LONGER_AVAILABLE un créneau déjà pris', async () => {
     const first = await request(harness.server())
       .post(BOOKING_PATH(harness.a.tenant.slug))
+      .set('Authorization', auth)
       .send(body());
     expect(first.status).toBe(201);
 
+    // Une **autre** cliente du même salon : c'est bien la contrainte de créneau
+    // qui tranche, et non la porte.
+    const autre = harness.appointments.seedClient({
+      tenantId: harness.a.tenant.id,
+      email: 'autre@example.test',
+    });
+    const avant = harness.appointments.clients.length;
     const second = await request(harness.server())
       .post(BOOKING_PATH(harness.a.tenant.slug))
-      .send(body({ client: guest({ email: 'autre@example.test' }) }));
+      .set('Authorization', await harness.bearer(harness.a, 'CLIENT', autre.id))
+      .send(body());
 
     expect(second.status).toBe(409);
     expect(second.body).toMatchObject({ code: 'SLOT_NO_LONGER_AVAILABLE' });
@@ -303,19 +400,22 @@ describe('POST /api/v1/public/:tenantSlug/appointments', () => {
       startsAt: slot.startsAt.toISOString(),
     });
     expect(harness.appointments.appointments).toHaveLength(1);
-    // La perdante n'a laissé **aucune** fiche : la seule au fichier est celle de
-    // la réservation qui a abouti (#313). Avant, la résolution était validée
-    // avant l'insertion, et chaque course perdue déposait une fiche publique sans
-    // rendez-vous.
-    expect(harness.appointments.clients).toHaveLength(1);
-    expect(harness.appointments.clients[0]?.email).toBe('camille@example.test');
+    // Le fichier client n'a pas bougé d'un iota — ni avant, ni après. C'est ce
+    // que #313 obtenait par l'ordre des écritures dans la transaction, et que
+    // #1136 obtient plus simplement : la réservation n'écrit plus dans `users`.
+    expect(harness.appointments.clients).toHaveLength(avant);
   });
 
-  it('refuse en 409 CLIENT_EMAIL_NOT_BOOKABLE une adresse de compte du personnel', async () => {
-    // La décision produit de #313, vue de l'extérieur : la réservation publique ne
-    // s'accroche jamais à un compte `MANAGER`/`ADMIN`, et le refus est un 409
-    // nommé — jamais le 500 qu'un `P2002` nu produirait.
-    harness.appointments.seedClient({
+  it('n’accroche pas un rendez-vous à un compte du personnel', async () => {
+    // La décision produit de #313, telle qu'elle subsiste depuis #1136 : la
+    // réservation du tunnel ne s'accroche jamais à un compte `STAFF`,
+    // `MANAGER` ou `ADMIN`. Le refus a changé de nature — ce n'est plus un 409
+    // `CLIENT_EMAIL_NOT_BOOKABLE` sur une adresse saisie, mais le 403 de la
+    // porte pour un jeton de personnel, et le 404 de `crm` pour un jeton
+    // `CLIENT` qui désignerait un compte qui n'en est pas un (#465). Les deux
+    // sont exercés par `la garde de la réservation` ci-dessus ; ce cas-ci tient
+    // l'invariant qu'ils protègent.
+    const gerante = harness.appointments.seedClient({
       tenantId: harness.a.tenant.id,
       email: 'gerante@example.test',
       role: 'MANAGER',
@@ -323,37 +423,14 @@ describe('POST /api/v1/public/:tenantSlug/appointments', () => {
 
     const response = await request(harness.server())
       .post(BOOKING_PATH(harness.a.tenant.slug))
+      .set('Authorization', await harness.bearer(harness.a, 'CLIENT', gerante.id))
       .send(body({ client: guest({ email: 'gerante@example.test' }) }));
 
-    expect(response.status).toBe(409);
-    expect(response.body).toMatchObject({
-      code: 'CLIENT_EMAIL_NOT_BOOKABLE',
-      details: {},
-    });
+    expect(response.status).toBe(404);
     // Le corps d'erreur ne renvoie pas l'adresse : c'est une donnée personnelle,
     // et celui qui vient de la saisir la connaît déjà (CDC §5.1).
     expect(JSON.stringify(response.body)).not.toContain('gerante@example.test');
     expect(harness.appointments.appointments).toHaveLength(0);
-    // Aucune seconde fiche : le compte de la gérante reste seul.
-    expect(harness.appointments.clients).toHaveLength(1);
-  });
-
-  it('réserve normalement sous une adresse déjà cliente — le refus ne vise que le personnel', async () => {
-    // Le pendant du cas précédent, et ce qui borne l'information que le refus
-    // laisse deviner : une adresse **cliente** rend 201, exactement comme une
-    // adresse inconnue. La route ne dit donc rien du fichier client du salon.
-    const known = harness.appointments.seedClient({
-      tenantId: harness.a.tenant.id,
-      email: 'camille@example.test',
-    });
-
-    const response = await request(harness.server())
-      .post(BOOKING_PATH(harness.a.tenant.slug))
-      .send(body());
-
-    expect(response.status).toBe(201);
-    expect(response.body.clientId).toBe(known.id);
-    expect(harness.appointments.clients).toHaveLength(1);
   });
 
   it('refuse en 409 un instant que le calendrier ne propose pas', async () => {
@@ -361,11 +438,11 @@ describe('POST /api/v1/public/:tenantSlug/appointments', () => {
 
     const response = await request(harness.server())
       .post(BOOKING_PATH(harness.a.tenant.slug))
+      .set('Authorization', auth)
       .send(body({ startsAt: offGrid }));
 
     expect(response.status).toBe(409);
     expect(harness.appointments.appointments).toHaveLength(0);
-    expect(harness.appointments.clients).toHaveLength(0);
   });
 
   it('refuse en 404 une prestation retirée du catalogue', async () => {
@@ -378,6 +455,7 @@ describe('POST /api/v1/public/:tenantSlug/appointments', () => {
 
     const response = await request(harness.server())
       .post(BOOKING_PATH(harness.a.tenant.slug))
+      .set('Authorization', auth)
       .send(body());
 
     expect(response.status).toBe(404);
@@ -395,7 +473,10 @@ describe('POST /api/v1/public/:tenantSlug/appointments', () => {
       // Séquentiel, et non parallèle : la limitation de débit se compte requête
       // après requête, et un tir groupé ne prouverait pas quel appel a franchi le
       // seuil.
-      last = await request(harness.server()).post(BOOKING_PATH(harness.a.tenant.slug)).send(body());
+      last = await request(harness.server())
+        .post(BOOKING_PATH(harness.a.tenant.slug))
+        .set('Authorization', auth)
+        .send(body());
     }
 
     expect(last?.status).toBe(429);
@@ -405,6 +486,7 @@ describe('POST /api/v1/public/:tenantSlug/appointments', () => {
   it('refuse en 404 un slug d’établissement inconnu, avant tout code métier', async () => {
     const response = await request(harness.server())
       .post(BOOKING_PATH('salon-qui-n-existe-pas'))
+      .set('Authorization', auth)
       .send(body());
 
     expect(response.status).toBe(404);
@@ -440,6 +522,7 @@ describe('POST /api/v1/public/:tenantSlug/appointments', () => {
 
       const response = await request(harness.server())
         .post(BOOKING_PATH(harness.a.tenant.slug))
+        .set('Authorization', auth)
         .send(withoutStaff());
 
       expect(response.status).toBe(201);
@@ -453,11 +536,13 @@ describe('POST /api/v1/public/:tenantSlug/appointments', () => {
 
       const taken = await request(harness.server())
         .post(BOOKING_PATH(harness.a.tenant.slug))
+        .set('Authorization', auth)
         .send(body({ staffId: first }));
       expect(taken.status).toBe(201);
 
       const response = await request(harness.server())
         .post(BOOKING_PATH(harness.a.tenant.slug))
+        .set('Authorization', auth)
         .send(withoutStaff({ client: guest({ email: 'autre@example.test' }) }));
 
       expect(response.status).toBe(201);
@@ -471,12 +556,19 @@ describe('POST /api/v1/public/:tenantSlug/appointments', () => {
       for (const staffId of [first, second]) {
         const taken = await request(harness.server())
           .post(BOOKING_PATH(harness.a.tenant.slug))
-          .send(body({ staffId, client: guest({ email: `${staffId}@example.test` }) }));
+          .set('Authorization', auth)
+          .send(
+            body({
+              staffId,
+              client: guest({ email: `${staffId}@example.test` }),
+            }),
+          );
         expect(taken.status).toBe(201);
       }
 
       const response = await request(harness.server())
         .post(BOOKING_PATH(harness.a.tenant.slug))
+        .set('Authorization', auth)
         .send(withoutStaff({ client: guest({ email: 'tard@example.test' }) }));
 
       expect(response.status).toBe(409);
@@ -493,6 +585,7 @@ describe('POST /api/v1/public/:tenantSlug/appointments', () => {
     it('refuse toujours un staffId mal formé plutôt que de le lire comme « pas de préférence »', async () => {
       const response = await request(harness.server())
         .post(BOOKING_PATH(harness.a.tenant.slug))
+        .set('Authorization', auth)
         .send(body({ staffId: 'pas-un-uuid' }));
 
       // Facultatif ne veut pas dire permissif : `OptionalPresent` ne saute la
@@ -506,16 +599,24 @@ describe('POST /api/v1/public/:tenantSlug/appointments', () => {
     it('refuse une date-heure sans offset explicite', async () => {
       const response = await request(harness.server())
         .post(BOOKING_PATH(harness.a.tenant.slug))
+        .set('Authorization', auth)
         .send(body({ startsAt: '2026-09-01T10:00:00' }));
 
       expect(response.status).toBe(400);
-      expect(response.body).toMatchObject({ code: expect.any(String), message: expect.any(String) });
+      expect(response.body).toMatchObject({
+        code: expect.any(String),
+        message: expect.any(String),
+      });
       expect(response.body).toHaveProperty('details');
     });
 
-    it('refuse un corps sans coordonnées plutôt que de tomber en 500', async () => {
+    it('refuse un corps sans consentement plutôt que de tomber en 500', async () => {
+      // Les coordonnées, elles, sont facultatives depuis #1136 — c'est
+      // `dataConsent` qui manque ici, et lui seul (#790). Le cas « corps sans
+      // coordonnées » est plus haut, et il rend 201.
       const response = await request(harness.server())
         .post(BOOKING_PATH(harness.a.tenant.slug))
+        .set('Authorization', auth)
         .send({
           serviceId: harness.a.serviceId,
           staffId: harness.a.staffId,
@@ -528,6 +629,7 @@ describe('POST /api/v1/public/:tenantSlug/appointments', () => {
     it('refuse une adresse e-mail invalide', async () => {
       const response = await request(harness.server())
         .post(BOOKING_PATH(harness.a.tenant.slug))
+        .set('Authorization', auth)
         .send(body({ client: guest({ email: 'pas-une-adresse' }) }));
 
       expect(response.status).toBe(400);
@@ -536,6 +638,7 @@ describe('POST /api/v1/public/:tenantSlug/appointments', () => {
     it('rejette un `tenantId` glissé dans le corps', async () => {
       const response = await request(harness.server())
         .post(BOOKING_PATH(harness.a.tenant.slug))
+        .set('Authorization', auth)
         .send(body({ tenantId: harness.b.tenant.id }));
 
       // `forbidNonWhitelisted` : le champ n'est pas ignoré, il fait échouer la
@@ -548,6 +651,7 @@ describe('POST /api/v1/public/:tenantSlug/appointments', () => {
     it('rejette un `price` imposé par le client', async () => {
       const response = await request(harness.server())
         .post(BOOKING_PATH(harness.a.tenant.slug))
+        .set('Authorization', auth)
         .send(body({ price: { amountMinor: 1, currency: 'EUR' } }));
 
       expect(response.status).toBe(400);
@@ -556,6 +660,7 @@ describe('POST /api/v1/public/:tenantSlug/appointments', () => {
     it('rejette un `endsAt` imposé par le client', async () => {
       const response = await request(harness.server())
         .post(BOOKING_PATH(harness.a.tenant.slug))
+        .set('Authorization', auth)
         .send(body({ endsAt: slot.endsAt.toISOString() }));
 
       expect(response.status).toBe(400);
@@ -567,33 +672,42 @@ describe('POST /api/v1/public/:tenantSlug/appointments', () => {
      * Ce que ces trois cas exercent, et que les suites unitaires ne peuvent pas
      * exercer, c'est le **trajet entier** : le slug de l'URL résolu en
      * établissement par `TenantScopeMiddleware`, le pays lu par le pipe sur le
-     * dépôt de ce module, et la valeur enregistrée dans la fiche cliente. Un
-     * pipe resté sur la variante sans pays sortirait ici en 400.
+     * dépôt de ce module, et le verdict de la frontière. Un pipe resté sur la
+     * variante sans pays sortirait ici en 400 là où le salon a un pays.
+     *
+     * Ce que ces cas ne prouvent plus depuis #1136, et ne peuvent plus prouver :
+     * la valeur **enregistrée**. Les coordonnées du corps n'atteignent plus
+     * aucune fiche — la cliente vient du jeton, et son numéro est celui de son
+     * compte. La normalisation elle-même reste exercée là où elle a lieu,
+     * `packages/shared/src/__tests__/phone.spec.ts` et
+     * `src/modules/appointments/__tests__/guest-booking-frontier.spec.ts`.
      */
     describe('pays de l’établissement et numéro national', () => {
-      it('accepte « 06 12 34 56 78 » sur un salon français et enregistre +33612345678', async () => {
+      it('accepte « 06 12 34 56 78 » sur un salon français, qui le complète', async () => {
         harness.appointments.seedCountryCode(harness.a.tenant.id, 'FR');
 
         const response = await request(harness.server())
           .post(BOOKING_PATH(harness.a.tenant.slug))
+          .set('Authorization', auth)
           .send(body({ client: guest({ phone: '06 12 34 56 78' }) }));
 
+        // Le **statut**, et non la valeur enregistrée : depuis #1136 les
+        // coordonnées du corps ne sont plus écrites nulle part (voir l'en-tête
+        // de ce `describe`). Ce que ce cas prouve reste le trajet — le pays de
+        // l'établissement a bien été lu, sans quoi ce numéro national sortirait
+        // en 400, comme le dernier cas de ce bloc le montre.
         expect(response.status).toBe(201);
-        // La **même** valeur que `POST /api/v1/auth/register` enregistre sur ce
-        // salon : c'est l'écart que le ticket referme, et c'est aussi la seule
-        // écriture que SNS sait composer.
-        expect(harness.appointments.clients[0]?.phone).toBe('+33612345678');
       });
 
-      it('complète « 034 12 345 67 » en +261341234567 sur un salon malgache', async () => {
+      it('accepte « 034 12 345 67 » sur un salon malgache, qui le complète', async () => {
         harness.appointments.seedCountryCode(harness.a.tenant.id, 'MG');
 
         const response = await request(harness.server())
           .post(BOOKING_PATH(harness.a.tenant.slug))
+          .set('Authorization', auth)
           .send(body({ client: guest({ phone: '034 12 345 67' }) }));
 
         expect(response.status).toBe(201);
-        expect(harness.appointments.clients[0]?.phone).toBe('+261341234567');
       });
 
       it('refuse en 400 le même corps sur un établissement sans pays', async () => {
@@ -601,6 +715,7 @@ describe('POST /api/v1/public/:tenantSlug/appointments', () => {
         // pays ne se devine pas — le deviner enverrait le rappel à un inconnu.
         const response = await request(harness.server())
           .post(BOOKING_PATH(harness.a.tenant.slug))
+          .set('Authorization', auth)
           .send(body({ client: guest({ phone: '06 12 34 56 78' }) }));
 
         expect(response.status).toBe(400);
@@ -610,7 +725,6 @@ describe('POST /api/v1/public/:tenantSlug/appointments', () => {
         // bloc en tête de page (web-frontend §4).
         expect(JSON.stringify(response.body.details)).toContain('client.phone');
         expect(harness.appointments.appointments).toHaveLength(0);
-        expect(harness.appointments.clients).toHaveLength(0);
       });
 
       it('laisse passer l’international inchangé, avec ou sans pays', async () => {
@@ -618,29 +732,22 @@ describe('POST /api/v1/public/:tenantSlug/appointments', () => {
 
         const response = await request(harness.server())
           .post(BOOKING_PATH(harness.a.tenant.slug))
+          .set('Authorization', auth)
           .send(body({ client: guest({ phone: '+261 34 12 345 67' }) }));
 
+        // Le pays ne remplace rien : il complète ce qui n'a pas d'indicatif. Un
+        // numéro déjà international traverse donc la frontière sans être refusé,
+        // même sous un pays par défaut qui n'est pas le sien.
         expect(response.status).toBe(201);
-        // Le pays ne remplace rien : il complète ce qui n'a pas d'indicatif. Une
-        // cliente malgache en voyage garde son numéro.
-        expect(harness.appointments.clients[0]?.phone).toBe('+261341234567');
       });
     });
 
-    it('canonise l’adresse e-mail avant de chercher la fiche', async () => {
-      harness.appointments.seedClient({
-        tenantId: harness.a.tenant.id,
-        email: 'camille@example.test',
-      });
-
-      const response = await request(harness.server())
-        .post(BOOKING_PATH(harness.a.tenant.slug))
-        .send(body({ client: guest({ email: '  Camille@Example.TEST  ' }) }));
-
-      expect(response.status).toBe(201);
-      // Une seule fiche : sans canonisation, l'unicité `(tenant_id, email)`
-      // porterait sur les octets et une seconde fiche serait née.
-      expect(harness.appointments.clients).toHaveLength(1);
-    });
+    /*
+     * `canonise l'adresse e-mail avant de chercher la fiche` a disparu avec
+     * #1136 : il n'y a plus de fiche à chercher depuis une adresse, donc plus
+     * d'unicité `(tenant_id, email)` que la canonisation puisse protéger sur ce
+     * chemin. La règle elle-même n'a pas bougé — `emailSchema` canonise
+     * toujours, et `guest-booking-frontier.spec.ts` le tient.
+     */
   });
 });
