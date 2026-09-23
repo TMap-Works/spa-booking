@@ -1,0 +1,6 @@
+# Marqueur de lint i18n — voir eslint-rules/i18n-markers.mjs.
+# L'encaissement au comptoir, traduit par #850 : la journée de caisse, le
+# récapitulatif du rendez-vous, les deux actions serveur et le relais PDF du
+# ticket. Le sous-arbre entier est sous la règle. Les trois composants de
+# l'écran vivent dans `../components/` et portent leur ligne dans le marqueur de
+# ce répertoire-là.

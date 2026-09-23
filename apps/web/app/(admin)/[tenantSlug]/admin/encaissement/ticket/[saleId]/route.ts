@@ -1,4 +1,5 @@
 import { ERROR_CODES, slugSchema, uuidSchema } from '@spa/shared';
+import { getTranslations } from 'next-intl/server';
 import { NextResponse, type NextRequest } from 'next/server';
 
 import { ApiClientError, fetchSaleReceiptPdf, type ReceiptPdfFormat } from '@/lib/api-client';
@@ -19,6 +20,17 @@ import { adminActionAccess } from '../../../session';
  * L'établissement n'est pas lu du chemin : c'est le jeton qui le désigne, et une
  * vente d'un autre salon répond 404 à l'API comme une vente inconnue
  * (tenant-isolation §4).
+ *
+ * ## Les deux phrases de ce relais parlent la langue du poste (#850)
+ *
+ * Elles s'affichent nues dans un onglet, sans écran autour : c'est précisément
+ * pour cela qu'elles doivent être lisibles. Un gestionnaire de route s'exécute
+ * dans le contexte de la requête, `getTranslations` y rend donc la langue
+ * résolue comme ailleurs. Il n'est appelé que **sur le chemin de refus**, comme
+ * dans `actions.ts` : le téléchargement qui aboutit n'a aucun mot à écrire, et
+ * résoudre la langue d'avance lui ferait payer la lecture des catalogues pour
+ * rien. Les refus de l'API, eux, gardent le message que l'API a rendu — c'est
+ * elle qui nomme son refus.
  */
 export const dynamic = 'force-dynamic';
 
@@ -31,7 +43,9 @@ export async function GET(
   const sale = uuidSchema.safeParse(params.saleId);
 
   if (!slug.success || !sale.success) {
-    return new NextResponse('Ticket introuvable.', { status: 404 });
+    return new NextResponse((await getTranslations('admin-checkout'))('pdf.notFound'), {
+      status: 404,
+    });
   }
 
   const format: ReceiptPdfFormat =
@@ -64,7 +78,7 @@ export async function GET(
       });
     }
 
-    return new NextResponse('Le ticket n’a pas pu être produit. Merci de réessayer.', {
+    return new NextResponse((await getTranslations('admin-checkout'))('pdf.failed'), {
       status: 502,
     });
   }

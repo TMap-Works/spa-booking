@@ -28,7 +28,29 @@
  * et c'est l'appelant qui lui remet le `clientSecret` que l'API a produit. La
  * seule valeur sensible qu'il touche est la clé **publiable**, publiable par
  * définition (payments-stripe §7).
+ *
+ * ## La langue, et pourquoi elle ne change rien au périmètre PCI (#850)
+ *
+ * `Stripe(clé, { locale })` est une **option de rendu**, au même titre qu'un
+ * thème : elle dit à Stripe dans quelle langue écrire les libellés de ses
+ * champs et — c'est le point du ticket — ses messages d'erreur, « carte
+ * refusée » comprise. Elle ne donne aucun accès aux données de carte, et ne
+ * déplace donc pas d'un pouce la frontière du §1 ci-dessus : les champs restent
+ * des iframes servies par `js.stripe.com`, que notre JavaScript ne lit pas. Le
+ * périmètre reste SAQ A.
+ *
+ * Elle est posée sur la **fabrique** et non sur `elements()` : la documentation
+ * de Stripe en fait le réglage global de Stripe.js, celui qui localise les
+ * chaînes d'erreur de *toutes* ses méthodes — `confirmPayment` y comprise, d'où
+ * viennent précisément les refus de carte. Un `locale` posé sur le seul groupe
+ * d'éléments aurait traduit les champs et laissé les refus en anglais.
+ *
+ * La valeur passée est la langue nue — `fr` ou `en` —, et non l'étiquette
+ * régionale de `lib/format.ts` : Stripe n'accepte qu'une liste close de codes,
+ * où figurent `fr` et `en` mais ni `fr-FR` ni `en-US`.
  */
+
+import type { Locale } from '@spa/shared';
 
 /** L'URL officielle, et la seule admissible. Voir l'en-tête. */
 export const STRIPE_JS_URL = 'https://js.stripe.com/v3/';
@@ -74,7 +96,36 @@ export interface StripeSdk {
   }): Promise<StripeConfirmation>;
 }
 
-type StripeFactory = (publishableKey: string) => StripeSdk;
+/** Les options de la fabrique que ce module emploie, et rien de plus. */
+export interface StripeSdkOptions {
+  /** La langue de Stripe.js — voir l'en-tête. `undefined` laisse son défaut. */
+  readonly locale?: Locale;
+}
+
+type StripeFactory = (publishableKey: string, options?: StripeSdkOptions) => StripeSdk;
+
+/**
+ * Pourquoi le SDK n'a pas pu être chargé — **un code, pas une phrase**.
+ *
+ * Ce module n'a pas de langue : il est chargé une fois par processus, sert les
+ * deux langues, et un message figé à son évaluation en aurait trahi une sur
+ * deux. Il rend donc la **raison**, et `checkout-card-form.tsx` va chercher la
+ * phrase dans `admin-checkout` — même règle que partout ailleurs dans le front,
+ * où l'on réagit sur un code et jamais sur un message (web-frontend §2).
+ */
+export type StripeLoadReason =
+  /** La balise n'a pas pu être tirée — réseau du poste, filtrage, coupure. */
+  | 'script'
+  /** Le script est arrivé, mais `window.Stripe` n'existe pas. */
+  | 'entrypoint';
+
+/** Un échec de chargement de Stripe.js, porteur de sa raison. */
+export class StripeLoadError extends Error {
+  constructor(readonly reason: StripeLoadReason) {
+    super(`stripe-load:${reason}`);
+    this.name = 'StripeLoadError';
+  }
+}
 
 /**
  * `window`, vu comme le porteur éventuel du SDK.
@@ -119,7 +170,7 @@ function injectStripeScript(): Promise<StripeFactory> {
         // ne rejoue aucun de ses deux événements, et la garder ferait attendre
         // indéfiniment la tentative suivante au lieu de la faire échouer.
         script.remove();
-        reject(new Error('Stripe.js s’est chargé sans exposer son point d’entrée.'));
+        reject(new StripeLoadError('entrypoint'));
         return;
       }
 
@@ -136,11 +187,7 @@ function injectStripeScript(): Promise<StripeFactory> {
         // se rejouent — la promesse de reprise n'aboutirait jamais, et le
         // comptoir resterait devant un bouton inerte sans message.
         script.remove();
-        reject(
-          new Error(
-            'Le module de paiement de Stripe n’a pas pu être chargé. Vérifiez la connexion du poste.',
-          ),
-        );
+        reject(new StripeLoadError('script'));
       },
       { once: true },
     );
@@ -159,19 +206,33 @@ function injectStripeScript(): Promise<StripeFactory> {
  * @param publishableKey la clé publiable **rendue par l'API** — jamais une
  * constante de build, pour qu'un changement de compte Stripe ne demande aucun
  * redéploiement du front.
+ * @param locale la langue de l'interface, passée telle quelle à Stripe.js. Voir
+ * l'en-tête : c'est une option de rendu, pas un accès aux données de carte.
+ *
+ * La langue est remise à **chaque** appel, et non mémorisée avec la balise : le
+ * script n'est tiré qu'une fois, mais la fabrique produit une instance par
+ * appel, et c'est elle qui porte le réglage. Un opérateur qui change de langue
+ * sans recharger l'onglet obtient donc un Stripe dans la nouvelle langue au
+ * montage suivant.
  */
-export async function loadStripeSdk(publishableKey: string): Promise<StripeSdk> {
+export async function loadStripeSdk(
+  publishableKey: string,
+  locale?: Locale,
+): Promise<StripeSdk> {
+  // `exactOptionalPropertyTypes` est actif : la clé est omise plutôt que posée à
+  // `undefined`, faute de quoi Stripe recevrait un `locale` explicitement vide.
+  const options: StripeSdkOptions = locale === undefined ? {} : { locale };
   const ready = carrier().Stripe;
 
   if (ready !== undefined) {
-    return ready(publishableKey);
+    return ready(publishableKey, options);
   }
 
   pending ??= injectStripeScript();
 
   try {
     const factory = await pending;
-    return factory(publishableKey);
+    return factory(publishableKey, options);
   } catch (error) {
     // Oubliée : sans cela, une coupure réseau condamnerait le paiement par carte
     // jusqu'au prochain rechargement complet de l'onglet.

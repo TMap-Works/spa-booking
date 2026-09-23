@@ -1,0 +1,162 @@
+{
+  "title": "Encaissement",
+  "denied": {
+    "title": "Accès réservé",
+    "hint": "L’encaissement est réservé aux comptes du salon. Demandez l’accès à l’administrateur.",
+    "failedTitle": "Encaissement indisponible"
+  },
+  "day": {
+    "navLabel": "Journée encaissée",
+    "previous": "Jour précédent",
+    "next": "Jour suivant",
+    "timeZoneHint": "Heures affichées dans le fuseau du salon.",
+    "backToList": "Revenir à la liste de la journée"
+  },
+  "notInDay": {
+    "title": "Rendez-vous introuvable dans cette journée",
+    "body": "Le rendez-vous demandé n’est pas au planning du {date}. Changez de jour, ou choisissez-en un dans la liste ci-dessous."
+  },
+  "list": {
+    "caption": "Rendez-vous de la journée",
+    "time": "Heure",
+    "client": "Client",
+    "service": "Prestation",
+    "amount": "Montant",
+    "status": "Statut",
+    "settlement": "Règlement",
+    "openSettlement": " — voir le règlement",
+    "openCheckout": " — encaisser ce rendez-vous",
+    "emptyTitle": "Aucun rendez-vous ce jour-là",
+    "emptyBody": "Rien à encaisser au {date}. Changez de jour pour retrouver une prestation rendue."
+  },
+  "recap": {
+    "attachedTo": "Rattaché au rendez-vous de",
+    "caption": "Prestation à encaisser",
+    "service": "Prestation",
+    "staff": "Praticien",
+    "total": "Total",
+    "schedule": "Horaire",
+    "due": "À encaisser",
+    "settled": "Réglé",
+    "fixedPrice": "Montant figé à la réservation. Le total qui fait foi est celui que le serveur recalcule à la validation — le front n’en fait jamais l’arithmétique."
+  },
+  "badge": {
+    "settled": "réglé",
+    "refunded": "remboursé",
+    "partiallyRefunded": "partiellement remboursé",
+    "cardOpen": "carte en cours",
+    "cardFailed": "carte en échec",
+    "due": "à encaisser"
+  },
+  "method": {
+    "legend": "Moyen de paiement",
+    "cash": "Espèces",
+    "card": "Carte",
+    "cashPhrase": "en espèces",
+    "cardPhrase": "par carte",
+    "cashHint": "Enregistré avec l’opérateur et l’horodatage ; la caisse fait foi au rapprochement. Aucun appel au prestataire.",
+    "cardHint": "La cliente saisit sa carte dans les champs servis par Stripe. Aucun numéro n’est saisi, ni vu, ni conservé par le salon.",
+    "unavailableTitle": "{method} indisponible"
+  },
+  "blocker": {
+    "nothingToSettleTitle": "Rien à encaisser",
+    "cancelled": "Ce rendez-vous est annulé : le créneau a été rendu, il n’y a plus de prestation à encaisser.",
+    "alreadySettled": "Ce rendez-vous a déjà été encaissé : un second règlement créerait une pièce comptable de trop.",
+    "cardOpenBlocksCash": "Un paiement par carte est déjà ouvert sur ce rendez-vous. Terminez-le — le règlement en espèces serait refusé tant qu’il court.",
+    "cardFailedBlocksCash": "Une intention de paiement par carte en échec reste attachée à ce rendez-vous. Reprenez la carte — le règlement en espèces serait refusé tant qu’elle n’est pas levée.",
+    "cardNotPayable": "Le paiement par carte n’accepte pas un rendez-vous déjà terminé ou non honoré. Encaissez en espèces, ou par le lecteur du comptoir."
+  },
+  "settlement": {
+    "title": "Réglé {method} — {amount}",
+    "recordedAt": "Encaissement inscrit le {date}.",
+    "refundedPart": " Dont {amount} remboursés.",
+    "nothingLeft": " Il n’y a plus rien à encaisser sur ce rendez-vous.",
+    "reprint": "Réimprimer le ticket",
+    "alreadySettledTitle": "Rendez-vous déjà encaissé"
+  },
+  "action": {
+    "settleCash": "Encaisser {amount} en espèces",
+    "settleCashLoading": "Encaissement en cours…",
+    "openCard": "Payer {amount} par carte",
+    "openCardLoading": "Ouverture du paiement…",
+    "confirmCard": "Encaisser {amount} par carte",
+    "confirmCardLoading": "Paiement en cours…"
+  },
+  "pci": {
+    "cash": "Aucun appel au prestataire de paiement sur ce chemin : la vente est inscrite avec son opérateur et son horodatage, et la caisse fait foi au rapprochement.",
+    "card": "Les champs de carte sont servis par Stripe : aucun numéro ne se saisit ici, ni ne se note ailleurs.",
+    "cardForm": "Les champs de carte sont servis par Stripe : aucun numéro ne se saisit ailleurs, ne se note ailleurs, ni ne transite par le salon ou par nos serveurs."
+  },
+  "card": {
+    "unavailableTitle": "Paiement par carte indisponible",
+    "cashStillPossible": "Le règlement en espèces reste possible.",
+    "loadFailedScript": "Le module de paiement de Stripe n’a pas pu être chargé. Vérifiez la connexion du poste.",
+    "loadFailedEntrypoint": "Stripe.js s’est chargé sans exposer son point d’entrée.",
+    "loadFailedUnknown": "Le module de paiement n’a pas pu être chargé.",
+    "declined": "Le paiement a été refusé.",
+    "unknownStatus": "inconnu",
+    "notCompleted": "Le paiement n’a pas abouti (état « {status} »). Rien n’a été débité : réessayez, ou encaissez en espèces."
+  },
+  "receipt": {
+    "acceptedTitle": "Paiement accepté par le prestataire",
+    "recordedTitle": "Encaissement enregistré — {amount}",
+    "heading": "Ticket de caisse",
+    "loading": "Préparation du ticket…",
+    "unavailableTitle": "Ticket indisponible",
+    "retry": "Réessayer",
+    "loadFailed": "Le ticket n’a pas pu être chargé. Vérifiez la connexion et réessayez.",
+    "pdfTicket": "PDF ticket",
+    "pdfInvoice": "Facture A4",
+    "label": "Reçu",
+    "provisionalTitle": "Reçu provisoire",
+    "finalTitle": "Reçu",
+    "pendingNote": "Paiement en cours de confirmation.",
+    "client": "Client",
+    "staff": "Praticien",
+    "linesCaption": "Lignes du reçu",
+    "item": "Article",
+    "quantity": "Qté",
+    "amount": "Montant",
+    "refunded": "Remboursé",
+    "total": "Total",
+    "kept": "Reste acquis",
+    "payment": "Règlement",
+    "thanks": "Merci de votre visite !",
+    "provisionalDisclaimer": "La confirmation définitive est inscrite par le webhook signé, côté serveur : ce reçu vaut preuve de passage, pas de capture.",
+    "cashDisclaimer": "Règlement en espèces inscrit et horodaté. C’est la caisse qui fait foi au rapprochement.",
+    "settledCardDisclaimer": "Encaissement par carte inscrit en base, sur confirmation du webhook signé. Ce reçu est définitif."
+  },
+  "completion": {
+    "card": "Le passage du rendez-vous en « honoré » n’est pas encore servi par l’API : le statut suivra la confirmation du webhook, sans rien à reprendre ici.",
+    "cash": "Le passage du rendez-vous en « honoré » n’est pas encore servi par l’API : l’encaissement est bien inscrit, le statut du rendez-vous suivra sans rien à reprendre ici."
+  },
+  "failure": {
+    "providerUnreachable": "Le prestataire de paiement n’a pas répondu. Rien n’a été débité : réessayez, ou encaissez en espèces.",
+    "alreadySettled": "Ce rendez-vous a déjà été encaissé. Rechargez l’écran avant de reprendre — un second règlement créerait une pièce comptable de trop.",
+    "notPayable": "Le paiement par carte n’accepte pas ce rendez-vous : il est annulé, terminé ou non honoré. Encaissez en espèces si la prestation a été rendue.",
+    "notSettleable": "Ce rendez-vous est annulé : il n’y a plus de prestation à encaisser.",
+    "tooManyRequests": "Trop d’ouvertures de paiement en peu de temps. Patientez quelques secondes avant de réessayer.",
+    "notFound": "Ce rendez-vous est introuvable dans cet établissement.",
+    "forbidden": "Votre compte n’a pas le droit d’encaisser. Demandez l’accès à l’administrateur du salon.",
+    "unknownTarget": "Rendez-vous ou établissement inconnu.",
+    "unknownReceiptTarget": "Ticket ou établissement inconnu."
+  },
+  "sale": {
+    "subtotal": "Sous-total",
+    "tax": "Taxe",
+    "tip": "Pourboire",
+    "total": "Total",
+    "itemUnavailable": "Un article du ticket n’est plus au rayon. Retirez-le et rechargez le catalogue avant de reprendre.",
+    "currencyMismatch": "Un article du ticket est libellé dans une autre devise que celle du salon. Il n’est pas vendable ici : retirez-le du ticket.",
+    "amountOutOfRange": "Le total dépasse ce qu’un ticket peut porter. Réduisez les quantités, ou composez plusieurs tickets.",
+    "historyWindowInvalid": "La période demandée est vide : la fin doit suivre le début.",
+    "validation": "Le ticket a été refusé : une ligne est incomplète ou hors bornes. Vérifiez les quantités avant de réessayer.",
+    "notFound": "Une prestation ou un article du ticket est introuvable dans cet établissement.",
+    "forbidden": "Votre compte n’a pas le droit de tenir la caisse. Demandez l’accès à l’administrateur du salon.",
+    "unavailable": "La caisse est momentanément injoignable. Le ticket n’a pas été enregistré : réessayez dans un instant."
+  },
+  "pdf": {
+    "notFound": "Ticket introuvable.",
+    "failed": "Le ticket n’a pas pu être produit. Merci de réessayer."
+  }
+}

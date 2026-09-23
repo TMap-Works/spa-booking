@@ -1,7 +1,8 @@
 'use client';
 
-import type { Appointment, PaymentMethod, SaleReceipt, TimeZone } from '@spa/shared';
+import type { Appointment, Locale, PaymentMethod, SaleReceipt, TimeZone } from '@spa/shared';
 import { subtractMoney } from '@spa/shared';
+import { useLocale, useTranslations } from 'next-intl';
 import { useEffect, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
@@ -14,7 +15,12 @@ import {
   settledReceiptDisclaimer,
 } from '@/lib/admin/checkout-summary';
 import type { PaymentTransaction } from '@/lib/admin/payment-contract';
-import { formatDuration, formatMoney, formatTicketDateTime } from '@/lib/format';
+import {
+  formatDuration,
+  formatMoney,
+  formatTicketDateTime,
+  type DisplayLocale,
+} from '@/lib/format';
 
 import { loadReceiptAction } from '../encaissement/actions';
 import { adminReceiptPdfPath } from '../paths';
@@ -61,9 +67,18 @@ import { useAdminSessionRenewal } from './use-admin-session-renewal';
  * relu de l'historique de la journée. `settled` dit qu'on est dans ce cas : un
  * reçu carte réimprimé depuis une ligne `succeeded` n'est pas provisoire —
  * c'est le webhook signé qui a écrit cette ligne.
+ *
+ * ## La langue (#850)
+ *
+ * Le reçu réduit — celui qui se compose du rendez-vous seul — parle la langue de
+ * l'interface : ses libellés viennent d'`admin-checkout`, ses montants et son
+ * horodatage de `lib/format.ts`. Le **ticket de la pièce**, lui, est mis en page
+ * par `ReceiptTicket` à partir de ce que l'API rend, et sa traduction relève de
+ * son propre ticket : ce composant-ci ne fait que le placer.
  */
 export function CheckoutReceipt({
   appointment,
+  countryCode = null,
   method,
   settled = false,
   tenantSlug,
@@ -71,6 +86,8 @@ export function CheckoutReceipt({
   transaction,
 }: {
   readonly appointment: Appointment;
+  /** `Tenant.countryCode` — la région de la mise en forme, jamais le fuseau. */
+  readonly countryCode?: string | null;
   readonly method: PaymentMethod;
   /** L'encaissement est déjà inscrit en base : le reçu est définitif. */
   readonly settled?: boolean;
@@ -79,6 +96,9 @@ export function CheckoutReceipt({
   /** L'encaissement inscrit — `null` sur une carte, que seul le webhook conclut. */
   readonly transaction: PaymentTransaction | null;
 }) {
+  const t = useTranslations('admin-checkout');
+  const locale = useLocale() as Locale;
+  const display: DisplayLocale = { locale, countryCode };
   const due = amountDue(appointment);
   const provisional = !settled && receiptIsProvisional(method);
   // La pièce que ce règlement solde — `null` sur un reçu carte provisoire, et
@@ -91,20 +111,25 @@ export function CheckoutReceipt({
         tone={provisional ? 'info' : 'success'}
         title={
           provisional
-            ? 'Paiement accepté par le prestataire'
-            : `Encaissement enregistré — ${formatMoney(due)}`
+            ? t('receipt.acceptedTitle')
+            : t('receipt.recordedTitle', { amount: formatMoney(due, display) })
         }
       >
-        <p>{settled ? settledReceiptDisclaimer(method) : receiptDisclaimer(method)}</p>
+        <p>
+          {settled
+            ? settledReceiptDisclaimer(method, locale)
+            : receiptDisclaimer(method, locale)}
+        </p>
       </Notification>
 
       <h2 className="spa-admin__section-title" id="recu-titre">
-        Ticket de caisse
+        {t('receipt.heading')}
       </h2>
 
       {saleId === null ? (
         <AppointmentReceipt
           appointment={appointment}
+          display={display}
           method={method}
           provisional={provisional}
           timeZone={timeZone}
@@ -120,7 +145,14 @@ export function CheckoutReceipt({
 type TicketState =
   | { readonly kind: 'chargement' }
   | { readonly kind: 'pret'; readonly receipt: SaleReceipt }
-  | { readonly kind: 'echec'; readonly message: string };
+  /**
+   * `message` est celui que l'**API** a rendu — c'est elle qui nomme son refus
+   * (web-frontend §2). `null` dit « le serveur n'a pas répondu du tout » : il n'y
+   * a alors aucun message à reprendre, et c'est l'écran qui le dit, donc le
+   * catalogue. Porter la phrase ici aurait obligé l'effet à lire `t`, donc à le
+   * déclarer en dépendance, donc à relancer la lecture du ticket à chaque rendu.
+   */
+  | { readonly kind: 'echec'; readonly message: string | null };
 
 /**
  * Le ticket de caisse d'une vente : relu de l'API, affiché en aperçu,
@@ -133,6 +165,7 @@ function SaleTicket({
   readonly saleId: string;
   readonly tenantSlug: string;
 }) {
+  const t = useTranslations('admin-checkout');
   const [state, setState] = useState<TicketState>({ kind: 'chargement' });
   const [attempt, setAttempt] = useState(0);
   const { renewIfExpired } = useAdminSessionRenewal(tenantSlug);
@@ -159,10 +192,7 @@ function SaleTicket({
       })
       .catch(() => {
         if (live) {
-          setState({
-            kind: 'echec',
-            message: 'Le ticket n’a pas pu être chargé. Vérifiez la connexion et réessayez.',
-          });
+          setState({ kind: 'echec', message: null });
         }
       });
 
@@ -179,7 +209,7 @@ function SaleTicket({
         rel="noopener"
         target="_blank"
       >
-        <span className="spa-button__label">PDF ticket</span>
+        <span className="spa-button__label">{t('receipt.pdfTicket')}</span>
       </a>
       <a
         className="spa-button spa-button--neutral"
@@ -187,7 +217,7 @@ function SaleTicket({
         rel="noopener"
         target="_blank"
       >
-        <span className="spa-button__label">Facture A4</span>
+        <span className="spa-button__label">{t('receipt.pdfInvoice')}</span>
       </a>
     </>
   );
@@ -195,7 +225,7 @@ function SaleTicket({
   if (state.kind === 'chargement') {
     return (
       <p aria-live="polite" className="spa-admin-checkout__pci" role="status">
-        Préparation du ticket…
+        {t('receipt.loading')}
       </p>
     );
   }
@@ -203,8 +233,8 @@ function SaleTicket({
   if (state.kind === 'echec') {
     return (
       <>
-        <Notification tone="warning" title="Ticket indisponible">
-          <p>{state.message}</p>
+        <Notification tone="warning" title={t('receipt.unavailableTitle')}>
+          <p>{state.message ?? t('receipt.loadFailed')}</p>
         </Notification>
         <div className="spa-ticket-actions">
           <Button
@@ -213,7 +243,7 @@ function SaleTicket({
             }}
             variant="accent"
           >
-            Réessayer
+            {t('receipt.retry')}
           </Button>
           {pdfLinks}
         </div>
@@ -249,17 +279,20 @@ function SaleTicket({
  */
 function AppointmentReceipt({
   appointment,
+  display,
   method,
   provisional,
   timeZone,
   transaction,
 }: {
   readonly appointment: Appointment;
+  readonly display: DisplayLocale;
   readonly method: PaymentMethod;
   readonly provisional: boolean;
   readonly timeZone: TimeZone;
   readonly transaction: PaymentTransaction | null;
 }) {
+  const t = useTranslations('admin-checkout');
   const due = amountDue(appointment);
   const settledAt = transaction?.capturedAt ?? transaction?.createdAt ?? null;
   // Ce que le prestataire a **rendu** sur cet encaissement (#63) — `null` tant
@@ -274,12 +307,14 @@ function AppointmentReceipt({
       : subtractMoney(transaction.amount, refunded);
 
   const receipt = (
-    <article aria-label="Reçu" className="spa-ticket">
+    <article aria-label={t('receipt.label')} className="spa-ticket">
       <div className="spa-ticket__identity">
-        <p className="spa-ticket__title">{provisional ? 'Reçu provisoire' : 'Reçu'}</p>
-        {settledAt === null ? null : <p>{formatTicketDateTime(settledAt, timeZone)}</p>}
+        <p className="spa-ticket__title">
+          {provisional ? t('receipt.provisionalTitle') : t('receipt.finalTitle')}
+        </p>
+        {settledAt === null ? null : <p>{formatTicketDateTime(settledAt, timeZone, display)}</p>}
         {provisional ? (
-          <p className="spa-ticket__note">Paiement en cours de confirmation.</p>
+          <p className="spa-ticket__note">{t('receipt.pendingNote')}</p>
         ) : null}
       </div>
 
@@ -287,13 +322,13 @@ function AppointmentReceipt({
 
       <dl className="spa-ticket__rows">
         <div className="spa-ticket__row">
-          <dt>Client</dt>
+          <dt>{t('receipt.client')}</dt>
           <dd>
             {appointment.client.firstName} {appointment.client.lastName}
           </dd>
         </div>
         <div className="spa-ticket__row">
-          <dt>Praticien</dt>
+          <dt>{t('receipt.staff')}</dt>
           <dd>{appointment.staff.displayName}</dd>
         </div>
       </dl>
@@ -301,25 +336,26 @@ function AppointmentReceipt({
       <hr className="spa-ticket__rule" />
 
       <table className="spa-ticket__items">
-        <caption className="spa-visually-hidden">Lignes du reçu</caption>
+        <caption className="spa-visually-hidden">{t('receipt.linesCaption')}</caption>
         <thead>
           <tr>
-            <th scope="col">Article</th>
+            <th scope="col">{t('receipt.item')}</th>
             <th className="spa-ticket__num" scope="col">
-              Qté
+              {t('receipt.quantity')}
             </th>
             <th className="spa-ticket__num" scope="col">
-              Montant
+              {t('receipt.amount')}
             </th>
           </tr>
         </thead>
         <tbody>
           <tr>
             <td>
-              {appointment.service.name} — {formatDuration(appointment.service.durationMinutes)}
+              {appointment.service.name} —{' '}
+              {formatDuration(appointment.service.durationMinutes, display)}
             </td>
             <td className="spa-ticket__num">1</td>
-            <td className="spa-ticket__num">{formatMoney(due)}</td>
+            <td className="spa-ticket__num">{formatMoney(due, display)}</td>
           </tr>
         </tbody>
       </table>
@@ -329,24 +365,24 @@ function AppointmentReceipt({
       <dl className="spa-ticket__rows">
         {refunded === null ? null : (
           <div className="spa-ticket__row">
-            <dt>Remboursé</dt>
-            <dd>− {formatMoney(refunded)}</dd>
+            <dt>{t('receipt.refunded')}</dt>
+            <dd>− {formatMoney(refunded, display)}</dd>
           </div>
         )}
         <div className="spa-ticket__row spa-ticket__row--grand">
-          <dt>{refunded === null ? 'Total' : 'Reste acquis'}</dt>
-          <dd>{formatMoney(kept)}</dd>
+          <dt>{refunded === null ? t('receipt.total') : t('receipt.kept')}</dt>
+          <dd>{formatMoney(kept, display)}</dd>
         </div>
         <div className="spa-ticket__row">
-          <dt>Règlement</dt>
-          <dd>{methodLabel(method)}</dd>
+          <dt>{t('receipt.payment')}</dt>
+          <dd>{methodLabel(method, display.locale)}</dd>
         </div>
       </dl>
 
       <hr className="spa-ticket__rule" />
 
       <footer className="spa-ticket__footer">
-        <p className="spa-ticket__thanks">Merci de votre visite !</p>
+        <p className="spa-ticket__thanks">{t('receipt.thanks')}</p>
       </footer>
     </article>
   );

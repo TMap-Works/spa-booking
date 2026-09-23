@@ -1,15 +1,18 @@
 'use client';
 
-import type { Money } from '@spa/shared';
+import type { Locale, Money } from '@spa/shared';
+import { useLocale, useTranslations } from 'next-intl';
 import { useEffect, useRef, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { Notification } from '@/components/ui/notification';
-import { PROVIDER_UNREACHABLE_MESSAGE } from '@/lib/admin/checkout-summary';
+import { providerUnreachableMessage } from '@/lib/admin/checkout-summary';
 import {
+  StripeLoadError,
   loadStripeSdk,
   type StripeConfirmation,
   type StripeElements,
+  type StripeLoadReason,
   type StripePaymentElement,
   type StripeSdk,
 } from '@/lib/admin/payment-stripe';
@@ -39,24 +42,52 @@ import { formatMoney } from '@/lib/format';
  * pas que notre encaissement est inscrit : cela, seul le webhook signé le fait,
  * côté serveur (payments-stripe §2). `onAccepted` dit donc « le prestataire a
  * accepté », et l'écran d'appel en tire un reçu explicitement provisoire.
+ *
+ * ## La langue de Stripe, et ce qu'elle ne change pas (#850)
+ *
+ * La langue courante part à Stripe.js par l'option `locale` de sa fabrique
+ * (`lib/admin/payment-stripe.ts`). C'est ce qui fait que les libellés de
+ * l'iframe **et** les messages du prestataire — « carte refusée » en tête —
+ * s'écrivent dans la langue de l'interface, sans qu'aucun d'eux ne soit recopié
+ * dans notre catalogue : les recopier les aurait fait diverger de ce que la
+ * cliente voit dans le champ.
+ *
+ * Le périmètre PCI ne bouge pas d'un pouce : `locale` est une option de rendu,
+ * pas un accès aux données de carte. Les champs restent des iframes servies par
+ * `js.stripe.com`, et il n'y a toujours **aucun** champ de carte dans ce
+ * fichier.
  */
 export function CheckoutCardForm({
   amount,
   clientSecret,
+  countryCode = null,
   publishableKey,
   onAccepted,
 }: {
   readonly amount: Money;
   /** Laissez-passer à usage unique, lié à cette intention et à elle seule. */
   readonly clientSecret: string;
+  /** `Tenant.countryCode` — la région de la mise en forme du montant. */
+  readonly countryCode?: string | null;
   /** Clé publiable rendue par l'API — jamais une constante de build. */
   readonly publishableKey: string;
   readonly onAccepted: () => void;
 }) {
+  const t = useTranslations('admin-checkout');
+  const locale = useLocale() as Locale;
   const holder = useRef<HTMLDivElement | null>(null);
   const elements = useRef<StripeElements | null>(null);
   const [sdk, setSdk] = useState<StripeSdk | null>(null);
-  const [unavailable, setUnavailable] = useState<string | null>(null);
+  /**
+   * Pourquoi l'élément n'a pas pu être monté — une **raison**, pas une phrase.
+   *
+   * L'état ne porte pas le message parce que le message a une langue et que
+   * l'effet qui le poserait n'en a pas : y lire `t` l'obligerait à figurer dans
+   * ses dépendances, et l'élément de Stripe serait démonté puis remonté à chaque
+   * rendu où `useTranslations` rend une nouvelle fonction — c'est-à-dire devant
+   * la cliente, au milieu d'une saisie de carte.
+   */
+  const [unavailable, setUnavailable] = useState<StripeLoadReason | 'unknown' | null>(null);
   const [refusal, setRefusal] = useState<string | null>(null);
   const [confirming, setConfirming] = useState(false);
 
@@ -79,7 +110,7 @@ export function CheckoutCardForm({
 
     async function mount(): Promise<void> {
       try {
-        const loaded = await loadStripeSdk(publishableKey);
+        const loaded = await loadStripeSdk(publishableKey, locale);
 
         if (cancelled) {
           return;
@@ -101,11 +132,7 @@ export function CheckoutCardForm({
           return;
         }
 
-        setUnavailable(
-          error instanceof Error
-            ? error.message
-            : 'Le module de paiement n’a pas pu être chargé.',
-        );
+        setUnavailable(error instanceof StripeLoadError ? error.reason : 'unknown');
       }
     }
 
@@ -116,7 +143,7 @@ export function CheckoutCardForm({
       element?.destroy();
       elements.current = null;
     };
-  }, [clientSecret, publishableKey]);
+  }, [clientSecret, locale, publishableKey]);
 
   async function confirm(): Promise<void> {
     const group = elements.current;
@@ -135,20 +162,23 @@ export function CheckoutCardForm({
       // écran, et il n'y a pas d'URL de retour à tenir à jour.
       outcome = await sdk.confirmPayment({ elements: group, redirect: 'if_required' });
     } catch {
-      setRefusal(PROVIDER_UNREACHABLE_MESSAGE);
+      setRefusal(providerUnreachableMessage(locale));
       setConfirming(false);
       return;
     }
 
     if (outcome.error !== undefined) {
       // Le message vient de Stripe et ne porte aucune donnée de carte, par
-      // construction du prestataire — il est donc affichable tel quel.
-      setRefusal(outcome.error.message ?? 'Le paiement a été refusé.');
+      // construction du prestataire — il est donc affichable tel quel. Il arrive
+      // déjà dans la langue de l'interface, `locale` ayant été passée à la
+      // fabrique : c'est exactement ce que le troisième critère de #850 demande,
+      // et c'est pourquoi il n'est pas remplacé par un texte de notre catalogue.
+      setRefusal(outcome.error.message ?? t('card.declined'));
       setConfirming(false);
       return;
     }
 
-    const status = outcome.paymentIntent?.status ?? 'inconnu';
+    const status = outcome.paymentIntent?.status ?? t('card.unknownStatus');
 
     // `processing` compte comme accepté : la carte est partie, l'issue arrivera
     // par le webhook comme pour un `succeeded`. Ce qui compte ici est que la
@@ -158,17 +188,21 @@ export function CheckoutCardForm({
       return;
     }
 
-    setRefusal(
-      `Le paiement n’a pas abouti (état « ${status} »). Rien n’a été débité : réessayez, ou encaissez en espèces.`,
-    );
+    setRefusal(t('card.notCompleted', { status }));
     setConfirming(false);
   }
 
   if (unavailable !== null) {
     return (
-      <Notification tone="danger" title="Paiement par carte indisponible">
-        <p>{unavailable}</p>
-        <p>Le règlement en espèces reste possible.</p>
+      <Notification tone="danger" title={t('card.unavailableTitle')}>
+        <p>
+          {unavailable === 'script'
+            ? t('card.loadFailedScript')
+            : unavailable === 'entrypoint'
+              ? t('card.loadFailedEntrypoint')
+              : t('card.loadFailedUnknown')}
+        </p>
+        <p>{t('card.cashStillPossible')}</p>
       </Notification>
     );
   }
@@ -199,16 +233,14 @@ export function CheckoutCardForm({
         type="submit"
         disabled={sdk === null}
         loading={confirming}
-        loadingLabel="Paiement en cours…"
+        loadingLabel={t('action.confirmCardLoading')}
       >
-        Encaisser {formatMoney(amount)} par carte
+        {t('action.confirmCard', { amount: formatMoney(amount, { locale, countryCode }) })}
       </Button>
 
       <p className="spa-admin-checkout__pci">
         <span aria-hidden="true">🔒</span>
-        Les champs de carte sont servis par Stripe : aucun numéro ne se saisit
-        ailleurs, ne se note ailleurs, ni ne transite par le salon ou par nos
-        serveurs.
+        {t('pci.cardForm')}
       </p>
     </form>
   );
