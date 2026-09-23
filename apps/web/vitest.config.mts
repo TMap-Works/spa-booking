@@ -34,6 +34,19 @@ export default defineConfig({
     // qui rend une brique partagée se heurte au contexte absent de
     // `NextIntlClientProvider`.
     setupFiles: ['./tests/support/next-intl.ts'],
+    // Le défaut de Vitest est 5 000 ms, et c'est trop court **ici** : une vague
+    // de jalon fait tourner plusieurs agents de front, chacun lançant la suite
+    // complète avec un worker par cœur. Seize cœurs, trois agents, et le
+    // planificateur ne rend la main à un worker qu'après plusieurs secondes —
+    // d'où des rafales de « Test timed out in 5000ms » sur des suites que la CI
+    // passe au vert (jusqu'à 49 échecs sur un seul ticket le 2026-09-23). Le
+    // symptôme est la famine, pas le test : chaque agent rejouait alors un
+    // `npm run verify` entier pour le prouver, soit la moitié du temps du
+    // ticket. Trente secondes laissent respirer un worker affamé sans masquer
+    // une vraie lenteur — une suite de composants correcte tient en dizaines de
+    // millisecondes, pas en secondes.
+    testTimeout: 30_000,
+    hookTimeout: 30_000,
   },
   resolve: {
     alias: {
