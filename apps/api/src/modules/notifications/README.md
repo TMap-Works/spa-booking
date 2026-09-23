@@ -613,14 +613,43 @@ de confirmation sans nom ni prestation ne serait pas une confirmation. Elle est
 
 ## `GET /api/v1/notifications`
 
-Le journal d'envois du back-office, derrière `@AuthAtLeast('STAFF')` : la
-question « ma cliente dit n'avoir rien reçu » se pose au comptoir, pendant que la
-cliente attend.
+Le journal d'envois du back-office, derrière `@AuthWith('agenda:read:own',
+'agenda:read:all')` : la question « ma cliente dit n'avoir rien reçu » se pose au
+comptoir, pendant que la cliente attend, et elle se pose autant à la praticienne
+qu'à la gérante.
+
+### Ce que chacune y lit — #1200
+
+| L'appelant porte | Ce que la route sert |
+|---|---|
+| `agenda:read:all` (`MANAGER`, `ADMIN`) | le journal de tout l'établissement |
+| `agenda:read:own` seul (`STAFF`) | les envois de **ses** rendez-vous, et rien d'autre |
+| ni l'une ni l'autre (`CLIENT`) | 403 |
+
+Le rang `STAFF` ouvrait la bonne porte et tout le salon derrière : la campagne QA
+`20260922-complet` y a lu 89 lignes dont 32 rendez-vous d'un collègue, avec leurs
+`appointmentId` et leurs `recipientUserId` — les identifiants qui ont servi à
+monter le contournement de #1135. Le défaut n'était pas le seuil mais sa forme,
+et c'est le raisonnement d'[ADR 0013](../../../../../docs/adr/0013-matrice-de-permissions-par-role.md) :
+ce qui sépare les deux rôles est un **ensemble d'objets**, pas un cran de
+capacité.
+
+Aucune permission n'a été créée pour cela. `agenda:read:own` / `:all` portent
+déjà la frontière depuis #812 — « le praticien ne voit que son propre
+planning » — et un journal d'envois n'est qu'une seconde lecture du même agenda,
+par une autre porte. Une `notifications:read:all` aurait écrit deux fois la même
+décision, et la seconde écriture est celle qui diverge.
+
+La borne s'applique **avant** les filtres de requête : `?appointmentId=` sur le
+rendez-vous d'une collègue rend une liste vide, comme pour un rendez-vous
+inconnu ou celui d'un autre salon. Trois situations indiscernables, délibérément
+— les distinguer ferait de la route un oracle sur l'agenda du salon.
 
 Filtres : `appointmentId`, `type`, `channel`, `statuses` — exactement ceux de
 `notificationListQuerySchema`, et pas un de plus. Le vocabulaire de la route est
 celui du contrat partagé, en minuscules ; la conversion vers l'énumération
-PostgreSQL vit dans `dto/list-notifications.dto.ts`.
+PostgreSQL vit dans `dto/list-notifications.dto.ts`. La portée, elle, n'est pas
+un filtre : elle vient du jeton vérifié et le contrôleur la pose lui-même.
 
 **Aucun verbe d'écriture**, et notamment aucun « renvoyer » : la reprise
 appartient à SQS et à son backoff natif (notifications §4). Un bouton au comptoir
