@@ -4,5 +4,4 @@ export {
   IDEMPOTENCY_KEY_MIN_LENGTH,
   readIdempotencyKey,
 } from './idempotency-key';
-export { tenantCountryValidationPipe } from './tenant-country-validation.pipe';
 export { ZodValidationPipe } from './zod-validation.pipe';

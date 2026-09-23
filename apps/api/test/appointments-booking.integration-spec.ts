@@ -44,6 +44,14 @@ const BOOKING_PATH = (slug: string): string => `/api/v1/public/${slug}/appointme
 
 const MINUTE_MS = 60_000;
 
+/**
+ * Des coordonnées bien formées — ce que le corps ne porte **plus** (#1222).
+ *
+ * Elles ne servent qu'au cas qui prouve le refus : le contrat a perdu le champ
+ * `client`, et le seul appel de cette suite qui l'envoie doit sortir en 400.
+ * Bien formées à dessein — ce n'est pas leur contenu qui est refusé, c'est leur
+ * présence.
+ */
 function guest(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     firstName: 'Camille',
@@ -81,7 +89,6 @@ describe('POST /api/v1/public/:tenantSlug/appointments', () => {
     serviceId: harness.a.serviceId,
     staffId: harness.a.staffId,
     startsAt: slot.startsAt.toISOString(),
-    client: guest(),
     // L'accord au traitement des données, obligatoire depuis #790 : le corps
     // par défaut est celui d'un tunnel qui a fait cocher la case. Les cas qui
     // l'omettent ou le refusent le disent par `overrides`.
@@ -199,12 +206,14 @@ describe('POST /api/v1/public/:tenantSlug/appointments', () => {
     expect(harness.appointments.appointments[0]?.clientId).toBe(harness.a.clientId);
   });
 
-  it('ignore l’adresse du corps — elle ne désigne plus aucune fiche', async () => {
+  it('refuse en 400 des coordonnées dans le corps — le champ n’existe plus', async () => {
     // Le cœur du défaut relevé le 22/09/2026 : avec `client.email` = l'adresse
     // d'une cliente existante, le rendez-vous se posait dans **son** compte et
-    // la réponse livrait son `clientId`. Une seconde cliente est au fichier, et
-    // l'adresse envoyée est la sienne : le rendez-vous reste pourtant celui du
-    // jeton.
+    // la réponse livrait son `clientId`. #1136 a rendu le champ sans effet ;
+    // #1222 l'a retiré du contrat, une fois le tunnel passé à un corps qui ne
+    // l'émet plus. Le `.strict()` en fait un champ inconnu, donc un 400 — et
+    // c'est le refus qu'on veut : l'appelant qui l'envoie croit désigner
+    // quelqu'un.
     const autre = harness.appointments.seedClient({
       tenantId: harness.a.tenant.id,
       email: 'clara@example.test',
@@ -215,28 +224,12 @@ describe('POST /api/v1/public/:tenantSlug/appointments', () => {
       .set('Authorization', auth)
       .send(body({ client: guest({ email: 'clara@example.test' }) }));
 
-    expect(response.status).toBe(201);
-    expect(response.body.clientId).toBe(harness.a.clientId);
-    expect(response.body.clientId).not.toBe(autre.id);
+    expect(response.status).toBe(400);
+    expect(response.body).toMatchObject({ code: 'VALIDATION_ERROR' });
+    expect(harness.appointments.appointments).toHaveLength(0);
     expect(
       harness.appointments.appointments.filter((row) => row.clientId === autre.id),
     ).toHaveLength(0);
-  });
-
-  it('accepte un corps sans coordonnées du tout — le jeton suffit', async () => {
-    // Le pendant du cas précédent, côté contrat : `client` est devenu facultatif
-    // (#1136), et c'est la forme que le tunnel servira quand son étape
-    // « Coordonnées » aura été reprise. La route doit déjà l'accepter, faute de
-    // quoi la reprise du front serait bloquée par l'API.
-    const { client: _sansCoordonnees, ...sansClient } = body();
-
-    const response = await request(harness.server())
-      .post(BOOKING_PATH(harness.a.tenant.slug))
-      .set('Authorization', auth)
-      .send(sansClient);
-
-    expect(response.status).toBe(201);
-    expect(response.body.clientId).toBe(harness.a.clientId);
   });
 
   /**
@@ -424,7 +417,7 @@ describe('POST /api/v1/public/:tenantSlug/appointments', () => {
     const response = await request(harness.server())
       .post(BOOKING_PATH(harness.a.tenant.slug))
       .set('Authorization', await harness.bearer(harness.a, 'CLIENT', gerante.id))
-      .send(body({ client: guest({ email: 'gerante@example.test' }) }));
+      .send(body());
 
     expect(response.status).toBe(404);
     // Le corps d'erreur ne renvoie pas l'adresse : c'est une donnée personnelle,
@@ -543,7 +536,7 @@ describe('POST /api/v1/public/:tenantSlug/appointments', () => {
       const response = await request(harness.server())
         .post(BOOKING_PATH(harness.a.tenant.slug))
         .set('Authorization', auth)
-        .send(withoutStaff({ client: guest({ email: 'autre@example.test' }) }));
+        .send(withoutStaff());
 
       expect(response.status).toBe(201);
       expect(response.body.staffId).toBe(second);
@@ -557,19 +550,14 @@ describe('POST /api/v1/public/:tenantSlug/appointments', () => {
         const taken = await request(harness.server())
           .post(BOOKING_PATH(harness.a.tenant.slug))
           .set('Authorization', auth)
-          .send(
-            body({
-              staffId,
-              client: guest({ email: `${staffId}@example.test` }),
-            }),
-          );
+          .send(body({ staffId }));
         expect(taken.status).toBe(201);
       }
 
       const response = await request(harness.server())
         .post(BOOKING_PATH(harness.a.tenant.slug))
         .set('Authorization', auth)
-        .send(withoutStaff({ client: guest({ email: 'tard@example.test' }) }));
+        .send(withoutStaff());
 
       expect(response.status).toBe(409);
       expect(response.body).toMatchObject({ code: 'SLOT_NO_LONGER_AVAILABLE' });
@@ -626,15 +614,6 @@ describe('POST /api/v1/public/:tenantSlug/appointments', () => {
       expect(response.status).toBe(400);
     });
 
-    it('refuse une adresse e-mail invalide', async () => {
-      const response = await request(harness.server())
-        .post(BOOKING_PATH(harness.a.tenant.slug))
-        .set('Authorization', auth)
-        .send(body({ client: guest({ email: 'pas-une-adresse' }) }));
-
-      expect(response.status).toBe(400);
-    });
-
     it('rejette un `tenantId` glissé dans le corps', async () => {
       const response = await request(harness.server())
         .post(BOOKING_PATH(harness.a.tenant.slug))
@@ -666,81 +645,14 @@ describe('POST /api/v1/public/:tenantSlug/appointments', () => {
       expect(response.status).toBe(400);
     });
 
-    /**
-     * Le pays de l'établissement complète un numéro **national** (#1028).
-     *
-     * Ce que ces trois cas exercent, et que les suites unitaires ne peuvent pas
-     * exercer, c'est le **trajet entier** : le slug de l'URL résolu en
-     * établissement par `TenantScopeMiddleware`, le pays lu par le pipe sur le
-     * dépôt de ce module, et le verdict de la frontière. Un pipe resté sur la
-     * variante sans pays sortirait ici en 400 là où le salon a un pays.
-     *
-     * Ce que ces cas ne prouvent plus depuis #1136, et ne peuvent plus prouver :
-     * la valeur **enregistrée**. Les coordonnées du corps n'atteignent plus
-     * aucune fiche — la cliente vient du jeton, et son numéro est celui de son
-     * compte. La normalisation elle-même reste exercée là où elle a lieu,
-     * `packages/shared/src/__tests__/phone.spec.ts` et
-     * `src/modules/appointments/__tests__/guest-booking-frontier.spec.ts`.
+    /*
+     * `pays de l'établissement et numéro national` a disparu avec #1222 : ces
+     * cas exerçaient le trajet du pays jusqu'à `client.phone`, et la demande ne
+     * porte plus de coordonnées. La règle E.164 et son pays par défaut vivent
+     * toujours, chez leur seul appelant — le formulaire de coordonnées du
+     * tunnel, monté sur `guestContactSchemaFor`, dont
+     * `packages/shared/src/__tests__/phone.spec.ts` tient la règle.
      */
-    describe('pays de l’établissement et numéro national', () => {
-      it('accepte « 06 12 34 56 78 » sur un salon français, qui le complète', async () => {
-        harness.appointments.seedCountryCode(harness.a.tenant.id, 'FR');
-
-        const response = await request(harness.server())
-          .post(BOOKING_PATH(harness.a.tenant.slug))
-          .set('Authorization', auth)
-          .send(body({ client: guest({ phone: '06 12 34 56 78' }) }));
-
-        // Le **statut**, et non la valeur enregistrée : depuis #1136 les
-        // coordonnées du corps ne sont plus écrites nulle part (voir l'en-tête
-        // de ce `describe`). Ce que ce cas prouve reste le trajet — le pays de
-        // l'établissement a bien été lu, sans quoi ce numéro national sortirait
-        // en 400, comme le dernier cas de ce bloc le montre.
-        expect(response.status).toBe(201);
-      });
-
-      it('accepte « 034 12 345 67 » sur un salon malgache, qui le complète', async () => {
-        harness.appointments.seedCountryCode(harness.a.tenant.id, 'MG');
-
-        const response = await request(harness.server())
-          .post(BOOKING_PATH(harness.a.tenant.slug))
-          .set('Authorization', auth)
-          .send(body({ client: guest({ phone: '034 12 345 67' }) }));
-
-        expect(response.status).toBe(201);
-      });
-
-      it('refuse en 400 le même corps sur un établissement sans pays', async () => {
-        // Aucun `seedCountryCode` : le salon n'a pas saisi son adresse, et le
-        // pays ne se devine pas — le deviner enverrait le rappel à un inconnu.
-        const response = await request(harness.server())
-          .post(BOOKING_PATH(harness.a.tenant.slug))
-          .set('Authorization', auth)
-          .send(body({ client: guest({ phone: '06 12 34 56 78' }) }));
-
-        expect(response.status).toBe(400);
-        expect(response.body).toMatchObject({ code: 'VALIDATION_ERROR' });
-        // Le champ est nommé, et il l'est sous sa forme imbriquée : c'est ce qui
-        // permet au formulaire de poser le message sous *son* champ plutôt qu'en
-        // bloc en tête de page (web-frontend §4).
-        expect(JSON.stringify(response.body.details)).toContain('client.phone');
-        expect(harness.appointments.appointments).toHaveLength(0);
-      });
-
-      it('laisse passer l’international inchangé, avec ou sans pays', async () => {
-        harness.appointments.seedCountryCode(harness.a.tenant.id, 'FR');
-
-        const response = await request(harness.server())
-          .post(BOOKING_PATH(harness.a.tenant.slug))
-          .set('Authorization', auth)
-          .send(body({ client: guest({ phone: '+261 34 12 345 67' }) }));
-
-        // Le pays ne remplace rien : il complète ce qui n'a pas d'indicatif. Un
-        // numéro déjà international traverse donc la frontière sans être refusé,
-        // même sous un pays par défaut qui n'est pas le sien.
-        expect(response.status).toBe(201);
-      });
-    });
 
     /*
      * `canonise l'adresse e-mail avant de chercher la fiche` a disparu avec

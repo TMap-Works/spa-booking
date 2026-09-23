@@ -145,11 +145,6 @@ describe('bookGuestAppointmentRequestSchema', () => {
   const request = {
     serviceId: '2b0f3a1c-6a4d-4a2e-9d3b-8f7c1e5a4b21',
     startsAt: '2026-09-01T11:00:00+02:00',
-    client: {
-      firstName: 'Camille',
-      lastName: 'Rakoto',
-      email: 'camille@example.test',
-    },
     // L'accord au traitement des données, obligatoire depuis #790.
     dataConsent: true,
   };
@@ -174,29 +169,22 @@ describe('bookGuestAppointmentRequestSchema', () => {
   });
 
   /**
-   * Le champ qui désignait la cliente, et qui ne désigne plus personne (#1136).
+   * Le champ qui désignait la cliente, et qui n'existe plus (#1136, #1222).
    *
    * Réserver exige un compte depuis la décision produit du 22/09/2026 : la
-   * cliente du rendez-vous est celle du jeton, et `client` est devenu facultatif
-   * et sans effet. Les deux cas ci-dessous tiennent les deux moitiés de cette
-   * phrase — il peut manquer, et il reste validé quand il est là, le temps que
-   * le tunnel cesse de l'envoyer.
+   * cliente du rendez-vous est celle du jeton. #1136 a rendu `client`
+   * facultatif et sans effet ; #1222 l'a retiré, une fois le tunnel passé à un
+   * corps qui ne l'émet plus. Le `.strict()` le refuse donc comme il refuse un
+   * `clientId`, et pour la même raison : les deux prétendent désigner
+   * quelqu'un, et aucun champ du corps ne le peut.
    */
-  describe('les coordonnées, depuis que réserver exige un compte', () => {
-    it('accepte une demande sans coordonnées — la cliente vient du jeton', () => {
-      const { client: _sansCoordonnees, ...request2 } = request;
-
-      expect(bookGuestAppointmentRequestSchema.safeParse(request2).success).toBe(true);
-    });
-
-    it('valide encore les coordonnées présentes, plutôt que de les laisser passer', () => {
-      expect(
-        bookGuestAppointmentRequestSchema.safeParse({
-          ...request,
-          client: { ...request.client, email: 'camille' },
-        }).success,
-      ).toBe(false);
-    });
+  it('refuse des coordonnées — aucun champ du corps ne désigne la cliente', () => {
+    expect(
+      bookGuestAppointmentRequestSchema.safeParse({
+        ...request,
+        client: { firstName: 'Camille', lastName: 'Rakoto', email: 'camille@example.test' },
+      }).success,
+    ).toBe(false);
   });
 
   it('refuse une date-heure nue, dont le fuseau ne pourrait qu’être deviné', () => {

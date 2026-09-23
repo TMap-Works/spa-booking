@@ -32,13 +32,6 @@ const STREAM_PATH = '/api/v1/appointments/stream';
 
 const BOOKING_PATH = (slug: string): string => `/api/v1/public/${slug}/appointments`;
 
-const GUEST = {
-  firstName: 'Camille',
-  lastName: 'Rakoto',
-  email: 'camille@example.test',
-  phone: '+261 34 12 345 67',
-} as const;
-
 /** Une connexion ouverte au flux, et tout ce qu'elle a reçu jusqu'ici. */
 interface OpenStream {
   readonly status: number;
@@ -121,7 +114,6 @@ describe('Isolation inter-tenant — flux temps réel des rendez-vous', () => {
         serviceId: harness.a.serviceId,
         staffId: harness.a.staffId,
         startsAt: slot.startsAt.toISOString(),
-        client: GUEST,
         dataConsent: true,
       });
 
@@ -191,9 +183,18 @@ describe('Isolation inter-tenant — flux temps réel des rendez-vous', () => {
     const inA = await bookInA();
     await waitFor(chezA, inA);
 
+    // Les coordonnées de la cliente **qui a réservé** — celles de la fiche que
+    // le jeton désigne (#1222). Chercher une adresse inventée par cette suite ne
+    // prouverait rien : elle ne figure nulle part, et l'assertion passerait même
+    // si le flux livrait le dossier entier.
+    const cliente = harness.appointments.clients.find(
+      (candidate) => candidate.id === harness.a.clientId,
+    );
+    expect(cliente).toBeDefined();
+
     const body = chezA.received();
     expect(body).not.toContain(harness.a.tenant.id);
-    expect(body).not.toContain(GUEST.email);
-    expect(body).not.toContain(GUEST.lastName);
+    expect(body).not.toContain(harness.a.clientEmail);
+    expect(body).not.toContain(cliente?.lastName);
   });
 });

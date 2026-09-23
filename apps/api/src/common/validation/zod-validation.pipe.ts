@@ -85,9 +85,8 @@ export function assertRefusesUnknownKeys(schema: ZodTypeAny): void {
 
   if (unwrapped instanceof ZodObject && unwrapped._def.unknownKeys !== 'strict') {
     throw new TypeError(
-      // Pas de nom de pipe dans le message : cette garde sert aussi
-      // `tenantCountryValidationPipe`, et nommer l'un enverrait chercher le
-      // défaut dans l'autre fichier.
+      // Pas de nom de pipe dans le message : la garde est exportée, et nommer
+      // l'appelant du jour enverrait chercher le défaut au mauvais endroit.
       'Validation : un schéma d’entrée doit être `.strict()` — sans quoi un champ ' +
         'inconnu (un `tenantId`, par exemple) traverserait la frontière sans être refusé.',
     );

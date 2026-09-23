@@ -2,14 +2,12 @@ import { Inject, Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 
 import { ConflictError, InvalidStateTransitionError, NotFoundError } from '../../common/errors';
-import type { TenantCountryProvider } from '../../common/tenant';
 import { requireTenantId } from '../../common/tenant/tenant-context';
 import { PRISMA, type ScopedPrismaClient } from '../../infrastructure/database/prisma-clients';
 // La **porte de service** du module `crm`, jamais son repository (api-module §3).
 // Elle est importée de valeur — Nest lit le type du paramètre de constructeur
 // dans les métadonnées émises par TypeScript, qu'un `import type` effacerait.
 import { ClientDirectoryService, type ClientDirectoryScope } from '../crm/client-directory.service';
-import { ClientRecordRaceError } from '../crm/crm.errors';
 import { generateAppointmentReference } from './appointment-reference';
 import { OCCUPYING_STATUSES, occupiesSlot } from './appointment-status';
 import {
@@ -60,19 +58,17 @@ import type {
  * défaillance que la vérification préalable masquait — plusieurs insertions
  * concurrentes s'attendent en cycle, et PostgreSQL en abat une. Voir `create`.
  *
- * ## Ce que ce fichier a cessé d'écrire : `users` (#313)
+ * ## Ce que ce fichier a cessé d'écrire : `users` (#313, #1222)
  *
  * `findOrCreateClient` vivait ici faute de porte ailleurs — la table d'un autre
  * domaine écrite par un module qui ne la possède pas, ce qu'api-module §3
- * n'admet pas. Elle est passée dans `crm`, derrière
- * `ClientDirectoryService.resolveWithin`, et ce fichier l'appelle **depuis
- * l'intérieur de sa propre transaction**.
+ * n'admet pas. Elle est passée dans `crm`, puis a disparu : plus aucune route ne
+ * crée de fiche en réservant, la cliente ayant un compte depuis #1136.
  *
- * Ce n'est pas un déplacement gratuit : c'est ce qui rend vrai « un 409 ne laisse
- * aucune fiche derrière lui ». L'ancienne conduite validait la fiche dans une
- * transaction, puis tentait l'insertion dans une autre ; la perdante d'une course
- * repartait avec un refus et une fiche publique au fichier du salon. Les deux
- * écritures partagent désormais un `COMMIT` — et un `ROLLBACK`.
+ * Ce qui reste de #313 est l'endroit où `crm` est interrogé — **depuis
+ * l'intérieur de la transaction d'insertion**, après le verrou d'agenda. La
+ * porte n'écrit plus, elle juge (`assertBookableWithin`, #465), et un jugement
+ * lu hors transaction serait périmé avant d'avoir servi.
  */
 
 /**
@@ -307,7 +303,7 @@ function toRecord(row: AppointmentRow): AppointmentRecord {
 }
 
 @Injectable()
-export class AppointmentsRepository implements TenantCountryProvider {
+export class AppointmentsRepository {
   public constructor(
     @Inject(PRISMA) private readonly prisma: ScopedPrismaClient,
     /**
@@ -543,18 +539,14 @@ export class AppointmentsRepository implements TenantCountryProvider {
    * `taken` est une fabrique et non une instance : construire l'erreur d'avance
    * capturerait une pile d'appel qui ne désigne pas le site du refus.
    *
-   * ## Un troisième cas de réessai, depuis #313 : la course sur la fiche cliente
+   * ## Le troisième cas de réessai de #313 a disparu avec #1222
    *
-   * `ClientRecordRaceError` dit que deux réservations d'invité concurrentes ont
-   * créé la même fiche et que celle-ci a perdu. C'est le même genre d'échec qu'un
-   * interblocage — une course d'ordonnancement, jamais un refus métier — et il se
-   * traite de la même façon : recommencer, la tentative suivante trouvant la fiche
-   * que la gagnante vient d'écrire.
-   *
-   * Le réessai est **ici** et non dans `crm`, et il ne peut pas être ailleurs :
-   * une violation de contrainte abandonne la transaction côté PostgreSQL, si bien
-   * que rien ne peut plus être lu ni écrit dedans. Seul celui qui l'a ouverte peut
-   * la rejouer.
+   * `ClientRecordRaceError` disait que deux réservations d'invité concurrentes
+   * avaient créé la même fiche et que celle-ci avait perdu. Plus aucune fiche
+   * n'est créée par cette transaction : les deux surfaces désignent une fiche
+   * existante, et `crm` ne fait plus que juger son rôle. Il n'y a donc plus de
+   * course à rejouer de ce côté-là, et ce qui reste est ce qui existait avant
+   * #313 — l'interblocage, et la collision de référence citable.
    */
   private async writingAgenda<T>(
     operation: () => Promise<T>,
@@ -581,15 +573,14 @@ export class AppointmentsRepository implements TenantCountryProvider {
    * `true` si l'échec est une course d'ordonnancement que rejouer résout.
    *
    * Deux origines, une seule conduite : PostgreSQL a abattu la transaction
-   * (interblocage, échec de sérialisation), ou la fiche cliente a été créée
-   * ailleurs entre la lecture et l'écriture. Aucune des deux n'apprend quoi que ce
-   * soit sur l'agenda, et les traduire en 409 ferait perdre une réservation sur un
-   * créneau peut-être libre.
+   * (interblocage, échec de sérialisation), ou le tirage de la référence citable
+   * est tombé sur une valeur déjà prise. Aucune des deux n'apprend quoi que ce
+   * soit sur l'agenda, et les traduire en 409 ferait perdre une réservation sur
+   * un créneau peut-être libre.
    */
   private worthRetrying(error: unknown): boolean {
     return (
       isTransientWriteConflict(error) ||
-      error instanceof ClientRecordRaceError ||
       // Le tirage de la référence citable est tombé sur une valeur déjà prise
       // dans cet établissement (#796). L'appelant n'y est pour rien, le créneau
       // n'y est pour rien : c'est le tirage qui est à refaire, et le rejeu en
@@ -757,28 +748,25 @@ export class AppointmentsRepository implements TenantCountryProvider {
    * dure une insertion et sert l'ordonnancement. Aucun des deux ne remplace la
    * contrainte (booking-engine §2).
    *
-   * ## La fiche cliente est résolue **dans cette transaction**, après le verrou
+   * ## La fiche cliente est jugée **dans cette transaction**, après le verrou
    *
-   * C'est le second critère de #313 : « un 409 ne laisse aucune fiche derrière
-   * lui ». `ClientDirectoryService.resolveWithin` reçoit la portée `tx` et écrit
-   * dedans ; si la contrainte d'exclusion refuse l'insertion qui suit, le
-   * `ROLLBACK` emporte la fiche avec elle. Rien de tout cela n'est du code : c'est
-   * la transaction, exactement comme pour le report (`move`).
+   * C'est ce que #313 a déplacé ici, et que #465 a étendu au comptoir :
+   * `ClientDirectoryService.assertBookableWithin` reçoit la portée `tx` et prend
+   * un `FOR SHARE` sur la ligne `users`. Le rôle jugé est donc celui que
+   * l'insertion désignera, et un refus n'a rien à défaire — le `ROLLBACK` s'en
+   * charge, exactement comme pour le report (`move`).
    *
-   * L'ordre — verrou, puis fiche, puis rendez-vous — n'est pas indifférent. Le
-   * verrou d'abord, parce qu'il est ce qui sérialise les candidates à ce créneau
-   * et supprime le cycle d'attente (ADR 0006) ; une résolution posée avant lui
-   * ferait attendre sur l'index unique de `users` une transaction qui ne tient pas
-   * encore l'agenda, c'est-à-dire recréerait un ordre d'acquisition dépendant des
-   * données. La fiche ensuite, parce que `appointments.client_id` est `NOT NULL` :
-   * il faut la ligne avant de pouvoir la désigner.
+   * L'ordre — verrou d'agenda, puis fiche, puis rendez-vous — n'est pas
+   * indifférent. Le verrou d'abord, parce qu'il est ce qui sérialise les
+   * candidates à ce créneau et supprime le cycle d'attente (ADR 0006) ; une
+   * lecture de `users` posée avant lui ferait attendre sur une ligne une
+   * transaction qui ne tient pas encore l'agenda, c'est-à-dire recréerait un
+   * ordre d'acquisition dépendant des données.
    *
-   * Le même ordre vaut pour le contrôle de rôle du comptoir (#465), qui prend au
-   * même moment un `FOR SHARE` sur la ligne `users`. Ce verrou-là est **partagé**
-   * : deux réservations pour la même cliente chez deux praticiens différents le
-   * détiennent ensemble, et aucune n'attend l'autre. Il ne bloque que les
-   * écrivains de cette ligne — ceux, précisément, qui pourraient la promouvoir au
-   * personnel entre le contrôle et l'insertion.
+   * Le verrou de ligne est **partagé** : deux réservations pour la même cliente
+   * chez deux praticiens différents le détiennent ensemble, et aucune n'attend
+   * l'autre. Il ne bloque que les écrivains de cette ligne — ceux, précisément,
+   * qui pourraient la promouvoir au personnel entre le contrôle et l'insertion.
    */
   private async insert(draft: AppointmentDraft): Promise<AppointmentRecord> {
     // La clé nomme les colonnes qu'elle sérialise. `staff_id` suffirait — un
@@ -796,16 +784,12 @@ export class AppointmentsRepository implements TenantCountryProvider {
       // eslint-disable-next-line tenant/raw-sql-tenant-filter -- Ce SQL ne lit ni n'écrit aucune ligne : il prend un verrou consultatif dont la clé porte le tenant, transmis en paramètre lié (`agenda`). Il n'y a pas de `WHERE` à filtrer.
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${agenda}::text, 0::bigint))`;
 
-      // L'écriture dans `users` appartient à `crm` (#313) : ce module la demande,
-      // il ne la fait plus. La portée passée est celle de cette transaction — la
-      // fiche et le rendez-vous sont donc validés, ou abandonnés, ensemble.
-      //
-      // Le comptoir, lui, désigne une fiche existante (#461) : il n'y a rien à
-      // créer, mais il y a une chose à confirmer, que les clés étrangères ne
-      // savent pas juger — que la ligne désignée est bien du **fichier client**
-      // et non un compte du personnel (#465). Ce contrôle est ici, après le
-      // verrou et sous `FOR SHARE`, pour la raison qui a fait descendre la
-      // résolution d'invitée jusqu'ici : jugé ailleurs, il serait périmé.
+      // Les deux surfaces désignent une fiche existante (#461, #1136) : il n'y a
+      // rien à créer, mais il y a une chose à confirmer, que les clés étrangères
+      // ne savent pas juger — que la ligne désignée est bien du **fichier
+      // client** et non un compte du personnel (#465). Ce contrôle est ici,
+      // après le verrou et sous `FOR SHARE`, et il ne peut pas être ailleurs :
+      // jugé hors de cette transaction, il serait périmé avant d'avoir servi.
       const clientId = await this.resolveClient(tx, draft.client);
 
       const row = await tx.appointment.create({
@@ -836,17 +820,22 @@ export class AppointmentsRepository implements TenantCountryProvider {
   }
 
   /**
-   * L'identifiant de la fiche cliente à écrire sur la ligne — résolu depuis les
-   * coordonnées, ou confirmé tel quel (#461, #465).
+   * L'identifiant de la fiche cliente à écrire sur la ligne — **confirmé** par
+   * `crm` avant d'être écrit (#461, #465).
    *
-   * Les deux branches passent par une porte de `crm`, et c'est le propos : ce
-   * module ne lit jamais `users` lui-même — il ne saurait pas ce qu'est une fiche
-   * cliente, et lui donner ce savoir reviendrait à lui donner un moyen de
-   * parcourir la clientèle, ce que `crm` refuse explicitement d'ouvrir
-   * (api-module §3, en-tête de `ClientDirectoryService`).
+   * L'appel passe par une porte de `crm`, et c'est le propos : ce module ne lit
+   * jamais `users` lui-même — il ne saurait pas ce qu'est une fiche cliente, et
+   * lui donner ce savoir reviendrait à lui donner un moyen de parcourir la
+   * clientèle, ce que `crm` refuse explicitement d'ouvrir (api-module §3,
+   * en-tête de `ClientDirectoryService`).
    *
-   * ## Pourquoi la forme `{ clientId }` est désormais **confirmée**, et pas
-   * seulement écrite (#465)
+   * Il y avait une seconde branche jusqu'à #1222 : des coordonnées que
+   * `resolveWithin` résolvait, en créant la fiche au besoin. Plus aucune route
+   * ne l'atteignait depuis #1136, et elle est partie avec le champ `client` du
+   * contrat.
+   *
+   * ## Pourquoi la forme `{ clientId }` est **confirmée**, et pas seulement
+   * écrite (#465)
    *
    * Jusqu'ici elle descendait telle quelle jusqu'aux clés étrangères, à qui on
    * laissait juger. Elles jugent bien deux choses — la fiche existe, elle est de
@@ -872,13 +861,8 @@ export class AppointmentsRepository implements TenantCountryProvider {
    * l'arbitre qui ne peut pas être contourné, et `create` continue de traduire
    * leur refus en 404 — le même 404 que celui-ci.
    */
-  private async resolveClient(
-    tx: ClientDirectoryScope,
-    client: ClientReference,
-  ): Promise<string> {
-    return 'clientId' in client
-      ? this.clients.assertBookableWithin(tx, client.clientId)
-      : this.clients.resolveWithin(tx, client.contact);
+  private async resolveClient(tx: ClientDirectoryScope, client: ClientReference): Promise<string> {
+    return this.clients.assertBookableWithin(tx, client.clientId);
   }
 
   /**
@@ -1150,29 +1134,6 @@ export class AppointmentsRepository implements TenantCountryProvider {
     const tenant = await this.prisma.tenant.findFirst({ select: { timezone: true } });
 
     return tenant?.timezone ?? null;
-  }
-
-  /**
-   * Le pays de l'établissement courant — ISO 3166-1 alpha-2, `null` s'il n'a pas
-   * encore saisi son adresse (#1028).
-   *
-   * C'est ce que ce module fournit à `TENANT_COUNTRY_PROVIDER`, et donc ce avec
-   * quoi le pipe du tunnel invité complète un numéro **national**. Jumelle
-   * exacte de `CrmRepository.findCurrentTenantCountryCode`, qui sert la même
-   * règle au comptoir : deux lectures d'une colonne, pas deux règles.
-   *
-   * Tout ce qui motive `currentTimeZone` juste au-dessus vaut mot pour mot ici —
-   * une lecture d'une seule colonne d'une table que ce module ne possède pas,
-   * faute de porte ouverte par `identity`, et sans `where` ni identifiant en
-   * paramètre. L'extension borne `Tenant` **sur son `id`**
-   * (`tenant-scope.extension.ts`) : cette requête ne peut rendre que
-   * l'établissement de la portée ouverte, celui que le slug de l'URL a résolu.
-   * Il n'existe aucune écriture par laquelle demander le pays du voisin.
-   */
-  public async currentCountryCode(): Promise<string | null> {
-    const tenant = await this.prisma.tenant.findFirst({ select: { countryCode: true } });
-
-    return tenant?.countryCode ?? null;
   }
 
   /**

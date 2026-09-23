@@ -2,7 +2,7 @@
 // de l'historique d'une cliente y portent les mêmes deux mots, dans la même
 // casse — c'est le seul vocabulaire de ce module qui échappe à la divergence de
 // casse de l'énumération PostgreSQL, parce qu'aucune colonne ne le stocke.
-import type { AppointmentScope, Locale } from '@spa/shared';
+import type { AppointmentScope } from '@spa/shared';
 
 import type { UserRole } from '../identity/roles';
 import type { AppointmentCancelledBy, AppointmentStatus } from './appointment-status';
@@ -51,21 +51,23 @@ export interface Money {
  * soin plus tampons de part et d'autre — est calculée en amont par le moteur de
  * disponibilité (#34) : ce module reçoit l'intervalle, il ne le devine pas.
  *
- * ## Des **coordonnées**, et non un `clientId` (#313)
+ * ## Une **fiche désignée**, et plus des coordonnées (#313, #1136, #1222)
  *
  * Jusqu'à #313, le service résolvait la fiche cliente avant de composer ce
- * brouillon, et n'y posait qu'un identifiant. C'était une écriture publique dans
- * `users` **validée avant** l'insertion du rendez-vous : la perdante d'une course
- * pour un créneau repartait avec un 409 et laissait sa fiche au fichier du salon.
+ * brouillon. C'était une écriture publique dans `users` **validée avant**
+ * l'insertion du rendez-vous : la perdante d'une course pour un créneau
+ * repartait avec un 409 et laissait sa fiche au fichier du salon. Le brouillon a
+ * donc porté les coordonnées jusqu'au repository, qui les résolvait **dans la
+ * transaction** d'insertion — tout perdu d'un même `ROLLBACK`.
  *
- * Porter les coordonnées jusqu'ici est ce qui permet au repository de résoudre la
- * cliente **dans la transaction** qui pose le rendez-vous — donc de tout perdre
- * d'un même `ROLLBACK`. Le prix est que ce type transporte une donnée personnelle
- * de plus ; il ne quitte jamais le module, et rien de ce qu'il porte ne ressort
- * dans `AppointmentRecord`.
+ * Il n'y a plus de coordonnées à résoudre : les deux surfaces désignent une
+ * fiche existante, et `crm` juge son rôle au même endroit, dans la même
+ * transaction et sous le même verrou (`assertBookableWithin`). Ce que la
+ * propriété de #313 garde de vrai est donc entier — un 409 ne laisse rien
+ * derrière lui —, et ce type ne transporte plus aucune donnée personnelle.
  */
 export interface AppointmentDraft {
-  /** La cliente — coordonnées à résoudre, ou fiche déjà désignée (#461). */
+  /** La cliente — une fiche déjà au fichier du salon (#461, #1136). */
   readonly client: ClientReference;
   readonly staffId: string;
   readonly serviceId: string;
@@ -91,46 +93,43 @@ export interface AppointmentDraft {
 }
 
 /**
- * De qui est le rendez-vous — les deux seules façons de le dire, et elles ne se
- * mélangent pas (#461).
+ * De qui est le rendez-vous — **une seule façon de le dire** depuis #1222.
  *
  * | Forme | Surface | Ce que le repository en fait |
  * |---|---|---|
- * | `{ contact }` | **plus aucune depuis #1136** | demande la fiche à `crm`, qui la crée si elle manque |
  * | `{ clientId }` | comptoir (#461) **et tunnel public** (#1136) | l'écrit telle quelle, après que `crm` a jugé son rôle |
  *
- * ## Pourquoi le tunnel public a changé de forme (#1136)
+ * ## Ce qu'il y avait à côté, et pourquoi il n'y a plus rien (#1136, #1222)
  *
- * Parce que résoudre la fiche depuis des **coordonnées** revient à laisser
- * l'appelant désigner une cliente par son adresse e-mail : réserver exige un
- * compte depuis la décision PO du 22/09/2026, et le rendez-vous se rattache
- * désormais au compte du jeton vérifié, comme au comptoir. La cliente est jugée
- * par `assertBookableWithin` — elle existe, elle est de cet établissement, et
- * son rôle est bien `CLIENT`.
+ * Une seconde forme, `{ contact }` : des coordonnées que le repository faisait
+ * résoudre par `crm`, qui créait la fiche si elle manquait. Résoudre depuis des
+ * coordonnées revient à laisser l'appelant désigner une cliente par son adresse
+ * e-mail ; réserver exige un compte depuis la décision PO du 22/09/2026, et le
+ * rendez-vous se rattache au compte du jeton vérifié, comme au comptoir. #1136 a
+ * donc cessé d'atteindre cette forme, et #1222 l'a retirée avec tout ce qu'elle
+ * maintenait en vie — la porte `crm.resolveWithin`, la fiche créée dans la
+ * transaction d'insertion (#313) et le réessai de `ClientRecordRaceError`.
  *
- * `{ contact }` n'est donc plus atteint par aucune route. Il subsiste parce que
- * le retirer emporterait la porte `crm.resolveWithin`, la fiche créée dans la
- * transaction d'insertion (#313) et le réessai de `ClientRecordRaceError` qui va
- * avec — un démontage qui touche `crm`, hors de l'empreinte de ce ticket, et qui
- * mérite son propre diff plutôt qu'une rallonge de celui-ci.
+ * Le type reste **nommé** plutôt qu'aplati en un `clientId: string` : c'est lui
+ * qui dit, dans `AppointmentDraft` comme dans `PlacementInput`, que la cliente
+ * a traversé une porte de `crm` et n'est pas un identifiant reçu tel quel.
  *
- * C'est la même frontière que `packages/shared` tient par le `.strict()` de ses
- * deux schémas — `bookGuestAppointmentRequestSchema` refuse un `clientId`,
- * `createAppointmentRequestSchema` refuse un `client`. Une union, et non deux
- * champs facultatifs : deux champs auraient laissé passer les deux à la fois,
- * c'est-à-dire un tunnel public capable de réserver au nom d'une fiche qu'il
- * aurait désignée.
+ * La cliente est jugée par `assertBookableWithin` — elle existe, elle est de cet
+ * établissement, et son rôle est bien `CLIENT`. C'est la même frontière que
+ * `packages/shared` tient par le `.strict()` de ses deux schémas :
+ * `bookGuestAppointmentRequestSchema` refuse un `clientId`, et
+ * `createAppointmentRequestSchema` refuse un `client`.
  *
- * La forme `{ clientId }` ne relâche rien sur la frontière du tenant, et ce
- * n'est pas ce fichier qui le tient : `appointments.client_id` porte la clé
- * étrangère composite `(tenant_id, client_id)`, si bien qu'une fiche du salon
- * voisin fait échouer l'insertion en base. `AppointmentsRepository` traduit ce
- * refus en 404 — jamais 403, qui confirmerait l'existence de la fiche
+ * Cette forme ne relâche rien sur la frontière du tenant, et ce n'est pas ce
+ * fichier qui le tient : `appointments.client_id` porte la clé étrangère
+ * composite `(tenant_id, client_id)`, si bien qu'une fiche du salon voisin fait
+ * échouer l'insertion en base. `AppointmentsRepository` traduit ce refus en
+ * 404 — jamais 403, qui confirmerait l'existence de la fiche
  * (tenant-isolation §4).
  */
-export type ClientReference =
-  | { readonly contact: GuestContact }
-  | { readonly clientId: string };
+export interface ClientReference {
+  readonly clientId: string;
+}
 
 /**
  * Un rendez-vous, sous la forme que le module manipule.
@@ -336,37 +335,6 @@ export interface CancelDraft {
 }
 
 /**
- * Les coordonnées d'une cliente qui réserve **sans compte** — le quatrième
- * critère de #37.
- *
- * `users.password_hash` est nullable précisément pour cela : « un client peut
- * exister sans compte, saisi au comptoir par le staff » (schéma Prisma). Une
- * fiche est donc créée, mais aucune identité : pas de mot de passe, pas de
- * session, rien à quoi se connecter.
- *
- * `phone` est facultatif : le SMS de rappel est un confort, l'e-mail de
- * confirmation est le canal obligatoire (CDC §1.4). Exiger un numéro ferait
- * abandonner des réservations pour un canal que le salon n'utilise peut-être
- * pas.
- */
-export interface GuestContact {
-  readonly firstName: string;
-  readonly lastName: string;
-  /** Canonisée — élaguée, en minuscules — avant d'atteindre ce type. */
-  readonly email: string;
-  readonly phone: string | null;
-  /**
-   * La langue du tunnel, ou `null` quand l'appelant n'en a pas donné (#844).
-   *
-   * Elle n'est pas une coordonnée de plus : elle ne sert qu'à **combler**
-   * l'absence de préférence sur la fiche que cette réservation joint, et le
-   * module `crm` est seul à décider de l'écrire (`resolveClientWithin`). Une
-   * fiche qui a déjà une préférence la garde.
-   */
-  readonly locale: Locale | null;
-}
-
-/**
  * Ce qu'une réservation demande, telle que le **service** la reçoit.
  *
  * `startsAt` est l'instant du **soin**, celui que le moteur de disponibilité a
@@ -382,7 +350,7 @@ export interface GuestContact {
  *
  * ## `client` est un **principal**, et non plus des coordonnées (#1136)
  *
- * Jusqu'ici ce champ portait un `GuestContact`, et le rendez-vous se rattachait
+ * Jusqu'ici ce champ portait des **coordonnées**, et le rendez-vous se rattachait
  * à la fiche que l'**adresse e-mail** du corps désignait — celle d'une cliente
  * existante s'il s'en trouvait une. Un appelant anonyme écrivait donc dans le
  * compte d'autrui sur la seule foi d'une adresse, et repartait avec le

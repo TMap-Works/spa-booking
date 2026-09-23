@@ -51,13 +51,15 @@ import {
  *    de disponibilité n'ouvre aucun chemin autour de la contrainte ;
  * 5. plusieurs **annulations** concurrentes du même rendez-vous n'en laissent
  *    aboutir qu'une (#40) ;
- * 6. deux réservations d'invité concurrentes sur la **même adresse inconnue**
- *    n'écrivent qu'une fiche et aboutissent toutes les deux (#313) — la perdante
- *    de `@@unique([tenant_id, email])` est rejouée, jamais refusée ;
- * 7. une réservation d'invité **attend** une promotion de la fiche en cours au
- *    lieu d'en lire l'ancien rôle (#468) — c'est le seul cas qui établisse que le
- *    `FOR SHARE` de `resolveClientWithin` verrouille vraiment, la suite unitaire
- *    ne vérifiant que ce que la requête *demande*.
+ * 6. une réservation **attend** une promotion de la fiche en cours au lieu d'en
+ *    lire l'ancien rôle (#465, #468) — c'est le seul cas qui établisse que le
+ *    `FOR SHARE` d'`assertClientBookableWithin` verrouille vraiment, la suite
+ *    unitaire ne vérifiant que ce que la requête *demande*.
+ *
+ * Il y en avait un septième jusqu'à #1222 : deux réservations d'invité
+ * concurrentes sur la même adresse inconnue, qui se disputaient
+ * `@@unique([tenant_id, email])` (#313). Réserver n'écrit plus dans `users` —
+ * la cliente a un compte —, et cette course n'existe plus.
  *
  * Le décor — base jetable, dépôt scopé, établissement complet — est celui de
  * `appointments-exclusion.harness.ts`, partagé avec la suite d'intégration
@@ -120,13 +122,13 @@ describe('Courses sur la contrainte d’exclusion — contre un vrai PostgreSQL'
      * La même course, mais **au comptoir** — sixième critère de #461.
      *
      * Elle n'est pas la répétition de la précédente, et c'est ce qui la rend
-     * nécessaire : le brouillon du comptoir ne traverse pas la porte `crm`, la
-     * fiche étant déjà désignée. Il n'y a donc ni écriture dans `users`, ni
-     * `ClientRecordRaceError` à rejouer — le seul arbitre restant est
-     * `appointments_no_overlap`. Si la boucle de réessai avait pris l'habitude
-     * de rattraper les perdantes par le chemin de la fiche, ce test le
-     * montrerait : huit écritures qui **ne peuvent pas** être rejouées doivent
-     * produire un succès et sept refus définitifs, pas huit rendez-vous.
+     * nécessaire : le brouillon du comptoir n'inscrit aucun consentement, et il
+     * part d'une autre surface. Le seul arbitre est `appointments_no_overlap` —
+     * aucune réservation n'écrit plus dans `users` depuis #1222, donc aucune
+     * course n'y est rejouable. Si la boucle de réessai avait pris l'habitude de
+     * rattraper les perdantes par un autre chemin, ce test le montrerait : huit
+     * écritures qui **ne peuvent pas** être rejouées doivent produire un succès
+     * et sept refus définitifs, pas huit rendez-vous.
      *
      * C'est aussi le seul endroit où la garantie du comptoir se prouve : le
      * double en mémoire des suites d'intégration ne simule pas une course, et
@@ -266,71 +268,15 @@ describe('Courses sur la contrainte d’exclusion — contre un vrai PostgreSQL'
   });
 
   /**
-   * La course sur la **fiche cliente**, ouverte par #313.
+   * La course sur le **rôle** de la fiche, refermée par #465 et #468.
    *
-   * Depuis que la résolution vit dans la transaction d'insertion, une réservation
-   * d'invité écrit dans `users` sous `@@unique([tenant_id, email])`. Deux
-   * réservations concurrentes sur une adresse **inconnue** se disputent donc cet
-   * index : la perdante reçoit `P2002`, que `crm` traduit en
-   * `ClientRecordRaceError` et que `AppointmentsRepository.writingAgenda` rejoue.
-   *
-   * Ce chemin ne s'exerce que contre un vrai PostgreSQL, et il ne s'exerce que
-   * **sur deux praticiens distincts** : le verrou consultatif d'agenda porte le
-   * `staff_id`, si bien que deux candidates au même praticien sont sérialisées
-   * avant d'atteindre `users` et ne peuvent pas se disputer l'adresse. C'est
-   * précisément pour cela que ce cas manquait — les suites voisines réservent
-   * toutes sous l'adresse déjà semée par le harnais, qui ne provoque aucune
-   * écriture.
-   *
-   * Le double clic de la cliente, ou ses deux onglets, sont exactement cela.
-   */
-  describe('la course sur la fiche cliente (#313)', () => {
-    it('rejoue la perdante et n’écrit qu’une seule fiche pour deux réservations concurrentes', async () => {
-      const start = new Date('2026-10-02T09:00:00.000Z');
-      const end = new Date(start.getTime() + ONE_HOUR);
-      const email = `course-${start.getTime()}@example.test`;
-
-      // Deux praticiens : deux clés de verrou d'agenda, donc deux transactions
-      // réellement parallèles au moment d'insérer la fiche.
-      const outcomes = await Promise.allSettled(
-        [salon.staffId, salon.secondStaffId].map((staffId) =>
-          inTenant(salon.tenantId, () => repository.create(draft(salon, start, end, staffId, email))),
-        ),
-      );
-
-      const fulfilled = outcomes.filter(
-        (outcome): outcome is PromiseFulfilledResult<Awaited<ReturnType<typeof repository.create>>> =>
-          outcome.status === 'fulfilled',
-      );
-      // Aucune des deux ne doit échouer : la course sur l'adresse n'est pas un
-      // refus de créneau, et la traduire en 409 — ou la laisser remonter en 500 —
-      // ferait perdre une réservation sur un créneau libre.
-      expect(fulfilled).toHaveLength(2);
-
-      // Une seule fiche, partagée : c'est ce que le réessai obtient, la seconde
-      // tentative trouvant la ligne que la gagnante vient de valider.
-      const files = await prismaUnscoped.user.findMany({
-        where: { tenantId: salon.tenantId, email },
-        select: { id: true, role: true },
-      });
-      expect(files).toHaveLength(1);
-      expect(files[0]?.role).toBe('CLIENT');
-      expect(new Set(fulfilled.map((outcome) => outcome.value.clientId))).toEqual(
-        new Set([files[0]?.id]),
-      );
-    });
-  });
-
-  /**
-   * La course sur le **rôle** de la fiche, refermée par #468.
-   *
-   * `resolveClientWithin` lisait le rôle sans verrou jusque-là. Sous `READ
-   * COMMITTED` chaque instruction prend son propre instantané : la lecture voyait
-   * `CLIENT`, une transaction concurrente promouvait la fiche au personnel et
-   * validait, et l'insertion passait — les deux clés étrangères de
-   * `appointments.client_id` prouvent l'existence de la ligne et son
-   * établissement, jamais son rôle. C'était la « vérification applicative suivie
-   * d'un `INSERT` » que booking-engine §1 interdit.
+   * Le contrôle de rôle a été écrit sans verrou. Sous `READ COMMITTED` chaque
+   * instruction prend son propre instantané : la lecture voyait `CLIENT`, une
+   * transaction concurrente promouvait la fiche au personnel et validait, et
+   * l'insertion passait — les deux clés étrangères de `appointments.client_id`
+   * prouvent l'existence de la ligne et son établissement, jamais son rôle.
+   * C'était la « vérification applicative suivie d'un `INSERT` » que
+   * booking-engine §1 interdit.
    *
    * Ce cas est le seul du dépôt à établir que le `FOR SHARE` **verrouille
    * vraiment**, et non seulement que la requête le demande : la suite unitaire
@@ -339,13 +285,19 @@ describe('Courses sur la contrainte d’exclusion — contre un vrai PostgreSQL'
    *
    * 1. une seconde connexion ouvre une transaction et promeut la fiche, sans
    *    valider — la ligne est alors verrouillée en exclusif ;
-   * 2. la réservation d'invité démarre et **attend** sur ce verrou. Sans
-   *    `FOR SHARE` elle ne l'attendrait pas : elle lirait l'ancienne version,
-   *    encore `CLIENT`, et poserait le rendez-vous ;
+   * 2. la réservation démarre et **attend** sur ce verrou. Sans `FOR SHARE` elle
+   *    ne l'attendrait pas : elle lirait l'ancienne version, encore `CLIENT`, et
+   *    poserait le rendez-vous ;
    * 3. la promotion valide, la réservation suit la chaîne de mise à jour, relit
    *    `STAFF`, et refuse.
+   *
+   * Le refus est un **404** depuis #1222 : la fiche se désigne par son
+   * identifiant, et c'est `assertClientBookableWithin` qui juge — inconnu, du
+   * salon voisin ou promu au personnel se disent du même 404
+   * (tenant-isolation §4). Il était un 409 tant que la résolution partait d'une
+   * adresse, parce qu'alors le refus devait se distinguer d'une création.
    */
-  describe('la promotion concurrente de la fiche (#468)', () => {
+  describe('la promotion concurrente de la fiche (#465, #468)', () => {
     it('attend la promotion en cours au lieu de lire l’ancien rôle', async () => {
       const start = new Date('2026-10-06T09:00:00.000Z');
       const end = new Date(start.getTime() + ONE_HOUR);
@@ -394,7 +346,7 @@ describe('Courses sur la contrainte d’exclusion — contre un vrai PostgreSQL'
 
       const booking = inTenant(salon.tenantId, () =>
         repository
-          .create(draft(salon, start, end, salon.staffId, email))
+          .create(draft(salon, start, end, salon.staffId, fiche.id))
           .catch((error: unknown) => error),
       );
 
@@ -405,7 +357,7 @@ describe('Courses sur la contrainte d’exclusion — contre un vrai PostgreSQL'
       release();
       await promotion;
 
-      expect(await booking).toMatchObject({ code: 'CLIENT_EMAIL_NOT_BOOKABLE', status: 409 });
+      expect(await booking).toMatchObject({ code: 'NOT_FOUND', status: 404 });
       // Et rien n'a été posé : le refus tombe dans la transaction d'insertion.
       expect(
         await prismaUnscoped.appointment.count({

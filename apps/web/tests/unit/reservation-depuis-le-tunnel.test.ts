@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { ERROR_CODES, type BookedAppointment, type PublicTenant } from '@spa/shared';
+import { ERROR_CODES, type BookedAppointment } from '@spa/shared';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ApiClientError } from '@/lib/api-client';
@@ -14,8 +14,9 @@ import { ApiClientError } from '@/lib/api-client';
  *    client, faute de quoi le navigateur ne joindrait aucun cookie
  *    (`compte/session.ts` les borne à `/{slug}/compte`) et
  *    `POST /public/{slug}/appointments` rendrait 401 depuis #1136 ;
- * 2. **le jeton est lu côté serveur**, jamais reçu du corps : c'est lui, et non
- *    l'adresse e-mail postée, qui désigne la cliente ;
+ * 2. **le jeton est lu côté serveur**, jamais reçu du corps : c'est lui qui
+ *    désigne la cliente, et le corps n'a plus aucun champ qui pourrait le
+ *    prétendre depuis #1222 ;
  * 3. **le code de refus survit** au passage par la route — c'est sur lui, et sur
  *    lui seul, que le récapitulatif distingue le créneau perdu d'une panne
  *    (`summary-step.tsx`) ;
@@ -29,7 +30,6 @@ import { ApiClientError } from '@/lib/api-client';
 
 const bookGuestAppointment = vi.fn();
 const refreshSession = vi.fn();
-const loadSalonTenant = vi.fn();
 
 // Le module réel est repris et deux fonctions seulement sont remplacées :
 // `ApiClientError` doit rester la vraie classe, sans quoi les `instanceof` de la
@@ -38,12 +38,6 @@ vi.mock('@/lib/api-client', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/api-client')>()),
   bookGuestAppointment: (...args: unknown[]) => bookGuestAppointment(...args),
   refreshSession: (...args: unknown[]) => refreshSession(...args),
-}));
-
-// Le chargement du salon part vers l'API : la route ne s'en sert que pour le
-// pays par défaut du téléphone (#1028), et c'est la seule chose qu'on lui donne.
-vi.mock('@/app/(booking)/[tenantSlug]/salon-data', () => ({
-  loadSalonTenant: (...args: unknown[]) => loadSalonTenant(...args),
 }));
 
 /** Les cookies que le navigateur envoie avec la requête. */
@@ -63,25 +57,16 @@ import { POST as reserver } from '@/app/(account)/[tenantSlug]/compte/reservatio
 const SLUG = 'maison-lotus';
 const JETON = 'jeton-de-la-cliente';
 
-const SALON: PublicTenant = {
-  id: '11111111-1111-4111-8111-111111111111',
-  slug: SLUG,
-  name: 'Maison Lotus',
-  timezone: 'Indian/Antananarivo',
-  defaultCurrency: 'EUR',
-  defaultLocale: 'fr',
-};
-
-/** Ce que le tunnel poste — la sortie de `summary-step.tsx`, au champ près. */
+/**
+ * Ce que le tunnel poste — la sortie de `summary-step.tsx`, au champ près.
+ *
+ * Aucune coordonnée depuis #1222 : le contrat a perdu le champ `client`, et
+ * `bookGuestAppointmentRequestSchema` est `.strict()`. Un `client` réintroduit
+ * ici ferait rendre 400 à cette route, exactement comme en vrai.
+ */
 const DEMANDE = {
   serviceId: '22222222-2222-4222-8222-222222222222',
   startsAt: '2026-09-01T06:00:00.000Z',
-  client: {
-    firstName: 'Camille',
-    lastName: 'Rakoto',
-    email: 'camille@example.test',
-    phone: '+261341234567',
-  },
   dataConsent: true,
 };
 
@@ -113,7 +98,6 @@ const contexte: Parameters<typeof reserver>[1] = { params: Promise.resolve({ ten
 
 beforeEach(() => {
   jar.set('spa_account_access', JETON);
-  loadSalonTenant.mockResolvedValue(SALON);
   bookGuestAppointment.mockResolvedValue(PRIS);
 });
 

@@ -45,13 +45,6 @@ const PUBLIC_CANCEL_PATH = (slug: string, id: string): string =>
 
 const DESK_CANCEL_PATH = (id: string): string => `/api/v1/appointments/${id}/cancel`;
 
-const GUEST = {
-  firstName: 'Camille',
-  lastName: 'Rakoto',
-  email: 'camille@example.test',
-  phone: '+261 34 12 345 67',
-} as const;
-
 describe('Isolation inter-tenant — annulation de rendez-vous', () => {
   let harness: AppointmentsHarness;
   let slot: ReturnType<typeof bookableSlot>;
@@ -76,7 +69,6 @@ describe('Isolation inter-tenant — annulation de rendez-vous', () => {
         serviceId: harness.a.serviceId,
         staffId: harness.a.staffId,
         startsAt: slot.startsAt.toISOString(),
-        client: GUEST,
         dataConsent: true,
       });
 

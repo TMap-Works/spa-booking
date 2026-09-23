@@ -5,7 +5,6 @@ import { ConflictError, InvalidStateTransitionError, NotFoundError } from '../..
 import { runWithTenant } from '../../../common/tenant/tenant-context';
 import type { ScopedPrismaClient } from '../../../infrastructure/database/prisma-clients';
 import type { ClientDirectoryService } from '../../crm/client-directory.service';
-import { ClientEmailNotBookableError, ClientRecordRaceError } from '../../crm/crm.errors';
 import { APPOINTMENT_REFERENCE_UNIQUE } from '../appointments.conflicts';
 import { SlotNoLongerAvailableError } from '../appointments.errors';
 import { AppointmentsRepository } from '../appointments.repository';
@@ -32,22 +31,11 @@ import type { AppointmentDraft, RescheduleDraft } from '../appointments.types';
 /** La fiche que la porte `crm` rend — celle que l'insertion doit désigner (#313). */
 const CLIENT_ID = '11111111-1111-4111-8111-111111111111';
 
-/** Les coordonnées que la porte `crm` doit recevoir, telles quelles. */
-const CONTACT = {
-  firstName: 'Camille',
-  lastName: 'Rakoto',
-  email: 'camille@example.test',
-  phone: null,
-  // `null` : le tunnel n'a pas dit dans quelle langue il s'affichait (#844).
-  locale: null,
-} as const;
-
 const DRAFT: AppointmentDraft = {
-  // Des coordonnées, et non un identifiant : la résolution a lieu **dans** la
-  // transaction depuis #313, et c'est la forme du tunnel public — celle qui
-  // exerce la porte `crm`, donc la boucle de réessai que cette suite observe. La
-  // forme du comptoir (`{ clientId }`, #461) ne la traverse pas.
-  client: { contact: CONTACT },
+  // Une fiche **désignée**, la seule forme depuis #1222 : les deux surfaces —
+  // tunnel public et comptoir — soumettent un identifiant que `crm` confirme
+  // dans la transaction d'insertion (#465).
+  client: { clientId: CLIENT_ID },
   staffId: '22222222-2222-4222-8222-222222222222',
   serviceId: '33333333-3333-4333-8333-333333333333',
   startsAt: new Date('2026-09-01T09:00:00.000Z'),
@@ -136,8 +124,8 @@ interface Double {
  * SQL qu'elle émet — celui-là s'exerce contre un vrai PostgreSQL
  * (`test/appointments-exclusion.integration-spec.ts`).
  *
- * `scopes` retient la portée reçue à chaque appel : c'est ce qui prouve que la
- * résolution est faite **dans** la transaction, et non par un client à part.
+ * `scopes` retient la portée reçue à chaque appel : c'est ce qui prouve que le
+ * contrôle est fait **dans** la transaction, et non par un client à part.
  */
 function directoryAnswering(
   options: {
@@ -149,15 +137,13 @@ function directoryAnswering(
 ): {
   service: ClientDirectoryService;
   scopes(): unknown[];
-  contacts(): unknown[];
   calls(): number;
-  /** Les identifiants soumis au contrôle du comptoir, dans l'ordre (#465). */
+  /** Les identifiants soumis au contrôle de la porte, dans l'ordre (#465). */
   asserted(): string[];
 } {
   const answers = options.answers ?? [];
   let index = 0;
   const scopes: unknown[] = [];
-  const contacts: unknown[] = [];
   const asserted: string[] = [];
 
   const nextAnswer = (fallback: string): string => {
@@ -169,16 +155,8 @@ function directoryAnswering(
     return answer;
   };
 
-  const resolveWithin = jest.fn(async (scope: unknown, contact: unknown) => {
-    options.order?.push('resolve');
-    scopes.push(scope);
-    contacts.push(contact);
-    return nextAnswer(CLIENT_ID);
-  });
-
-  // Le second battant de la porte (#465). Il partage la file de réponses de
-  // `resolveWithin` : les deux formes de `ClientReference` s'excluent, une seule
-  // des deux est appelée par un `create` donné.
+  // Le seul battant de la porte depuis #1222 (#465) : il confirme la fiche que
+  // l'appelant a désignée, et ne crée jamais rien.
   const assertBookableWithin = jest.fn(async (scope: unknown, clientId: string) => {
     options.order?.push('resolve');
     scopes.push(scope);
@@ -187,10 +165,9 @@ function directoryAnswering(
   });
 
   return {
-    service: { resolveWithin, assertBookableWithin } as unknown as ClientDirectoryService,
+    service: { assertBookableWithin } as unknown as ClientDirectoryService,
     scopes: () => scopes,
-    contacts: () => contacts,
-    calls: () => resolveWithin.mock.calls.length + assertBookableWithin.mock.calls.length,
+    calls: () => assertBookableWithin.mock.calls.length,
     asserted: () => asserted,
   };
 }
@@ -390,120 +367,30 @@ describe('AppointmentsRepository.create — conduite face à l’échec', () => 
 });
 
 /**
- * La fiche cliente, résolue **dans la transaction** de l'insertion (#313).
- *
- * Ce que cette suite prouve, et que le test d'intégration ne montre pas aussi
- * nettement : la **place** de l'appel — dans la portée transactionnelle, entre le
- * verrou et l'insertion —, l'identifiant effectivement écrit, et la conduite face
- * aux deux refus que la porte `crm` peut opposer.
- *
- * Ce qu'elle ne prouve pas, et ne peut pas prouver : que le `ROLLBACK` emporte
- * réellement la fiche. C'est de l'atomicité de PostgreSQL, et cela se prouve
- * contre lui seul — `test/appointments-exclusion.integration-spec.ts`.
- */
-describe('AppointmentsRepository.create — la fiche cliente vient de `crm`', () => {
-  it('résout la fiche dans la portée de la transaction, jamais par un client à part', async () => {
-    // C'est **toute** la garantie d'atomicité : une résolution faite hors de la
-    // transaction survivrait au `ROLLBACK` d'un créneau refusé, ce qui est
-    // exactement le défaut que ce ticket supprime.
-    const double = clientAnswering(ROW);
-    const directory = directoryAnswering();
-
-    await createAppointment(double.prisma, directory.service);
-
-    expect(directory.calls()).toBe(1);
-    // La portée reçue est bien celle que `$transaction` a fabriquée — celle qui
-    // porte le `$executeRaw` du verrou et l'`appointment.create` qui suit —, et
-    // non le client de premier niveau, qui n'a ni l'un ni l'autre.
-    const [scope] = directory.scopes();
-    expect(scope).toHaveProperty('appointment');
-    expect(scope).toHaveProperty('$executeRaw');
-    expect(scope).not.toBe(double.prisma);
-  });
-
-  it('passe les coordonnées reçues, et écrit l’identifiant que la porte rend', async () => {
-    const double = clientAnswering(ROW);
-    const directory = directoryAnswering();
-
-    await createAppointment(double.prisma, directory.service);
-
-    // Les coordonnées **déballées** de la référence, et non la référence
-    // elle-même : la porte `crm` ne connaît que `ClientContact` — lui passer
-    // l'enveloppe de `ClientReference` ferait chercher l'adresse un cran trop
-    // bas et créerait une fiche vide à chaque réservation (#461).
-    expect(directory.contacts()).toEqual([CONTACT]);
-    expect(double.createData()[0]).toMatchObject({ clientId: CLIENT_ID });
-  });
-
-  it('rejoue la transaction entière quand deux résolutions se sont disputé la fiche', async () => {
-    // `ClientRecordRaceError` dit que l'unicité `(tenant_id, email)` a tranché en
-    // faveur d'une autre transaction. Relire dans le `catch` serait vain — la
-    // violation a abandonné la transaction —, et refuser rendrait un 500 sur un
-    // cas parfaitement normal : deux onglets, ou un double clic mal désarmé.
-    const double = clientAnswering(ROW);
-    const directory = directoryAnswering({
-      answers: [new ClientRecordRaceError(), CLIENT_ID],
-    });
-
-    await expect(createAppointment(double.prisma, directory.service)).resolves.toMatchObject({
-      id: ROW.id,
-    });
-    expect(directory.calls()).toBe(2);
-    // La première tentative n'a rien inséré : elle n'a pas dépassé la résolution.
-    expect(double.calls()).toBe(1);
-  });
-
-  it('cesse de rejouer au bout de trois tentatives, et ne maquille pas l’échec', async () => {
-    // Trois courses d'affilée sur la même adresse ne sont plus une course, c'est
-    // une contention : la dire en 500 vaut mieux que de boucler — même arbitrage
-    // que pour l'interblocage.
-    const double = clientAnswering(ROW);
-    const directory = directoryAnswering({ answers: [new ClientRecordRaceError()] });
-
-    await expect(createAppointment(double.prisma, directory.service)).rejects.toBeInstanceOf(
-      ClientRecordRaceError,
-    );
-    expect(directory.calls()).toBe(3);
-    expect(double.calls()).toBe(0);
-  });
-
-  it('ne rejoue pas un refus d’adresse, et le laisse remonter tel quel', async () => {
-    // `ClientEmailNotBookableError` est une **décision**, pas une course : la
-    // réessayer rendrait trois fois le même refus en tenant une connexion de plus
-    // à chaque tour, et retarderait un 409 que le front sait déjà traiter.
-    const refusal = new ClientEmailNotBookableError();
-    const double = clientAnswering(ROW);
-    const directory = directoryAnswering({ answers: [refusal] });
-
-    await expect(createAppointment(double.prisma, directory.service)).rejects.toBe(refusal);
-    expect(directory.calls()).toBe(1);
-    expect(double.calls()).toBe(0);
-  });
-});
-
-/**
- * La fiche **désignée** par le comptoir passe elle aussi par `crm` (#465).
+ * La fiche désignée passe par `crm`, quelle que soit la surface (#465, #1136).
  *
  * Jusqu'ici la forme `{ clientId }` descendait telle quelle jusqu'aux clés
  * étrangères. Elles jugent l'existence de la ligne et son établissement, jamais
  * son **rôle** : un identifiant de collègue produisait un rendez-vous valide
  * dont la cliente était un employé.
  *
+ * C'est désormais le **seul** chemin : le tunnel public désignait une fiche par
+ * des coordonnées jusqu'à #1136, et cette résolution a été retirée par #1222
+ * avec la porte `crm` qui la servait. Les deux surfaces soumettent un
+ * identifiant, et le même contrôle les juge.
+ *
  * Ce que cette suite prouve, et que le test d'intégration ne montrerait qu'au
  * travers du moteur : la **place** du contrôle — dans la transaction, après le
  * verrou, avant l'insertion — et le fait qu'un refus n'insère rien et ne se
  * rejoue pas.
  */
-describe('AppointmentsRepository.create — la fiche désignée au comptoir', () => {
-  /** Le brouillon du comptoir : une fiche désignée, aucune coordonnée (#461). */
-  const DESK_DRAFT: AppointmentDraft = { ...DRAFT, client: { clientId: CLIENT_ID } };
-
+describe('AppointmentsRepository.create — la fiche désignée passe par `crm`', () => {
   async function createAtDesk(
     prisma: ScopedPrismaClient,
     clients: ClientDirectoryService,
   ): Promise<unknown> {
     return runWithTenant(TENANT_ID, async () =>
-      new AppointmentsRepository(prisma, clients).create(DESK_DRAFT),
+      new AppointmentsRepository(prisma, clients).create(DRAFT),
     );
   }
 
@@ -557,16 +444,17 @@ describe('AppointmentsRepository.create — la fiche désignée au comptoir', ()
     expect(double.calls()).toBe(0);
   });
 
-  it('ne demande aucune résolution de coordonnées pour cette forme', async () => {
-    // Les deux branches de `ClientReference` s'excluent : le comptoir désigne, il
-    // ne crée pas. Une réservation de comptoir qui traverserait `resolveWithin`
-    // écrirait dans `users` à chaque appel.
+  it('contrôle une fois, et n’écrit jamais dans `users`', async () => {
+    // La porte ne crée plus de fiche depuis #1222 : `assertBookableWithin` est
+    // le seul battant, et une réservation n'appelle rien d'autre. Un second
+    // appel voudrait dire qu'une branche de résolution est revenue.
     const double = clientAnswering(ROW);
     const directory = directoryAnswering();
 
     await createAtDesk(double.prisma, directory.service);
 
-    expect(directory.contacts()).toEqual([]);
+    expect(directory.calls()).toBe(1);
+    expect(directory.asserted()).toEqual([CLIENT_ID]);
   });
 });
 

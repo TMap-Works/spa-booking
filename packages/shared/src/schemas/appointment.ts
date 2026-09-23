@@ -324,10 +324,11 @@ export type CreateAppointmentRequest = z.infer<typeof createAppointmentRequestSc
  *
  * **La cliente du rendez-vous.** Ces coordonnées ont servi à retrouver une
  * fiche par son adresse e-mail tant que réserver n'exigeait pas de compte ;
- * elles ne le font plus, et le champ `client` de
- * `bookGuestAppointmentRequestSchemaFor` est devenu facultatif et sans effet.
- * Ce schéma garde son emploi propre — valider une saisie de coordonnées — et
- * c'est le formulaire du tunnel qui le lui donne.
+ * elles ne le font plus. Le champ `client` de la demande de réservation est
+ * devenu facultatif et sans effet avec #1136, puis a disparu du contrat avec
+ * #1222. Ce schéma garde son emploi propre — valider une saisie de
+ * coordonnées — et c'est le formulaire du tunnel qui le lui donne
+ * (`contact-step.tsx`).
  *
  * ## Une **fabrique**, parce que le pays est une donnée de requête (#1028)
  *
@@ -340,32 +341,29 @@ export type CreateAppointmentRequest = z.infer<typeof createAppointmentRequestSc
  *
  * La fabrique déplace la décision d'un cran : le contrat continue de porter la
  * règle et **une seule fois**, et c'est l'appelant qui l'instancie avec ce qu'il
- * sait de l'établissement — le pipe à portée de requête côté API
- * (`apps/api/src/common/validation/tenant-country-validation.pipe.ts`), le pays
- * de la vitrine côté formulaire. Sans pays, le comportement est **exactement**
- * celui d'avant : un numéro national reste irrattachable, et le refuser vaut
- * mieux que deviner un indicatif — c'est-à-dire qu'envoyer le rappel de
- * quelqu'un à un inconnu.
+ * sait de l'établissement — le pays de la vitrine, côté formulaire. Sans pays,
+ * le comportement est **exactement** celui d'avant : un numéro national reste
+ * irrattachable, et le refuser vaut mieux que deviner un indicatif —
+ * c'est-à-dire qu'envoyer le rappel de quelqu'un à un inconnu.
  *
- * ## Ce schéma **est** la frontière de l'API, depuis #404
+ * Il n'y a plus qu'un appelant depuis #1222, et c'est le formulaire :
+ * `POST /api/v1/public/{slug}/appointments` ne prend plus de coordonnées du
+ * tout, si bien que le pipe à portée de requête qui instanciait cette fabrique
+ * côté API n'a plus d'objet et a été retiré avec elle.
  *
- * `GuestContactDto` décrivait la même forme une seconde fois, en
- * `class-validator`, et l'écart de comportement était réel : il validait `phone`
- * avec un motif **libre borné** et conservait la saisie, là où ce schéma-ci
- * normalise et refuse un numéro national.
+ * ## Ce schéma n'est plus une frontière d'API, depuis #1222
  *
- * Il n'y a plus d'écart, parce qu'il n'y a plus de seconde écriture :
- * `POST /api/v1/public/:tenantSlug/appointments` valide avec **cette
- * fabrique-ci**, instanciée par requête avec le pays de l'établissement du slug
+ * Il l'a été : `POST /api/v1/public/:tenantSlug/appointments` validait avec
+ * cette fabrique-ci le champ `client` de sa demande, et `GuestContactDto` en
+ * portait les `@ApiProperty`
  * ([ADR 0008](../../../../docs/adr/0008-validation-zod-classe-dto-documentaire.md)).
- * `GuestContactDto` survit dépouillé de ses décorateurs de validation, comme
- * porteur des `@ApiProperty` d'où sort `/api/docs`.
+ * La route ne prend plus de coordonnées, le champ a disparu du contrat, et la
+ * classe avec lui : il ne reste **qu'un** appelant, le formulaire du tunnel
+ * (`contact-step.tsx`).
  *
- * La conséquence pour qui écrit un formulaire de coordonnées est inchangée, et
- * désormais garantie plutôt qu'espérée : le message à afficher n'est pas
- * « l'API a refusé », c'est « ce numéro doit porter son indicatif ».
- * `apps/api/src/modules/appointments/__tests__/guest-booking-frontier.spec.ts`
- * tient le câblage — que la route est bien montée sur ce schéma-ci.
+ * La conséquence pour qui écrit un formulaire de coordonnées est inchangée : le
+ * message à afficher n'est pas « l'API a refusé », c'est « ce numéro doit
+ * porter son indicatif ».
  */
 export function guestContactSchemaFor(defaultCountry?: string | null) {
   return z
@@ -402,8 +400,8 @@ export function guestContactSchemaFor(defaultCountry?: string | null) {
  * Conservée comme valeur pour la raison qui garde `e164PhoneSchema` : plusieurs
  * fichiers la composent, et la recréer à chaque import multiplierait des objets
  * identiques. Elle reste par ailleurs la référence de la **forme** — le
- * `.strict()`, les noms de champs — que le pipe serveur vérifie à l'amorçage,
- * une fois, plutôt qu'à chaque requête.
+ * `.strict()`, les noms de champs —, ce dont les suites du contrat se servent
+ * sans avoir à choisir un pays.
  */
 export const guestContactSchema = guestContactSchemaFor();
 
@@ -450,7 +448,7 @@ export const dataConsentSchema = z.boolean().refine((accepted) => accepted, {
  * désigne personne du tout — la cliente du rendez-vous est celle du jeton, et
  * `POST /api/v1/public/{slug}/appointments` exige ce jeton depuis #1136.
  *
- * ## Ce que #1136 a retiré à ce schéma, et pourquoi
+ * ## Ce que #1136 a retiré à ce schéma, et #1222 emporté
  *
  * `client` portait les coordonnées saisies au moment de réserver, « à partir
  * desquelles le serveur crée ou retrouve la fiche ». Retrouver une fiche
@@ -461,14 +459,13 @@ export const dataConsentSchema = z.boolean().refine((accepted) => accepted, {
  * authentifiée aurait encore pu réserver au nom d'une autre en donnant son
  * adresse.
  *
- * Le champ est donc devenu **facultatif et sans effet**. Il n'entre plus dans
- * aucune décision du serveur : `AppointmentsService.book` prend un compte de
- * jeton vérifié (`AppointmentClientPrincipal`) et n'a plus de type pour
- * recevoir des coordonnées. Il reste accepté — et validé, quand il est là — le
- * temps que le tunnel cesse de l'envoyer : `apps/web` le poste encore depuis son
- * étape « Coordonnées », et le refuser en 400 n'apprendrait rien à personne que
- * le 401 de la route ne dise déjà. Sa suppression appartient au même diff que
- * cette étape-là, hors de l'empreinte de #1136.
+ * #1136 a donc rendu le champ **facultatif et sans effet** : il n'entrait plus
+ * dans aucune décision du serveur, `AppointmentsService.book` prenant un compte
+ * de jeton vérifié (`AppointmentClientPrincipal`). Il restait accepté — et
+ * validé — le seul temps que le tunnel cesse de l'envoyer, ce que #1222 a fait
+ * en premier. **Le champ n'existe plus** : le `.strict()` le refuse désormais
+ * en 400, et c'est le sens utile du refus — plus aucun appelant du dépôt ne
+ * l'émet, et celui qui l'émettrait croirait désigner une cliente.
  *
  * ## Ce que le `.strict()` continue de tenir
  *
@@ -479,49 +476,35 @@ export const dataConsentSchema = z.boolean().refine((accepted) => accepted, {
  * back-office ferait créer une fiche là où le comptoir en avait désigné une.
  * `guest-booking.spec.ts` exerce les deux (#314).
  *
- * ## Une fabrique, pour la seule raison qui vaut pour `guestContactSchemaFor`
+ * ## Une constante, et non plus une fabrique (#1222)
  *
- * Le pays par défaut du téléphone (#1028), et rien d'autre : aucun autre champ
- * de cette demande ne dépend de l'établissement. La forme — les clés, le
- * `.strict()`, la version d'UUID — est donc **la même** quel que soit
- * l'argument, ce dont le pipe serveur se sert pour ne payer sa garde de champ
- * inconnu qu'une fois, à l'amorçage.
+ * `bookGuestAppointmentRequestSchemaFor(pays)` n'existait que pour le pays par
+ * défaut du téléphone (#1028) — c'est-à-dire pour le seul champ `client`.
+ * Aucun des champs restants ne dépend de l'établissement, si bien qu'il n'y a
+ * plus rien à paramétrer : le schéma redevient une valeur, et le pipe serveur
+ * un `ZodValidationPipe` ordinaire. `guestContactSchemaFor`, elle, **reste**
+ * une fabrique : c'est le formulaire de coordonnées du tunnel qui la valide, et
+ * lui connaît le pays de la vitrine.
  */
-export function bookGuestAppointmentRequestSchemaFor(defaultCountry?: string | null) {
-  return z
-    .object({
-      serviceId: uuidSchema,
-      /** Absent = « premier disponible ». Voir `createAppointmentRequestSchema`. */
-      staffId: uuidSchema.optional(),
-      /** Début du soin, ISO 8601 avec offset explicite — normalisé en UTC ici. */
-      startsAt: offsetDateTimeSchema,
-      /**
-       * **Obsolète depuis #1136, et sans effet.** La cliente du rendez-vous est
-       * celle du jeton ; ces coordonnées-là ne rattachent plus rien à personne.
-       * Voir l'en-tête de ce schéma.
-       */
-      client: guestContactSchemaFor(defaultCountry).optional(),
-      clientNote: longTextSchema.optional(),
-      /**
-       * L'accord au traitement des données, **obligatoire** (#790).
-       *
-       * C'est le seul champ de cette demande qui ne décrit pas le rendez-vous :
-       * il décrit ce qui autorise le salon à en garder la trace. Voir
-       * `dataConsentSchema` pour le sens de l'obligation, et
-       * `appointmentSchema.dataConsentAt` pour ce que le serveur en fait.
-       */
-      dataConsent: dataConsentSchema,
-    })
-    .strict();
-}
-
-/**
- * La même demande **sans pays par défaut** — la forme historique du contrat.
- *
- * Elle reste la référence de tout ce qui ne dépend pas de l'établissement : le
- * type inféré, la garde de champ inconnu du pipe, et les suites du contrat.
- */
-export const bookGuestAppointmentRequestSchema = bookGuestAppointmentRequestSchemaFor();
+export const bookGuestAppointmentRequestSchema = z
+  .object({
+    serviceId: uuidSchema,
+    /** Absent = « premier disponible ». Voir `createAppointmentRequestSchema`. */
+    staffId: uuidSchema.optional(),
+    /** Début du soin, ISO 8601 avec offset explicite — normalisé en UTC ici. */
+    startsAt: offsetDateTimeSchema,
+    clientNote: longTextSchema.optional(),
+    /**
+     * L'accord au traitement des données, **obligatoire** (#790).
+     *
+     * C'est le seul champ de cette demande qui ne décrit pas le rendez-vous :
+     * il décrit ce qui autorise le salon à en garder la trace. Voir
+     * `dataConsentSchema` pour le sens de l'obligation, et
+     * `appointmentSchema.dataConsentAt` pour ce que le serveur en fait.
+     */
+    dataConsent: dataConsentSchema,
+  })
+  .strict();
 
 export type BookGuestAppointmentRequest = z.infer<typeof bookGuestAppointmentRequestSchema>;
 

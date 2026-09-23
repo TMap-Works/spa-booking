@@ -3,18 +3,13 @@ import {
   APPOINTMENT_REFERENCE_LENGTH,
   APPOINTMENT_REFERENCE_PATTERN,
   type BookGuestAppointmentRequest,
-  EMAIL_ADDRESS_MAX_LENGTH,
-  LOCALES,
   LONG_TEXT_MAX_LENGTH,
-  NAME_MAX_LENGTH,
-  PHONE_MAX_LENGTH,
-  bookGuestAppointmentRequestSchemaFor,
+  bookGuestAppointmentRequestSchema,
   bookedAppointmentSchema,
-  guestContactSchema,
 } from '@spa/shared';
 import type { z } from 'zod';
 
-import { tenantCountryValidationPipe } from '../../../common/validation';
+import { ZodValidationPipe } from '../../../common/validation';
 import type { AppointmentCancelledBy, AppointmentStatus } from '../appointment-status';
 import { CANCELLATION_AUTHORS } from '../appointment-status';
 import type { AppointmentView, Money } from '../appointments.types';
@@ -24,15 +19,18 @@ import type { AppointmentView, Money } from '../appointments.types';
  *
  * ## Ce que ce fichier est devenu, et ce qu'il n'est plus
  *
- * Il ne décrit plus la frontière : il la **documente**. Les trois formes de
+ * Il ne décrit plus la frontière : il la **documente**. Les deux formes de
  * cette route appartiennent au contrat d'API, et `packages/shared` les décrit —
  * chacune sous son nom propre, apparié ici une fois pour toutes :
  *
  * | Ce fichier | `packages/shared/src/schemas/appointment.ts` |
  * |---|---|
- * | `BookAppointmentBodyPipe` (le pipe) | `bookGuestAppointmentRequestSchemaFor` |
- * | `GuestContactDto` (la documentation) | `guestContactSchema` |
+ * | `BookAppointmentBodyPipe` (le pipe) | `bookGuestAppointmentRequestSchema` |
  * | `AppointmentDto` (la documentation) | `bookedAppointmentSchema` |
+ *
+ * Il y en avait une troisième jusqu'à #1222 — `GuestContactDto`, qui
+ * documentait le champ `client`. La demande ne porte plus de coordonnées : la
+ * cliente du rendez-vous est celle du jeton, et le contrat a perdu le champ.
  *
  * Les classes survivent parce que le schéma OpenAPI de `/api/docs` sort des
  * décorateurs `@nestjs/swagger`, que Zod ne porte pas : les supprimer
@@ -58,57 +56,42 @@ import type { AppointmentView, Money } from '../appointments.types';
  * **refusé**, en particulier un `tenantId` glissé dans le corps — la fuite que
  * le scoping automatique supprime (tenant-isolation §2). Sur une route publique,
  * c'est la seule barrière avant le service : il n'y a pas de garde à franchir.
- * `tenantCountryValidationPipe` refuse d'ailleurs au montage, comme
- * `ZodValidationPipe`, un schéma d'entrée qui ne serait pas `.strict()`.
+ * `ZodValidationPipe` refuse d'ailleurs au montage un schéma d'entrée qui ne
+ * serait pas `.strict()`.
  *
- * ## Les deux écarts de #314, et comment ils se referment
+ * C'est ce `.strict()`, et lui seul, qui referme la porte que #1222 condamne :
+ * un `client` envoyé à cette route est désormais un **champ inconnu**, donc un
+ * 400. Le refus est le sens utile de la suppression — l'appelant qui l'émet
+ * croit désigner une cliente, et aucune valeur du corps ne le peut.
  *
- * **Téléphone.** `phone` est validé par `e164PhoneSchemaFor`, qui **normalise**
- * (`+261 34 12 345 67` → `+261341234567`) là où le DTO acceptait un format libre
- * borné et conservait la saisie.
- *
- * Le sens de la décision est celui de #66 : les surfaces qui **composent** un
- * numéro l'exigent en E.164 — le rappel SMS J-1 part d'ici, sans qu'aucun humain
- * le relise —, celles qui l'**enregistrent** ou l'**affichent** gardent
- * `phoneSchema`. `users.phone` n'est donc pas en E.164 pour tous ses écrivains,
- * et c'est délibéré : `identity` et `crm` y écrivent en format libre, et
- * durcir la colonne rendrait illisible le stock antérieur à la règle
- * (`storedPhoneSchema`).
- *
- * **Le pays par défaut vient de la requête, depuis #1028.** Cette route refusait
- * « 06 12 34 56 78 » que `/auth/register` accepte sur le *même* salon : son
- * schéma était figé à l'amorçage, quand les six autres portes du téléphone
- * normalisent dans un service qui a lu `tenants.country_code`. Le pipe ci-dessus
- * instancie désormais la fabrique du contrat avec le pays de l'établissement que
- * le slug de l'URL a résolu ; sans pays renseigné, le refus d'un national reste
- * le comportement — et reste le bon, faute de quoi le rappel partirait à un
- * inconnu.
+ * ## L'écart de #314, et comment il se referme
  *
  * **Version d'UUID.** `uuidSchema` acceptait n'importe quelle version là où
  * `@IsUUID('4')` exigeait la v4 ; le contrat a été resserré sur la v4 (#403),
  * ce qui laisse le comportement de cette route inchangé. Voir l'en-tête
  * d'`uuidSchema`.
+ *
+ * L'autre écart — le **téléphone**, en E.164 et complété par le pays de
+ * l'établissement (#1028) — ne concerne plus cette route : il portait sur
+ * `client.phone`, et il n'y a plus de coordonnées dans cette demande. La règle
+ * vit toujours, chez le seul appelant qui la valide encore : le formulaire de
+ * coordonnées du tunnel, monté sur `guestContactSchemaFor`.
  */
 
 /**
  * Le pipe de la demande de réservation — c'est **lui** qui valide, et non les
  * classes ci-dessous.
  *
- * Une **classe** et non une instance depuis #1028, et c'est la seule chose qui
- * change : `@Body(BookAppointmentBodyPipe)` laisse Nest l'instancier, donc lui
- * injecter le fournisseur du pays de l'établissement. Une instance écrite ici
- * n'aurait rien à quoi le demander — un pipe construit au chargement du module
- * ne voit pas une donnée de requête, et c'est précisément le défaut que le
- * ticket referme.
+ * Une **instance**, et non plus une classe injectable (#1222) : le pipe à
+ * portée de requête de #1028 n'existait que pour lire `tenants.country_code`,
+ * dont seul `client.phone` dépendait. Plus aucun champ de cette demande ne
+ * dépend de l'établissement, donc plus rien à injecter — et le schéma, comme sa
+ * garde `.strict()`, se construit une fois pour toutes à l'amorçage.
  *
- * La garde `.strict()` se paie toujours une seule fois, à l'amorçage :
- * `tenantCountryValidationPipe` la pose sur la forme du schéma, qui ne dépend
- * pas du pays. La déclarer ici plutôt qu'au contrôleur garde apparié, dans un
- * seul fichier, le schéma du contrat et le pipe qui le monte.
+ * La déclarer ici plutôt qu'au contrôleur garde apparié, dans un seul fichier,
+ * le schéma du contrat et le pipe qui le monte.
  */
-export const BookAppointmentBodyPipe = tenantCountryValidationPipe(
-  bookGuestAppointmentRequestSchemaFor,
-);
+export const BookAppointmentBodyPipe = new ZodValidationPipe(bookGuestAppointmentRequestSchema);
 
 /** La demande de réservation, telle que le contrat la rend au contrôleur. */
 export type BookAppointmentBody = BookGuestAppointmentRequest;
@@ -126,78 +109,8 @@ export class MoneyDto implements Money {
 }
 
 /**
- * Les coordonnées d'une cliente qui réserve **sans compte** — la documentation
- * de `guestContactSchema`.
- *
- * Aucun mot de passe, et il n'y en aura pas : ce formulaire crée une fiche
- * jointe au rendez-vous, pas une identité. Un visiteur qui veut un compte passe
- * par `/auth/register` (#21), et le tunnel n'a pas à le lui imposer pour prendre
- * un rendez-vous — c'est le quatrième critère de #37.
- */
-export class GuestContactDto {
-  @ApiProperty({ example: 'Camille', maxLength: NAME_MAX_LENGTH })
-  public firstName!: string;
-
-  @ApiProperty({ example: 'Rakoto', maxLength: NAME_MAX_LENGTH })
-  public lastName!: string;
-
-  @ApiProperty({
-    description:
-      'Canonisée avant écriture — élaguée, en minuscules. C’est ce qui rend ' +
-      'l’unicité (tenant, e-mail) fiable, la contrainte de base portant sur les octets.',
-    example: 'camille@example.test',
-    // `EMAIL_ADDRESS_MAX_LENGTH` (254, RFC 5321 §4.5.3.1.3) et non
-    // `EMAIL_MAX_LENGTH` (320, la largeur de la colonne) : c'est la borne
-    // qu'`emailSchema` applique réellement, et cette classe documente le schéma.
-    // Publier 320 ferait annoncer par `/api/docs` une adresse que la route
-    // refuse en 400 — le sens dangereux de l'écart, celui que l'ADR 0008 ferme.
-    maxLength: EMAIL_ADDRESS_MAX_LENGTH,
-  })
-  public email!: string;
-
-  @ApiPropertyOptional({
-    description:
-      'Facultatif : le SMS de rappel est un confort, l’e-mail de confirmation est ' +
-      'le canal obligatoire. **Normalisé en E.164 à la frontière** — c’est le ' +
-      'seul numéro que la chaîne SMS compose sans qu’aucun humain le relise : ' +
-      '« +261 34 12 345 67 » est enregistré « +261341234567 ». Le format ' +
-      'international est toujours accepté ; un numéro **national** ne l’est que ' +
-      'si l’établissement du slug a renseigné son pays, qui sert alors ' +
-      'd’indicatif par défaut — « 06 12 34 56 78 » devient « +33612345678 » chez ' +
-      'un salon français. Sans pays renseigné, le numéro national est refusé en ' +
-      '400 : le deviner enverrait le rappel à quelqu’un d’autre.',
-    example: '+261341234567',
-    maxLength: PHONE_MAX_LENGTH,
-  })
-  public phone?: string;
-
-  /**
-   * La langue dans laquelle le tunnel a été suivi — #844, huitième critère
-   * d'acceptation.
-   *
-   * Facultative, et elle ne décrit pas une saisie : personne ne la tape, le
-   * tunnel la constate. Ce qu'elle produit est borné dans un seul sens — elle
-   * **comble** l'absence de préférence sur la fiche cliente, et n'écrase jamais
-   * celle qui s'y trouve. C'est la même règle que pour le prénom, le nom et le
-   * numéro, à ceci près que ceux-là ne sont jamais écrits sur une fiche
-   * existante du tout : un appel public ne réécrit pas le dossier d'une cliente
-   * dont on connaît l'adresse.
-   */
-  @ApiPropertyOptional({
-    enum: LOCALES,
-    example: 'en',
-    description:
-      'Langue de l’interface au moment de la réservation. Enregistrée sur la ' +
-      'fiche cliente **seulement si** celle-ci n’a pas encore de préférence — ' +
-      'une préférence existante n’est jamais écrasée. La casse est normalisée ; ' +
-      'toute valeur hors `fr`/`en` est refusée en 400.',
-  })
-  public locale?: string;
-}
-
-/**
  * La demande de réservation — la documentation de
- * `bookGuestAppointmentRequestSchemaFor`.
+ * `bookGuestAppointmentRequestSchema`.
  *
  * **Aucun `endsAt`.** La cliente choisit un début et une prestation ; la fin se
  * dérive de la durée du catalogue, côté serveur. Laisser le client l'envoyer
@@ -232,26 +145,6 @@ export class BookAppointmentDto {
     example: '2026-09-01T09:00:00Z',
   })
   public startsAt!: string;
-
-  /**
-   * **Obsolète depuis #1136.** La cliente du rendez-vous est celle du jeton, et
-   * ces coordonnées n'entrent dans aucune décision du serveur.
-   *
-   * `deprecated` plutôt qu'une suppression : le tunnel les poste encore depuis
-   * son étape « Coordonnées », et les refuser en 400 ajouterait un refus de
-   * plus à une route qui rend déjà 401 à qui n'a pas de jeton. Le champ part
-   * avec cette étape-là, hors de l'empreinte de #1136.
-   */
-  @ApiPropertyOptional({
-    type: GuestContactDto,
-    deprecated: true,
-    description:
-      'Coordonnées saisies. **Sans effet depuis #1136** : la cliente du ' +
-      'rendez-vous est celle du jeton d’accès, et aucun champ du corps ne peut ' +
-      'la désigner. Accepté — et validé s’il est présent — le temps que le ' +
-      'tunnel cesse de l’envoyer.',
-  })
-  public client?: GuestContactDto;
 
   @ApiPropertyOptional({
     description: 'Mot de la cliente au salon — allergie, préférence, retard annoncé.',
@@ -433,22 +326,20 @@ type _AppointmentDtoIsReadableByTheContract = AssertTrue<
  * garde une seconde, et une `@ApiProperty` oubliée décrirait une route qui
  * refuse ce qu'elle annonce.
  */
-type BookGuestAppointmentWire = z.input<ReturnType<typeof bookGuestAppointmentRequestSchemaFor>>;
+type BookGuestAppointmentWire = z.input<typeof bookGuestAppointmentRequestSchema>;
 
 type _BookAppointmentDtoHasTheContractKeys = AssertNever<
   | Exclude<keyof BookAppointmentDto, keyof BookGuestAppointmentWire>
   | Exclude<keyof BookGuestAppointmentWire, keyof BookAppointmentDto>
 >;
 
-type _GuestContactDtoHasTheContractKeys = AssertNever<
-  | Exclude<keyof GuestContactDto, keyof z.input<typeof guestContactSchema>>
-  | Exclude<keyof z.input<typeof guestContactSchema>, keyof GuestContactDto>
->;
-
 /*
  * `toGuestContact` a disparu avec #1136, et son absence est le propos : elle
- * convertissait les coordonnées du corps en `GuestContact` pour que le service
- * en tire la fiche cliente — c'est-à-dire pour que l'adresse e-mail d'un corps
- * de requête désigne un compte. `AppointmentsService.book` n'a plus de
- * paramètre où mettre son résultat : il prend la cliente du jeton vérifié.
+ * convertissait les coordonnées du corps en coordonnées de domaine pour que le
+ * service en tire la fiche cliente — c'est-à-dire pour que l'adresse e-mail
+ * d'un corps de requête désigne un compte. `AppointmentsService.book` n'a plus
+ * de paramètre où mettre son résultat : il prend la cliente du jeton vérifié.
+ *
+ * #1222 a emporté ce qui restait de ce chemin : le champ du contrat, la classe
+ * qui le documentait, et la porte `crm` qu'il maintenait en vie.
  */
