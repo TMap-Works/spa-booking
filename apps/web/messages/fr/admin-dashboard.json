@@ -1,0 +1,61 @@
+{
+  "metadata": {
+    "title": "Tableau de bord"
+  },
+  "denied": {
+    "title": "Accès réservé",
+    "hint": "Le tableau de bord est réservé à la gestion du salon. Le planning reste accessible depuis le menu.",
+    "failedTitle": "Tableau de bord indisponible"
+  },
+  "hero": {
+    "eyebrow": "Aujourd’hui · {date}",
+    "greeting": "Bonjour",
+    "greetingNamed": "Bonjour {firstName}",
+    "lead": "{count, plural, =0 {Aucun rendez-vous} other {# rendez-vous}} au programme de {salon} aujourd’hui.",
+    "leadPending": "{count, plural, other {# rendez-vous}} au programme de {salon} aujourd’hui, dont {pending} à confirmer.",
+    "checkout": "Encaisser",
+    "openCalendar": "Ouvrir le planning"
+  },
+  "kpi": {
+    "appointments": {
+      "label": "Rendez-vous aujourd’hui",
+      "detail": "{done, plural, one {# honoré} other {# honorés}} · {upcoming} à venir"
+    },
+    "revenue": {
+      "label": "Encaissé aujourd’hui",
+      "detail": "{count, plural, one {# encaissement} other {# encaissements}}",
+      "detailEmpty": "Aucun encaissement pour l’instant"
+    },
+    "pending": {
+      "label": "À confirmer",
+      "detail": "Demandes en attente de réponse",
+      "detailNone": "Tout est confirmé"
+    },
+    "noShow": {
+      "label": "Non honorés · 30 jours",
+      "detail": "{noShows} sur {total, plural, one {# rendez-vous échu} other {# rendez-vous échus}}"
+    }
+  },
+  "upcoming": {
+    "title": "Prochains rendez-vous",
+    "more": "Tout le planning",
+    "duration": "{minutes} min",
+    "emptyTitle": "Plus rien au programme aujourd’hui",
+    "emptyBody": "Les rendez-vous de la journée sont passés. Le planning montre les jours suivants."
+  },
+  "week": {
+    "title": "Les 7 derniers jours",
+    "more": "Reporting",
+    "caption": "encaissés · {count, plural, other {# rendez-vous}}",
+    "barsLabel": "Rendez-vous par jour",
+    "barDescription": " : {count, plural, other {# rendez-vous}} le {date}"
+  },
+  "shortcuts": {
+    "title": "Raccourcis",
+    "newService": "Nouvelle prestation",
+    "clients": "Fichier client",
+    "staff": "Équipe et horaires",
+    "storefront": "Ma vitrine",
+    "newTab": " (nouvel onglet)"
+  }
+}

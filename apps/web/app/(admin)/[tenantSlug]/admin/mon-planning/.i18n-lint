@@ -1,0 +1,5 @@
+# Marqueur de lint i18n — voir eslint-rules/i18n-markers.mjs.
+# « Mon planning », l'écran du praticien connecté, traduit par #1104 : sa page et
+# son squelette. Le sous-arbre entier est sous la règle. Les deux morceaux
+# interactifs de l'écran vivent dans `../components/my-planning-client.tsx` et
+# portent leur ligne dans le marqueur de ce répertoire-là.

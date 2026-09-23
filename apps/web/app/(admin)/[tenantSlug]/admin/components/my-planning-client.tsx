@@ -2,10 +2,12 @@
 
 import type { AppointmentStatus } from '@spa/shared';
 import { useRouter } from 'next/navigation';
+import { useLocale, useTranslations } from 'next-intl';
 import { useEffect, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { deskStatusActions } from '@/lib/admin/appointment-desk';
+import { appointmentStatusLabelInSentence } from '@/lib/appointment-status';
 
 import { markDeskAppointmentStatusAction } from '../calendrier/actions';
 import { useAdminSessionRenewal } from './use-admin-session-renewal';
@@ -13,6 +15,13 @@ import { useAdminSessionRenewal } from './use-admin-session-renewal';
 /**
  * Les deux morceaux interactifs de « Mon planning » (#813) — le reste de
  * l'écran est rendu par le serveur.
+ *
+ * Leurs mots viennent du namespace `admin-my-planning` (#1104), à une exception
+ * près : le **statut** inséré dans « Marquer honoré » est lu dans
+ * `lib/appointment-status.ts`, seul endroit du front où ce vocabulaire s'écrit.
+ * C'est exactement le montage du tiroir de rendez-vous du planning du salon
+ * (`appointment-panel.tsx`, #917) — le verbe appartient à l'écran, le statut au
+ * module de vocabulaire.
  */
 
 /** Le rafraîchissement de l'écran : toutes les minutes, et au retour sur l'onglet. */
@@ -69,6 +78,8 @@ export function MyAppointmentActions({
   readonly started: boolean;
 }) {
   const router = useRouter();
+  const t = useTranslations('admin-my-planning');
+  const locale = useLocale();
   const { renewIfExpired } = useAdminSessionRenewal(tenantSlug);
   const [pending, setPending] = useState<AppointmentStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -97,7 +108,7 @@ export function MyAppointmentActions({
       }
       setError(result.message);
     } catch {
-      setError('Le serveur ne répond pas. Réessayez dans un instant.');
+      setError(t('actions.serverSilent'));
     } finally {
       setPending(null);
     }
@@ -110,11 +121,18 @@ export function MyAppointmentActions({
           disabled={pending !== null && pending !== action.status}
           key={action.status}
           loading={pending === action.status}
-          loadingLabel="Enregistrement…"
+          loadingLabel={t('actions.saving')}
           onClick={() => void mark(action.status)}
           variant={action.variant}
         >
-          {action.label}
+          {/* Le verbe appartient à l'écran, le statut au module de vocabulaire :
+              « Confirmer le rendez-vous » nomme un acte, « Marquer honoré »
+              constate ce qui a eu lieu au salon (#917). */}
+          {action.status === 'confirmed'
+            ? t('actions.confirm')
+            : t('actions.mark', {
+                status: appointmentStatusLabelInSentence(action.status, locale),
+              })}
         </Button>
       ))}
       {error === null ? null : (

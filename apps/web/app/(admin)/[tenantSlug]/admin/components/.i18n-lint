@@ -21,3 +21,6 @@ category-manager.tsx
 service-activation-button.tsx
 service-form.tsx
 service-staff-panel.tsx
+#
+# Les deux morceaux interactifs de « Mon planning » — #1104.
+my-planning-client.tsx
