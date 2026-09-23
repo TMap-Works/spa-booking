@@ -77,6 +77,8 @@ import { createTranslator } from 'next-intl';
 
 import { MyAppointmentActions } from '@/app/(admin)/[tenantSlug]/admin/components/my-planning-client';
 import { loadMessages } from '@/i18n/messages';
+import { rangeLabel } from '@/lib/admin/calendar-range';
+import frCatalog from '@/messages/fr/admin-my-planning.json';
 import {
   dayBoundsInTimeZone,
   myPlanningViewLabels,
@@ -170,13 +172,20 @@ describe('les onglets de vue', () => {
 });
 
 describe('les en-têtes de période et la navigation', () => {
-  it('encadre la semaine dans les deux langues', () => {
-    expect(
-      planning('fr')('period.week', { from: 'lundi 14 septembre 2026', to: 'dimanche 20 septembre 2026' }),
-    ).toBe('Du lundi 14 septembre 2026 au dimanche 20 septembre 2026');
-    expect(
-      planning('en')('period.week', { from: 'Monday, September 14, 2026', to: 'Sunday, September 20, 2026' }),
-    ).toBe('Monday, September 14, 2026 to Sunday, September 20, 2026');
+  it('emprunte le libellé daté du back-office plutôt que d’en écrire un second', () => {
+    // La semaine ne s'écrit plus dans ce catalogue : c'est `rangeLabel` — celui
+    // du planning du salon et de l'encaissement — qui la dit, en `Intl` et dans
+    // la région de l'établissement. Deux écritures d'une même période auraient
+    // fini par diverger, et la seconde tenait sur trois lignes à 360 px.
+    expect(rangeLabel('semaine', '2026-09-23', { locale: 'fr', countryCode: 'FR' })).toBe(
+      '21 – 27 septembre 2026',
+    );
+    expect(rangeLabel('jour', '2026-09-23', { locale: 'en', countryCode: 'US' })).toBe(
+      'Wednesday, September 23, 2026',
+    );
+    // Et la clé a bien disparu du catalogue : une phrase orpheline serait
+    // retraduite au prochain passage sans que rien ne l'affiche.
+    expect(Object.keys(frCatalog.period)).toEqual(['upcoming']);
   });
 
   it('dit l’horizon de la vue « À venir » avec le nombre de jours que l’API borne', () => {
@@ -193,8 +202,24 @@ describe('les en-têtes de période et la navigation', () => {
     expect(planning('en')('nav.previousWeek')).toBe('Previous week');
     expect(planning('fr')('nav.nextDay')).toBe('Jour suivant');
     expect(planning('en')('nav.nextDay')).toBe('Next day');
-    expect(planning('fr')('nav.today')).toBe('Aujourd’hui');
-    expect(planning('en')('nav.today')).toBe('Today');
+  });
+
+  it('compte la charge d’une période au pluriel de la langue', () => {
+    // Le retour au jour courant n'est plus écrit ici : la barre de période est
+    // celle du planning du salon (`PeriodNav`), et le mot vient de son
+    // namespace — il n'y a qu'une écriture d'« Aujourd'hui » dans le
+    // back-office. Ce que cet écran écrit, c'est ce que la période pèse.
+    expect(planning('fr')('toolbar.load', { count: 0 })).toBe('Aucun rendez-vous');
+    expect(planning('fr')('toolbar.load', { count: 1 })).toBe('1 rendez-vous');
+    expect(planning('fr')('toolbar.load', { count: 3 })).toBe('3 rendez-vous');
+    expect(planning('en')('toolbar.load', { count: 0 })).toBe('No appointments');
+    expect(planning('en')('toolbar.load', { count: 1 })).toBe('1 appointment');
+    expect(planning('en')('toolbar.load', { count: 3 })).toBe('3 appointments');
+  });
+
+  it('nomme le prochain rendez-vous dans les deux langues', () => {
+    expect(planning('fr')('appointment.next')).toBe('Prochain');
+    expect(planning('en')('appointment.next')).toBe('Next');
   });
 });
 

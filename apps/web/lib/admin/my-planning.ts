@@ -156,6 +156,55 @@ export function upcomingOnly(
   );
 }
 
+/**
+ * Le prochain rendez-vous encore attendu, s'il y en a un.
+ *
+ * C'est la seule ligne que la praticienne cherche en sortant d'un soin : elle
+ * est donc désignée à l'écran plutôt que laissée à compter dans la liste. Le
+ * « prochain » se lit sur la même définition que la vue « À venir » — ni passé,
+ * ni annulé — pour qu'un rendez-vous marqué en soit retiré sans autre règle.
+ */
+export function nextAppointment(
+  appointments: readonly MyStaffAppointment[],
+  now: Date,
+): MyStaffAppointment | null {
+  let soonest: MyStaffAppointment | null = null;
+
+  for (const candidate of upcomingOnly(appointments, now)) {
+    if (soonest === null || candidate.startsAt < soonest.startsAt) {
+      soonest = candidate;
+    }
+  }
+
+  return soonest;
+}
+
+/**
+ * Ce que pèse une période : ses rendez-vous, les annulés exceptés.
+ *
+ * Un rendez-vous annulé reste affiché — la praticienne doit savoir qu'un
+ * créneau s'est libéré — mais il ne charge plus sa journée, et le compter le
+ * ferait mentir.
+ */
+export function bookedCount(appointments: readonly MyStaffAppointment[]): number {
+  return appointments.filter((appointment) => appointment.status !== 'cancelled').length;
+}
+
+/**
+ * La période affichée contient-elle la journée courante du salon ?
+ *
+ * Ce que le retour « Aujourd'hui » a besoin de savoir pour ne pas se proposer
+ * quand il ne mène nulle part. Comparaison de chaînes : une `CalendarDate` est
+ * un `AAAA-MM-JJ`, dont l'ordre lexicographique est l'ordre chronologique.
+ */
+export function showsToday(
+  from: CalendarDate,
+  to: CalendarDate,
+  today: CalendarDate,
+): boolean {
+  return from <= today && today <= to;
+}
+
 /** « Rina A. » — la cliente telle que l'API la sert au praticien. */
 export function clientLabel(appointment: MyStaffAppointment): string {
   return appointment.client.lastInitial === ''

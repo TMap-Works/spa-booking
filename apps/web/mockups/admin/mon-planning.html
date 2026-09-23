@@ -32,27 +32,46 @@
 
       <div class="spa-admin__main">
         <main class="spa-admin__content" id="contenu">
-          <section class="spa-my-planning" aria-labelledby="mon-planning-titre">
+          <section class="spa-my-planning spa-my-planning--day" aria-labelledby="mon-planning-titre">
             <header class="spa-my-planning__head">
               <span class="spa-my-planning__who">Hasina</span>
               <h1 class="spa-admin__title" id="mon-planning-titre">Mon planning</h1>
-              <p class="spa-my-planning__period">vendredi 18 septembre 2026</p>
             </header>
 
-            <nav class="spa-my-planning__nav" aria-label="Période">
-              <a class="spa-button spa-button--neutral" href="mon-planning.html">
-                <span aria-hidden="true">‹</span>
-                <span class="spa-visually-hidden">Jour précédent</span>
-              </a>
-              <a class="spa-button spa-button--quiet" href="mon-planning.html">Aujourd’hui</a>
-              <a class="spa-button spa-button--neutral" href="mon-planning.html">
-                <span aria-hidden="true">›</span>
-                <span class="spa-visually-hidden">Jour suivant</span>
-              </a>
-            </nav>
+            <!--
+              La barre de période est celle du planning du salon et de
+              l'encaissement (`PeriodNav`, #629) : deux chevrons encadrant la
+              date, puis le retour au jour courant. Il est ici **désactivé**,
+              parce que la période ouverte est déjà aujourd'hui — c'est l'état
+              où l'écran s'ouvre, et le laisser actif le faisait se presser sans
+              que rien ne bouge.
+            -->
+            <div class="spa-admin-toolbar">
+              <div class="spa-admin-toolbar__group">
+                <a class="spa-button spa-button--neutral" href="mon-planning.html">
+                  <span aria-hidden="true">‹</span>
+                  <span class="spa-visually-hidden">Jour précédent</span>
+                </a>
+                <span class="spa-admin-toolbar__caption">Vendredi 18 septembre 2026</span>
+                <a class="spa-button spa-button--neutral" href="mon-planning.html">
+                  <span aria-hidden="true">›</span>
+                  <span class="spa-visually-hidden">Jour suivant</span>
+                </a>
+                <button class="spa-button spa-button--quiet" type="button" disabled>
+                  <span class="spa-button__label">Aujourd’hui</span>
+                </button>
+              </div>
+              <div class="spa-admin-toolbar__group spa-admin-toolbar__spacer">
+                <span class="spa-admin-toolbar__hint">2 rendez-vous</span>
+              </div>
+            </div>
 
+            <!--
+              Deux journées, pour montrer les deux états d'une carte : celle du
+              jour porte le liséré d'accent, la suivante non.
+            -->
             <div class="spa-my-planning__days">
-              <section class="spa-my-day" aria-labelledby="jour-2026-09-18">
+              <section class="spa-my-day spa-my-day--today" aria-labelledby="jour-2026-09-18">
                 <header class="spa-my-day__head">
                   <h2 class="spa-my-day__title" id="jour-2026-09-18">
                     vendredi 18 septembre 2026
@@ -63,7 +82,7 @@
                 </header>
                 <ol class="spa-my-day__list" role="list">
                   <li>
-                    <details class="spa-my-appointment" open>
+                    <details class="spa-my-appointment spa-my-appointment--next" open>
                       <summary class="spa-my-appointment__summary">
                         <span class="spa-my-appointment__time">
                           <strong>10:00</strong>
@@ -73,7 +92,10 @@
                           <strong>Massage suédois</strong>
                           <span>Rina A. · 1 h</span>
                         </span>
-                        <span class="spa-admin-badge spa-admin-badge--confirmed">Confirmé</span>
+                        <span class="spa-my-appointment__tags">
+                          <span class="spa-admin-badge spa-admin-badge--confirmed">Confirmé</span>
+                          <span class="spa-my-appointment__flag">Prochain</span>
+                        </span>
                       </summary>
                       <div class="spa-my-appointment__details">
                         <dl class="spa-my-appointment__facts">
@@ -102,7 +124,9 @@
                           <strong>Soin visage</strong>
                           <span>Voahangy R. · 45 min</span>
                         </span>
-                        <span class="spa-admin-badge spa-admin-badge--cancelled">Annulé</span>
+                        <span class="spa-my-appointment__tags">
+                          <span class="spa-admin-badge spa-admin-badge--cancelled">Annulé</span>
+                        </span>
                       </summary>
                     </details>
                   </li>

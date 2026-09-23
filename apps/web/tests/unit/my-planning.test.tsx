@@ -6,13 +6,16 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { MyAppointmentActions } from '@/app/(admin)/[tenantSlug]/admin/components/my-planning-client';
 import {
   appointmentsByDay,
+  bookedCount,
   clientLabel,
   dayBoundsInTimeZone,
   daysOf,
   mondayOfDate,
+  nextAppointment,
   parseMyPlanningView,
   planningRange,
   shiftPlanningAnchor,
+  showsToday,
   upcomingOnly,
   workingDay,
 } from '@/lib/admin/my-planning';
@@ -143,6 +146,55 @@ describe('les rendez-vous', () => {
 
   it('nomme la cliente par son prénom et son initiale', () => {
     expect(clientLabel(appointment())).toBe('Rina A.');
+  });
+
+  it('désigne le prochain encore attendu, et non le premier de la liste', () => {
+    const now = new Date('2026-09-18T10:00:00.000Z');
+    // Le 8 h est terminé, le 20 est annulé : c'est le 19 que la praticienne
+    // doit voir marqué, même si la liste s'ouvre sur un rendez-vous plus ancien.
+    const soonest = nextAppointment(
+      [
+        appointment(),
+        appointment({
+          id: 'x3',
+          status: 'cancelled',
+          startsAt: '2026-09-20T08:00:00.000Z',
+          endsAt: '2026-09-20T09:00:00.000Z',
+        }),
+        appointment({
+          id: 'x2',
+          startsAt: '2026-09-19T08:00:00.000Z',
+          endsAt: '2026-09-19T09:00:00.000Z',
+        }),
+      ],
+      now,
+    );
+
+    expect(soonest?.id).toBe('x2');
+    expect(nextAppointment([appointment()], new Date('2026-09-30T00:00:00.000Z'))).toBeNull();
+  });
+
+  it('ne compte pas les annulés dans la charge d’une période', () => {
+    expect(bookedCount([])).toBe(0);
+    expect(
+      bookedCount([
+        appointment(),
+        appointment({ id: 'x2', status: 'no_show' }),
+        appointment({ id: 'x3', status: 'cancelled' }),
+      ]),
+    ).toBe(2);
+  });
+});
+
+describe('le retour au jour courant', () => {
+  it('ne s’offre que si la période affichée ne contient pas déjà aujourd’hui', () => {
+    // Le défaut relevé en prenant l'écran en main : ouvert sur aujourd'hui — son
+    // état par défaut —, le bouton « Aujourd'hui » pointait la page où l'on
+    // était déjà, et le premier clic ne produisait rien.
+    expect(showsToday('2026-09-18', '2026-09-18', '2026-09-18')).toBe(true);
+    expect(showsToday('2026-09-14', '2026-09-20', '2026-09-18')).toBe(true);
+    expect(showsToday('2026-09-14', '2026-09-20', '2026-09-21')).toBe(false);
+    expect(showsToday('2026-09-19', '2026-09-19', '2026-09-18')).toBe(false);
   });
 });
 

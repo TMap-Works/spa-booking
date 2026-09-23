@@ -128,4 +128,31 @@ describe('PeriodNav', () => {
       'spa-button--quiet',
     );
   });
+
+  it('désactive le retour au jour courant quand la période ouverte est aujourd’hui', () => {
+    render(
+      <PeriodNav
+        label="Mercredi 23 septembre 2026"
+        next={{ href: '/maison-lotus/admin/mon-planning?date=2026-09-24' }}
+        nextLabel="Jour suivant"
+        previous={{ href: '/maison-lotus/admin/mon-planning?date=2026-09-22' }}
+        previousLabel="Jour précédent"
+        today={{ href: '/maison-lotus/admin/mon-planning' }}
+        todayIsCurrent
+      />,
+    );
+
+    // Le défaut que cette branche ferme : sur « Mon planning », l'écran s'ouvre
+    // sur aujourd'hui, le lien pointait la page où l'on était déjà, et le
+    // premier clic de la praticienne ne produisait rien. Le contrôle reste à sa
+    // place — la barre garde ses quatre contrôles — mais il se dit indisponible.
+    const control = screen.getByRole('button', { name: 'Aujourd’hui' });
+
+    expect(control.hasAttribute('disabled')).toBe(true);
+    expect(screen.queryByRole('link', { name: 'Aujourd’hui' })).toBeNull();
+
+    // Et les deux chevrons restent des liens : seul le retour est neutralisé.
+    expect(screen.getByRole('link', { name: 'Jour précédent' })).toBeDefined();
+    expect(screen.getByRole('link', { name: 'Jour suivant' })).toBeDefined();
+  });
 });

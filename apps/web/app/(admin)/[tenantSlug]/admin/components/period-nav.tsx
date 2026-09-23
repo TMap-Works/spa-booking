@@ -65,6 +65,20 @@ interface PeriodNavProps {
   readonly nextLabel: string;
   /** Le retour au jour courant **du salon**, jamais à celui du navigateur. */
   readonly today: PeriodNavControl;
+  /**
+   * La période ouverte **contient déjà** la journée courante.
+   *
+   * Le retour au jour courant n'a alors nulle part où mener : il se rend
+   * désactivé, et le dit. Laissé actif, il se presse sans que rien ne bouge —
+   * relevé sur « Mon planning », où l'écran s'ouvre précisément sur aujourd'hui,
+   * si bien que le tout premier clic de la praticienne ne produisait rien. Un
+   * contrôle qui ne fait rien n'est pas un état neutre, c'est un défaut : le
+   * gris dit « vous y êtes » là où le noir promettait un déplacement.
+   *
+   * Omis, la barre se comporte comme avant — l'encaissement et le planning du
+   * salon ne sont pas modifiés par ce seul ajout.
+   */
+  readonly todayIsCurrent?: boolean;
 }
 
 export function PeriodNav({
@@ -74,6 +88,7 @@ export function PeriodNav({
   next,
   nextLabel,
   today,
+  todayIsCurrent = false,
 }: PeriodNavProps) {
   /*
    * Le seul libellé que cette barre écrit elle-même — les deux autres lui sont
@@ -104,9 +119,20 @@ export function PeriodNav({
         <span className="spa-visually-hidden">{nextLabel}</span>
       </PeriodNavButton>
 
-      <PeriodNavButton control={today} variant="quiet">
-        {t('toolbar.today')}
-      </PeriodNavButton>
+      {/* Désactivé plutôt que masqué : la barre garde ses quatre contrôles au
+       * même endroit d'une période à l'autre, et le bouton grisé reste ce qui
+       * annonce qu'on est sur aujourd'hui. Un `<button disabled>` sort de
+       * l'ordre de tabulation et s'annonce « indisponible » — c'est la forme
+       * que le design system peint déjà (`styles/components/button.css`). */}
+      {todayIsCurrent ? (
+        <Button disabled variant="quiet">
+          {t('toolbar.today')}
+        </Button>
+      ) : (
+        <PeriodNavButton control={today} variant="quiet">
+          {t('toolbar.today')}
+        </PeriodNavButton>
+      )}
     </div>
   );
 }

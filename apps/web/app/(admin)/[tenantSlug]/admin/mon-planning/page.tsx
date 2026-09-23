@@ -18,19 +18,22 @@ import {
   fetchMyStaffProfile,
   fetchPublicTenant,
 } from '@/lib/api-client';
-import { parseCalendarDate, todayInTimeZone } from '@/lib/admin/calendar-range';
+import { parseCalendarDate, rangeLabel, todayInTimeZone } from '@/lib/admin/calendar-range';
 import { statusModifier } from '@/lib/admin/calendar-grid';
 import {
   MY_PLANNING_VIEWS,
   UPCOMING_DAYS,
   appointmentsByDay,
+  bookedCount,
   clientLabel,
   dayBoundsInTimeZone,
   daysOf,
   myPlanningViewLabels,
+  nextAppointment,
   parseMyPlanningView,
   planningRange,
   shiftPlanningAnchor,
+  showsToday,
   upcomingOnly,
   workingDay,
   type MyPlanningView,
@@ -45,6 +48,7 @@ import {
 import { isRenewalReturn, RENEWAL_PARAM } from '@/lib/session-refresh';
 
 import { MyAppointmentActions, MyPlanningAutoRefresh } from '../components/my-planning-client';
+import { PeriodNav } from '../components/period-nav';
 import { adminLoadFailure, requireAdminAccessToken } from '../guard';
 import { loadAdminShell } from '../layout';
 import { adminCalendarPath, adminMyPlanningPath } from '../paths';
@@ -71,6 +75,24 @@ import { adminCalendarPath, adminMyPlanningPath } from '../paths';
  * Jour (par défaut), Semaine, et « À venir » : les trente et un prochains
  * jours, rendez-vous encore attendus seulement. Vue et date sont dans
  * l'adresse, pour qu'un rafraîchissement ne ramène pas à aujourd'hui.
+ *
+ * ## La reprise de conception
+ *
+ * L'écran dessinait sa propre barre de période et son propre libellé de
+ * semaine ; il emprunte désormais ceux du reste du back-office — `PeriodNav`
+ * dans une `.spa-admin-toolbar`, `rangeLabel` pour la période. Trois conséquences
+ * qui se voient :
+ *
+ *   - le retour « Aujourd'hui » se **désactive** quand la période ouverte
+ *     contient déjà la journée du salon. C'est l'état où l'écran s'ouvre : le
+ *     lien pointait la page où l'on était déjà, et le tout premier clic de la
+ *     praticienne ne produisait rien ;
+ *   - la date n'est plus écrite trois fois — barre du haut, sous-titre, en-tête
+ *     de journée — mais une fois, entre les deux chevrons ;
+ *   - la barre dit ce que la période pèse, annulés exclus.
+ *
+ * Le reste est dans `styles/admin/my-planning.css`, qui porte le détail des
+ * trois défauts de mise en page relevés en prenant l'écran en main.
  *
  * ## La langue (#1104)
  *
@@ -106,23 +128,31 @@ interface MyPlanningPageProps {
   }>;
 }
 
+/**
+ * Ce qu'annonce la barre de période.
+ *
+ * Les deux vues datées empruntent `rangeLabel` — le libellé du planning du
+ * salon et de l'encaissement. Il n'y a ainsi qu'une écriture d'une période dans
+ * le back-office, et la semaine s'y dit « 21 – 27 septembre 2026 » là où cet
+ * écran l'écrivait en toutes lettres des deux côtés : à 360 px, les
+ * cinquante-quatre caractères de « Du lundi 21 septembre 2026 au dimanche 27
+ * septembre 2026 » chassaient les deux chevrons sur trois lignes.
+ *
+ * `rangeLabel` compte la semaine du lundi par défaut — c'est aussi ce que
+ * `planningRange` demande à l'API, et les deux ne peuvent donc pas diverger.
+ *
+ * « À venir » n'est pas une période datée mais un horizon : son libellé reste
+ * une phrase du catalogue, paramétrée par la borne de l'API.
+ */
 function periodLabel(
   view: MyPlanningView,
-  from: CalendarDate,
-  to: CalendarDate,
+  anchor: CalendarDate,
   t: MyPlanningTranslator,
   display: DisplayLocale,
 ): string {
-  if (view === 'jour') {
-    return formatCalendarDate(from, display);
-  }
-  if (view === 'semaine') {
-    return t('period.week', {
-      from: formatCalendarDate(from, display),
-      to: formatCalendarDate(to, display),
-    });
-  }
-  return t('period.upcoming', { days: UPCOMING_DAYS });
+  return view === 'a-venir'
+    ? t('period.upcoming', { days: UPCOMING_DAYS })
+    : rangeLabel(view, anchor, display);
 }
 
 export default async function MyPlanningPage({ params, searchParams }: MyPlanningPageProps) {
@@ -197,15 +227,20 @@ export default async function MyPlanningPage({ params, searchParams }: MyPlannin
   const today = todayInTimeZone(zone);
   const anchor = requested ?? today;
   const viewLabels = myPlanningViewLabels(locale);
-  const byDay = appointmentsByDay(
-    view === 'a-venir' ? upcomingOnly(agenda.appointments, now) : agenda.appointments,
-    zone,
-  );
-  const days =
-    view === 'a-venir' ? [...byDay.keys()] : daysOf(agenda.from, agenda.to);
+  const shown =
+    view === 'a-venir' ? upcomingOnly(agenda.appointments, now) : agenda.appointments;
+  const byDay = appointmentsByDay(shown, zone);
+  const days = view === 'a-venir' ? [...byDay.keys()] : daysOf(agenda.from, agenda.to);
+  // Le prochain rendez-vous est désigné sur **toute** la période affichée et non
+  // journée par journée : une semaine dont le lundi est passé met la marque au
+  // mardi, ce qu'un calcul par jour ne saurait pas faire.
+  const next = nextAppointment(shown, now);
 
   return (
-    <section aria-labelledby="mon-planning-titre" className="spa-my-planning">
+    <section
+      aria-labelledby="mon-planning-titre"
+      className={`spa-my-planning${view === 'jour' ? ' spa-my-planning--day' : ''}`}
+    >
       <MyPlanningAutoRefresh />
 
       <header className="spa-my-planning__head">
@@ -213,9 +248,6 @@ export default async function MyPlanningPage({ params, searchParams }: MyPlannin
         <h1 className="spa-admin__title" id="mon-planning-titre">
           {t('title')}
         </h1>
-        <p className="spa-my-planning__period">
-          {periodLabel(view, agenda.from, agenda.to, t, display)}
-        </p>
       </header>
 
       <NavTabs
@@ -230,37 +262,48 @@ export default async function MyPlanningPage({ params, searchParams }: MyPlannin
         label={t('tabsLabel')}
       />
 
-      {view === 'a-venir' ? null : (
-        <nav aria-label={t('nav.label')} className="spa-my-planning__nav">
-          <Link
-            className="spa-button spa-button--neutral"
-            href={adminMyPlanningPath(tenantSlug, {
-              view,
-              date: shiftPlanningAnchor(view, anchor, -1),
-            })}
-          >
-            <span aria-hidden="true">‹</span>
-            <span className="spa-visually-hidden">
-              {view === 'semaine' ? t('nav.previousWeek') : t('nav.previousDay')}
-            </span>
-          </Link>
-          <Link className="spa-button spa-button--quiet" href={adminMyPlanningPath(tenantSlug, { view })}>
-            {t('nav.today')}
-          </Link>
-          <Link
-            className="spa-button spa-button--neutral"
-            href={adminMyPlanningPath(tenantSlug, {
-              view,
-              date: shiftPlanningAnchor(view, anchor, 1),
-            })}
-          >
-            <span aria-hidden="true">›</span>
-            <span className="spa-visually-hidden">
-              {view === 'semaine' ? t('nav.nextWeek') : t('nav.nextDay')}
-            </span>
-          </Link>
-        </nav>
-      )}
+      {/*
+       * La barre de période est celle du planning du salon et de l'encaissement
+       * (`PeriodNav`, #629) : même geste, même rendu, même place. Elle remplace
+       * trois liens dessinés à part, où la date était à chercher dans l'en-tête
+       * plutôt qu'entre les deux chevrons.
+       *
+       * Des liens et non des gestes : l'écran est rendu par le serveur, et la
+       * vue comme la date vivent dans l'adresse (web-frontend §1).
+       */}
+      <div className="spa-admin-toolbar">
+        {view === 'a-venir' ? (
+          <span className="spa-admin-toolbar__caption">
+            {periodLabel(view, anchor, t, display)}
+          </span>
+        ) : (
+          <PeriodNav
+            label={periodLabel(view, anchor, t, display)}
+            next={{
+              href: adminMyPlanningPath(tenantSlug, {
+                view,
+                date: shiftPlanningAnchor(view, anchor, 1),
+              }),
+            }}
+            nextLabel={view === 'semaine' ? t('nav.nextWeek') : t('nav.nextDay')}
+            previous={{
+              href: adminMyPlanningPath(tenantSlug, {
+                view,
+                date: shiftPlanningAnchor(view, anchor, -1),
+              }),
+            }}
+            previousLabel={view === 'semaine' ? t('nav.previousWeek') : t('nav.previousDay')}
+            today={{ href: adminMyPlanningPath(tenantSlug, { view }) }}
+            todayIsCurrent={showsToday(agenda.from, agenda.to, today)}
+          />
+        )}
+
+        <div className="spa-admin-toolbar__group spa-admin-toolbar__spacer">
+          <span className="spa-admin-toolbar__hint">
+            {t('toolbar.load', { count: bookedCount(shown) })}
+          </span>
+        </div>
+      </div>
 
       {days.length === 0 ? (
         <div className="spa-empty-state">
@@ -277,6 +320,7 @@ export default async function MyPlanningPage({ params, searchParams }: MyPlannin
               day={day}
               display={display}
               key={day}
+              nextId={next?.id ?? null}
               now={now}
               schedule={schedule}
               showSchedule={view !== 'a-venir'}
@@ -296,6 +340,7 @@ function MyDay({
   appointments,
   day,
   display,
+  nextId,
   now,
   schedule,
   showSchedule,
@@ -306,6 +351,8 @@ function MyDay({
   readonly appointments: readonly MyStaffAppointment[];
   readonly day: CalendarDate;
   readonly display: DisplayLocale;
+  /** Le rendez-vous à suivre, désigné sur toute la période — ou aucun. */
+  readonly nextId: string | null;
   readonly now: Date;
   readonly schedule: MyStaffSchedule;
   readonly showSchedule: boolean;
@@ -318,7 +365,10 @@ function MyDay({
   const headingId = `jour-${day}`;
 
   return (
-    <section aria-labelledby={headingId} className="spa-my-day">
+    <section
+      aria-labelledby={headingId}
+      className={`spa-my-day${day === today ? ' spa-my-day--today' : ''}`}
+    >
       <header className="spa-my-day__head">
         <h2 className="spa-my-day__title" id={headingId}>
           {formatCalendarDate(day, display)}
@@ -353,6 +403,7 @@ function MyDay({
               <MyAppointment
                 appointment={appointment}
                 display={display}
+                isNext={appointment.id === nextId}
                 now={now}
                 t={t}
                 tenantSlug={tenantSlug}
@@ -373,6 +424,7 @@ function MyDay({
 function MyAppointment({
   appointment,
   display,
+  isNext,
   now,
   t,
   tenantSlug,
@@ -380,15 +432,23 @@ function MyAppointment({
 }: {
   readonly appointment: MyStaffAppointment;
   readonly display: DisplayLocale;
+  /** Celui vers lequel l'œil doit aller — le prochain encore attendu. */
+  readonly isNext: boolean;
   readonly now: Date;
   readonly t: MyPlanningTranslator;
   readonly tenantSlug: string;
   readonly timeZone: string;
 }) {
-  const cancelled = appointment.status === 'cancelled';
+  const classes = [
+    'spa-my-appointment',
+    appointment.status === 'cancelled' ? 'spa-my-appointment--cancelled' : null,
+    isNext ? 'spa-my-appointment--next' : null,
+  ]
+    .filter((name) => name !== null)
+    .join(' ');
 
   return (
-    <details className={`spa-my-appointment${cancelled ? ' spa-my-appointment--cancelled' : ''}`}>
+    <details className={classes}>
       <summary className="spa-my-appointment__summary">
         <span className="spa-my-appointment__time">
           <strong>{formatTimeInTimeZone(appointment.startsAt, timeZone, display)}</strong>
@@ -401,8 +461,18 @@ function MyAppointment({
             {formatDuration(appointment.service.durationMinutes, display)}
           </span>
         </span>
-        <span className={`spa-admin-badge spa-admin-badge--${statusModifier(appointment.status)}`}>
-          {appointmentStatusLabels(display.locale)[appointment.status]}
+        {/* Statut et marque « prochain » dans la même boîte : ils occupent la même
+            place dans la lecture d'une ligne, et c'est cette boîte que la mise en
+            page large déplace à droite d'un seul tenant. */}
+        <span className="spa-my-appointment__tags">
+          <span
+            className={`spa-admin-badge spa-admin-badge--${statusModifier(appointment.status)}`}
+          >
+            {appointmentStatusLabels(display.locale)[appointment.status]}
+          </span>
+          {isNext ? (
+            <span className="spa-my-appointment__flag">{t('appointment.next')}</span>
+          ) : null}
         </span>
       </summary>
       <div className="spa-my-appointment__details">
