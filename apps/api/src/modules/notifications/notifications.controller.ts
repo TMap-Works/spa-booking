@@ -10,7 +10,10 @@ import {
   ApiUnauthorizedResponse,
 } from '@nestjs/swagger';
 
-import { AuthAtLeast } from '../identity/auth.decorator';
+import { AuthWith } from '../identity/auth.decorator';
+import type { AuthenticatedUser } from '../identity/identity.types';
+import { CurrentUser } from '../identity/jwt-auth.guard';
+import { roleHasPermission } from '../identity/permissions';
 import { DeliveryEventService } from './delivery-event.service';
 import { DeliveryEventDto, toDeliveryEventDto } from './dto/delivery-event.dto';
 import {
@@ -29,9 +32,9 @@ import { ReminderSweepService } from './reminder-sweep.service';
  * Le journal d'envois de l'établissement — CDC §1.4, « le statut d'envoi est
  * visible dans le back-office » (#70).
  *
- * | Route | Rôle | Ce qu'elle sert |
+ * | Route | Droit exigé | Ce qu'elle sert |
  * |---|---|---|
- * | `GET /notifications` | `STAFF` | les traces d'envoi, filtrées |
+ * | `GET /notifications` | `agenda:read:own` **ou** `:all` | les traces d'envoi, filtrées — **bornées à ses propres rendez-vous** pour le premier |
  * | `POST /notifications/reminders/sweep` | interne | les rappels J-1 dus (#71) |
  * | `POST /notifications/delivery-events` | interne | un rebond ou une plainte SES (#73) |
  *
@@ -48,23 +51,68 @@ import { ReminderSweepService } from './reminder-sweep.service';
  * `notification-dispatch.controller.ts`, qui porte la même garde et le même
  * jeton.
  *
- * ## Pourquoi `STAFF` et non `MANAGER`
+ * ## Pourquoi `agenda:read:*` et non plus `@AuthAtLeast('STAFF')` — #1200
  *
  * La question à laquelle cette route répond est « ma cliente dit n'avoir rien
  * reçu — le message est-il parti ? ». Elle se pose au comptoir, au téléphone,
- * pendant que la cliente attend. La placer à `MANAGER` l'aurait rendue
- * inaccessible aux personnes qui décrochent — c'est-à-dire à toutes celles qui
- * en ont besoin — et le CDC range explicitement la tenue de l'agenda et des
- * fiches clientes dans les gestes de front-desk.
+ * pendant que la cliente attend, et elle se pose aussi bien à la praticienne
+ * qu'à la gérante : fermer la route à `MANAGER` l'aurait rendue inaccessible aux
+ * personnes qui décrochent. Le rang `STAFF` ouvrait donc la bonne porte — mais
+ * il ouvrait **tout le salon** derrière elle.
  *
- * Le seuil est celui de `GET /customers` et de `GET /appointments` chez leurs
- * modules respectifs, et il tient à ce que la réponse ne porte **rien** de plus
- * sensible qu'eux : ni coordonnée, ni contenu de message, ni chiffre
- * d'affaires. Un statut d'envoi et une date.
+ * C'est le constat de #1200, relevé par la campagne QA `20260922-complet` : un
+ * praticien y lisait les 89 lignes de l'établissement, dont 32 rendez-vous de
+ * son collègue, `appointmentId` et `recipientUserId` compris. Ces identifiants
+ * sont exactement ceux par lesquels le contournement de #1135 a été monté ;
+ * #1135 a fermé la conséquence, celui-ci ferme l'exposition.
  *
- * Le contraste avec `reporting` est délibéré : là-bas, `MANAGER`, parce qu'un
- * rapport rend la performance de l'établissement. Ici, rien de tel — le journal
- * ne dit pas combien le salon gagne, il dit si un e-mail est parti.
+ * Le défaut n'était pas dans le seuil, il était dans sa **forme**, et c'est le
+ * raisonnement même d'ADR 0013 : ce qui sépare le praticien de la gérante n'est
+ * pas un cran de capacité mais un **ensemble d'objets**. Les deux lisent un
+ * journal d'envois ; l'un celui de ses rendez-vous, l'autre celui du salon.
+ * Aucun rang n'ordonne cela.
+ *
+ * ## Pourquoi aucune permission nouvelle
+ *
+ * `agenda:read:own` et `agenda:read:all` **portent déjà cette frontière**, posée
+ * par #812 sur l'arbitrage du PO du 16/09 : « le praticien ne voit que son
+ * propre planning ». Un journal d'envois n'est rien d'autre qu'une seconde
+ * lecture du même agenda — il nomme les mêmes rendez-vous et les mêmes
+ * destinataires, par une autre porte, exactement comme l'écran d'encaissement
+ * dont l'ADR dit qu'il « est un agenda complet par une autre porte ».
+ *
+ * Créer `notifications:read:all` aurait donc écrit **une seconde fois** une
+ * décision déjà prise, et la seconde écriture est celle qui diverge : le jour où
+ * le PO rouvrirait l'agenda du salon au praticien, une des deux resterait
+ * fermée sans que rien ne le dise. Une permission par module n'est pas un
+ * vocabulaire de droits, c'est une table des matières.
+ *
+ * ## Les deux permissions sur la même route, et ce que cela veut dire
+ *
+ * « L'une d'elles », jamais « toutes » — c'est la lecture qu'ADR 0013 donne de
+ * plusieurs permissions citées, et c'est ce que réclame une route à double
+ * portée. La garde décide de l'**accès** et ne consulte aucune ressource ; c'est
+ * ensuite `ownScopeOf` qui décide du **contenu**. Même montage que
+ * `GET /v1/customers` chez `crm`, au mot près.
+ *
+ * `CLIENT` n'a ni l'une ni l'autre et reste refusé en 403, comme sous le rang.
+ *
+ * ## Pourquoi une liste vide et non un 403 `OWN_SCOPE_ONLY`
+ *
+ * Parce que cette route rend une **liste**, et qu'une liste bornée à son
+ * périmètre ne refuse rien : elle rend ce qui s'y trouve. Le 403 de portée est
+ * la réponse juste quand l'appelant **désigne** une ressource et se voit
+ * opposer un refus — `PATCH /appointments/:id` chez `appointments`. Ici,
+ * `?appointmentId=<celui d'une collègue>` rend une liste vide, ce que la route
+ * rendait déjà pour un rendez-vous inconnu ou celui d'un autre salon : trois
+ * situations indiscernables, et c'est très bien ainsi. Distinguer la première
+ * aurait fait de la route un oracle qui confirme, un identifiant à la fois, la
+ * composition de l'agenda du salon — le raisonnement qu'ADR 0013 tient pour la
+ * fiche cliente hors périmètre, qui rend 404 et non 403.
+ *
+ * Le contraste avec `reporting` reste délibéré : là-bas, `reporting:read`, parce
+ * qu'un rapport rend la performance de l'établissement. Ici, rien de tel — le
+ * journal ne dit pas combien le salon gagne, il dit si un e-mail est parti.
  *
  * ## Aucune route publique, aucune route `CLIENT`
  *
@@ -101,17 +149,27 @@ export class NotificationsController {
   ) {}
 
   @Get()
-  @AuthAtLeast('STAFF')
+  @AuthWith('agenda:read:own', 'agenda:read:all')
   @ApiOperation({
     summary: 'Lire le journal d’envois de l’établissement',
     description:
       'Les traces d’envoi, du plus récent au plus ancien. Aucune coordonnée ni ' +
-      'contenu de message : la table n’en porte pas.',
+      'contenu de message : la table n’en porte pas. Avec `agenda:read:own` seul, ' +
+      'le journal est borné aux envois des rendez-vous de l’appelant ; ceux de ses ' +
+      'collègues n’y figurent pas, pas même par leur identifiant.',
   })
   @ApiOkResponse({ type: NotificationListDto })
   @ApiBadRequestResponse({ description: 'Filtre invalide — le champ fautif est nommé.' })
-  public async list(@Query() query: ListNotificationsQueryDto): Promise<NotificationListDto> {
-    return toNotificationListDto(await this.notifications.list(toNotificationSearch(query)));
+  public async list(
+    @CurrentUser() actor: AuthenticatedUser,
+    @Query() query: ListNotificationsQueryDto,
+  ): Promise<NotificationListDto> {
+    return toNotificationListDto(
+      await this.notifications.list({
+        ...toNotificationSearch(query),
+        ownedByUserId: ownScopeOf(actor),
+      }),
+    );
   }
 
   /**
@@ -237,4 +295,35 @@ export class NotificationsController {
   public async ingestDeliveryEvent(@Body() payload: unknown): Promise<DeliveryEventDto> {
     return toDeliveryEventDto(await this.deliveryEvents.ingest(payload));
   }
+}
+
+/**
+ * Le périmètre de lecture de l'appelant : `null` pour « tout le journal du
+ * salon », son identifiant de compte pour « les envois de ses rendez-vous à
+ * lui » (#1200).
+ *
+ * ## Pourquoi ici et non dans le service
+ *
+ * Parce que c'est une traduction de la **porte** vers le domaine, exactement
+ * comme `ownScopeOf` chez `crm` : la garde a déjà décidé que l'appelant entre,
+ * il reste à dire avec quelle portée. Le service, lui, ne connaît qu'un critère
+ * de recherche — il n'a ni rôle ni matrice à interroger, et c'est ce qui le
+ * laisse testable sans couche d'autorisation.
+ *
+ * ## Le compte, jamais la fiche praticien
+ *
+ * `actor.userId` vient d'un jeton **vérifié**, et c'est lui qui traverse
+ * jusqu'au prédicat du dépôt. Un identifiant de fiche `staff` aurait demandé une
+ * lecture de plus et n'aurait rien prouvé de mieux ; surtout, il aurait pu venir
+ * d'ailleurs que du jeton, ce qui est la définition d'une fuite
+ * (tenant-isolation §2).
+ *
+ * ## `agenda:read:all` l'emporte quand les deux sont portées
+ *
+ * Une gérante qui donne aussi des soins a les deux permissions et lit le journal
+ * entier, comme avant — la matrice les lui accorde toutes les deux précisément
+ * pour cela, et l'ordre de ce test est ce qui le dit.
+ */
+function ownScopeOf(actor: AuthenticatedUser): string | null {
+  return roleHasPermission(actor.role, 'agenda:read:all') ? null : actor.userId;
 }

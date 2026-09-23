@@ -28,6 +28,21 @@ export interface NotificationSearch {
   readonly channel?: NotificationChannel;
   readonly statuses?: readonly NotificationStatus[];
   readonly limit?: number;
+  /**
+   * Le périmètre de lecture de l'appelant — `null` pour tout l'établissement,
+   * son identifiant de compte pour ses seuls rendez-vous (#1200).
+   *
+   * Ce n'est **pas un filtre de la requête** : il ne vient pas de la chaîne de
+   * requête mais du jeton vérifié, et il est posé par le contrôleur, qui seul
+   * connaît la porte par laquelle l'appelant est entré. Un praticien ne peut
+   * donc pas l'élargir — le `whitelist` du `ValidationPipe` global refuse déjà
+   * tout champ non déclaré par `ListNotificationsQueryDto`, et celui-ci n'y
+   * figure pas.
+   *
+   * Obligatoire, contrairement aux autres champs : voir
+   * `NotificationListQuery.ownedByUserId`.
+   */
+  readonly ownedByUserId: string | null;
 }
 
 /**
@@ -40,6 +55,15 @@ export interface NotificationSearch {
  * contrôleur ne doit pas pouvoir l'oublier, et le dépôt ne doit pas en décider.
  * Le mettre ici est ce qui garantit qu'aucun appelant — le contrôleur
  * d'aujourd'hui, le consommateur de file de demain — ne lise sans borne.
+ *
+ * ## Ce qu'il ne décide pas : la portée
+ *
+ * `ownedByUserId` lui arrive **déjà résolu**, du contrôleur. Il ne lit ni rôle
+ * ni permission, et c'est délibéré : ADR 0013 écarte nommément l'option de
+ * « filtrer les réponses selon le rôle » dans chaque service, parce que le
+ * défaut d'un filtre oublié y est silencieux — la route répond 200, avec trop de
+ * données. Ici la portée est un critère de recherche comme un autre, obligatoire
+ * dans le type, et le service reste testable sans couche d'autorisation.
  *
  * ## Ce qu'il ne fait pas
  *
@@ -59,6 +83,11 @@ export class NotificationsService {
       ...(search.type === undefined ? {} : { type: search.type }),
       ...(search.channel === undefined ? {} : { channel: search.channel }),
       ...(search.statuses === undefined ? {} : { statuses: search.statuses }),
+      // Recopié tel quel, `null` compris : le service ne décide pas de la
+      // portée, il la transmet. La décider ici aurait demandé de lire le rôle de
+      // l'appelant — c'est-à-dire de remettre la matrice de permissions dans un
+      // service, ce qu'ADR 0013 écarte explicitement (option B).
+      ownedByUserId: search.ownedByUserId,
       // Borné des **deux** côtés : `take` négatif ne rend pas moins de lignes
       // chez Prisma, il inverse le parcours et rendrait les envois les plus
       // *anciens* sous un ordre annoncé décroissant. Le plancher est ce qui

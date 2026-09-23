@@ -385,6 +385,28 @@ export interface NotificationListQuery {
   readonly statuses?: readonly NotificationStatus[];
   /** Plafond de lignes rendues. Le service en impose un ; il n'est pas optionnel ici. */
   readonly limit: number;
+  /**
+   * Restreint la lecture aux envois des rendez-vous du **compte** désigné, et à
+   * eux seuls (#1200, ADR 0013).
+   *
+   * `null` se lit « le journal de tout l'établissement », ce qu'ouvre
+   * `agenda:read:all`. Un identifiant se lit « les envois de ses rendez-vous à
+   * lui », ce que porte `agenda:read:own` — et c'est exactement la frontière que
+   * #812 a posée sur l'agenda : le praticien voit sa journée, l'encadrement voit
+   * le salon.
+   *
+   * **Obligatoire, et non facultatif comme les autres filtres.** Un champ
+   * optionnel se serait oublié dans un appelant, et l'oubli aurait rouvert le
+   * journal entier en répondant 200 — le mode de défaillance silencieux que
+   * l'ADR reproche au filtrage par rôle. Ici l'oubli ne compile pas.
+   *
+   * C'est un identifiant de **compte** (`users.id`) et non de fiche praticien :
+   * l'appelant le tient du jeton vérifié, et la traversée se fait en une seule
+   * requête — même parti que `CustomerSearchCriteria.ownedByUserId` chez `crm`.
+   * Un compte sans fiche praticien ne satisfait donc aucune ligne, et le journal
+   * rendu est vide : il n'a aucun rendez-vous, il n'a aucun envoi.
+   */
+  readonly ownedByUserId: string | null;
 }
 
 /**
