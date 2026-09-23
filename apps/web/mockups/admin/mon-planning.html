@@ -9,13 +9,18 @@
   </head>
   <body>
     <!--
-      « Mon planning » — #813.
+      « Mon planning » — #813, repris en conception.
 
-      L'emploi du temps de la praticienne connectée, pensé pour le téléphone :
-      une carte par journée, un rendez-vous par ligne qui se déplie. Elle exerce
-      chaque règle de `styles/admin/my-planning.css`, états de chargement et
-      vide compris. Le rail d'une praticienne n'a que « Mon planning »,
-      « Clients » et « Prestations » : ni planning du salon, ni encaissement.
+      L'emploi du temps de la praticienne connectée, pensé pour le téléphone.
+      L'écran empilait trois niveaux de cadre — barre en carte, journée en
+      carte, rendez-vous en carte : il est désormais **un agenda**, c'est-à-dire
+      une seule surface où une journée est une section à colonne de date et un
+      rendez-vous une ligne séparée par un filet.
+
+      Elle exerce chaque règle de `styles/admin/my-planning.css`, états de
+      chargement et vide compris. Le rail d'une praticienne n'a que « Mon
+      planning », « Clients » et « Prestations » : ni planning du salon, ni
+      encaissement.
     -->
     <div class="spa-admin">
       <nav class="spa-admin__rail" aria-label="Sections du tableau de bord">
@@ -32,9 +37,9 @@
 
       <div class="spa-admin__main">
         <main class="spa-admin__content" id="contenu">
-          <section class="spa-my-planning spa-my-planning--day" aria-labelledby="mon-planning-titre">
+          <section class="spa-my-planning" aria-labelledby="mon-planning-titre">
             <header class="spa-my-planning__head">
-              <span class="spa-my-planning__who">Hasina</span>
+              <span class="spa-my-planning__who">Hasina R.</span>
               <h1 class="spa-admin__title" id="mon-planning-titre">Mon planning</h1>
             </header>
 
@@ -50,12 +55,12 @@
               <div class="spa-admin-toolbar__group">
                 <a class="spa-button spa-button--neutral" href="mon-planning.html">
                   <span aria-hidden="true">‹</span>
-                  <span class="spa-visually-hidden">Jour précédent</span>
+                  <span class="spa-visually-hidden">Semaine précédente</span>
                 </a>
-                <span class="spa-admin-toolbar__caption">Vendredi 18 septembre 2026</span>
+                <span class="spa-admin-toolbar__caption">14 – 20 septembre 2026</span>
                 <a class="spa-button spa-button--neutral" href="mon-planning.html">
                   <span aria-hidden="true">›</span>
-                  <span class="spa-visually-hidden">Jour suivant</span>
+                  <span class="spa-visually-hidden">Semaine suivante</span>
                 </a>
                 <button class="spa-button spa-button--quiet" type="button" disabled>
                   <span class="spa-button__label">Aujourd’hui</span>
@@ -67,21 +72,30 @@
             </div>
 
             <!--
-              Deux journées, pour montrer les deux états d'une carte : celle du
-              jour porte le liséré d'accent, la suivante non.
+              UNE SEULE SURFACE. Trois journées s'y suivent, séparées par un
+              filet : celle du jour, une journée sans rendez-vous, une journée
+              de fermeture. Aucune ne porte de cadre à elle.
             -->
-            <div class="spa-my-planning__days">
+            <div class="spa-my-agenda">
               <section class="spa-my-day spa-my-day--today" aria-labelledby="jour-2026-09-18">
-                <header class="spa-my-day__head">
-                  <h2 class="spa-my-day__title" id="jour-2026-09-18">
-                    vendredi 18 septembre 2026
-                    <span class="spa-my-day__today">Aujourd’hui</span>
+                <div class="spa-my-day__rail">
+                  <h2 class="spa-my-day__date" id="jour-2026-09-18">
+                    <span class="spa-visually-hidden">vendredi 18 septembre 2026</span>
+                    <span class="spa-my-day__weekday" aria-hidden="true">ven.</span>
+                    <span class="spa-my-day__number" aria-hidden="true">18</span>
+                    <span class="spa-my-day__month" aria-hidden="true">sept.</span>
                   </h2>
-                  <p class="spa-my-day__hours">09:00 – 12:00 · 14:00 – 19:00</p>
+                  <span class="spa-my-day__today">Aujourd’hui</span>
+                  <p class="spa-my-day__hours">
+                    <span>09:00 – 12:00</span><span>14:00 – 19:00</span>
+                  </p>
                   <p class="spa-my-day__absence">Absence : 16:00 – 17:00 · Formation</p>
-                </header>
+                </div>
+
                 <ol class="spa-my-day__list" role="list">
                   <li>
+                    <!-- Le prochain rendez-vous encore attendu : pastille pleine
+                         et heure accentuée. C'est le seul accent de la liste. -->
                     <details class="spa-my-appointment spa-my-appointment--next" open>
                       <summary class="spa-my-appointment__summary">
                         <span class="spa-my-appointment__time">
@@ -134,10 +148,28 @@
               </section>
 
               <section class="spa-my-day" aria-labelledby="jour-2026-09-19">
-                <header class="spa-my-day__head">
-                  <h2 class="spa-my-day__title" id="jour-2026-09-19">samedi 19 septembre 2026</h2>
+                <div class="spa-my-day__rail">
+                  <h2 class="spa-my-day__date" id="jour-2026-09-19">
+                    <span class="spa-visually-hidden">samedi 19 septembre 2026</span>
+                    <span class="spa-my-day__weekday" aria-hidden="true">sam.</span>
+                    <span class="spa-my-day__number" aria-hidden="true">19</span>
+                    <span class="spa-my-day__month" aria-hidden="true">sept.</span>
+                  </h2>
+                  <p class="spa-my-day__hours"><span>09:00 – 12:00</span></p>
+                </div>
+                <p class="spa-my-day__empty">Aucun rendez-vous.</p>
+              </section>
+
+              <section class="spa-my-day" aria-labelledby="jour-2026-09-20">
+                <div class="spa-my-day__rail">
+                  <h2 class="spa-my-day__date" id="jour-2026-09-20">
+                    <span class="spa-visually-hidden">dimanche 20 septembre 2026</span>
+                    <span class="spa-my-day__weekday" aria-hidden="true">dim.</span>
+                    <span class="spa-my-day__number" aria-hidden="true">20</span>
+                    <span class="spa-my-day__month" aria-hidden="true">sept.</span>
+                  </h2>
                   <p class="spa-my-day__hours">Salon fermé</p>
-                </header>
+                </div>
                 <p class="spa-my-day__empty">Aucun rendez-vous.</p>
               </section>
             </div>

@@ -2,34 +2,40 @@
  * « Mon planning » — l'emploi du temps du praticien connecté (#813)
  * =============================================================================
  *
+ * ## Un agenda, et non une pile de cartes
+ *
+ * L'écran empilait trois niveaux de cadre : la barre d'outils en carte, chaque
+ * journée en carte bordée et ombrée, et dans chacune, chaque rendez-vous en
+ * carte à son tour. Trois bordures et deux ombres pour ce qui est une liste —
+ * et en vue semaine, sept boîtes de hauteurs inégales rangées en deux colonnes
+ * ne laissaient plus voir la semaine, seulement des boîtes.
+ *
+ * La forme retenue est celle des agendas en liste : **une seule surface**
+ * (`.spa-my-agenda`), où une journée est une *section* — colonne de date à
+ * gauche, rendez-vous à droite — et un rendez-vous une *ligne* séparée par un
+ * filet. Le cadre ne se répète plus ; ce qui distingue une journée d'une autre,
+ * c'est sa date et son filet, pas une ombre de plus.
+ *
+ * ## L'accent est rare, donc il désigne (BM-VISUEL-01)
+ *
+ * Il était partout : liseré de trois pixels sur **chaque** rendez-vous, bordure
+ * de la journée courante, pastille du jour, pastille « Prochain », nom du
+ * praticien. Une couleur employée partout ne désigne plus rien. Elle ne reste
+ * ici que sur trois choses, et toutes trois disent « c'est ici » :
+ *
+ *   - le quantième de la journée courante, et le liseré de sa section ;
+ *   - la pastille « Prochain », et l'heure du rendez-vous qu'elle marque ;
+ *   - l'onglet ouvert, qui n'appartient pas à cette feuille.
+ *
+ * Le statut, lui, est un **mot** dans sa pastille (BM-VISUEL-05, WCAG 1.4.1) :
+ * il ne dépend jamais de la seule couleur.
+ *
+ * ## Densité
+ *
  * Conçu à 360 px d'abord : la praticienne le consulte sur son téléphone entre
- * deux soins. Une journée est une carte, un rendez-vous une ligne qui se
- * déplie ; au-delà de 48 rem, les journées d'une semaine se rangent en deux
- * colonnes.
- *
- * ## Ce que la reprise de conception a changé
- *
- * Trois défauts relevés en prenant l'écran en main :
- *
- *   1. LA VUE JOUR NE TENAIT QUE LE TIERS GAUCHE DE L'ÉCRAN. La grille des
- *      journées est faite pour une semaine — `auto-fill` sur une piste de
- *      22 rem —, et une seule carte y prenait une colonne sur deux, laissant
- *      500 px de vide à sa droite sur un poste de 1280. La vue jour reprend
- *      donc une colonne unique (`--day`), et sa ligne de rendez-vous profite de
- *      la largeur : statut et marque passent à droite plutôt que sous le nom de
- *      la prestation.
- *   2. RIEN NE DISAIT QU'UNE LIGNE SE DÉPLIE. Le marqueur natif de `<summary>`
- *      est retiré depuis #813 — pour ne pas désaligner la grille — sans que rien
- *      ne le remplace. Un chevron dessiné en pseudo-élément le rend, et pivote à
- *      l'ouverture.
- *   3. LA JOURNÉE COURANTE NE SE DISTINGUAIT QUE PAR UNE PASTILLE. Sur la vue
- *      semaine, sept cartes identiques obligeaient à lire les dates pour trouver
- *      aujourd'hui. Sa carte porte maintenant le liseré d'accent, et le prochain
- *      rendez-vous encore attendu est désigné (`--next`) — c'est la seule ligne
- *      qu'on cherche en sortant d'un soin.
- *
- * La barre de période, elle, n'est plus dessinée ici : c'est `PeriodNav` dans
- * une `.spa-admin-toolbar`, comme le planning du salon et l'encaissement.
+ * deux soins. Au-delà de 48 rem, la date passe en colonne de gauche et le
+ * statut se range à droite de la ligne, en regard de l'heure — la largeur d'un
+ * poste sert alors à lire une ligne d'un seul tenant, et non à laisser du vide.
  *
  * Maquette : `mockups/admin/mon-planning.html`.
  */
@@ -47,65 +53,84 @@
 .spa-my-planning__who {
   font-size: var(--spa-font-size-sm);
   font-weight: var(--spa-font-weight-semibold);
-  color: var(--spa-color-accent-text);
+  color: var(--spa-color-text-muted);
 }
 
-.spa-my-planning__days {
-  display: grid;
-  gap: var(--spa-space-4);
-}
-
-@media (width >= 48rem) {
-  .spa-my-planning__days {
-    grid-template-columns: repeat(auto-fill, minmax(22rem, 1fr));
-    align-items: start;
-  }
-}
+/* --- La surface unique ---------------------------------------------------- */
 
 /*
- * La vue jour n'a qu'une journée à montrer : elle la pose sur toute la largeur
- * plutôt que dans une piste de 22 rem. Sélecteur plus spécifique que la règle de
- * média ci-dessus, il la bat où qu'il soit écrit.
+ * `overflow: hidden` : les journées se touchent par un filet et la journée
+ * courante porte un liseré interne ; sans découpe, les deux dépasseraient du
+ * rayon aux quatre coins.
  */
-.spa-my-planning--day .spa-my-planning__days {
-  grid-template-columns: minmax(0, 1fr);
-}
-
-/* --- Une journée ---------------------------------------------------------- */
-
-.spa-my-day {
-  display: grid;
-  gap: var(--spa-space-3);
-  padding: var(--spa-space-4);
+.spa-my-agenda {
+  overflow: hidden;
   border: 1px solid var(--spa-color-border);
   border-radius: var(--spa-radius-lg);
   background-color: var(--spa-color-surface);
   box-shadow: var(--spa-shadow-card);
 }
 
-/* Aujourd'hui se trouve d'un coup d'œil au milieu d'une semaine. */
-.spa-my-day--today {
-  border-color: var(--spa-color-accent);
-  box-shadow: var(--spa-shadow-md);
-}
+/* --- Une journée ---------------------------------------------------------- */
 
-.spa-my-day__head {
+.spa-my-day {
   display: grid;
-  gap: var(--spa-space-1);
+  gap: var(--spa-space-2);
+  padding: var(--spa-space-4);
 }
 
-.spa-my-day__title {
+/* Le filet est la seule séparation entre deux journées — pas un second cadre. */
+.spa-my-day + .spa-my-day {
+  border-block-start: 1px solid var(--spa-color-border);
+}
+
+/*
+ * La journée courante : un liseré d'accent posé **à l'intérieur**, par une ombre
+ * plutôt que par une bordure. Une bordure déplacerait le contenu de trois pixels
+ * et romprait l'alignement des colonnes de date d'une journée à l'autre.
+ */
+.spa-my-day--today {
+  box-shadow: inset 3px 0 0 0 var(--spa-color-accent);
+}
+
+.spa-my-day__rail {
   display: flex;
   flex-wrap: wrap;
-  align-items: center;
+  align-items: baseline;
+  gap: var(--spa-space-1) var(--spa-space-3);
+}
+
+.spa-my-day__date {
+  display: flex;
+  align-items: baseline;
   gap: var(--spa-space-2);
   margin: 0;
   font-size: var(--spa-font-size-md);
-  font-weight: var(--spa-font-weight-semibold);
+  font-weight: var(--spa-font-weight-regular);
 }
 
-.spa-my-day__title::first-letter {
+.spa-my-day__weekday {
+  font-size: var(--spa-font-size-xs);
+  font-weight: var(--spa-font-weight-semibold);
+  letter-spacing: var(--spa-letter-spacing-wide);
   text-transform: uppercase;
+  color: var(--spa-color-text-muted);
+}
+
+.spa-my-day__number {
+  font-size: var(--spa-font-size-xl);
+  font-weight: var(--spa-font-weight-semibold);
+  line-height: var(--spa-line-height-tight);
+  font-variant-numeric: tabular-nums;
+}
+
+.spa-my-day--today .spa-my-day__number {
+  color: var(--spa-color-accent-text);
+}
+
+.spa-my-day__month {
+  font-size: var(--spa-font-size-sm);
+  color: var(--spa-color-text-muted);
 }
 
 .spa-my-day__today {
@@ -117,9 +142,26 @@
   font-weight: var(--spa-font-weight-semibold);
 }
 
-.spa-my-day__hours,
+/*
+ * Les plages de travail, une par élément. `nowrap` sur chacune : ce qui se
+ * coupe, c'est la liste, jamais une plage au milieu de son tiret.
+ */
+.spa-my-day__hours {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spa-space-1) var(--spa-space-3);
+  margin: 0;
+  font-size: var(--spa-font-size-sm);
+  color: var(--spa-color-text-muted);
+}
+
+.spa-my-day__hours span {
+  white-space: nowrap;
+}
+
 .spa-my-day__empty {
   margin: 0;
+  padding-block: var(--spa-space-3);
   font-size: var(--spa-font-size-sm);
   color: var(--spa-color-text-muted);
 }
@@ -132,51 +174,27 @@
 
 .spa-my-day__list {
   display: grid;
-  gap: var(--spa-space-2);
   margin: 0;
   padding: 0;
   list-style: none;
 }
 
-/* --- Un rendez-vous ------------------------------------------------------- */
-
-.spa-my-appointment {
-  border: 1px solid var(--spa-color-border);
-  border-inline-start: 3px solid var(--spa-color-accent);
-  border-radius: var(--spa-radius-md);
-  background-color: var(--spa-color-surface-raised);
+.spa-my-day__list > li + li {
+  border-block-start: 1px solid var(--spa-color-border);
 }
 
-.spa-my-appointment--cancelled {
-  border-inline-start-color: var(--spa-color-border-strong);
-  opacity: 0.7;
-}
-
-/*
- * Le prochain rendez-vous encore attendu. Le liseré d'accent fait le tour de la
- * ligne au lieu de tenir le seul bord gauche : c'est ce qui la détache d'une
- * pile où toutes les autres portent déjà ce bord.
- */
-.spa-my-appointment--next {
-  border-color: var(--spa-color-accent);
-  box-shadow: var(--spa-shadow-sm);
-}
+/* --- Un rendez-vous, une ligne -------------------------------------------- */
 
 .spa-my-appointment__summary {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-columns: 4.25rem minmax(0, 1fr) auto;
   gap: var(--spa-space-1) var(--spa-space-3);
   align-items: center;
-  padding: var(--spa-space-3);
-  min-block-size: 2.75rem;
-  border-radius: inherit;
+  padding: var(--spa-space-3) var(--spa-space-2);
+  min-block-size: 3rem;
+  border-radius: var(--spa-radius-sm);
   cursor: pointer;
   list-style: none;
-}
-
-.spa-my-appointment[open] .spa-my-appointment__summary {
-  border-end-start-radius: 0;
-  border-end-end-radius: 0;
 }
 
 .spa-my-appointment__summary:hover {
@@ -220,7 +238,6 @@
   grid-column: 1;
   grid-row: 1 / span 2;
   align-content: start;
-  min-inline-size: 3.25rem;
   font-variant-numeric: tabular-nums;
 }
 
@@ -229,8 +246,9 @@
   color: var(--spa-color-text-muted);
 }
 
-.spa-my-appointment--cancelled .spa-my-appointment__time strong {
-  text-decoration: line-through;
+/* L'heure du prochain rendez-vous — le seul autre accent de la liste. */
+.spa-my-appointment--next .spa-my-appointment__time strong {
+  color: var(--spa-color-accent-text);
 }
 
 .spa-my-appointment__what {
@@ -244,6 +262,21 @@
 .spa-my-appointment__what span {
   font-size: var(--spa-font-size-sm);
   color: var(--spa-color-text-muted);
+}
+
+/*
+ * Un rendez-vous annulé s'écrit barré et en gris, plutôt qu'en transparence :
+ * une opacité posée sur la ligne entière emportait aussi sa pastille de statut
+ * et faisait tomber son contraste sous le seuil (WCAG 1.4.3) — au moment précis
+ * où c'est ce mot-là qu'il faut lire.
+ */
+.spa-my-appointment--cancelled {
+  color: var(--spa-color-text-muted);
+}
+
+.spa-my-appointment--cancelled .spa-my-appointment__time strong,
+.spa-my-appointment--cancelled .spa-my-appointment__what strong {
+  text-decoration: line-through;
 }
 
 .spa-my-appointment__tags {
@@ -266,41 +299,34 @@
 }
 
 /*
- * Sur la vue jour d'un poste, la ligne a la largeur de la zone de contenu :
- * statut et marque se rangent à droite, en regard de l'heure, plutôt que sous le
- * nom de la prestation. La vue semaine garde l'empilement — ses cartes font
- * 22 rem, et la règle ne doit pas s'y appliquer.
+ * Une ligne dépliée devient **un seul bloc teinté**, résumé compris — et non un
+ * résumé blanc surmontant un panneau gris plus étroit : au survol, les deux
+ * fonds se rejoignaient sur deux largeurs différentes, et la ligne semblait
+ * découpée en travers. Le survol peint la même teinte, il n'y a donc plus rien
+ * à neutraliser.
  */
-@media (width >= 48rem) {
-  .spa-my-planning--day .spa-my-appointment__summary {
-    grid-template-columns: auto minmax(0, 1fr) auto auto;
-  }
-
-  .spa-my-planning--day .spa-my-appointment__tags {
-    grid-column: 3;
-    grid-row: 1 / span 2;
-    justify-self: end;
-  }
-
-  .spa-my-planning--day .spa-my-appointment__summary::after {
-    grid-column: 4;
-  }
+.spa-my-appointment[open] {
+  display: block;
+  border-radius: var(--spa-radius-sm);
+  background-color: var(--spa-color-surface-sunken);
 }
 
 .spa-my-appointment__details {
   display: grid;
   gap: var(--spa-space-3);
-  padding: 0 var(--spa-space-3) var(--spa-space-3);
+  padding: 0 var(--spa-space-2) var(--spa-space-4);
 }
 
 .spa-my-appointment__facts {
   display: grid;
-  gap: var(--spa-space-2);
+  gap: var(--spa-space-3);
   margin: 0;
 }
 
 .spa-my-appointment__facts dt {
   font-size: var(--spa-font-size-xs);
+  letter-spacing: var(--spa-letter-spacing-wide);
+  text-transform: uppercase;
   color: var(--spa-color-text-muted);
 }
 
@@ -314,4 +340,56 @@
   display: flex;
   flex-wrap: wrap;
   gap: var(--spa-space-2);
+}
+
+/* --- Au-delà du téléphone -------------------------------------------------- */
+
+/*
+ * La date passe en colonne de gauche, et la ligne d'un rendez-vous s'étale :
+ * statut et marque se rangent à droite, en regard de l'heure, plutôt que sous le
+ * nom de la prestation. C'est ce qui fait qu'on lit une ligne d'un seul tenant —
+ * heure, prestation, cliente, statut — au lieu de la lire en deux temps.
+ */
+@media (width >= 48rem) {
+  .spa-my-day {
+    grid-template-columns: 9rem minmax(0, 1fr);
+    gap: var(--spa-space-5);
+    padding: var(--spa-space-5);
+  }
+
+  .spa-my-day__rail {
+    display: grid;
+    align-content: start;
+    justify-items: start;
+    gap: var(--spa-space-2);
+  }
+
+  /* En colonne, les plages s'empilent plutôt que de s'enrouler. */
+  .spa-my-day__hours {
+    flex-direction: column;
+    gap: 0.125rem;
+  }
+
+  .spa-my-appointment__summary {
+    grid-template-columns: 4.25rem minmax(0, 1fr) auto auto;
+  }
+
+  .spa-my-appointment__tags {
+    grid-column: 3;
+    grid-row: 1 / span 2;
+    justify-self: end;
+  }
+
+  .spa-my-appointment__summary::after {
+    grid-column: 4;
+  }
+
+  /* Le détail s'aligne sur la colonne du libellé, et non sur celle de l'heure. */
+  .spa-my-appointment__details {
+    padding-inline-start: calc(4.25rem + var(--spa-space-3) + var(--spa-space-2));
+  }
+
+  .spa-my-appointment__facts {
+    grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr));
+  }
 }
