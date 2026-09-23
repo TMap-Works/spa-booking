@@ -1,0 +1,61 @@
+{
+  "metadata": {
+    "title": "My schedule"
+  },
+  "title": "My schedule",
+  "denied": {
+    "title": "Restricted access",
+    "hint": "This account has no schedule to consult in this salon.",
+    "failedTitle": "Schedule unavailable"
+  },
+  "noProfile": {
+    "title": "No practitioner record yet",
+    "body": "Your account is not linked to any practitioner record: no appointment can be assigned to you. Ask the salon management to create your record under “Staff”.",
+    "openCalendar": "Open the salon schedule"
+  },
+  "tabsLabel": "Schedule view",
+  "views": {
+    "jour": "Day",
+    "semaine": "Week",
+    "a-venir": "Upcoming"
+  },
+  "period": {
+    "week": "{from} to {to}",
+    "upcoming": "The next {days} days"
+  },
+  "nav": {
+    "label": "Period",
+    "today": "Today",
+    "previousDay": "Previous day",
+    "previousWeek": "Previous week",
+    "nextDay": "Next day",
+    "nextWeek": "Next week"
+  },
+  "empty": {
+    "title": "Nothing planned for now",
+    "body": "No appointment awaits you in the next {days} days. New bookings show up here on their own."
+  },
+  "day": {
+    "today": "Today",
+    "closed": "Salon closed",
+    "noShift": "No working hours",
+    "absence": "Time off: {span}",
+    "empty": "No appointments."
+  },
+  "appointment": {
+    "reference": "Reference",
+    "clientNote": "Client’s note",
+    "noNote": "None",
+    "staffNote": "Internal note"
+  },
+  "schedule": {
+    "midnight": "midnight",
+    "allDay": "All day"
+  },
+  "actions": {
+    "confirm": "Confirm the appointment",
+    "mark": "Mark {status}",
+    "saving": "Saving…",
+    "serverSilent": "The server is not answering. Try again in a moment."
+  }
+}

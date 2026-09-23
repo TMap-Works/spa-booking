@@ -2,13 +2,16 @@ import {
   isoWeekdayOf,
   type AppointmentStatus,
   type CalendarDate,
+  type Locale,
   type MyStaffAppointment,
   type MyStaffSchedule,
   type TimeZone,
 } from '@spa/shared';
 
 import { addCalendarDays, calendarDateInTimeZone } from '@/lib/booking/calendar';
-import { formatTimeInTimeZone } from '@/lib/format';
+import { formatTimeInTimeZone, type DisplayLocale } from '@/lib/format';
+import en from '@/messages/en/admin-my-planning.json';
+import fr from '@/messages/fr/admin-my-planning.json';
 
 /**
  * « Mon planning » — l'emploi du temps du praticien connecté (#813), ce qui se
@@ -17,18 +20,54 @@ import { formatTimeInTimeZone } from '@/lib/format';
  *
  * Toutes les dates civiles sont **celles du salon** : le praticien travaille
  * dans le fuseau de son salon, pas dans celui de son téléphone.
+ *
+ * ## Les mots viennent du catalogue, pas de ce fichier (#1104)
+ *
+ * Deux choses seulement en rendent : le nom des trois vues, et ce qu'une journée
+ * de travail dit d'elle-même — « Salon fermé » relève de l'écran, mais « minuit »
+ * et « Toute la journée » se composent ici, au milieu d'un calcul d'heures. Elles
+ * les lisent dans `messages/<langue>/admin-my-planning.json` par **import direct
+ * des deux fichiers**, comme `lib/admin/calendar-messages.ts` et
+ * `lib/appointment-status.ts` lisent les leurs : ce module est fait de fonctions
+ * pures, appelées depuis un Server Component, depuis un Client Component et
+ * depuis des tests sans DOM, où aucun crochet de `next-intl` n'existe. Ce sont
+ * **les mêmes fichiers** que ceux qu'`useTranslations` sert à l'écran — il n'y a
+ * qu'une écriture de ce vocabulaire, et le test de parité la garde entière dans
+ * les deux langues.
+ *
+ * Aucun des messages lus ici n'a de forme plurielle ni de paramètre : un accès
+ * direct à la valeur suffit, sans formateur ICU à monter.
  */
+
+/** Les deux catalogues, dans l'ordre où le front les sert. */
+const CATALOG = { fr, en } as const;
+
+/**
+ * La langue employée quand l'appelant n'en passe pas.
+ *
+ * `fr` et non `DEFAULT_LOCALE` : ce défaut garde le comportement d'avant #1104
+ * pour les tests qui éprouvent les libellés français de ce module, plutôt que de
+ * les faire basculer en anglais. L'écran, lui, passe toujours sa langue résolue.
+ */
+const FALLBACK_LOCALE: Locale = 'fr';
 
 /** Les trois vues de l'écran — dans l'adresse (`?vue=`), en français. */
 export const MY_PLANNING_VIEWS = ['jour', 'semaine', 'a-venir'] as const;
 
 export type MyPlanningView = (typeof MY_PLANNING_VIEWS)[number];
 
-export const MY_PLANNING_VIEW_LABELS: Readonly<Record<MyPlanningView, string>> = {
-  jour: 'Jour',
-  semaine: 'Semaine',
-  'a-venir': 'À venir',
-};
+/**
+ * Le nom des trois onglets, dans la langue demandée.
+ *
+ * La **clé** reste française — c'est un segment d'URL (`?vue=semaine`), et le
+ * traduire changerait les adresses d'un salon anglophone sans rien lui apprendre.
+ * Seul le libellé suit la langue.
+ */
+export function myPlanningViewLabels(
+  locale: Locale = FALLBACK_LOCALE,
+): Readonly<Record<MyPlanningView, string>> {
+  return CATALOG[locale].views;
+}
 
 /** La vue demandée, ou la journée — la vue qu'on consulte entre deux soins. */
 export function parseMyPlanningView(raw: string | undefined): MyPlanningView {
@@ -141,18 +180,29 @@ export interface WorkingDay {
  * Une absence qui déborde la journée s'affiche bornée à celle-ci : « toute la
  * journée » quand elle la couvre entière, plutôt qu'une heure de début tombée
  * trois jours plus tôt.
+ *
+ * `display` porte la langue **et la région de l'établissement** (#1104) : les
+ * deux mots composés ici viennent du catalogue, et les heures d'une absence sont
+ * mises en forme par `lib/format.ts`, dans le fuseau du salon — qui ne bouge pas
+ * avec la langue. Les bornes d'une plage de travail, elles, restent telles que le
+ * contrat les porte (`09:00`) : ce sont des heures murales saisies par la
+ * gérance, pas des instants à reprojeter.
  */
 export function workingDay(
   schedule: MyStaffSchedule,
   day: CalendarDate,
   dayStart: Date,
   dayEnd: Date,
+  display: DisplayLocale = { locale: FALLBACK_LOCALE },
 ): WorkingDay {
+  const words = CATALOG[display.locale].schedule;
   const weekday = isoWeekdayOf(day);
   const hours = schedule.entries
     .filter((entry) => entry.weekday === weekday)
     .sort((left, right) => left.startsAt.localeCompare(right.startsAt))
-    .map((entry) => `${entry.startsAt} – ${entry.endsAt === '24:00' ? 'minuit' : entry.endsAt}`);
+    .map(
+      (entry) => `${entry.startsAt} – ${entry.endsAt === '24:00' ? words.midnight : entry.endsAt}`,
+    );
 
   const absences = schedule.timeOff
     .filter(
@@ -164,8 +214,8 @@ export function workingDay(
       const end = Math.min(Date.parse(off.endsAt), dayEnd.getTime());
       const whole = start === dayStart.getTime() && end === dayEnd.getTime();
       const span = whole
-        ? 'Toute la journée'
-        : `${formatTimeInTimeZone(new Date(start).toISOString(), schedule.timezone)} – ${formatTimeInTimeZone(new Date(end).toISOString(), schedule.timezone)}`;
+        ? words.allDay
+        : `${formatTimeInTimeZone(new Date(start).toISOString(), schedule.timezone, display)} – ${formatTimeInTimeZone(new Date(end).toISOString(), schedule.timezone, display)}`;
       return off.reason === null ? span : `${span} · ${off.reason}`;
     });
 
