@@ -13,7 +13,7 @@ import {
 import { AuthWith } from '../identity/auth.decorator';
 import type { AuthenticatedUser } from '../identity/identity.types';
 import { CurrentUser } from '../identity/jwt-auth.guard';
-import { roleHasPermission } from '../identity/permissions';
+import { ownScopeFor } from '../identity/permissions';
 import { DeliveryEventService } from './delivery-event.service';
 import { DeliveryEventDto, toDeliveryEventDto } from './dto/delivery-event.dto';
 import {
@@ -92,10 +92,25 @@ import { ReminderSweepService } from './reminder-sweep.service';
  * « L'une d'elles », jamais « toutes » — c'est la lecture qu'ADR 0013 donne de
  * plusieurs permissions citées, et c'est ce que réclame une route à double
  * portée. La garde décide de l'**accès** et ne consulte aucune ressource ; c'est
- * ensuite `ownScopeOf` qui décide du **contenu**. Même montage que
- * `GET /v1/customers` chez `crm`, au mot près.
+ * ensuite `ownScopeFor(actor, 'agenda:read:all')` qui décide du **contenu**.
+ * Même montage que `GET /v1/customers` chez `crm`, au mot près — et depuis
+ * #1205 la même fonction, exposée par `identity/permissions.ts`, parce que deux
+ * écritures d'une décision déjà tranchée par la matrice pouvaient diverger. Le
+ * nom de la permission large reste nommé ici : c'est la route qui sait par
+ * quelle porte on entre.
  *
  * `CLIENT` n'a ni l'une ni l'autre et reste refusé en 403, comme sous le rang.
+ *
+ * ## Le compte, jamais la fiche praticien
+ *
+ * La portée retenue est `actor.userId`, issu d'un jeton **vérifié**, et c'est
+ * lui qui traverse jusqu'au prédicat du dépôt. Un identifiant de fiche `staff`
+ * aurait demandé une lecture de plus et n'aurait rien prouvé de mieux ; surtout,
+ * il aurait pu venir d'ailleurs que du jeton, ce qui est la définition d'une
+ * fuite (tenant-isolation §2).
+ *
+ * `agenda:read:all` l'emporte quand les deux sont portées : une gérante qui
+ * donne aussi des soins lit le journal entier, comme avant.
  *
  * ## Pourquoi une liste vide et non un 403 `OWN_SCOPE_ONLY`
  *
@@ -167,7 +182,7 @@ export class NotificationsController {
     return toNotificationListDto(
       await this.notifications.list({
         ...toNotificationSearch(query),
-        ownedByUserId: ownScopeOf(actor),
+        ownedByUserId: ownScopeFor(actor, 'agenda:read:all'),
       }),
     );
   }
@@ -295,35 +310,4 @@ export class NotificationsController {
   public async ingestDeliveryEvent(@Body() payload: unknown): Promise<DeliveryEventDto> {
     return toDeliveryEventDto(await this.deliveryEvents.ingest(payload));
   }
-}
-
-/**
- * Le périmètre de lecture de l'appelant : `null` pour « tout le journal du
- * salon », son identifiant de compte pour « les envois de ses rendez-vous à
- * lui » (#1200).
- *
- * ## Pourquoi ici et non dans le service
- *
- * Parce que c'est une traduction de la **porte** vers le domaine, exactement
- * comme `ownScopeOf` chez `crm` : la garde a déjà décidé que l'appelant entre,
- * il reste à dire avec quelle portée. Le service, lui, ne connaît qu'un critère
- * de recherche — il n'a ni rôle ni matrice à interroger, et c'est ce qui le
- * laisse testable sans couche d'autorisation.
- *
- * ## Le compte, jamais la fiche praticien
- *
- * `actor.userId` vient d'un jeton **vérifié**, et c'est lui qui traverse
- * jusqu'au prédicat du dépôt. Un identifiant de fiche `staff` aurait demandé une
- * lecture de plus et n'aurait rien prouvé de mieux ; surtout, il aurait pu venir
- * d'ailleurs que du jeton, ce qui est la définition d'une fuite
- * (tenant-isolation §2).
- *
- * ## `agenda:read:all` l'emporte quand les deux sont portées
- *
- * Une gérante qui donne aussi des soins a les deux permissions et lit le journal
- * entier, comme avant — la matrice les lui accorde toutes les deux précisément
- * pour cela, et l'ordre de ce test est ce qui le dit.
- */
-function ownScopeOf(actor: AuthenticatedUser): string | null {
-  return roleHasPermission(actor.role, 'agenda:read:all') ? null : actor.userId;
 }
