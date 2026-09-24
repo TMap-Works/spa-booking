@@ -40,8 +40,9 @@
             AUCUN CHAMP DE CARTE SUR CET ÉCRAN, ET IL N'Y EN AURA JAMAIS.
             C'est la condition qui maintient le projet en auto-évaluation PCI
             SAQ A : le jour où un numéro de carte traverse notre code, l'obligation
-            devient SAQ D et un audit annuel. Le montant part vers un lecteur
-            Stripe Terminal ; le client compose son code sur le lecteur.
+            devient SAQ D et un audit annuel. Le montant s'affiche en grand, le
+            caissier le saisit sur le TPE **autonome** de la banque du salon —
+            auquel l'application ne parle pas — puis déclare l'issue (ADR 0015).
           -->
           <section class="spa-admin__section" aria-labelledby="titre-ticket">
             <h2 class="spa-admin__section-title" id="titre-ticket">Ticket en cours</h2>
@@ -113,21 +114,6 @@
                     class="spa-admin-checkout__method-input spa-visually-hidden"
                     type="radio"
                     name="moyen"
-                    id="moyen-carte"
-                    checked
-                  />
-                  <label class="spa-admin-checkout__method" for="moyen-carte">
-                    <span class="spa-admin-checkout__method-label">Carte — lecteur du comptoir</span>
-                    <span class="spa-admin-checkout__method-hint">
-                      Le montant est envoyé au lecteur. La cliente insère sa carte et compose
-                      son code sur le lecteur.
-                    </span>
-                  </label>
-
-                  <input
-                    class="spa-admin-checkout__method-input spa-visually-hidden"
-                    type="radio"
-                    name="moyen"
                     id="moyen-especes"
                   />
                   <label class="spa-admin-checkout__method" for="moyen-especes">
@@ -138,34 +124,97 @@
                     </span>
                   </label>
 
+                  <!--
+                    LE TPE EST AUTONOME — ADR 0015, #834, #835.
+
+                    Le terminal est celui de la banque du salon. L'application ne lui
+                    parle pas, ne reçoit aucune donnée de carte, et n'enregistre que
+                    l'issue que le caissier déclare. Il n'y a donc ni « lecteur prêt »
+                    à interroger, ni formulaire de carte à monter — et c'est ce qui
+                    rend la frontière SAQ A vraie sur toutes les pages que nous
+                    servons.
+                  -->
                   <input
                     class="spa-admin-checkout__method-input spa-visually-hidden"
                     type="radio"
                     name="moyen"
-                    id="moyen-lien"
+                    id="moyen-tpe"
+                    checked
                   />
-                  <label class="spa-admin-checkout__method" for="moyen-lien">
-                    <span class="spa-admin-checkout__method-label">Lien de paiement</span>
+                  <label class="spa-admin-checkout__method" for="moyen-tpe">
+                    <span class="spa-admin-checkout__method-label">Carte bancaire (TPE)</span>
                     <span class="spa-admin-checkout__method-hint">
-                      Envoyé par SMS ou e-mail à la cliente, qui paie depuis son téléphone.
+                      Le montant se saisit sur le terminal de la banque du salon. Aucun
+                      numéro n’est saisi, ni vu, ni conservé.
                     </span>
                   </label>
                 </fieldset>
 
+                <!--
+                  LE RÈGLEMENT MIXTE — #835, quatrième critère.
+
+                  Ce qui est déjà pris reste à l'écran, et le reste dû descend jusqu'à
+                  zéro. Les trois montants viennent du serveur : le front n'en
+                  soustrait aucun.
+                -->
+                <div class="spa-admin-checkout__totals">
+                  <p class="spa-admin__section-title">Règlements enregistrés</p>
+                  <ul class="spa-admin-checkout__settlements">
+                    <li class="spa-admin-checkout__total-row">
+                      <span class="spa-admin-checkout__total-label">Espèces</span>
+                      <span class="spa-admin-checkout__total-value">200 000 MGA</span>
+                    </li>
+                  </ul>
+                </div>
+
+                <!--
+                  LE CHIFFRE QU'ON ANNONCE À VOIX HAUTE — #835, critères 2 et 3.
+
+                  Le montant à recopier sur le terminal, puis la monnaie à rendre, se
+                  lisent d'un coup d'œil et non dans une ligne de tableau.
+                -->
+                <div class="spa-admin-checkout__callout">
+                  <span class="spa-admin-checkout__callout-label">
+                    Saisissez ce montant sur le TPE
+                  </span>
+                  <span class="spa-admin-checkout__callout-amount">64 000 MGA</span>
+                </div>
+
                 <p class="spa-admin-checkout__terminal">
                   <span aria-hidden="true">●</span>
-                  Lecteur « Comptoir 1 » prêt — en attente de la carte
+                  Le terminal du salon est autonome : faites passer la carte, puis
+                  déclarez l’issue.
                 </p>
 
+                <div class="spa-field">
+                  <label class="spa-field__label" for="tpe-reference">N° de ticket TPE</label>
+                  <input
+                    class="spa-field__control"
+                    type="text"
+                    id="tpe-reference"
+                    name="tpe-reference"
+                    maxlength="32"
+                    autocomplete="off"
+                    aria-describedby="tpe-reference-aide"
+                  />
+                  <p class="spa-field__hint" id="tpe-reference-aide">
+                    Facultatif — le numéro d’opération que le terminal imprime.
+                  </p>
+                </div>
+
                 <button class="spa-button spa-button--accent spa-button--block" type="button">
-                  <span class="spa-button__label">Encaisser 264 000 MGA</span>
+                  <span class="spa-button__label">Paiement accepté sur le TPE</span>
+                </button>
+
+                <button class="spa-button spa-button--neutral spa-button--block" type="button">
+                  <span class="spa-button__label">Paiement refusé</span>
                 </button>
 
                 <p class="spa-admin-checkout__pci">
                   <span aria-hidden="true">🔒</span>
-                  Aucun numéro de carte ne se saisit ici, ni ne se note ailleurs : les
-                  données de carte ne transitent que par le lecteur, jamais par le salon
-                  ni par nos serveurs.
+                  Aucun numéro de carte ne se saisit ici, ni ne se note ailleurs : le
+                  terminal du salon est autonome, et rien de ce qu’il manipule ne passe
+                  par le salon ni par nos serveurs.
                 </p>
               </div>
             </div>
@@ -375,18 +424,20 @@
           </section>
 
           <!--
-            REÇU PROVISOIRE — une carte acceptée par Stripe dont le webhook n'a
-            encore rien inscrit : pas de pièce à relire, un reçu réduit composé
-            du rendez-vous, qui se dit provisoire.
+            REÇU RÉDUIT — la pièce n'a pas pu être relue (caisse injoignable) :
+            pas de lignes à imprimer, un reçu composé du rendez-vous, qui dit
+            lui-même qu'il ne fait pas foi. Plus rien ici n'attend la
+            confirmation d'un tiers : depuis l'ADR 0015 le règlement est inscrit
+            au moment où l'API répond, espèces comme TPE.
           -->
-          <section class="spa-admin__section" aria-labelledby="titre-recu-provisoire">
-            <h2 class="spa-admin__section-title" id="titre-recu-provisoire">Reçu provisoire</h2>
+          <section class="spa-admin__section" aria-labelledby="titre-recu-reduit">
+            <h2 class="spa-admin__section-title" id="titre-recu-reduit">Reçu réduit</h2>
 
             <article class="spa-ticket" aria-label="Reçu">
               <div class="spa-ticket__identity">
-                <p class="spa-ticket__title">Reçu provisoire</p>
+                <p class="spa-ticket__title">Reçu réduit</p>
                 <p>18/09/2026 19:25</p>
-                <p class="spa-ticket__note">Paiement en cours de confirmation.</p>
+                <p class="spa-ticket__note">Ticket de caisse indisponible — reçu sans valeur comptable.</p>
               </div>
               <hr class="spa-ticket__rule">
               <dl class="spa-ticket__rows">
@@ -396,21 +447,29 @@
             </article>
           </section>
 
-          <!-- Lecteur injoignable — le cas le plus fréquent au comptoir. -->
-          <section class="spa-admin__section" aria-labelledby="titre-lecteur">
-            <h2 class="spa-admin__section-title" id="titre-lecteur">Lecteur hors ligne</h2>
+          <!--
+            PAIEMENT REFUSÉ SUR LE TERMINAL — deuxième critère de #835.
+
+            Le TPE est autonome : l'application ne l'interroge pas et n'a donc
+            aucun « état de lecteur » à afficher. Ce que le caissier déclare,
+            c'est l'issue — et un refus ne s'enregistre pas : rien n'est parti
+            chez nous, il n'y a rien à inscrire ni à annuler. L'écran revient au
+            choix du moyen, et la cliente paie autrement.
+          -->
+          <section class="spa-admin__section" aria-labelledby="titre-refus-tpe">
+            <h2 class="spa-admin__section-title" id="titre-refus-tpe">Paiement refusé</h2>
 
             <div class="spa-admin-checkout__payment">
               <p class="spa-admin-checkout__terminal spa-admin-checkout__terminal--offline">
                 <span aria-hidden="true">●</span>
-                Lecteur « Comptoir 1 » injoignable depuis 2 min
+                Le terminal du salon a refusé l’opération
               </p>
               <div class="spa-notification spa-notification--warning" role="status">
                 <span class="spa-notification__icon" aria-hidden="true">!</span>
                 <div class="spa-notification__content">
-                  <p class="spa-notification__title">Le lecteur ne répond pas</p>
+                  <p class="spa-notification__title">Rien n’a été enregistré</p>
                   <p>
-                    Encaissez en espèces, ou envoyez un lien de paiement à la cliente. Ne
+                    Choisissez un autre moyen, ou réessayez sur le terminal. Ne
                     demandez jamais un numéro de carte à recopier.
                   </p>
                 </div>
@@ -428,7 +487,7 @@
 
             <div class="spa-admin-checkout spa-admin-checkout--loading" aria-busy="true">
               <div class="spa-admin-checkout__ticket">
-                <p class="spa-visually-hidden">Autorisation en cours auprès du lecteur…</p>
+                <p class="spa-visually-hidden">Enregistrement du règlement…</p>
                 <span class="spa-admin-checkout__skeleton-line spa-skeleton"></span>
                 <span class="spa-admin-checkout__skeleton-line spa-skeleton"></span>
                 <span class="spa-admin-skeleton-line spa-admin-skeleton-line--short spa-skeleton"></span>
@@ -436,10 +495,10 @@
               <div class="spa-admin-checkout__payment">
                 <p class="spa-admin-checkout__terminal">
                   <span aria-hidden="true">●</span>
-                  Carte lue — autorisation en cours
+                  Issue déclarée — enregistrement du règlement
                 </p>
                 <button class="spa-button spa-button--accent spa-button--block spa-button--loading" type="button" disabled>
-                  <span class="spa-button__label">Encaisser 264 000 MGA</span>
+                  <span class="spa-button__label">Paiement accepté sur le TPE</span>
                   <span class="spa-spinner spa-button__spinner" aria-hidden="true"></span>
                 </button>
               </div>

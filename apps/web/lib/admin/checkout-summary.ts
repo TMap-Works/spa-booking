@@ -43,12 +43,18 @@
 import type {
   Appointment,
   AppointmentStatus,
+  CounterSettlementMean,
   Locale,
   Money,
   PaymentMethod,
   PaymentStatus,
 } from '@spa/shared';
-import { CAPTURED_PAYMENT_STATUSES, ERROR_CODES, PAYMENT_ERROR_CODES } from '@spa/shared';
+import {
+  CAPTURED_PAYMENT_STATUSES,
+  ERROR_CODES,
+  PAYMENT_ERROR_CODES,
+  terminalReferenceSchema,
+} from '@spa/shared';
 
 import type {
   CreateSaleRequest,
@@ -71,13 +77,36 @@ export function checkoutWords(locale: Locale = CHECKOUT_FALLBACK_LOCALE): typeof
 }
 
 /**
- * Les deux moyens que le comptoir propose, dans l'ordre où l'écran les montre.
+ * Les deux moyens que le comptoir propose, dans l'ordre où l'écran les montre —
+ * #835, premier critère.
  *
- * Ni « lien de paiement » ni Stripe Terminal : la maquette de #30 les dessine,
- * l'API ne les sert pas. Un troisième bouton qui ne mènerait à rien coûterait
- * plus cher au comptoir que son absence.
+ * Ce sont les **combinaisons légitimes** du fil, celles que
+ * `POST /v1/sales/{saleId}/payments` accepte : `CASH`, et `CARD_TERMINAL` pour
+ * le TPE autonome de la banque du salon (ADR 0015). `CARD_ONLINE` n'y est pas et
+ * ne peut pas y être — le contrat ne sait pas le taper —, ce qui est la forme la
+ * plus solide de « Stripe n'est plus utilisé au comptoir » : il n'y a pas de
+ * valeur à refuser.
+ *
+ * Ni « lien de paiement » ni lecteur piloté : la maquette de #30 les dessinait,
+ * l'API ne les sert pas, et le TPE intégré est renvoyé en post-MVP (#833).
  */
-export const CHECKOUT_METHODS = ['cash', 'card'] as const satisfies readonly PaymentMethod[];
+export const COUNTER_MEANS = [
+  'CASH',
+  'CARD_TERMINAL',
+] as const satisfies readonly CounterSettlementMean[];
+
+/**
+ * Le moyen **du domaine** que ce geste produira — ce que l'API rendra dans
+ * `payment.method`.
+ *
+ * Les deux vocabulaires cohabitent délibérément (ADR 0015) : le fil nomme la
+ * combinaison (`CARD_TERMINAL`), le domaine nomme le moyen (`card`) et range le
+ * tuyau à part. La conversion tient en une ligne et n'existe qu'ici, côté front,
+ * pour les libellés que l'écran doit écrire **avant** que l'API n'ait répondu.
+ */
+export function methodOfMean(mean: CounterSettlementMean): PaymentMethod {
+  return mean === 'CASH' ? 'cash' : 'card';
+}
 
 /**
  * Le montant dû — le prix figé à la réservation, et rien d'autre.
@@ -90,16 +119,15 @@ export function amountDue(appointment: Appointment): Money {
   return appointment.price;
 }
 
-/**
- * Statuts sur lesquels le tunnel de paiement en ligne refuse d'ouvrir une
- * intention — `APPOINTMENT_NOT_PAYABLE`, côté API.
+/*
+ * ## `NOT_PAYABLE_ONLINE` n'existe plus — #835
  *
- * `completed` et `no_show` en font partie : une fois la prestation passée, le
- * paiement en ligne n'a plus d'objet, et le CDC range l'encaissement de ces
- * cas-là au comptoir. C'est exactement l'asymétrie que documente
- * `payments.errors.ts` — le règlement en espèces, lui, les accepte.
+ * Il portait l'asymétrie du tunnel en ligne : `completed` et `no_show` y étaient
+ * refusés en 422 alors que le comptoir devait précisément pouvoir les encaisser.
+ * Le comptoir n'ouvre plus d'intention, et les deux moyens qu'il propose
+ * acceptent désormais exactement les mêmes statuts — celui qui reste fermé est
+ * le seul qui n'ait plus rien à encaisser.
  */
-const NOT_PAYABLE_ONLINE: readonly AppointmentStatus[] = ['cancelled', 'completed', 'no_show'];
 
 /** Le seul statut sur lequel le comptoir n'encaisse rien du tout. */
 const NOT_SETTLEABLE: readonly AppointmentStatus[] = ['cancelled'];
@@ -225,7 +253,6 @@ export function settlementBadge(
  */
 export function settlementBlocker(
   settlement: SettlementState,
-  method: PaymentMethod,
   locale: Locale = CHECKOUT_FALLBACK_LOCALE,
 ): string | null {
   const words = checkoutWords(locale).blocker;
@@ -233,10 +260,16 @@ export function settlementBlocker(
   switch (settlement.kind) {
     case 'regle':
       return words.alreadySettled;
+    // Une intention en ligne, en vol ou en échec, ferme désormais les **deux**
+    // moyens du comptoir et non les seules espèces : `SettlementRepository`
+    // refuse tout règlement de comptoir sur un ticket qui porte une intention
+    // vivante, quel qu'en soit le moyen. Tant que le comptoir ouvrait lui-même
+    // l'intention, « reprendre la carte » était une issue ; depuis #835 il n'a
+    // plus rien à reprendre — c'est le tunnel en ligne qui doit conclure.
     case 'ouvert':
-      return method === 'cash' ? words.cardOpenBlocksCash : null;
+      return words.onlinePaymentOpen;
     case 'echoue':
-      return method === 'cash' ? words.cardFailedBlocksCash : null;
+      return words.onlinePaymentFailed;
     default:
       return null;
   }
@@ -255,7 +288,6 @@ export function settlementBlocker(
  */
 export function checkoutBlocker(
   status: AppointmentStatus,
-  method: PaymentMethod,
   settlement: SettlementState = { kind: 'du' },
   locale: Locale = CHECKOUT_FALLBACK_LOCALE,
 ): string | null {
@@ -265,22 +297,12 @@ export function checkoutBlocker(
     return words.cancelled;
   }
 
-  const settled = settlementBlocker(settlement, method, locale);
-
-  if (settled !== null) {
-    return settled;
-  }
-
-  if (method === 'card' && NOT_PAYABLE_ONLINE.includes(status)) {
-    return words.cardNotPayable;
-  }
-
-  return null;
+  return settlementBlocker(settlement, locale);
 }
 
-/** `true` si au moins un moyen de paiement reste ouvert pour ce statut. */
+/** `true` si le comptoir peut encore encaisser ce rendez-vous. */
 export function isSettleable(status: AppointmentStatus): boolean {
-  return CHECKOUT_METHODS.some((method) => checkoutBlocker(status, method) === null);
+  return checkoutBlocker(status) === null;
 }
 
 /** Le libellé du moyen de paiement, tel que le fieldset l'annonce. */
@@ -291,6 +313,22 @@ export function methodLabel(
   const words = checkoutWords(locale).method;
 
   return method === 'cash' ? words.cash : words.card;
+}
+
+/** Le libellé du moyen **tel que le comptoir le choisit** — `CASH` ou `CARD_TERMINAL`. */
+export function meanLabel(
+  mean: CounterSettlementMean,
+  locale: Locale = CHECKOUT_FALLBACK_LOCALE,
+): string {
+  return methodLabel(methodOfMean(mean), locale);
+}
+
+/** Ce que la ligne d'aide dit sous chaque moyen choisi. */
+export function meanHint(
+  mean: CounterSettlementMean,
+  locale: Locale = CHECKOUT_FALLBACK_LOCALE,
+): string {
+  return methodHint(methodOfMean(mean), locale);
 }
 
 /**
@@ -461,6 +499,11 @@ export function checkoutFailureMessage(
       return words.notPayable;
     case PAYMENT_ERROR_CODES.APPOINTMENT_NOT_SETTLEABLE:
       return words.notSettleable;
+    // Le reste dû a bougé entre la lecture de l'écran et le clic — un autre
+    // poste a encaissé une part. Rien n'a été pris : le serveur ne rogne jamais
+    // un montant en silence (#817).
+    case PAYMENT_ERROR_CODES.SALE_OVERPAYMENT:
+      return words.overpayment;
     case PAYMENT_ERROR_CODES.PAYMENT_PROVIDER_UNAVAILABLE:
     case ERROR_CODES.SERVICE_UNAVAILABLE:
       return words.providerUnreachable;
@@ -480,84 +523,103 @@ export function checkoutFailureMessage(
   }
 }
 
-/**
- * Ce que le reçu peut affirmer, selon le moyen employé.
+/*
+ * ## Plus aucun reçu de comptoir n'est provisoire — #835, ADR 0015
  *
- * C'est la règle la plus importante de l'écran, et elle vient de
- * payments-stripe §2 : **le navigateur n'a jamais autorité pour déclarer un
- * paiement abouti.** Une carte acceptée par Stripe l'est *auprès de Stripe* ; ce
- * qui inscrit l'encaissement chez nous est le webhook signé, reçu côté serveur,
- * et il arrive après. Le reçu carte est donc explicitement provisoire.
+ * `receiptIsProvisional` distinguait la carte des espèces, et la distinction
+ * était juste tant que le comptoir confirmait auprès de Stripe : le navigateur
+ * n'a jamais autorité pour déclarer un paiement abouti, et c'est le webhook
+ * signé qui inscrivait l'encaissement (payments-stripe §2).
  *
- * Les espèces sont l'inverse : il n'y a aucun tiers dont on attende quoi que ce
- * soit, la route d'encaissement rend la ligne déjà `SUCCEEDED`, et le reçu est
- * définitif au moment où il s'imprime.
+ * Le comptoir n'appelle plus aucun prestataire. Espèces comme TPE, il n'y a
+ * aucun tiers dont on attende une confirmation : `POST /sales/{id}/payments`
+ * inscrit le règlement `SUCCEEDED` avec son opérateur et son horodatage, et le
+ * ticket est définitif à la seconde où il s'imprime. La contrepartie est dite
+ * dans l'ADR et sur le reçu : le règlement au terminal est une **déclaration
+ * d'opérateur**, et l'écart se constate au rapprochement, contre le relevé que
+ * le terminal imprime.
  */
-export function receiptIsProvisional(method: PaymentMethod): boolean {
-  return method === 'card';
-}
 
 /**
- * Ce que l'écran dit du passage en « honoré », que l'API ne sert pas encore.
+ * Ce que l'écran dit du passage en « honoré » après un encaissement.
  *
- * Le quatrième critère de #59 demande deux choses : confirmer l'encaissement —
- * fait — et faire passer le rendez-vous en `completed`. La seconde suppose une
- * route de transition de statut qui n'existe pas : `AppointmentsController`
- * n'expose que `GET /appointments`, `GET /appointments/mine` et
- * `POST /appointments/{id}/cancel`, et `changeAppointmentStatusRequestSchema` du
- * contrat partagé n'a aucun contrôleur en face. L'ouvrir relève d'`apps/api`,
- * hors de l'empreinte de ce ticket.
- *
- * L'écran le **dit** plutôt que de le taire, comme le planning dit que l'agenda
- * n'est pas encore servi : un encaissement qui laisse le rendez-vous en
- * `confirmed` doit s'expliquer au comptoir, faute de quoi l'opérateur cherche
- * l'erreur de son côté.
- *
- * ## Deux phrases, parce que les deux moyens ne sont pas au même point
- *
- * Sur un règlement en espèces, la ligne est inscrite et aboutie : le seul reste
- * est le statut du rendez-vous. Sur une carte, **rien n'est encore inscrit** —
- * c'est le webhook signé qui le fera —, et affirmer le contraire sous un reçu
- * que la ligne du dessus vient de déclarer provisoire contredirait la seule
- * règle que payments-stripe §2 interdit de brouiller.
+ * Le quatrième critère de #59 demandait de faire passer le rendez-vous en
+ * `completed` du même geste. Ce n'est plus un manque de l'API mais une décision
+ * de produit : c'est le salon qui confirme et clôt un rendez-vous, à la main,
+ * depuis son planning. L'écran le dit plutôt que de le taire — un encaissement
+ * qui laisse le rendez-vous en `confirmed` doit s'expliquer au comptoir, faute
+ * de quoi l'opérateur cherche l'erreur de son côté.
  */
 export function completionUnavailableMessage(
-  method: PaymentMethod,
   locale: Locale = CHECKOUT_FALLBACK_LOCALE,
 ): string {
-  const words = checkoutWords(locale).completion;
-
-  return receiptIsProvisional(method) ? words.card : words.cash;
+  return checkoutWords(locale).completion.settled;
 }
 
-/** La mention que le reçu porte sous son total, selon le moyen employé. */
-export function receiptDisclaimer(
-  method: PaymentMethod,
-  locale: Locale = CHECKOUT_FALLBACK_LOCALE,
-): string {
-  const words = checkoutWords(locale).receipt;
-
-  return receiptIsProvisional(method) ? words.provisionalDisclaimer : words.cashDisclaimer;
+/** La mention que le reçu porte sous son total. */
+export function receiptDisclaimer(locale: Locale = CHECKOUT_FALLBACK_LOCALE): string {
+  return checkoutWords(locale).receipt.cashDisclaimer;
 }
+
+// ---------------------------------------------------------------------------
+// Le geste de règlement : ce que l'écran vérifie avant d'appeler — #835
+// ---------------------------------------------------------------------------
 
 /**
- * La mention d'un reçu **réimprimé** depuis un encaissement déjà inscrit (#828).
+ * Ce qui cloche dans le **numéro du ticket du TPE** saisi — `null` s'il est
+ * recevable, y compris vide.
  *
- * Elle diffère de la précédente sur le seul cas qui compte, et l'écart n'est pas
- * cosmétique : un reçu carte imprimé juste après la confirmation du navigateur
- * est provisoire — le webhook signé n'a pas encore inscrit la capture —, tandis
- * qu'un reçu réimprimé depuis une ligne `succeeded` relue de l'historique est
- * **définitif**, puisque c'est précisément le webhook qui a écrit cette ligne
- * (payments-stripe §2). Réutiliser la mention provisoire ferait dire à l'écran
- * qu'il ne sait pas ce qu'il vient de lire en base.
+ * Vide est recevable, et c'est le troisième critère de #1025 autant que le
+ * deuxième de #835 : le caissier n'a pas toujours le ticket du terminal sous la
+ * main, et bloquer la caisse sur un champ de confort serait un refus de service.
+ * Le champ absent et le champ vide se rejoignent donc en une seule chose — rien
+ * n'est envoyé.
+ *
+ * La forme est jugée par {@link terminalReferenceSchema}, **le schéma du contrat
+ * partagé** et non une expression recopiée ici : 32 caractères alphanumériques
+ * au plus, ni espace, ni tiret, ni barre oblique. Les séparateurs sont
+ * précisément ce qui rend un numéro de carte méconnaissable à un contrôle, et
+ * c'est pourquoi ils n'ont pas leur place dans une référence qu'aucun terminal
+ * n'imprime avec.
+ *
+ * La **seconde** barrière — la clé de Luhn sur 13 à 19 chiffres — n'est pas ici,
+ * et c'est délibéré : elle vit à un seul endroit, côté API
+ * (`payments/terminal-reference.ts`), et la recopier donnerait deux
+ * implémentations d'un même contrôle de conformité, donc deux à faire diverger
+ * un jour. Le front borne pour le confort, l'API refuse pour la sécurité
+ * (web-frontend §4) — et son refus tombe dans le `ValidationPipe`, avant toute
+ * écriture et avant tout journal (payments-stripe §1).
  */
-export function settledReceiptDisclaimer(
-  method: PaymentMethod,
+export function terminalReferenceIssue(
+  value: string,
   locale: Locale = CHECKOUT_FALLBACK_LOCALE,
-): string {
-  return method === 'card'
-    ? checkoutWords(locale).receipt.settledCardDisclaimer
-    : receiptDisclaimer('cash', locale);
+): string | null {
+  // La **même** valeur que celle qui partira : `terminalReferenceField` envoie
+  // la chaîne détourée, et juger l'autre faisait refuser à l'écran un numéro
+  // parfaitement recevable — « TPE7788A » collé depuis le ticket du terminal
+  // arrive avec son espace de fin, et le caissier n'a aucun moyen de deviner
+  // que c'est lui qu'on lui reproche.
+  const trimmed = value.trim();
+
+  if (trimmed === '') {
+    return null;
+  }
+
+  return terminalReferenceSchema.safeParse(trimmed).success
+    ? null
+    : checkoutWords(locale).terminal.referenceInvalid;
+}
+
+/** Ce que le corps porte pour `terminalReference` — la clé absente quand rien n'est saisi. */
+export function terminalReferenceField(
+  value: string,
+): { readonly terminalReference: string } | Record<string, never> {
+  const trimmed = value.trim();
+
+  // Absent, et non une chaîne vide : « le caissier n'a pas saisi la référence »
+  // et « le caissier a saisi une chaîne vide » deviendraient sinon deux états
+  // indiscernables d'une même colonne (`terminalReferenceSchema`).
+  return trimmed === '' ? {} : { terminalReference: trimmed };
 }
 
 // ---------------------------------------------------------------------------

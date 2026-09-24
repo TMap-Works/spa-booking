@@ -34,7 +34,7 @@ import { CheckoutPanel } from '../components/checkout-panel';
 import { PeriodNav } from '../components/period-nav';
 import { adminCheckoutPath } from '../paths';
 import { adminLoadFailure, redirectWithoutPermission, requireAdminAccessToken } from '../guard';
-import { readDaySettlements } from './settlements';
+import { readAppointmentTicket, readDaySettlements } from './settlements';
 
 /**
  * L'encaissement au comptoir — CDC §1.4, « encaissement en fin de prestation »
@@ -168,6 +168,11 @@ export default async function CheckoutPage({ params, searchParams }: CheckoutPag
   // Lue **après** l'agenda et jamais avant : elle est facultative, et un
   // encaissement doit rester possible quand l'historique ne répond pas.
   const settlements = await readDaySettlements(accessToken, anchor, tenant.timezone);
+  // Le ticket déjà ouvert sur le rendez-vous en cours de règlement, s'il y en a
+  // un : c'est ce qui permet à un règlement mixte de survivre à un
+  // rafraîchissement au lieu d'ouvrir une seconde pièce (#835). Lecture seule —
+  // la composition est au premier règlement, jamais à l'affichage.
+  const ticket = selected === undefined ? null : await readAppointmentTicket(accessToken, selected.id);
   const settlementFor = (appointmentId: string): SettlementState | null =>
     settlements === null ? null : settlementOf(settlements, appointmentId);
 
@@ -232,6 +237,7 @@ export default async function CheckoutPage({ params, searchParams }: CheckoutPag
             countryCode={tenant.address?.country ?? null}
             settlement={settlementFor(selected.id)}
             tenantSlug={tenantSlug}
+            ticket={ticket}
             timeZone={tenant.timezone}
           />
         </div>

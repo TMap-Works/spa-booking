@@ -86,13 +86,20 @@ const CATEGORIE = { slug: 'soins-du-corps', name: 'Soins du corps' };
  * Une seule prestation, et c'est voulu : le tunnel se choisit par libellé, et un
  * catalogue à une entrée rend le choix non ambigu sans dépendre de l'ordre de
  * tri. Soixante minutes tombent juste sur le pas de 15 minutes du calendrier.
+ *
+ * **78,00 € et non un montant rond**, depuis #835 : c'est le ticket du huitième
+ * critère, celui que `reglement-comptoir.e2e.ts` règle en 50,00 € d'espèces puis
+ * 28,00 € au terminal. Un prix qui ne se divise pas en deux parts égales est ce
+ * qui rend le scénario lisible — les deux montants du reçu ne peuvent pas être
+ * confondus l'un avec l'autre. L'établissement n'a pas de taux de taxe, si bien
+ * que le total du ticket **est** ce prix.
  */
 const PRESTATION = {
   slug: 'massage-signature',
   name: 'Massage signature',
   description: 'Massage du corps entier, huiles chaudes.',
   durationMinutes: 60,
-  priceAmountMinor: 6000,
+  priceAmountMinor: 7800,
   priceCurrency: DEVISE,
 };
 

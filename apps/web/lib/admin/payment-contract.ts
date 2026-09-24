@@ -43,7 +43,6 @@
 
 import {
   nonNegativeMoneySchema,
-  paymentIntentSchema,
   paymentMethodSchema,
   paymentSchema,
   paymentStatusSchema,
@@ -72,43 +71,18 @@ export const receivedPaymentStatusSchema = z
   .transform((value) => value.toLowerCase())
   .pipe(paymentStatusSchema);
 
-/**
- * L'intention de paiement d'un rendez-vous — de quoi monter Stripe Elements.
+/*
+ * ## L'intention de paiement a quitté ce module — #835, ADR 0015
  *
- * Les deux valeurs sensibles en apparence ne le sont pas :
- *
- * - `clientSecret` est un laissez-passer à usage unique qui n'autorise que la
- *   confirmation de **cette** intention. Il n'ouvre aucune autre ressource, et
- *   il n'est pas conservé — une reprise le redemande à sa source ;
- * - `publishableKey` est publiable par définition (payments-stripe §7). La clé
- *   **secrète** ne quitte jamais le serveur d'API.
- *
- * C'est ce qui permet à ces deux champs de traverser la frontière serveur vers
- * le navigateur, là où un jeton de session ne le pourrait pas.
- *
- * Les six clés viennent maintenant de `paymentIntentSchema` : seul le statut est
- * réécrit, parce que l'API l'émet en majuscules et que la conversion appartient
- * à la frontière.
- *
- * ## Pourquoi le `.strip()` explicite, contre le `.strict()` du contrat
- *
- * Le schéma partagé est `.strict()`, et c'est juste **en entrée** : un
- * `cardNumber` glissé dans un corps de requête doit sortir en refus nommé plutôt
- * que d'être ignoré. En **lecture**, la même rigueur se retournerait contre ce
- * qu'elle protège : si l'API se mettait un jour à émettre un champ de carte, un
- * schéma strict ferait échouer la réponse entière et fermerait le tunnel de
- * paiement, là où un `.strip()` le retire et laisse le parcours vivre. La donnée
- * n'atteint ni composant ni journal dans les deux cas (payments-stripe §1) ;
- * seule diffère la manière dont le front survit à l'incident.
+ * `appointmentPaymentIntentSchema` décrivait ce que le comptoir lisait pour
+ * monter Stripe Elements. Le comptoir ne monte plus rien : la carte se règle sur
+ * le **TPE autonome** de la banque du salon, et l'application n'enregistre que
+ * l'issue que le caissier déclare. Le schéma partagé `paymentIntentSchema`
+ * reste publié — `POST /public/{slug}/payments/intents` est toujours servie pour
+ * un éventuel paiement en ligne — mais plus aucun écran du back-office ne la
+ * lit, et c'est ce qui permet à la dépendance Stripe côté navigateur de partir
+ * avec le formulaire (premier critère de #835).
  */
-export const appointmentPaymentIntentSchema = paymentIntentSchema
-  .extend({
-    amount: nonNegativeMoneySchema,
-    status: receivedPaymentStatusSchema,
-  })
-  .strip();
-
-export type AppointmentPaymentIntent = z.infer<typeof appointmentPaymentIntentSchema>;
 
 /**
  * Un encaissement inscrit, tel que le comptoir le relit après un règlement en
@@ -272,6 +246,24 @@ export const saleSummarySchema = z.object({
   tax: nonNegativeMoneySchema,
   tip: nonNegativeMoneySchema,
   total: nonNegativeMoneySchema,
+  /**
+   * Ce que le ticket a **déjà** encaissé, et ce qu'il reste à prendre — #817,
+   * lus par l'écran de comptoir depuis #835.
+   *
+   * Ils sont la raison pour laquelle le règlement mixte ne demande aucune
+   * arithmétique au front : `remaining` est `total − settled` **calculé par le
+   * serveur**, relu sous verrou à chaque règlement. Le comptoir affiche ce
+   * chiffre, il ne le compose pas — soustraire ici deux montants produirait un
+   * second reste dû, susceptible de diverger de celui que la base tient, et
+   * c'est devant la cliente que l'écart se verrait (payments-stripe §5).
+   *
+   * `settledAt` est l'instant du solde, `null` tant qu'il reste un centime dû.
+   * C'est lui, et non un `remaining` à zéro lu de loin, qui dit qu'un ticket ne
+   * se règle plus : l'API refuse alors en 409 `SALE_ALREADY_SETTLED`.
+   */
+  settled: nonNegativeMoneySchema,
+  remaining: nonNegativeMoneySchema,
+  settledAt: utcInstantSchema.nullable(),
   createdAt: utcInstantSchema,
 });
 

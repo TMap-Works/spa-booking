@@ -1,9 +1,9 @@
 import type { CalendarDate, TimeZone } from '@spa/shared';
 import { MAX_PAGE_SIZE } from '@spa/shared';
 
-import type { PaymentTransaction } from '@/lib/admin/payment-contract';
+import type { PaymentTransaction, SaleSummary } from '@/lib/admin/payment-contract';
 import { windowOfRange } from '@/lib/admin/reporting-window';
-import { fetchPayments } from '@/lib/api-client';
+import { fetchAppointmentSales, fetchPayments } from '@/lib/api-client';
 import { addCalendarDays } from '@/lib/booking/calendar';
 
 /**
@@ -97,4 +97,45 @@ export async function readDaySettlements(
   }
 
   return collected;
+}
+
+/**
+ * Le ticket de caisse en cours sur ce rendez-vous — `null` s'il n'y en a pas
+ * encore, ou si la lecture n'a pas abouti (#835, quatrième critère).
+ *
+ * ## Pourquoi c'est une lecture, et pourquoi elle est ici
+ *
+ * Parce qu'ouvrir l'écran ne doit **rien écrire**. Composer le ticket à
+ * l'affichage laisserait une pièce comptable ouverte derrière chaque
+ * rendez-vous simplement consulté, et la journée de caisse porterait des
+ * tickets que personne n'a demandés. Le ticket est donc composé au **premier
+ * règlement** — `openCheckoutTicketAction` —, et cette lecture-ci ne sert qu'à
+ * retrouver celui qui existe déjà.
+ *
+ * Elle est ce qui rend le règlement mixte survivable : entre les 50,00 €
+ * d'espèces et les 28,00 € du terminal, l'opérateur peut rafraîchir, changer de
+ * poste ou fermer l'onglet. Sans elle, le geste suivant composerait un second
+ * ticket et le reste dû du premier resterait en l'air.
+ *
+ * ## Un refus n'est pas une panne
+ *
+ * Même conduite que la journée de caisse juste au-dessus : `null` veut dire
+ * « inconnu », pas « rien ». L'écran repart alors du montant dû du rendez-vous,
+ * et le ticket sera retrouvé — et non recomposé — au premier règlement, puisque
+ * l'action refait la même recherche côté serveur avant d'écrire.
+ */
+export async function readAppointmentTicket(
+  accessToken: string,
+  appointmentId: string,
+): Promise<SaleSummary | null> {
+  try {
+    const sales = await fetchAppointmentSales(accessToken, appointmentId);
+
+    // Le ticket encore ouvert d'abord ; à défaut le plus récent, qui dira de
+    // lui-même qu'il est soldé. `undefined` n'est pas une réponse que cet écran
+    // sache lire — il n'a que deux cas, un ticket ou pas.
+    return sales.find((sale) => sale.settledAt === null) ?? sales[0] ?? null;
+  } catch {
+    return null;
+  }
 }

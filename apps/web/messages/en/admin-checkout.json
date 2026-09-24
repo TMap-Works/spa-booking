@@ -44,27 +44,26 @@
     "settled": "settled",
     "refunded": "refunded",
     "partiallyRefunded": "partially refunded",
-    "cardOpen": "card in progress",
-    "cardFailed": "card failed",
+    "cardOpen": "online payment in progress",
+    "cardFailed": "online payment failed",
     "due": "to settle"
   },
   "method": {
     "legend": "Payment method",
     "cash": "Cash",
-    "card": "Card",
+    "card": "Bank card (terminal)",
     "cashPhrase": "in cash",
-    "cardPhrase": "by card",
-    "cashHint": "Recorded with the operator and a timestamp; the till is the reference at reconciliation. No call to the payment provider.",
-    "cardHint": "The client enters their card in fields served by Stripe. No number is entered, seen or kept by the salon.",
+    "cardPhrase": "by bank card (terminal)",
+    "cashHint": "Recorded with the operator and a timestamp; the till is the reference at reconciliation.",
+    "cardHint": "The amount is keyed on the salon’s own bank terminal, which is not wired to the application. No card number is entered, seen or kept.",
     "unavailableTitle": "{method} unavailable"
   },
   "blocker": {
     "nothingToSettleTitle": "Nothing to settle",
     "cancelled": "This appointment is cancelled: the slot has been released, there is no service left to settle.",
     "alreadySettled": "This appointment has already been settled: a second payment would create one accounting record too many.",
-    "cardOpenBlocksCash": "A card payment is already open on this appointment. Finish it — a cash settlement would be refused while it runs.",
-    "cardFailedBlocksCash": "A failed card payment intent is still attached to this appointment. Resume the card — a cash settlement would be refused until it is cleared.",
-    "cardNotPayable": "Card payment does not accept an appointment that is already completed or was a no-show. Settle in cash, or with the counter terminal."
+    "onlinePaymentOpen": "An online payment is still in flight on this appointment. Wait for it to conclude — a counter settlement would be refused while it runs.",
+    "onlinePaymentFailed": "A failed online payment intent is still attached to this appointment. It must be cleared before settling at the counter."
   },
   "settlement": {
     "title": "Settled {method} — {amount}",
@@ -74,31 +73,50 @@
     "reprint": "Reprint the receipt",
     "alreadySettledTitle": "Appointment already settled"
   },
+  "ticket": {
+    "opening": "Opening the till receipt…",
+    "unavailableTitle": "Till receipt unavailable",
+    "totalLabel": "Receipt total",
+    "settledLabel": "Already settled",
+    "remainingLabel": "Left to pay",
+    "priceDrift": "The receipt total ({ticket}) differs from the amount fixed at booking ({booked}). The receipt is what counts at checkout: announce that amount.",
+    "settlementsTitle": "Recorded settlements",
+    "settlementsCaption": "Settlements already recorded on this receipt",
+    "settlementReference": "Terminal no. {reference}",
+    "replayed": "Replayed submission: this settlement was already recorded. Nothing was taken twice."
+  },
+  "amount": {
+    "partialToggle": "Settle part of it",
+    "partialHint": "Clear it to settle everything left to pay in one go.",
+    "partialLabel": "Amount for this settlement",
+    "invalid": "Unreadable amount. Enter a sum such as “28.00”.",
+    "tooHigh": "That amount is more than what is left to pay ({amount}).",
+    "tenderedLabel": "Amount handed over by the client",
+    "tenderedHint": "Optional. The change to give back is computed by the server.",
+    "tenderedTooLow": "The amount handed over must cover the settlement ({amount}).",
+    "changeTitle": "Change to give back"
+  },
+  "terminal": {
+    "instructionTitle": "Key this amount on the terminal",
+    "instructionBody": "The terminal is the salon’s own, from its bank: the application does not talk to it. Run the card, then declare the outcome below.",
+    "referenceLabel": "Terminal receipt no.",
+    "referenceHint": "Optional — the operation number the terminal prints. At most 32 alphanumeric characters, no spaces or dashes.",
+    "referenceInvalid": "At most 32 alphanumeric characters, no spaces or dashes.",
+    "accept": "Payment accepted on the terminal",
+    "decline": "Payment declined",
+    "declinedNotice": "Payment declined on the terminal. Nothing was recorded: pick another method, or try again."
+  },
   "action": {
     "settleCash": "Take {amount} in cash",
     "settleCashLoading": "Settling…",
-    "openCard": "Pay {amount} by card",
-    "openCardLoading": "Opening the payment…",
-    "confirmCard": "Take {amount} by card",
-    "confirmCardLoading": "Payment in progress…"
+    "settleTerminal": "Settle {amount} on the terminal",
+    "settleTerminalLoading": "Recording the settlement…"
   },
   "pci": {
     "cash": "No call to the payment provider on this path: the sale is recorded with its operator and its timestamp, and the till is the reference at reconciliation.",
-    "card": "Card fields are served by Stripe: no number is entered here, nor written down anywhere else.",
-    "cardForm": "Card fields are served by Stripe: no number is entered anywhere else, written down anywhere else, or passed through the salon or our servers."
-  },
-  "card": {
-    "unavailableTitle": "Card payment unavailable",
-    "cashStillPossible": "Settling in cash is still possible.",
-    "loadFailedScript": "Stripe’s payment module could not be loaded. Check this workstation’s connection.",
-    "loadFailedEntrypoint": "Stripe.js loaded without exposing its entry point.",
-    "loadFailedUnknown": "The payment module could not be loaded.",
-    "declined": "The payment was declined.",
-    "unknownStatus": "unknown",
-    "notCompleted": "The payment did not go through (state “{status}”). Nothing was charged: try again, or settle in cash."
+    "card": "The salon’s terminal stands alone: the application does not talk to it and receives no card data. No number is entered here, nor written down anywhere else."
   },
   "receipt": {
-    "acceptedTitle": "Payment accepted by the provider",
     "recordedTitle": "Settlement recorded — {amount}",
     "heading": "Till receipt",
     "loading": "Preparing the receipt…",
@@ -108,9 +126,7 @@
     "pdfTicket": "Receipt PDF",
     "pdfInvoice": "A4 invoice",
     "label": "Receipt",
-    "provisionalTitle": "Provisional receipt",
     "finalTitle": "Receipt",
-    "pendingNote": "Payment awaiting confirmation.",
     "client": "Client",
     "staff": "Practitioner",
     "linesCaption": "Receipt lines",
@@ -122,20 +138,19 @@
     "kept": "Amount kept",
     "payment": "Payment",
     "thanks": "Thank you for your visit!",
-    "provisionalDisclaimer": "The final confirmation is recorded by the signed webhook, server side: this receipt proves the attempt, not the capture.",
-    "cashDisclaimer": "Cash settlement recorded and timestamped. The till is the reference at reconciliation.",
-    "settledCardDisclaimer": "Card settlement recorded in the database, on confirmation from the signed webhook. This receipt is final."
+    "cashDisclaimer": "Settlement recorded and timestamped, with its operator. The till and the terminal’s printout are the reference at reconciliation."
   },
   "completion": {
-    "card": "Moving the appointment to “completed” is not served by the API yet: the status will follow the webhook confirmation, with nothing to redo here.",
-    "cash": "Moving the appointment to “completed” is not served by the API yet: the settlement is recorded, and the appointment status will follow with nothing to redo here."
+    "settled": "Moving the appointment to “completed” stays a salon gesture: the settlement is recorded, the status is changed from the schedule."
   },
   "failure": {
-    "providerUnreachable": "The payment provider did not answer. Nothing was charged: try again, or settle in cash.",
-    "alreadySettled": "This appointment has already been settled. Reload the screen before carrying on — a second payment would create one accounting record too many.",
-    "notPayable": "Card payment does not accept this appointment: it is cancelled, completed or a no-show. Settle in cash if the service was delivered.",
+    "providerUnreachable": "The till did not answer. Nothing was taken: try again in a moment.",
+    "alreadySettled": "This receipt has already been settled in full. Reload the screen before carrying on — a second payment would create one accounting record too many.",
+    "notPayable": "This appointment no longer accepts a settlement: it is cancelled. Nothing was taken.",
     "notSettleable": "This appointment is cancelled: there is no service left to settle.",
-    "tooManyRequests": "Too many payments opened in a short time. Wait a few seconds before trying again.",
+    "overpayment": "That amount is more than what is left to pay on the receipt. Nothing was taken: reload the screen to read the remainder again.",
+    "terminalReferenceRefused": "The terminal receipt number was refused: at most 32 alphanumeric characters, and it cannot look like a card number.",
+    "tooManyRequests": "Too many requests in a short time. Wait a few seconds before trying again.",
     "notFound": "This appointment cannot be found in this salon.",
     "forbidden": "Your account is not allowed to take payments. Ask the salon administrator for access.",
     "unknownTarget": "Unknown appointment or salon.",

@@ -17,9 +17,13 @@
  *   · ESPÈCES — aucun appel Stripe. La vente est enregistrée avec son opérateur,
  *     son horodatage et son montant ; c'est la caisse qui fait foi au
  *     rapprochement.
- *   · CARTE — le montant part vers un lecteur Stripe Terminal, et l'écran suit
- *     l'état du lecteur. Le client compose son code sur le lecteur, pas chez
- *     nous. À défaut de lecteur, un lien de paiement lui est envoyé.
+ *   · CARTE (TPE) — le montant s'affiche en grand, le caissier le saisit sur le
+ *     terminal de la banque du salon, et déclare l'issue. Le terminal est
+ *     **autonome** : l'application ne lui parle pas et ne reçoit aucune donnée de
+ *     carte (ADR 0015, #834, #835). Le seul champ de saisie du panneau est le
+ *     numéro d'opération que le terminal imprime, facultatif, borné à 32
+ *     caractères alphanumériques et refusé en 400 par l'API s'il ressemble à un
+ *     numéro de carte.
  *
  * Un numéro dicté au téléphone et saisi dans un formulaire est exactement ce que
  * SAQ A interdit. La maquette n'offre nulle part où le taper — c'est la forme la
@@ -240,13 +244,73 @@
   color: var(--spa-color-text-muted);
 }
 
-/* --- État du lecteur ------------------------------------------------------- */
+/* --- Le chiffre que l'opérateur annonce ------------------------------------ */
 
 /*
- * Le lecteur Stripe Terminal a son propre état, indépendant de la vente : hors
- * ligne, prêt, en attente de la carte, en cours d'autorisation. L'afficher évite
- * la question la plus coûteuse du comptoir — « ça a marché ou pas ? » — devant un
- * client qui attend.
+ * Le montant à saisir sur le TPE, et la monnaie à rendre — #835, critères 2 et 3.
+ *
+ * Ces deux chiffres-là ne se cherchent pas dans une ligne de tableau : le
+ * premier se recopie sur un terminal sous les yeux de la cliente, le second se
+ * compte dans la main. Ils sont donc sortis de la pile des totaux et posés en
+ * grand, avec leur libellé au-dessus.
+ *
+ * Aucun des deux n'est calculé par le front : le montant vient du reste dû que
+ * le serveur tient, la monnaie du `change` que l'enveloppe de règlement rend
+ * (payments-stripe §5). Ce bloc ne fait que les rendre lisibles.
+ *
+ * `nowrap` sur le montant pour la raison qui le pose déjà sur le grand total :
+ * « 28,00 € » rendu « 28,00 » puis « € » à la ligne suivante est un prix qu'on
+ * lit de travers, et celui-ci se lit à voix haute.
+ */
+.spa-admin-checkout__callout {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spa-space-1);
+  padding: var(--spa-space-3);
+  border-radius: var(--spa-radius-md);
+  background-color: var(--spa-color-accent-soft);
+}
+
+.spa-admin-checkout__callout-label {
+  font-size: var(--spa-font-size-sm);
+  color: var(--spa-color-text-muted);
+}
+
+.spa-admin-checkout__callout-amount {
+  font-size: var(--spa-font-size-2xl);
+  font-weight: var(--spa-font-weight-semibold);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* --- Les règlements déjà pris ---------------------------------------------- */
+
+/*
+ * La liste des règlements inscrits sur le ticket — quatrième critère de #835,
+ * « les règlements déjà faits restent visibles ».
+ *
+ * Une liste et non un tableau : chaque entrée est une paire moyen/montant, et
+ * elle emprunte les lignes de la pile des totaux juste au-dessus, dont c'est
+ * exactement la forme. Les puces tombent — la structure sert le lecteur d'écran,
+ * pas la mise en page.
+ */
+.spa-admin-checkout__settlements {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spa-space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* --- État du terminal ------------------------------------------------------ */
+
+/*
+ * Le bandeau qui explique le geste au comptoir : le TPE est **celui de la banque
+ * du salon**, autonome, et l'application ne lui parle pas (ADR 0015). Il ne
+ * reflète donc aucun état de lecteur — il n'y a pas de lecteur à interroger —,
+ * il dit ce que l'opérateur a à faire, et ce que l'écran attend de lui ensuite :
+ * déclarer l'issue.
  */
 .spa-admin-checkout__terminal {
   display: flex;
@@ -259,6 +323,11 @@
   font-size: var(--spa-font-size-sm);
 }
 
+/*
+ * Le même bandeau, en avertissement : l'issue déclarée est un **refus**. Il n'y
+ * a rien d'inscrit à annuler — l'application n'a appelé personne —, et le
+ * modificateur ne sert qu'à distinguer d'un coup d'œil la consigne du constat.
+ */
 .spa-admin-checkout__terminal--offline {
   background-color: var(--spa-color-warning-surface);
   color: var(--spa-color-warning);

@@ -1,4 +1,4 @@
-import type { Appointment, AppointmentStatus } from '@spa/shared';
+import type { Appointment, AppointmentStatus, SaleSettlement } from '@spa/shared';
 import { cleanup, render, screen, waitFor, type RenderResult } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { ReactElement } from 'react';
@@ -6,33 +6,31 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { CheckoutPanel } from '@/app/(admin)/[tenantSlug]/admin/components/checkout-panel';
 import type { SettlementState } from '@/lib/admin/checkout-summary';
+import type { SaleSummary } from '@/lib/admin/payment-contract';
 
 /**
- * Le panneau d'encaissement tel qu'il se manipule (#59, critères 2, 3, 4 et 5).
+ * Le panneau d'encaissement tel qu'il se manipule (#59, repris par #835).
  *
  * Les actions serveur sont doublées : ce qui est exercé ici est **l'écran** —
- * les moyens offerts, la protection du double clic, ce que le reçu affirme —,
- * pas le transport. Le transport a sa recette, et l'API a la sienne.
+ * les moyens offerts, le règlement mixte, la protection du double clic, ce que
+ * le reçu affirme —, pas le transport. Le transport a sa recette, l'API la
+ * sienne.
  *
- * Le SDK de Stripe est doublé lui aussi, et pour une raison qui n'est pas
- * seulement pratique : la vraie implémentation charge un script depuis
- * `js.stripe.com`, précisément parce que les champs carte ne doivent jamais
- * appartenir à notre DOM. Il n'y a donc rien à monter dans jsdom, et c'est le
- * signe que la frontière PCI tient.
+ * Il n'y a plus aucune doublure de SDK de paiement, et c'est le résultat qui
+ * compte le plus dans ce fichier : la carte se règle sur le **TPE autonome** de
+ * la banque du salon, l'application ne parle à personne, et il n'existe donc
+ * plus rien à monter — pas même une iframe (ADR 0015).
  */
 
-const settleInCashAction = vi.fn();
-const openCardPaymentAction = vi.fn();
+const openCheckoutTicketAction = vi.fn();
+const settleTicketAction = vi.fn();
 const loadReceiptAction = vi.fn();
 const replace = vi.fn();
 const refresh = vi.fn();
-const confirmPayment = vi.fn();
-const mount = vi.fn();
-const destroy = vi.fn();
 
 vi.mock('@/app/(admin)/[tenantSlug]/admin/encaissement/actions', () => ({
-  settleInCashAction: (...args: unknown[]) => settleInCashAction(...args),
-  openCardPaymentAction: (...args: unknown[]) => openCardPaymentAction(...args),
+  openCheckoutTicketAction: (...args: unknown[]) => openCheckoutTicketAction(...args),
+  settleTicketAction: (...args: unknown[]) => settleTicketAction(...args),
   loadReceiptAction: (...args: unknown[]) => loadReceiptAction(...args),
 }));
 
@@ -43,59 +41,94 @@ vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: vi.fn(), refresh, replace }),
 }));
 
-// Le module réel est conservé et seul `loadStripeSdk` est doublé : le
-// formulaire de carte importe aussi `StripeLoadError` — une **valeur**, dont il
-// se sert pour classer un échec de chargement — et une doublure qui ne
-// l'exporterait pas ferait échouer l'accès plutôt que le chargement (#850).
-vi.mock('@/lib/admin/payment-stripe', async () => {
-  const actual =
-    await vi.importActual<typeof import('@/lib/admin/payment-stripe')>(
-      '@/lib/admin/payment-stripe',
-    );
-
-  return {
-    ...actual,
-    loadStripeSdk: () =>
-      Promise.resolve({
-        elements: () => ({ create: () => ({ mount, unmount: vi.fn(), destroy }) }),
-        confirmPayment: (...args: unknown[]) => confirmPayment(...args),
-      }),
-  };
-});
-
 const SLUG = 'maison-lotus';
 const TIMEZONE = 'Indian/Antananarivo';
 const APPOINTMENT_ID = 'aaaaaaaa-0000-4000-8000-000000000001';
+const SERVICE_ID = 'eeeeeeee-0000-4000-8000-000000000004';
+const SALE_ID = '99999999-0000-4000-8000-000000000009';
+
+/** Un ticket de 78,00 € — celui du huitième critère de #835. */
+function sale(settledMinor = 0): SaleSummary {
+  return {
+    id: SALE_ID,
+    appointmentId: APPOINTMENT_ID,
+    cashierUserId: 'bbbbbbbb-0000-4000-8000-000000000008',
+    subtotal: { amountMinor: 7800, currency: 'EUR' },
+    tax: { amountMinor: 0, currency: 'EUR' },
+    tip: { amountMinor: 0, currency: 'EUR' },
+    total: { amountMinor: 7800, currency: 'EUR' },
+    settled: { amountMinor: settledMinor, currency: 'EUR' },
+    remaining: { amountMinor: 7800 - settledMinor, currency: 'EUR' },
+    settledAt: settledMinor === 7800 ? '2026-09-05T07:05:00.000Z' : null,
+    createdAt: '2026-09-05T07:00:00.000Z',
+  };
+}
+
+function settlement(
+  amountMinor: number,
+  method: 'cash' | 'card',
+  remainingMinor: number,
+  extra: { readonly changeMinor?: number; readonly terminalReference?: string } = {},
+): SaleSettlement {
+  return {
+    payment: {
+      id: `ffffffff-0000-4000-8000-00000000000${String(amountMinor).slice(0, 1)}`,
+      appointmentId: APPOINTMENT_ID,
+      saleId: SALE_ID,
+      amount: { amountMinor, currency: 'EUR' },
+      refunded: { amountMinor: 0, currency: 'EUR' },
+      method,
+      cardChannel: method === 'card' ? 'TERMINAL' : null,
+      terminalReference: extra.terminalReference ?? null,
+      status: 'succeeded',
+      capturedAt: '2026-09-05T07:05:00.000Z',
+      createdAt: '2026-09-05T07:05:00.000Z',
+    },
+    saleId: SALE_ID,
+    total: { amountMinor: 7800, currency: 'EUR' },
+    settled: { amountMinor: 7800 - remainingMinor, currency: 'EUR' },
+    remaining: { amountMinor: remainingMinor, currency: 'EUR' },
+    change: { amountMinor: extra.changeMinor ?? 0, currency: 'EUR' },
+    settledAt: remainingMinor === 0 ? '2026-09-05T07:05:00.000Z' : null,
+    replayed: false,
+  };
+}
 
 function appointment(status: AppointmentStatus = 'confirmed'): Appointment {
   return {
     id: APPOINTMENT_ID,
     reference: 'RDV-8F3K-27',
     status,
-    client: { id: 'cccccccc-0000-4000-8000-000000000002', firstName: 'Rina', lastName: 'Andriamana' },
+    client: {
+      id: 'cccccccc-0000-4000-8000-000000000002',
+      firstName: 'Rina',
+      lastName: 'Andriamana',
+    },
     staff: { id: 'dddddddd-0000-4000-8000-000000000003', displayName: 'Hasina' },
     service: {
-      id: 'eeeeeeee-0000-4000-8000-000000000004',
+      id: SERVICE_ID,
       name: 'Massage suédois',
       durationMinutes: 60,
-      price: { amountMinor: 3500, currency: 'EUR' },
+      price: { amountMinor: 7800, currency: 'EUR' },
     },
     startsAt: '2026-09-05T06:00:00.000Z',
     endsAt: '2026-09-05T07:00:00.000Z',
-    price: { amountMinor: 3500, currency: 'EUR' },
+    price: { amountMinor: 7800, currency: 'EUR' },
     createdAt: '2026-09-01T08:00:00.000Z',
   };
 }
 
 function panel(
   status: AppointmentStatus = 'confirmed',
-  settlement: SettlementState | null = null,
+  settlementState: SettlementState | null = null,
+  ticket: SaleSummary | null = null,
 ): ReactElement {
   return (
     <CheckoutPanel
       appointment={appointment(status)}
-      settlement={settlement}
+      settlement={settlementState}
       tenantSlug={SLUG}
+      ticket={ticket}
       timeZone={TIMEZONE}
     />
   );
@@ -110,15 +143,17 @@ function panel(
  */
 function renderPanel(
   status: AppointmentStatus = 'confirmed',
-  settlement: SettlementState | null = null,
+  settlementState: SettlementState | null = null,
+  ticket: SaleSummary | null = null,
 ): RenderResult {
-  return render(panel(status, settlement));
+  return render(panel(status, settlementState, ticket));
 }
 
 const CASH_TRANSACTION = {
   id: 'ffffffff-0000-4000-8000-000000000005',
   appointmentId: APPOINTMENT_ID,
-  amount: { amountMinor: 3500, currency: 'EUR' },
+  saleId: SALE_ID,
+  amount: { amountMinor: 7800, currency: 'EUR' },
   refunded: { amountMinor: 0, currency: 'EUR' },
   method: 'cash' as const,
   status: 'succeeded' as const,
@@ -126,41 +161,59 @@ const CASH_TRANSACTION = {
   createdAt: '2026-09-05T07:05:00.000Z',
 };
 
+/** Le clic qui règle : le bouton des espèces, ou l'acceptation du TPE. */
+const CASH_BUTTON = /en espèces/;
+
 afterEach(() => {
   cleanup();
-  settleInCashAction.mockReset();
-  openCardPaymentAction.mockReset();
+  openCheckoutTicketAction.mockReset();
+  settleTicketAction.mockReset();
   loadReceiptAction.mockReset();
-  confirmPayment.mockReset();
   refresh.mockReset();
-  mount.mockReset();
-  destroy.mockReset();
 });
 
 describe('le choix du moyen de paiement', () => {
-  it('offre les espèces et la carte, et rien qui suppose un lecteur absent', () => {
+  it('offre exactement deux moyens : les espèces et la carte au TPE', () => {
     renderPanel();
 
     expect(screen.getAllByRole('radio')).toHaveLength(2);
     expect(screen.getByRole('radio', { name: /Espèces/ })).toBeDefined();
-    expect(screen.getByRole('radio', { name: /Carte/ })).toBeDefined();
+    expect(screen.getByRole('radio', { name: /Carte bancaire \(TPE\)/ })).toBeDefined();
   });
 
-  it('n’offre nulle part où saisir un numéro de carte', () => {
-    // La preuve la plus solide de la frontière PCI : il n'y a aucun champ de
-    // saisie sur ce panneau, hors les deux boutons radio du moyen de paiement.
+  it('n’offre nulle part où saisir un numéro de carte, et ne nomme plus Stripe', () => {
+    // Sixième critère de #835, et la garantie la plus coûteuse à perdre du
+    // projet : un champ de carte ferait basculer le périmètre de SAQ A à SAQ D.
     renderPanel();
 
+    // Seules les saisies **libres** sont examinées : un bouton radio ne porte
+    // pas de numéro, et c'est le même découpage que la garde des maquettes
+    // (`tests/admin-mockups.test.mjs`).
+    const freeText = /^(?:text|tel|number|password|email|search)$/;
+
     for (const field of document.querySelectorAll('input')) {
-      expect(field.getAttribute('type')).toBe('radio');
+      expect(field.getAttribute('autocomplete') ?? '').not.toMatch(/^cc-/);
+
+      if (!freeText.test(field.getAttribute('type') ?? 'text')) {
+        continue;
+      }
+
+      const identity = [field.id, field.name, field.getAttribute('placeholder') ?? ''].join(' ');
+
+      expect(identity).not.toMatch(/carte|card|cvc|cvv|expirat/i);
     }
+
+    expect(document.body.textContent).not.toMatch(/Stripe/i);
   });
 
-  it('ferme la carte sur un rendez-vous honoré, et dit ce qu’il reste à faire', () => {
+  it('laisse encaisser un rendez-vous honoré par l’un ou l’autre moyen', () => {
+    // Le tunnel en ligne refusait ces statuts en 422 ; le comptoir n'ouvre plus
+    // d'intention, et les deux moyens acceptent donc les mêmes.
     renderPanel('completed');
 
-    expect(screen.getByRole('radio', { name: /Carte/ })).toHaveProperty('disabled', true);
-    expect(screen.getByRole('radio', { name: /Espèces/ })).toHaveProperty('disabled', false);
+    for (const radio of screen.getAllByRole('radio')) {
+      expect(radio).toHaveProperty('disabled', false);
+    }
   });
 
   it('n’encaisse rien sur un rendez-vous annulé', () => {
@@ -171,166 +224,128 @@ describe('le choix du moyen de paiement', () => {
   });
 });
 
-describe('un rendez-vous déjà réglé (#828)', () => {
-  const SETTLED_BY_CARD: SettlementState = {
-    kind: 'regle',
-    payment: { ...CASH_TRANSACTION, method: 'card' },
-  };
-
-  it('n’offre plus aucun encaissement — ni moyen, ni bouton', () => {
-    // L'écran ouvrait ce rendez-vous avec « À encaisser », ses deux moyens et un
-    // bouton actif ; le refus n'arrivait qu'après le clic, en 409.
-    renderPanel('completed', SETTLED_BY_CARD);
-
-    expect(screen.queryAllByRole('radio')).toHaveLength(0);
-    expect(screen.queryByRole('button', { name: /Encaisser/ })).toBeNull();
-    expect(screen.queryByRole('button', { name: /Payer/ })).toBeNull();
-  });
-
-  it('annonce le règlement avant le clic — moyen, montant et instant', () => {
-    renderPanel('completed', SETTLED_BY_CARD);
-
-    expect(screen.getByText(/Réglé par carte/)).toBeDefined();
-    expect(screen.getByText(/35,00/)).toBeDefined();
-    expect(screen.getByText(/Encaissement inscrit le/)).toBeDefined();
-  });
-
-  it('propose de réimprimer le ticket, et ce reçu-là n’est pas provisoire', async () => {
-    // Le webhook signé a écrit la ligne qu'on vient de relire : la réimpression
-    // est définitive, là où le reçu imprimé sur la réponse du navigateur ne
-    // l'était pas (payments-stripe §2).
-    renderPanel('completed', SETTLED_BY_CARD);
-
-    await userEvent.click(screen.getByRole('button', { name: 'Réimprimer le ticket' }));
-
-    expect(await screen.findByText(/Encaissement enregistré/)).toBeDefined();
-    expect(screen.getByText(/définitif/i)).toBeDefined();
-    expect(screen.queryByText(/pas de capture/i)).toBeNull();
-  });
-
-  it('écrit le remboursement sur le ticket réimprimé, jamais la somme entière', async () => {
-    // Le ticket se remet en main propre : lui faire affirmer « Total 35,00 € »
-    // sur un encaissement que le prestataire a rendu contredirait le bandeau
-    // au-dessus, qui annonce déjà le remboursement (#63).
-    renderPanel('completed', {
-      kind: 'regle',
-      payment: {
-        ...CASH_TRANSACTION,
-        method: 'card',
-        status: 'refunded',
-        refunded: { amountMinor: 3500, currency: 'EUR' },
-      },
-    });
-
-    await userEvent.click(screen.getByRole('button', { name: 'Réimprimer le ticket' }));
-
-    expect(await screen.findByText('Remboursé')).toBeDefined();
-    expect(screen.getByText('Reste acquis')).toBeDefined();
-    // « Total » ne subsiste que comme en-tête de la colonne des lignes ; la
-    // ligne des totaux, elle, ne l'écrit plus.
-    expect(screen.queryByText('Total', { selector: 'span' })).toBeNull();
-    expect(screen.getByText(/0,00/)).toBeDefined();
-  });
-
-  it('ferme les espèces et présélectionne la carte quand une intention court', () => {
-    // `replayOrRefuse` refuse les espèces tant qu'une intention carte existe :
-    // ouvrir l'écran sur une case grisée ferait chercher la panne.
-    renderPanel('confirmed', { kind: 'ouvert', payment: CASH_TRANSACTION });
-
-    expect(screen.getByRole('radio', { name: /Espèces/ })).toHaveProperty('disabled', true);
-    expect(screen.getByRole('radio', { name: /Carte/ })).toHaveProperty('checked', true);
-  });
-
-  it('laisse l’écran intact quand l’historique n’a pas répondu', () => {
-    // `null` n'est pas « rien n'est réglé » : la route est au seuil `MANAGER`, et
-    // un comptoir `STAFF` doit pouvoir encaisser malgré tout.
-    renderPanel('confirmed', null);
-
-    expect(screen.getAllByRole('radio')).toHaveLength(2);
-    expect(screen.getByRole('button', { name: /en espèces/ })).toBeDefined();
-  });
-
-  it('bascule l’écran sur le refus 409 au lieu de laisser le bouton actif', async () => {
-    settleInCashAction.mockResolvedValue({
-      ok: false,
-      code: 'PAYMENT_ALREADY_SETTLED',
-      message: 'Already settled.',
-    });
-    renderPanel();
-
-    await userEvent.click(screen.getByRole('button', { name: /en espèces/ }));
-
-    expect(await screen.findByText('Rendez-vous déjà encaissé')).toBeDefined();
-    expect(screen.queryByRole('button', { name: /en espèces/ })).toBeNull();
-  });
-
-  it('bascule aussi sur le ticket soldé, et n’affiche pas le message brut de l’API', async () => {
-    // La reproduction exacte de l'audit `d20260917-2` (#1005) : second clic sur
-    // un rendez-vous déjà réglé. La route rend 409 `SALE_ALREADY_SETTLED` depuis
-    // qu'elle compose la vente avant de la régler (#817) ; l'écran laissait
-    // passer ce code, affichait « Ce ticket a déjà été réglé. » en ligne rouge et
-    // gardait son bouton recliquable — un second clic ne pouvait qu'échouer de la
-    // même façon, devant la cliente.
-    settleInCashAction.mockResolvedValue({
-      ok: false,
-      code: 'SALE_ALREADY_SETTLED',
-      message: 'Ce ticket a déjà été réglé.',
-    });
-    renderPanel();
-
-    await userEvent.click(screen.getByRole('button', { name: /en espèces/ }));
-
-    expect(await screen.findByText('Rendez-vous déjà encaissé')).toBeDefined();
-    // Le bouton **et** le choix du moyen ont disparu : c'est un état de l'écran,
-    // pas une ligne glissée entre les moyens de paiement et un bouton resté plein.
-    expect(screen.queryByRole('button', { name: /en espèces/ })).toBeNull();
-    expect(screen.queryAllByRole('radio')).toHaveLength(0);
-    // Et le texte est celui de l'écran, pas celui que l'API a rendu.
-    expect(screen.queryByText('Ce ticket a déjà été réglé.')).toBeNull();
-  });
-});
-
 describe('le règlement en espèces', () => {
-  it('n’envoie que l’établissement et le rendez-vous — jamais un montant', async () => {
-    // Le prix est celui figé à la réservation, relu en base : un montant envoyé
-    // par l'écran serait un prix choisi par l'écran.
-    settleInCashAction.mockResolvedValue({ ok: true, data: CASH_TRANSACTION });
+  it('compose le ticket au premier règlement, jamais à l’affichage', async () => {
+    // Ouvrir l'écran d'un rendez-vous ne doit laisser aucune pièce comptable
+    // derrière soi : le ticket naît du clic, pas du rendu.
+    openCheckoutTicketAction.mockResolvedValue({ ok: true, data: sale() });
+    settleTicketAction.mockResolvedValue({ ok: true, data: settlement(7800, 'cash', 0) });
+    loadReceiptAction.mockResolvedValue({ ok: false, code: 'X', message: 'x' });
     renderPanel();
 
-    await userEvent.click(screen.getByRole('button', { name: /en espèces/ }));
+    expect(openCheckoutTicketAction).not.toHaveBeenCalled();
+
+    await userEvent.click(screen.getByRole('button', { name: CASH_BUTTON }));
 
     await waitFor(() => {
-      expect(settleInCashAction).toHaveBeenCalledWith(SLUG, APPOINTMENT_ID);
+      expect(openCheckoutTicketAction).toHaveBeenCalledWith(SLUG, APPOINTMENT_ID, SERVICE_ID);
     });
   });
 
-  it('rend un reçu définitif — la caisse fait foi', async () => {
-    settleInCashAction.mockResolvedValue({ ok: true, data: CASH_TRANSACTION });
+  it('règle tout le reste dû, et n’envoie aucun total', async () => {
+    // Le corps porte la **part** réglée maintenant, jamais le total du ticket :
+    // celui-là est composé par le serveur et relu sous verrou (#817).
+    openCheckoutTicketAction.mockResolvedValue({ ok: true, data: sale() });
+    settleTicketAction.mockResolvedValue({ ok: true, data: settlement(7800, 'cash', 0) });
+    loadReceiptAction.mockResolvedValue({ ok: false, code: 'X', message: 'x' });
     renderPanel();
 
-    await userEvent.click(screen.getByRole('button', { name: /en espèces/ }));
+    await userEvent.click(screen.getByRole('button', { name: CASH_BUTTON }));
 
-    expect(await screen.findByText(/Encaissement enregistré/)).toBeDefined();
-    expect(screen.getByText(/caisse qui fait foi/i)).toBeDefined();
-    expect(screen.getByRole('button', { name: 'Imprimer le ticket' })).toBeDefined();
+    await waitFor(() => {
+      expect(settleTicketAction).toHaveBeenCalledTimes(1);
+    });
+
+    const [slug, saleId, body, key] = settleTicketAction.mock.calls[0] as [
+      string,
+      string,
+      Record<string, unknown>,
+      string,
+    ];
+
+    expect(slug).toBe(SLUG);
+    expect(saleId).toBe(SALE_ID);
+    expect(body).toEqual({ method: 'CASH', amountMinor: 7800 });
+    expect(key.length).toBeGreaterThanOrEqual(8);
   });
 
-  it('dit que le passage en « honoré » n’est pas encore servi par l’API', async () => {
-    // Un encaissement qui laisse le rendez-vous en `confirmed` doit s'expliquer
-    // au comptoir, faute de quoi l'opérateur cherche l'erreur de son côté.
-    settleInCashAction.mockResolvedValue({ ok: true, data: CASH_TRANSACTION });
+  it('affiche en grand la monnaie à rendre, calculée par le serveur', async () => {
+    // Troisième critère de #835. `change` vient de l'enveloppe de règlement : le
+    // front ne soustrait jamais deux montants.
+    openCheckoutTicketAction.mockResolvedValue({ ok: true, data: sale() });
+    settleTicketAction.mockResolvedValue({
+      ok: true,
+      data: settlement(7800, 'cash', 0, { changeMinor: 2200 }),
+    });
+    loadReceiptAction.mockResolvedValue({ ok: false, code: 'X', message: 'x' });
     renderPanel();
 
-    await userEvent.click(screen.getByRole('button', { name: /en espèces/ }));
+    await userEvent.type(screen.getByLabelText(/Montant remis/), '100,00');
+    await userEvent.click(screen.getByRole('button', { name: CASH_BUTTON }));
 
-    expect(await screen.findByText(/honoré/)).toBeDefined();
+    const callout = await screen.findByText('Monnaie à rendre');
+
+    expect(callout.className).toContain('spa-admin-checkout__callout-label');
+    expect(screen.getByText(/22,00/)).toBeDefined();
+
+    const [, , body] = settleTicketAction.mock.calls[0] as [string, string, Record<string, unknown>];
+
+    // Le billet tendu part **seul**. `amountMinor` et `tenderedAmountMinor`
+    // s'excluent côté API (`settleSaleRequestSchema`, `settlement.rules.ts`) :
+    // les envoyer ensemble rendait un 400 « La requête est invalide » que seul
+    // un appel réel voyait — ce double-ci accepte tout. Le serveur applique le
+    // reste dû et rend la différence en monnaie.
+    expect(body).toEqual({ method: 'CASH', tenderedAmountMinor: 10_000 });
+  });
+
+  it('ne demande pas de billet tendu en règlement partiel — les deux s’excluent', async () => {
+    // La régression que la recette a levée : le corps portait `amountMinor`
+    // **et** `tenderedAmountMinor`, que l'API refuse en 400 (« un billet tendu
+    // et une part réglée sont deux gestes distincts »,
+    // `settleSaleRequestSchema`). Le champ disparaît donc du mode partiel, et
+    // ce qui y aurait été saisi avant la bascule ne part pas.
+    openCheckoutTicketAction.mockResolvedValue({ ok: true, data: sale() });
+    settleTicketAction.mockResolvedValue({ ok: true, data: settlement(5000, 'cash', 2800) });
+    renderPanel();
+
+    await userEvent.type(screen.getByLabelText(/Montant remis/), '100,00');
+    await userEvent.click(screen.getByLabelText(/Régler une partie/));
+
+    expect(screen.queryByLabelText(/Montant remis/)).toBeNull();
+
+    await userEvent.type(screen.getByLabelText(/Montant de ce règlement/), '50,00');
+    await userEvent.click(screen.getByRole('button', { name: CASH_BUTTON }));
+
+    await waitFor(() => {
+      expect(settleTicketAction).toHaveBeenCalledTimes(1);
+    });
+
+    const [, , body] = settleTicketAction.mock.calls[0] as [string, string, Record<string, unknown>];
+
+    expect(body).toEqual({ method: 'CASH', amountMinor: 5000 });
+    expect(body).not.toHaveProperty('tenderedAmountMinor');
+  });
+
+  it('refuse sur le champ un montant remis qui ne couvre pas le règlement', async () => {
+    // Le front borne pour le confort, l'API pour la sécurité : le refus s'affiche
+    // **sur le champ**, pas en bloc en haut de page (web-frontend §4).
+    renderPanel();
+
+    await userEvent.type(screen.getByLabelText(/Montant remis/), '10,00');
+    await userEvent.click(screen.getByRole('button', { name: CASH_BUTTON }));
+
+    const alert = await screen.findByRole('alert');
+
+    expect(alert.id).toBe('montant-remis-erreur');
+    expect(settleTicketAction).not.toHaveBeenCalled();
   });
 
   it('désactive le bouton dès le premier clic — un double clic n’encaisse pas deux fois', async () => {
-    settleInCashAction.mockReturnValue(new Promise(() => undefined));
+    openCheckoutTicketAction.mockResolvedValue({ ok: true, data: sale() });
+    settleTicketAction.mockReturnValue(new Promise(() => undefined));
     renderPanel();
 
-    const button = screen.getByRole('button', { name: /en espèces/ });
+    const button = screen.getByRole('button', { name: CASH_BUTTON });
     await userEvent.click(button);
 
     await waitFor(() => {
@@ -338,18 +353,14 @@ describe('le règlement en espèces', () => {
     });
     await userEvent.click(button);
 
-    expect(settleInCashAction).toHaveBeenCalledTimes(1);
+    expect(settleTicketAction).toHaveBeenCalledTimes(1);
   });
 
   it('rend la main quand l’action serveur ne répond pas du tout', async () => {
-    // Une action serveur ne rend un résultat que si elle aboutit : si le réseau
-    // du poste tombe entre le clic et le POST, la promesse est **rejetée**. Sans
-    // reprise, le bouton resterait grisé et muet, et il ne resterait qu'à
-    // recharger la page devant la cliente.
-    settleInCashAction.mockRejectedValue(new Error('Failed to fetch'));
+    openCheckoutTicketAction.mockRejectedValue(new Error('Failed to fetch'));
     renderPanel();
 
-    const button = screen.getByRole('button', { name: /en espèces/ });
+    const button = screen.getByRole('button', { name: CASH_BUTTON });
     await userEvent.click(button);
 
     expect((await screen.findByRole('alert')).textContent).toMatch(/n’a pas répondu/);
@@ -358,244 +369,281 @@ describe('le règlement en espèces', () => {
     });
   });
 
-  it('traduit le refus de l’API en une conduite, pas en un code', async () => {
-    settleInCashAction.mockResolvedValue({
+  it('bascule l’écran sur le ticket déjà soldé au lieu de laisser le bouton actif', async () => {
+    openCheckoutTicketAction.mockResolvedValue({ ok: true, data: sale() });
+    settleTicketAction.mockResolvedValue({
       ok: false,
-      code: 'PAYMENT_ALREADY_SETTLED',
-      message: 'Already settled.',
+      code: 'SALE_ALREADY_SETTLED',
+      message: 'Ce ticket a déjà été réglé.',
     });
     renderPanel();
 
-    await userEvent.click(screen.getByRole('button', { name: /en espèces/ }));
+    await userEvent.click(screen.getByRole('button', { name: CASH_BUTTON }));
 
-    const refusal = await screen.findByRole('alert');
-    expect(refusal.textContent).toMatch(/déjà été encaissé/i);
-    expect(refusal.textContent).not.toMatch(/Already settled/);
+    expect(await screen.findByText('Rendez-vous déjà encaissé')).toBeDefined();
+    expect(screen.queryByRole('button', { name: CASH_BUTTON })).toBeNull();
+    expect(screen.queryAllByRole('radio')).toHaveLength(0);
+    // Le texte est celui de l'écran, pas celui que l'API a rendu.
+    expect(screen.queryByText('Ce ticket a déjà été réglé.')).toBeNull();
   });
 
   it('renouvelle une session expirée plutôt que de la dire — #856', async () => {
     replace.mockReset();
-    settleInCashAction.mockResolvedValue({
+    openCheckoutTicketAction.mockResolvedValue({
       ok: false,
       code: 'UNAUTHORIZED',
       message: 'Votre session a expiré. Reconnectez-vous pour continuer.',
     });
     renderPanel();
 
-    const button = screen.getByRole('button', { name: /en espèces/ });
-    await userEvent.click(button);
+    await userEvent.click(screen.getByRole('button', { name: CASH_BUTTON }));
 
-    // Rien n'a été encaissé : l'écran part se renouveler et revient sur la
-    // page affichée, sans message de refus ni bouton resté grisé.
     await waitFor(() => {
       expect(replace).toHaveBeenCalledTimes(1);
     });
-    expect(String(replace.mock.calls[0]?.[0])).toBe(
-      `/${SLUG}/admin/session/refresh?next=${encodeURIComponent(
-        `${globalThis.location.pathname}${globalThis.location.search}`,
-      )}`,
-    );
     expect(screen.queryByRole('alert')).toBeNull();
-    await waitFor(() => {
-      expect(screen.getByRole('button', { name: /en espèces/ }).hasAttribute('disabled')).toBe(
-        false,
-      );
-    });
   });
 });
 
-describe('le paiement par carte', () => {
-  const INTENT = {
-    paymentId: 'aaaaaaaa-0000-4000-8000-000000000009',
-    appointmentId: APPOINTMENT_ID,
-    amount: { amountMinor: 3500, currency: 'EUR' },
-    status: 'pending' as const,
-    // Volontairement écrit en clair et sans entropie : `gitleaks` lit
-    // « clientSecret: … » comme une clé d'API et fait rougir la CI sur une valeur
-    // qui *ressemble* à un laissez-passer Stripe, fût-elle inventée. Le schéma
-    // n'attend qu'une chaîne non vide — la ressemblance ne prouvait rien.
-    clientSecret: 'laissez-passer-de-recette',
-    publishableKey: 'cle-publiable-de-recette',
-  };
-
-  async function openCard(): Promise<void> {
-    openCardPaymentAction.mockResolvedValue({ ok: true, data: INTENT });
-    renderPanel();
-
-    await userEvent.click(screen.getByRole('radio', { name: /Carte/ }));
-    await userEvent.click(screen.getByRole('button', { name: /par carte/ }));
+describe('le règlement par carte au TPE', () => {
+  async function goToTerminal(ticket: SaleSummary | null = null): Promise<void> {
+    renderPanel('confirmed', null, ticket);
+    await userEvent.click(screen.getByRole('radio', { name: /Carte bancaire \(TPE\)/ }));
+    await userEvent.click(screen.getByRole('button', { name: /au TPE/ }));
   }
 
-  it('monte l’élément de Stripe plutôt qu’un formulaire de carte à nous', async () => {
-    await openCard();
+  it('annonce en grand le montant à saisir sur le terminal', async () => {
+    // Deuxième critère de #835 : c'est le chiffre que l'opérateur recopie sur le
+    // terminal, sous les yeux de la cliente.
+    await goToTerminal();
 
-    await waitFor(() => {
-      expect(mount).toHaveBeenCalledTimes(1);
+    expect(await screen.findByText(/Saisissez ce montant sur le TPE/)).toBeDefined();
+    const amount = screen.getByText(/78,00/, {
+      selector: '.spa-admin-checkout__callout-amount',
     });
-
-    // Toujours aucun champ de saisie hors les radios : ce que Stripe monte est
-    // une iframe servie par son domaine, pas un `<input>` de notre arbre.
-    for (const field of document.querySelectorAll('input')) {
-      expect(field.getAttribute('type')).toBe('radio');
-    }
+    expect(amount).toBeDefined();
   });
 
-  it('rend un reçu explicitement provisoire quand Stripe accepte', async () => {
-    // Le navigateur n'a jamais autorité pour déclarer un paiement abouti : c'est
-    // le webhook signé qui inscrit l'encaissement (payments-stripe §2).
-    confirmPayment.mockResolvedValue({ paymentIntent: { status: 'succeeded' } });
-    await openCard();
+  it('n’a inscrit rien du tout tant que l’issue n’est pas déclarée', async () => {
+    await goToTerminal();
 
-    // Le bouton reste inerte tant que le SDK n'est pas prêt : confirmer sans lui
-    // n'enverrait rien nulle part.
-    await waitFor(() => {
-      expect(screen.getByRole('button', { name: /par carte$/ })).toHaveProperty(
-        'disabled',
-        false,
-      );
-    });
-    await userEvent.click(screen.getByRole('button', { name: /par carte$/ }));
-
-    expect(await screen.findByText('Paiement accepté par le prestataire')).toBeDefined();
-    expect(screen.getByText(/pas de capture/i)).toBeDefined();
-
-    // Et rien, sur ce reçu-là, ne prétend l'encaissement déjà inscrit : c'est le
-    // webhook qui l'inscrit, et il n'est pas arrivé. Une note qui l'affirmerait
-    // contredirait la ligne du dessus, sur le seul point qui ne se brouille pas.
-    expect(screen.queryByText(/l’encaissement est bien inscrit/)).toBeNull();
+    expect(settleTicketAction).not.toHaveBeenCalled();
   });
 
-  it('affiche le refus de Stripe sans rien conclure', async () => {
-    confirmPayment.mockResolvedValue({ error: { message: 'Votre carte a été refusée.' } });
-    await openCard();
-
-    // Le bouton reste inerte tant que le SDK n'est pas prêt : confirmer sans lui
-    // n'enverrait rien nulle part.
-    await waitFor(() => {
-      expect(screen.getByRole('button', { name: /par carte$/ })).toHaveProperty(
-        'disabled',
-        false,
-      );
+  it('reçoit un numéro de ticket TPE facultatif, et l’envoie quand il est saisi', async () => {
+    openCheckoutTicketAction.mockResolvedValue({ ok: true, data: sale() });
+    settleTicketAction.mockResolvedValue({
+      ok: true,
+      data: settlement(7800, 'card', 0, { terminalReference: 'A1B2C3' }),
     });
-    await userEvent.click(screen.getByRole('button', { name: /par carte$/ }));
+    loadReceiptAction.mockResolvedValue({ ok: false, code: 'X', message: 'x' });
+    await goToTerminal();
 
-    expect(await screen.findByRole('alert')).toHaveProperty(
-      'textContent',
-      'Votre carte a été refusée.',
-    );
-    expect(screen.queryByText(/Paiement accepté/)).toBeNull();
+    await userEvent.type(screen.getByLabelText(/N° de ticket TPE/), 'A1B2C3');
+    await userEvent.click(screen.getByRole('button', { name: 'Paiement accepté sur le TPE' }));
+
+    await waitFor(() => {
+      expect(settleTicketAction).toHaveBeenCalledTimes(1);
+    });
+
+    const [, , body] = settleTicketAction.mock.calls[0] as [string, string, Record<string, unknown>];
+    expect(body).toEqual({
+      method: 'CARD_TERMINAL',
+      amountMinor: 7800,
+      terminalReference: 'A1B2C3',
+    });
   });
 
-  it('ne redemande aucun rendu serveur : seul le webhook inscrit la capture', async () => {
-    // Le récapitulatif d'à côté dit « À encaisser », et c'est **vrai** tant que
-    // le webhook signé n'a rien inscrit — le reçu d'en face s'annonce d'ailleurs
-    // provisoire. Relire la journée de caisse ici ne ramènerait qu'une intention
-    // `pending` et coûterait un aller-retour devant la cliente (#1004).
-    confirmPayment.mockResolvedValue({ paymentIntent: { status: 'succeeded' } });
-    await openCard();
+  it('règle sans référence quand le caissier n’a pas le ticket du terminal', async () => {
+    openCheckoutTicketAction.mockResolvedValue({ ok: true, data: sale() });
+    settleTicketAction.mockResolvedValue({ ok: true, data: settlement(7800, 'card', 0) });
+    loadReceiptAction.mockResolvedValue({ ok: false, code: 'X', message: 'x' });
+    await goToTerminal();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Paiement accepté sur le TPE' }));
 
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: /par carte$/ })).toHaveProperty(
-        'disabled',
-        false,
-      );
+      expect(settleTicketAction).toHaveBeenCalledTimes(1);
     });
-    await userEvent.click(screen.getByRole('button', { name: /par carte$/ }));
 
-    expect(await screen.findByText('Paiement accepté par le prestataire')).toBeDefined();
-    expect(refresh).not.toHaveBeenCalled();
+    const [, , body] = settleTicketAction.mock.calls[0] as [string, string, Record<string, unknown>];
+    expect(body).toEqual({ method: 'CARD_TERMINAL', amountMinor: 7800 });
+  });
+
+  it('refuse sur le champ une référence qui ressemble à un numéro de carte', async () => {
+    // Le front borne la forme ; la clé de Luhn reste côté API, où le refus tombe
+    // avant tout journal (payments-stripe §1).
+    await goToTerminal();
+
+    await userEvent.type(screen.getByLabelText(/N° de ticket TPE/), '4242 4242 4242 4242');
+    await userEvent.click(screen.getByRole('button', { name: 'Paiement accepté sur le TPE' }));
+
+    const alert = await screen.findByRole('alert');
+
+    expect(alert.id).toBe('tpe-reference-erreur');
+    expect(settleTicketAction).not.toHaveBeenCalled();
+  });
+
+  it('ramène au choix du moyen sur « Paiement refusé », sans rien enregistrer', async () => {
+    // Deuxième critère de #835, dernier point : rien n'est parti chez nous, il
+    // n'y a donc rien à inscrire ni à annuler.
+    await goToTerminal();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Paiement refusé' }));
+
+    expect(settleTicketAction).not.toHaveBeenCalled();
+    expect(screen.getAllByRole('radio')).toHaveLength(2);
+    expect((await screen.findByRole('alert')).textContent).toMatch(/refusé sur le terminal/i);
   });
 });
 
-/**
- * Le récapitulatif rendu côté serveur, après l'encaissement (#1004).
- *
- * L'écran se contredisait d'une moitié à l'autre : « Encaissement enregistré —
- * 65,00 € » à droite, « À encaisser 65,00 € » à gauche, et rien pour le
- * corriger sinon un rechargement complet. Le récapitulatif est un Server
- * Component, ce panneau ne peut pas le réécrire — il ne peut que **redemander
- * son rendu**.
- *
- * Ce que ces cas exercent est donc les deux moitiés du geste : le
- * rafraîchissement est-il demandé quand la journée de caisse a changé, et le
- * panneau tient-il bon quand le rendu revient ?
- */
-describe('le récapitulatif rendu côté serveur, après l’encaissement (#1004)', () => {
-  const SETTLED_IN_CASH: SettlementState = { kind: 'regle', payment: CASH_TRANSACTION };
-
-  it('redemande le rendu serveur quand les espèces aboutissent', async () => {
-    settleInCashAction.mockResolvedValue({ ok: true, data: CASH_TRANSACTION });
+describe('le règlement mixte — quatrième critère de #835', () => {
+  it('affiche le reste dû après une part, puis solde le ticket', async () => {
+    openCheckoutTicketAction.mockResolvedValue({ ok: true, data: sale() });
+    settleTicketAction.mockResolvedValueOnce({
+      ok: true,
+      data: settlement(5000, 'cash', 2800),
+    });
+    settleTicketAction.mockResolvedValueOnce({
+      ok: true,
+      data: settlement(2800, 'card', 0, { terminalReference: 'A1B2C3' }),
+    });
+    loadReceiptAction.mockResolvedValue({ ok: false, code: 'X', message: 'x' });
     renderPanel();
 
-    await userEvent.click(screen.getByRole('button', { name: /en espèces/ }));
+    // 50,00 € en espèces.
+    await userEvent.click(screen.getByLabelText(/Régler une partie/));
+    await userEvent.type(screen.getByLabelText(/Montant de ce règlement/), '50,00');
+    await userEvent.click(screen.getByRole('button', { name: CASH_BUTTON }));
+
+    // Le reste dû est celui du serveur, et il est écrit à l'écran.
+    expect(await screen.findByText('Reste dû')).toBeDefined();
+    expect(screen.getAllByText(/28,00/).length).toBeGreaterThan(0);
+    // Et le règlement déjà pris reste visible.
+    expect(screen.getByText('Règlements enregistrés')).toBeDefined();
+    expect(screen.getAllByText(/50,00/).length).toBeGreaterThan(0);
+
+    // 28,00 € au TPE.
+    await userEvent.click(screen.getByRole('radio', { name: /Carte bancaire \(TPE\)/ }));
+    await userEvent.click(screen.getByRole('button', { name: /au TPE/ }));
+    await userEvent.type(screen.getByLabelText(/N° de ticket TPE/), 'A1B2C3');
+    await userEvent.click(screen.getByRole('button', { name: 'Paiement accepté sur le TPE' }));
 
     await waitFor(() => {
-      expect(refresh).toHaveBeenCalledTimes(1);
+      expect(settleTicketAction).toHaveBeenCalledTimes(2);
     });
+
+    const [, , first] = settleTicketAction.mock.calls[0] as [string, string, Record<string, unknown>];
+    const [, , second] = settleTicketAction.mock.calls[1] as [
+      string,
+      string,
+      Record<string, unknown>,
+    ];
+
+    expect(first).toEqual({ method: 'CASH', amountMinor: 5000 });
+    expect(second).toEqual({
+      method: 'CARD_TERMINAL',
+      amountMinor: 2800,
+      terminalReference: 'A1B2C3',
+    });
+    // Un seul ticket pour les deux règlements : c'est la pièce que le reçu
+    // imprimera, avec ses deux lignes.
+    expect(openCheckoutTicketAction).toHaveBeenCalledTimes(1);
   });
 
-  it('garde le ticket à l’écran quand le rendu revient avec le règlement', async () => {
-    // Le piège du correctif : le panneau sait déjà rendre un rendez-vous réglé —
-    // un bandeau et un bouton « Réimprimer le ticket ». Si cet état-là l'emporte
-    // sur le reçu qu'on vient de produire, le rafraîchissement escamote le
-    // ticket au moment précis où l'opérateur le tend à sa cliente.
-    settleInCashAction.mockResolvedValue({ ok: true, data: CASH_TRANSACTION });
-    const { rerender } = renderPanel();
-
-    await userEvent.click(screen.getByRole('button', { name: /en espèces/ }));
-    expect(await screen.findByText(/Encaissement enregistré/)).toBeDefined();
-
-    // Ce que `router.refresh()` produit, vu d'ici : la page a relu la journée de
-    // caisse, et ce panneau reçoit le règlement qu'il vient lui-même d'obtenir.
-    rerender(panel('confirmed', SETTLED_IN_CASH));
-
-    expect(screen.getByText(/Encaissement enregistré/)).toBeDefined();
-    expect(screen.getByRole('button', { name: 'Imprimer le ticket' })).toBeDefined();
-    expect(screen.queryByRole('button', { name: 'Réimprimer le ticket' })).toBeNull();
-  });
-
-  it('ne redemande rien quand rien n’a été encaissé', async () => {
-    // Un refus, une panne de réseau : la journée de caisse n'a pas bougé, et un
-    // rafraîchissement ne ferait que coûter un aller-retour devant la cliente.
-    settleInCashAction.mockRejectedValue(new Error('Failed to fetch'));
+  it('donne une clé d’idempotence différente à chaque geste', async () => {
+    // Même clé sur deux gestes, et le second serait rendu comme une répétition
+    // du premier : 28,00 € disparaîtraient du rapprochement.
+    openCheckoutTicketAction.mockResolvedValue({ ok: true, data: sale() });
+    settleTicketAction.mockResolvedValueOnce({ ok: true, data: settlement(5000, 'cash', 2800) });
+    settleTicketAction.mockResolvedValueOnce({ ok: true, data: settlement(2800, 'cash', 0) });
+    loadReceiptAction.mockResolvedValue({ ok: false, code: 'X', message: 'x' });
     renderPanel();
 
-    await userEvent.click(screen.getByRole('button', { name: /en espèces/ }));
+    await userEvent.click(screen.getByLabelText(/Régler une partie/));
+    await userEvent.type(screen.getByLabelText(/Montant de ce règlement/), '50,00');
+    await userEvent.click(screen.getByRole('button', { name: CASH_BUTTON }));
 
-    expect(await screen.findByRole('alert')).toBeDefined();
-    expect(refresh).not.toHaveBeenCalled();
+    await screen.findByText('Reste dû');
+    await userEvent.click(screen.getByRole('button', { name: CASH_BUTTON }));
+
+    await waitFor(() => {
+      expect(settleTicketAction).toHaveBeenCalledTimes(2);
+    });
+
+    const keys = settleTicketAction.mock.calls.map((call) => call[3] as string);
+    expect(new Set(keys).size).toBe(2);
   });
 
-  it.each(['PAYMENT_ALREADY_SETTLED', 'SALE_ALREADY_SETTLED'])(
-    'ne redemande rien sur le refus « déjà encaissé » non plus (%s)',
-    async (code) => {
-      // Le refus qu'un poste voisin provoque apprend, lui aussi, que la journée
-      // de caisse a changé — mais relire la journée ne rendrait pas au comptoir
-      // le ticket qu'il n'a pas produit, et coûterait un aller-retour devant la
-      // cliente. L'écran bascule, il ne se recharge pas.
-      //
-      // `SALE_ALREADY_SETTLED` est ici pour la raison qui a motivé #1005 : le
-      // classement vivait dans `lib/admin/checkout-summary.ts`, que #1004
-      // laissait hors de son empreinte, et ce code-là — le seul que
-      // `POST /payments/cash` rende vraiment depuis #817 — n'y était pas rangé.
-      settleInCashAction.mockResolvedValue({
-        ok: false,
-        code,
-        message: 'Already settled.',
-      });
-      renderPanel();
+  it('refuse sur le champ une part supérieure au reste dû', async () => {
+    renderPanel('confirmed', null, sale(5000));
 
-      await userEvent.click(screen.getByRole('button', { name: /en espèces/ }));
+    await userEvent.click(screen.getByLabelText(/Régler une partie/));
+    await userEvent.type(screen.getByLabelText(/Montant de ce règlement/), '50,00');
+    await userEvent.click(screen.getByRole('button', { name: CASH_BUTTON }));
 
-      expect(await screen.findByText('Rendez-vous déjà encaissé')).toBeDefined();
-      expect(refresh).not.toHaveBeenCalled();
-    },
-  );
+    const alert = await screen.findByRole('alert');
+
+    expect(alert.id).toBe('montant-regle-erreur');
+    expect(alert.textContent).toMatch(/28,00/);
+    expect(settleTicketAction).not.toHaveBeenCalled();
+  });
+
+  it('reprend le ticket ouvert que la page a retrouvé, sans en composer un second', async () => {
+    // C'est ce qui rend le règlement mixte survivable à un rafraîchissement :
+    // sans cette reprise, le second geste ouvrirait une seconde pièce et le
+    // reste dû de la première resterait en l'air.
+    settleTicketAction.mockResolvedValue({ ok: true, data: settlement(2800, 'cash', 0) });
+    loadReceiptAction.mockResolvedValue({ ok: false, code: 'X', message: 'x' });
+    renderPanel('confirmed', null, sale(5000));
+
+    expect(screen.getByText('Reste dû')).toBeDefined();
+
+    await userEvent.click(screen.getByRole('button', { name: CASH_BUTTON }));
+
+    await waitFor(() => {
+      expect(settleTicketAction).toHaveBeenCalledTimes(1);
+    });
+    expect(openCheckoutTicketAction).not.toHaveBeenCalled();
+  });
+});
+
+describe('un rendez-vous déjà réglé (#828)', () => {
+  const SETTLED: SettlementState = { kind: 'regle', payment: CASH_TRANSACTION };
+
+  it('n’offre plus aucun encaissement — ni moyen, ni bouton', () => {
+    renderPanel('completed', SETTLED);
+
+    expect(screen.queryAllByRole('radio')).toHaveLength(0);
+    expect(screen.queryByRole('button', { name: /Encaisser/ })).toBeNull();
+  });
+
+  it('annonce le règlement avant le clic — moyen, montant et instant', () => {
+    renderPanel('completed', SETTLED);
+
+    expect(screen.getByText(/Réglé en espèces/)).toBeDefined();
+    expect(screen.getByText(/78,00/)).toBeDefined();
+    expect(screen.getByText(/Encaissement inscrit le/)).toBeDefined();
+  });
+
+  it('ferme le comptoir tant qu’une intention en ligne n’est pas conclue', () => {
+    renderPanel('confirmed', { kind: 'ouvert', payment: CASH_TRANSACTION });
+
+    expect(screen.getByText(/en ligne/)).toBeDefined();
+    expect(screen.queryByRole('button', { name: CASH_BUTTON })).toBeNull();
+  });
+
+  it('laisse l’écran intact quand l’historique n’a pas répondu', () => {
+    // `null` n'est pas « rien n'est réglé » : la route est au seuil `MANAGER`, et
+    // un comptoir doit pouvoir encaisser malgré tout.
+    renderPanel('confirmed', null);
+
+    expect(screen.getAllByRole('radio')).toHaveLength(2);
+    expect(screen.getByRole('button', { name: CASH_BUTTON })).toBeDefined();
+  });
 });
 
 describe('le ticket de caisse de la vente (#818)', () => {
-  const SALE_ID = '99999999-0000-4000-8000-000000000009';
-  const SOLD = { ...CASH_TRANSACTION, saleId: SALE_ID };
   const RECEIPT = {
     saleId: SALE_ID,
     number: 'TIC-2026-000123',
@@ -622,97 +670,82 @@ describe('le ticket de caisse de la vente (#818)', () => {
         kind: 'SERVICE' as const,
         label: 'Massage suédois',
         quantity: 1,
-        unitPrice: { amountMinor: 3500, currency: 'EUR' },
-        total: { amountMinor: 3500, currency: 'EUR' },
-      },
-      {
-        position: 1,
-        kind: 'TAX' as const,
-        label: 'TVA 20 %',
-        quantity: 1,
-        unitPrice: { amountMinor: 583, currency: 'EUR' },
-        total: { amountMinor: 583, currency: 'EUR' },
+        unitPrice: { amountMinor: 7800, currency: 'EUR' },
+        total: { amountMinor: 7800, currency: 'EUR' },
       },
     ],
-    taxBreakdown: [
-      {
-        rateBps: 2000,
-        base: { amountMinor: 2917, currency: 'EUR' },
-        tax: { amountMinor: 583, currency: 'EUR' },
-      },
-    ],
-    subtotal: { amountMinor: 2917, currency: 'EUR' },
-    taxTotal: { amountMinor: 583, currency: 'EUR' },
+    taxBreakdown: [],
+    subtotal: { amountMinor: 7800, currency: 'EUR' },
+    taxTotal: { amountMinor: 0, currency: 'EUR' },
     tip: { amountMinor: 0, currency: 'EUR' },
-    total: { amountMinor: 3500, currency: 'EUR' },
+    total: { amountMinor: 7800, currency: 'EUR' },
     settlements: [
       {
         method: 'CASH' as const,
-        amount: { amountMinor: 3500, currency: 'EUR' },
-        tendered: { amountMinor: 5000, currency: 'EUR' },
-        change: { amountMinor: 1500, currency: 'EUR' },
+        amount: { amountMinor: 5000, currency: 'EUR' },
         capturedAt: '2026-09-05T07:05:00.000Z',
+      },
+      {
+        method: 'CARD' as const,
+        amount: { amountMinor: 2800, currency: 'EUR' },
+        capturedAt: '2026-09-05T07:06:00.000Z',
       },
     ],
     refunds: [],
   };
 
-  async function settleWithSale(): Promise<void> {
-    settleInCashAction.mockResolvedValue({ ok: true, data: SOLD });
+  async function settleToTheEnd(): Promise<void> {
+    openCheckoutTicketAction.mockResolvedValue({ ok: true, data: sale() });
+    settleTicketAction.mockResolvedValue({ ok: true, data: settlement(7800, 'cash', 0) });
     loadReceiptAction.mockResolvedValue({ ok: true, data: RECEIPT });
     renderPanel();
 
-    await userEvent.click(screen.getByRole('button', { name: /en espèces/ }));
+    await userEvent.click(screen.getByRole('button', { name: CASH_BUTTON }));
   }
 
-  it('affiche la pièce de l’API : salon, numéro, client, HT, TVA, TTC', async () => {
-    await settleWithSale();
+  it('affiche la pièce de l’API et **tous** ses règlements', async () => {
+    // Quatrième critère de #835, dernier point : « le ticket les liste tous ».
+    await settleToTheEnd();
 
     const ticket = await screen.findByRole('article', { name: 'Ticket n° TIC-2026-000123' });
 
     expect(loadReceiptAction).toHaveBeenCalledWith(SLUG, SALE_ID);
     expect(ticket.textContent).toContain('Maison Lotus');
-    expect(ticket.textContent).toContain('LOTUS BIEN-ÊTRE SARL');
-    expect(ticket.textContent).toContain('SIRET 73282932000074');
-    expect(ticket.textContent).toContain('Rina Andriamana');
-    expect(ticket.textContent).toContain('Total HT');
-    expect(ticket.textContent).toContain('Total TTC');
-    expect(ticket.textContent).toContain('20 %');
-    expect(ticket.textContent).toContain('Rendu');
-    expect(ticket.textContent).toContain('Ni repris ni échangé.');
+    expect(ticket.textContent).toContain('50,00');
+    expect(ticket.textContent).toContain('28,00');
   });
 
-  it('n’imprime pas la ligne de taxe parmi les articles — c’est une ventilation', async () => {
-    await settleWithSale();
+  it('rend un reçu définitif — il n’y a plus de tiers à attendre', async () => {
+    await settleToTheEnd();
 
-    await screen.findByRole('article', { name: 'Ticket n° TIC-2026-000123' });
-    const items = screen.getByRole('table', { name: 'Articles' });
-
-    expect(items.textContent).toContain('Massage suédois');
-    expect(items.textContent).not.toContain('TVA 20 %');
+    expect(await screen.findByText(/Encaissement enregistré/)).toBeDefined();
+    expect(screen.queryByText(/provisoire/i)).toBeNull();
+    expect(screen.queryByText(/webhook/i)).toBeNull();
   });
 
-  it('imprime le ticket seul, et non la page', async () => {
-    const print = vi.spyOn(window, 'print').mockImplementation(() => undefined);
-    await settleWithSale();
-    await screen.findByRole('article', { name: 'Ticket n° TIC-2026-000123' });
+  it('redemande le rendu serveur une fois le ticket soldé', async () => {
+    await settleToTheEnd();
 
-    await userEvent.click(screen.getByRole('button', { name: 'Imprimer le ticket' }));
+    await waitFor(() => {
+      expect(refresh).toHaveBeenCalledTimes(1);
+    });
+  });
 
-    expect(print).toHaveBeenCalledTimes(1);
-    // La copie destinée à l'imprimante vit directement sous <body>, hors de la
-    // page, et <html> porte l'attribut qui efface tout le reste à l'impression.
-    const copy = document.body.querySelector(':scope > [data-print-ticket]');
-    expect(copy?.textContent).toContain('TIC-2026-000123');
-    expect(document.documentElement.getAttribute('data-printing')).toBe('ticket');
+  it('ne redemande rien tant qu’il reste dû', async () => {
+    openCheckoutTicketAction.mockResolvedValue({ ok: true, data: sale() });
+    settleTicketAction.mockResolvedValue({ ok: true, data: settlement(5000, 'cash', 2800) });
+    renderPanel();
 
-    window.dispatchEvent(new Event('afterprint'));
-    expect(document.documentElement.hasAttribute('data-printing')).toBe(false);
-    print.mockRestore();
+    await userEvent.click(screen.getByLabelText(/Régler une partie/));
+    await userEvent.type(screen.getByLabelText(/Montant de ce règlement/), '50,00');
+    await userEvent.click(screen.getByRole('button', { name: CASH_BUTTON }));
+
+    expect(await screen.findByText('Reste dû')).toBeDefined();
+    expect(refresh).not.toHaveBeenCalled();
   });
 
   it('ouvre les deux PDF de l’API — rouleau 80 mm et facture A4', async () => {
-    await settleWithSale();
+    await settleToTheEnd();
     await screen.findByRole('article', { name: 'Ticket n° TIC-2026-000123' });
 
     expect(screen.getByRole('link', { name: 'PDF ticket' }).getAttribute('href')).toBe(
@@ -724,7 +757,8 @@ describe('le ticket de caisse de la vente (#818)', () => {
   });
 
   it('dit que le ticket est indisponible, et laisse réessayer', async () => {
-    settleInCashAction.mockResolvedValue({ ok: true, data: SOLD });
+    openCheckoutTicketAction.mockResolvedValue({ ok: true, data: sale() });
+    settleTicketAction.mockResolvedValue({ ok: true, data: settlement(7800, 'cash', 0) });
     loadReceiptAction.mockResolvedValueOnce({
       ok: false,
       code: 'SERVICE_UNAVAILABLE',
@@ -733,7 +767,7 @@ describe('le ticket de caisse de la vente (#818)', () => {
     loadReceiptAction.mockResolvedValueOnce({ ok: true, data: RECEIPT });
     renderPanel();
 
-    await userEvent.click(screen.getByRole('button', { name: /en espèces/ }));
+    await userEvent.click(screen.getByRole('button', { name: CASH_BUTTON }));
     expect(await screen.findByText('Ticket indisponible')).toBeDefined();
 
     await userEvent.click(screen.getByRole('button', { name: 'Réessayer' }));

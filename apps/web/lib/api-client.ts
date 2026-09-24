@@ -43,6 +43,7 @@ import {
   provisionedTenantSchema,
   reissuedTenantInvitationSchema,
   saleReceiptSchema,
+  saleSettlementSchema,
   appointmentSchema,
   authSessionResponseSchema,
   availabilityResponseSchema,
@@ -112,6 +113,8 @@ import {
   type ReissuedTenantInvitation,
   type RescheduleAppointmentRequest,
   type SaleReceipt,
+  type SaleSettlement,
+  type SettleSaleRequest,
   type SalonSignupRequest,
   type Service,
   type ServiceCategory,
@@ -133,17 +136,22 @@ import {
 } from '@spa/shared';
 import { z } from 'zod';
 
-// Les deux formes d'encaissement, désormais **étendues du contrat partagé** :
-// #554 y a porté les six clés de l'intention et les deux `nullable` de
-// l'encaissement, et il ne reste ici que la normalisation de casse de la
-// frontière. Le détail est dans l'en-tête de `lib/admin/payment-contract.ts`.
+// Les formes d'encaissement, désormais **étendues du contrat partagé** : #554 y
+// a porté les `nullable` de l'encaissement, et il ne reste ici que la
+// normalisation de casse de la frontière. Le détail est dans l'en-tête de
+// `lib/admin/payment-contract.ts`.
+//
+// L'intention de paiement en est partie avec le formulaire de carte (#835,
+// ADR 0015) : le comptoir règle la carte sur le TPE du salon, et n'ouvre plus
+// aucune intention.
 import {
-  appointmentPaymentIntentSchema,
   paymentTransactionPageSchema,
-  paymentTransactionSchema,
-  type AppointmentPaymentIntent,
-  type PaymentTransaction,
+  salePageSchema,
+  saleSchema,
+  type CreateSaleRequest,
   type PaymentTransactionPage,
+  type Sale,
+  type SaleSummary,
 } from '@/lib/admin/payment-contract';
 
 // Les formes de l'administration du personnel, que `@spa/shared` ne décrit pas
@@ -1240,68 +1248,127 @@ export async function fetchAppointments(
 // ---------------------------------------------------------------------------
 
 /**
- * Ouvre — ou reprend — le paiement par carte d'un rendez-vous, et rend de quoi
- * monter Stripe Elements.
+ * Les tickets déjà composés pour un rendez-vous — `GET /v1/sales?appointmentId=`.
  *
- * ## Pourquoi la route **publique**, depuis le back-office
+ * C'est une **lecture**, et c'est tout l'intérêt : l'écran de comptoir s'en sert
+ * pour retrouver le ticket qu'il a ouvert avant de recharger, au milieu d'un
+ * règlement mixte. Sans elle, un rafraîchissement entre les 50,00 € d'espèces et
+ * les 28,00 € du terminal aurait composé un second ticket, et le reste dû du
+ * premier serait resté en l'air (#835, quatrième critère).
  *
- * Parce que c'est la seule que l'API sert : `POST /public/{slug}/payments/intents`
- * n'a pas d'équivalent gardé, et ouvrir celui-ci relèverait d'`apps/api`, hors
- * de l'empreinte de ce ticket. Ce n'est pas un contournement de garde — la route
- * est publique **par conception** (on réserve sans compte, donc on paie sans
- * compte), et ce qui l'autorise est la connaissance de l'identifiant du
- * rendez-vous, que le comptoir a légitimement.
- *
- * Deux conséquences à connaître, portées par l'issue de suivi de #59 :
- * l'ouverture est plafonnée à dix par minute **et par adresse** — et toutes les
- * demandes du back-office sortent par l'adresse du serveur Next, non par celle
- * du poste ; et un rendez-vous `completed` ou `no_show` y est refusé en 422,
- * alors que le comptoir devrait précisément pouvoir l'encaisser.
- *
- * ## Ce que le corps ne porte pas
- *
- * Ni montant, ni devise, ni donnée de carte : le prix est celui figé à la
- * réservation, relu en base, et les champs carte n'existent nulle part dans
- * cette pile — ils sont saisis dans une iframe servie par Stripe
- * (payments-stripe §1 et §2).
+ * La page est bornée à ce qu'un rendez-vous peut raisonnablement porter : la
+ * colonne `sales.appointment_id` n'est pas unique — une vente retail ajoutée
+ * après coup est légitime — mais elle n'en porte pas dix. L'ordre est celui de
+ * l'API, le plus récent d'abord.
  */
-export function openAppointmentPaymentIntent(
-  tenantSlug: string,
+export async function fetchAppointmentSales(
+  accessToken: string,
   appointmentId: string,
-): Promise<AppointmentPaymentIntent> {
-  return request(publicPath(tenantSlug, '/payments/intents'), {
-    method: 'POST',
-    body: { appointmentId },
-    schema: appointmentPaymentIntentSchema,
+): Promise<readonly SaleSummary[]> {
+  const query = new URLSearchParams({
+    appointmentId,
+    page: '1',
+    pageSize: '20',
   });
+  const { payload } = await authorizedRequest({
+    method: 'GET',
+    path: `/sales?${query.toString()}`,
+    schema: salePageSchema,
+    accessToken,
+  });
+
+  return payload.items;
 }
 
 /**
- * Règle un rendez-vous en espèces — aucun appel au prestataire sur ce chemin.
+ * Compose le ticket de caisse d'un rendez-vous — `POST /v1/sales`.
  *
- * Le corps ne porte **que** l'identifiant du rendez-vous : le montant est celui
- * figé à la réservation, l'opérateur vient du jeton vérifié, l'établissement de
- * la revendication signée. Il n'y a donc rien à envoyer qui puisse être faux.
+ * ## Aucun montant ne part d'ici
  *
- * La route est **rejouable** : appelée deux fois, elle rend deux fois le même
- * encaissement, et la caisse n'est créditée qu'une fois — d'où son `200` et non
- * un `201`. Le front s'en protège de son côté en désactivant son bouton dès le
- * premier clic (web-frontend §3), mais l'invariant tient en base, pas dans
- * l'écran.
+ * Le corps porte des natures, des identifiants et des quantités : il n'a
+ * **aucune place** où écrire un prix (voir `CreateSaleRequest`). Les quatre
+ * montants du ticket sont composés par le serveur et vérifiés par une contrainte
+ * de la base (payments-stripe §4 et §5).
+ *
+ * ## Le prix relu est celui du catalogue, et non celui figé à la réservation
+ *
+ * C'est la seule chose que cette route fait autrement que `POST /payments/cash`,
+ * qui compose le ticket d'un rendez-vous **au prix accepté par la cliente**
+ * (`SalesService.composeForAppointment`). Aucune route ne sait aujourd'hui
+ * composer ce ticket-là sans le régler du même geste, et en ouvrir une relève
+ * d'`apps/api/src/modules/payments`, hors de l'empreinte de #835 — une issue de
+ * suivi la porte. Tant qu'elle n'existe pas, un tarif changé entre la
+ * réservation et le comptoir se lit sur le ticket : c'est pourquoi l'écran
+ * affiche le total **du ticket** comme autorité, à côté du montant dû du
+ * rendez-vous, plutôt que de les confondre.
  */
-export async function settleAppointmentInCash(
+export async function createSale(
   accessToken: string,
-  appointmentId: string,
-): Promise<PaymentTransaction> {
+  body: CreateSaleRequest,
+): Promise<Sale> {
   const { payload } = await authorizedRequest({
     method: 'POST',
-    path: '/payments/cash',
-    body: { appointmentId },
-    schema: paymentTransactionSchema,
+    path: '/sales',
+    body,
+    schema: saleSchema,
     accessToken,
   });
+
   return payload;
 }
+
+/**
+ * Règle un ticket, en totalité ou en partie —
+ * `POST /v1/sales/{saleId}/payments` (#817, #834).
+ *
+ * ## Ce que le corps porte, et ce qu'il ne portera jamais
+ *
+ * `method` vaut `CASH` ou `CARD_TERMINAL`, et rien d'autre : le comptoir ne sait
+ * plus produire d'intention Stripe, et ce n'est pas un contrôle à écrire mais la
+ * forme du contrat (ADR 0015). `terminalReference` est le numéro du **ticket du
+ * terminal**, facultatif et borné à 32 caractères alphanumériques — jamais une
+ * donnée de carte : l'API refuse en 400 une suite de 13 à 19 chiffres qui
+ * vérifie la clé de Luhn, avant tout journal (payments-stripe §1).
+ *
+ * ## La clé d'idempotence est **obligatoire**, et elle vient du geste
+ *
+ * Deux règlements de 25,00 € sur le même ticket sont deux gestes distincts : le
+ * serveur ne peut pas les distinguer d'une double soumission, seul l'appelant le
+ * sait. La clé est donc engendrée au montage du geste, pas au clic — sinon un
+ * double clic porterait deux clés et inscrirait deux règlements. Rejouée, la
+ * route rend le règlement déjà inscrit **sans rien écrire**, et `replayed` vaut
+ * `true`.
+ */
+export async function settleSale(
+  accessToken: string,
+  saleId: string,
+  body: SettleSaleRequest,
+  idempotencyKey: string,
+): Promise<SaleSettlement> {
+  const { payload } = await authorizedRequest({
+    method: 'POST',
+    path: `/sales/${encodeURIComponent(saleId)}/payments`,
+    body,
+    headers: { 'idempotency-key': idempotencyKey },
+    schema: saleSettlementSchema,
+    accessToken,
+  });
+
+  return payload;
+}
+
+/*
+ * ## `POST /v1/payments/cash` n'est plus appelée d'ici — #835
+ *
+ * Elle composait le ticket d'un rendez-vous **et** le réglait, en une fois et en
+ * espèces. Le comptoir sait désormais faire les deux séparément — composer par
+ * `createSale`, régler par `settleSale` —, ce qu'exige le règlement mixte : un
+ * ticket de 78,00 € réglé par 50,00 € d'espèces puis 28,00 € au terminal n'a pas
+ * de geste unique auquel se raccrocher. Garder deux façons de composer le ticket
+ * d'un même rendez-vous, c'était garantir qu'un jour les deux en produisent
+ * deux. La route reste servie par l'API, et le README du module `payments` la
+ * documente ; c'est le front qui n'en a plus l'usage.
+ */
 
 /**
  * Le ticket de caisse d'une vente — `GET /sales/{id}/receipt` (#818).
