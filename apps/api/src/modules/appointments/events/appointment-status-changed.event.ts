@@ -27,13 +27,20 @@
  * Des identifiants, un statut, un instant — même discipline que ses voisins.
  */
 
-import type { AppointmentStatus } from '../appointment-status';
+import type { OutcomeStatus } from '../appointment-status';
 
 /** Le nom sous lequel l'événement est publié. */
 export const APPOINTMENT_STATUS_CHANGED = 'appointment.status_changed' as const;
 
-/** Les statuts que cet événement annonce — les deux issues d'un rendez-vous. */
-export type AppointmentOutcomeStatus = Extract<AppointmentStatus, 'COMPLETED' | 'NO_SHOW'>;
+/**
+ * Les statuts que cet événement annonce — les deux issues d'un rendez-vous.
+ *
+ * Alias d'`OutcomeStatus`, et non plus un `Extract<>` qui recopiait les deux
+ * littéraux : depuis #1137 la même liste sert au cycle de vie, qui refuse de les
+ * écrire avant l'heure du soin. Deux écritures auraient pu diverger, et c'est
+ * l'événement qui aurait annoncé un statut que la règle ne connaît pas.
+ */
+export type AppointmentOutcomeStatus = OutcomeStatus;
 
 /** Un rendez-vous vient d'être dit honoré, ou non présenté. */
 export interface AppointmentStatusChangedEvent {
