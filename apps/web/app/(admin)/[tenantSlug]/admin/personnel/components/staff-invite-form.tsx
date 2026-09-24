@@ -14,8 +14,10 @@ import { Select } from '@/components/ui/select';
 import { inviteStaffAccountRequestSchema } from '@/lib/admin/staff-contract';
 
 import { roleLabel } from '../../components/navigation';
+import { adminInvitationPath } from '../../invitation/paths';
 import { inviteStaffAccountAction } from '../actions';
 import { useAdminSessionRenewal } from '../../components/use-admin-session-renewal';
+import { InvitationLink } from './invitation-link';
 
 /**
  * Invitation d'un membre du personnel (#53, premier critère).
@@ -27,7 +29,7 @@ import { useAdminSessionRenewal } from '../../components/use-admin-session-renew
  * canal que personne ne maîtrise. Le compte naît sans secret ; c'est la personne
  * invitée qui pose le sien, contre le jeton que cette réponse porte.
  *
- * ## Pourquoi le jeton s'affiche ici
+ * ## Pourquoi le lien d'activation s'affiche ici
  *
  * Parce que le module `notifications` n'expédie pas encore de courriel : aucune
  * chaîne d'envoi ne peut porter le lien, et l'API rend donc le jeton à
@@ -35,6 +37,23 @@ import { useAdminSessionRenewal } from '../../components/use-admin-session-renew
  * façon réémettre l'invitation à volonté. L'écran l'affiche une fois, à lui
  * seul, avec ce qu'il faut en faire. Le jour où l'envoi existera, ce bloc
  * disparaîtra avec le champ de la réponse.
+ *
+ * ## Un lien, et non le jeton nu (#1143)
+ *
+ * L'écran rendait le JWT seul, trois cents caractères dans un champ en lecture
+ * seule. Il n'était utilisable nulle part : la page d'activation n'accepte qu'un
+ * lien, et celui-ci n'existait dans aucune interface — le seul chemin connu pour
+ * activer un compte invité était de composer l'URL à la main. Ce qui s'affiche
+ * ici est donc l'adresse complète, prête à coller dans un message, et le bouton
+ * qui la dépose dans le presse-papiers — le même geste que la console de
+ * l'éditeur remet au gérant d'un salon (`plateforme/components/access-links.tsx`).
+ *
+ * L'origine est lue de `window.location` et non d'`APP_URL` : le composant est
+ * rendu dans le navigateur de l'administrateur, sous l'origine même par laquelle
+ * la personne invitée joindra ce back-office. En recette comme en production,
+ * c'est la seule valeur qui soit sûrement joignable par le destinataire, et elle
+ * n'est lue qu'au clic sur « Inviter » — jamais au rendu, que le serveur joue
+ * aussi.
  *
  * ## Les rôles proposés s'arrêtent au personnel
  *
@@ -130,7 +149,7 @@ export function StaffInviteForm({ tenantSlug }: { readonly tenantSlug: string })
   const [, startRefresh] = useTransition();
   const [fieldErrors, setFieldErrors] = useState<InviteFieldErrors>({});
   const [formError, setFormError] = useState<string | null>(null);
-  const [invitation, setInvitation] = useState<{ email: string; token: string } | null>(null);
+  const [invitation, setInvitation] = useState<{ email: string; url: string } | null>(null);
 
   function change(changes: Partial<InviteDraft>): void {
     setDraft((current) => ({ ...current, ...changes }));
@@ -207,7 +226,10 @@ export function StaffInviteForm({ tenantSlug }: { readonly tenantSlug: string })
       return;
     }
 
-    setInvitation({ email: result.data.user.email, token: result.data.invitationToken });
+    setInvitation({
+      email: result.data.user.email,
+      url: `${window.location.origin}${adminInvitationPath(tenantSlug, result.data.invitationToken)}`,
+    });
     setDraft({ ...EMPTY });
     startRefresh(() => {
       router.refresh();
@@ -232,17 +254,7 @@ export function StaffInviteForm({ tenantSlug }: { readonly tenantSlug: string })
       {invitation === null ? null : (
         <Notification tone="success" title={t('invite.issuedTitle')}>
           <p>{t('invite.issuedBody', { email: invitation.email })}</p>
-          {/* Un champ en lecture seule plutôt qu'un `<code>` : le jeton fait
-              trois cents caractères d'un seul tenant, et sans coupure possible
-              il pousse la page entière en défilement horizontal. Le champ le
-              borne à sa propre boîte — et se sélectionne d'un raccourci, ce
-              qu'on vient précisément faire ici. */}
-          <Field
-            id="invitation-jeton"
-            label={t('invite.tokenLabel')}
-            readOnly
-            value={invitation.token}
-          />
+          <InvitationLink id="invitation-lien" url={invitation.url} />
         </Notification>
       )}
 

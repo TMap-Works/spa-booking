@@ -6,17 +6,18 @@ import { useRouter } from 'next/navigation';
 import { useState, useTransition } from 'react';
 
 import { Button } from '@/components/ui/button';
-import { Field } from '@/components/ui/field';
 import { Notification } from '@/components/ui/notification';
 import { Select } from '@/components/ui/select';
 
 import { roleLabel } from '../../components/navigation';
+import { adminInvitationPath } from '../../invitation/paths';
 import {
   changeStaffAccountRoleAction,
   reissueStaffInvitationAction,
   setStaffAccountStatusAction,
 } from '../actions';
 import { useAdminSessionRenewal } from '../../components/use-admin-session-renewal';
+import { InvitationLink } from './invitation-link';
 
 /**
  * Ce qu'on fait d'un compte du personnel depuis la liste (#53, premier critère).
@@ -82,20 +83,27 @@ export function StaffAccountActions({
   const [refreshing, startRefresh] = useTransition();
   const [notice, setNotice] = useState<{ tone: 'success' | 'danger'; message: string } | null>(null);
   /**
-   * Le jeton d'une invitation réémise, tenu à part du message.
+   * Le **lien** d'une invitation réémise, tenu à part du message.
    *
-   * Il fait trois cents caractères d'un seul tenant : glissé dans une phrase, il
-   * pousse la ligne du tableau — donc la page — en défilement horizontal. Un
-   * champ en lecture seule le borne à sa propre boîte, et se sélectionne d'un
-   * raccourci, ce qu'on vient précisément faire ici.
+   * Il fait plus de trois cents caractères d'un seul tenant : glissé dans une
+   * phrase, il pousse la ligne du tableau — donc la page — en défilement
+   * horizontal. `InvitationLink` le borne à sa propre boîte et lui donne le
+   * bouton qui le copie.
+   *
+   * Le lien et non le jeton depuis #1143 : le jeton nu ne s'employait nulle
+   * part, la page d'activation n'acceptant qu'une adresse.
    */
-  const [invitationToken, setInvitationToken] = useState<string | null>(null);
+  const [invitationUrl, setInvitationUrl] = useState<string | null>(null);
 
   const roleChanged = role !== account.role;
 
   async function applyRole(): Promise<void> {
     setPending('role');
     setNotice(null);
+    // Le lien d'une invitation réémise plus tôt est rendu **dans** ce bandeau :
+    // le laisser en place l'aurait fait réapparaître sous « Rôle enregistré »,
+    // où rien ne dit plus de quoi il est le lien.
+    setInvitationUrl(null);
 
     const result = await changeStaffAccountRoleAction(tenantSlug, account.id, { role });
 
@@ -123,6 +131,7 @@ export function StaffAccountActions({
 
     setPending('status');
     setNotice(null);
+    setInvitationUrl(null);
 
     const result = await setStaffAccountStatusAction(tenantSlug, account.id, { isActive: next });
 
@@ -151,7 +160,7 @@ export function StaffAccountActions({
   async function reissue(): Promise<void> {
     setPending('invitation');
     setNotice(null);
-    setInvitationToken(null);
+    setInvitationUrl(null);
 
     const result = await reissueStaffInvitationAction(tenantSlug, account.id);
 
@@ -165,7 +174,12 @@ export function StaffAccountActions({
       return;
     }
 
-    setInvitationToken(result.data.invitationToken);
+    // L'origine est lue de `window.location` et non d'`APP_URL` : l'écran tourne
+    // dans le navigateur de l'administrateur, sous l'origine même par laquelle
+    // la personne invitée joindra ce back-office.
+    setInvitationUrl(
+      `${window.location.origin}${adminInvitationPath(tenantSlug, result.data.invitationToken)}`,
+    );
     setNotice({
       tone: 'success',
       message: t('accountActions.newToken', { email: account.email }),
@@ -246,13 +260,8 @@ export function StaffAccountActions({
           tone={notice.tone}
         >
           <p>{notice.message}</p>
-          {invitationToken === null ? null : (
-            <Field
-              id={`invitation-${account.id}`}
-              label={t('accountActions.tokenLabel')}
-              readOnly
-              value={invitationToken}
-            />
+          {invitationUrl === null ? null : (
+            <InvitationLink id={`invitation-${account.id}`} url={invitationUrl} />
           )}
         </Notification>
       )}

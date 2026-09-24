@@ -348,3 +348,47 @@
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+/* --- Le lien d'activation d'une invitation émise (#1143) ------------------- */
+
+/*
+ * L'écran rendait le jeton nu dans un champ en lecture seule : inutilisable, la
+ * page d'activation n'acceptant qu'une adresse. Ce qui s'affiche désormais est
+ * le lien entier, avec le bouton qui le copie — et ce bouton doit être sur la
+ * MÊME LIGNE que ce qu'il copie, sans quoi rien ne dit lequel des champs de
+ * l'écran il vise. C'est la seule raison d'être de ces trois règles : `Field`
+ * n'admet pas d'action à côté de son contrôle.
+ *
+ * Le motif est celui que la console de l'éditeur tient déjà pour les trois liens
+ * qu'elle remet au gérant d'un salon (`components/platform.css`). Les deux ne
+ * sont pas mutualisés : le back-office et la console ne chargent pas la même
+ * feuille, et un bloc commun aurait fait porter le chrome de l'une à l'autre.
+ */
+
+.spa-admin-invite-link {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spa-space-1);
+  margin-block-start: var(--spa-space-3);
+}
+
+.spa-admin-invite-link__row {
+  display: flex;
+  gap: var(--spa-space-2);
+  align-items: center;
+  /* Le bouton passe sous le champ plutôt que de l'écraser : une adresse de plus
+   * de trois cents caractères et un bouton ne tiennent pas côte à côte dans les
+   * 318 px utiles d'une fenêtre à 360. */
+  flex-wrap: wrap;
+}
+
+.spa-admin-invite-link__value {
+  /* La base est large — le champ prend la ligne entière et renvoie le bouton
+   * dessous quand la place manque — mais elle cède : `min-inline-size: 0` est ce
+   * qui autorise un enfant flex à devenir plus étroit que son contenu, faute de
+   * quoi l'adresse pousserait la carte hors de l'écran. */
+  flex: 1 1 18rem;
+  min-inline-size: 0;
+  font-family: var(--spa-font-mono);
+  font-size: var(--spa-font-size-sm);
+}

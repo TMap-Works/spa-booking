@@ -61,8 +61,13 @@
     "roleSaved": "Role saved: {role}.",
     "reactivated": "Account reactivated: signing in is possible again.",
     "deactivated": "Account deactivated. Its assignments and past appointments are untouched.",
-    "newToken": "New invitation token to pass on to {email}.",
-    "tokenLabel": "Invitation token"
+    "newToken": "New activation link to pass on to {email}."
+  },
+  "invitationLink": {
+    "label": "Activation link",
+    "hint": "Copy it whole: it carries the activation code, and shortening it would make it unusable.",
+    "copy": "Copy link",
+    "copied": "Link copied"
   },
   "invite": {
     "screenTitle": "Invite a staff member",
@@ -70,8 +75,7 @@
     "deniedBody": "Inviting a staff member is reserved for the administrator rank. The staff list stays readable, and a salon administrator can issue the invitation for you. <link>Back to staff</link>.",
     "failureTitle": "Cannot invite",
     "issuedTitle": "Invitation issued",
-    "issuedBody": "Pass this token on to {email}: it lets them set their password, once. It is shown here only, and a new invitation can be reissued at any time from the list.",
-    "tokenLabel": "Invitation token",
+    "issuedBody": "Pass this link on to {email}: it lets them set their password, once. It is shown here only, and a new invitation can be reissued at any time from the list.",
     "firstName": "First name",
     "lastName": "Last name",
     "email": "Email address",

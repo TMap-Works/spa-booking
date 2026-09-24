@@ -63,7 +63,13 @@
     "submitting": "Activation en cours…",
     "missingToken": {
       "title": "Lien incomplet",
-      "body": "Ce lien ne contient pas de code d’activation. Ouvrez le lien complet reçu par message, sans le raccourcir."
+      "body": "Cette adresse ne porte pas de code d’activation. Ouvrez le lien complet reçu, ou collez-le ci-dessous.",
+      "field": "Lien ou code d’activation",
+      "hint": "Collez le lien reçu en entier, ou seulement le code qu’il contient. Les retours à la ligne ajoutés par votre messagerie sont sans conséquence.",
+      "submit": "Continuer",
+      "invalid": "Ce lien ou ce code est illisible. Copiez-le à nouveau depuis le message reçu, en entier.",
+      "acceptedTitle": "Code d’activation reconnu",
+      "acceptedBody": "Choisissez maintenant votre mot de passe."
     },
     "failureTitle": "Activation impossible",
     "expiredLink": "Ce lien d’activation n’est plus valable : il a expiré, ou il a déjà servi. Demandez un nouveau lien à la personne qui vous l’a envoyé — ou, si votre compte est déjà activé, connectez-vous.",

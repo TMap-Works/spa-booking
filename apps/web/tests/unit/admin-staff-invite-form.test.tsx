@@ -35,6 +35,10 @@ afterEach(() => {
   cleanup();
   inviteStaffAccountAction.mockReset();
   refresh.mockReset();
+  // La doublure du presse-papiers ne survit pas à son test : jsdom n'en fournit
+  // pas, et la laisser en place ferait passer une suite voisine qui n'aurait
+  // rien posé.
+  Reflect.deleteProperty(navigator, 'clipboard');
 });
 
 function renderForm(): void {
@@ -53,6 +57,25 @@ function invalide(label: RegExp): boolean {
 
 async function soumettre(): Promise<void> {
   await userEvent.click(screen.getByRole('button', { name: /Inviter/ }));
+}
+
+/** La réponse d'une invitation acceptée par l'API, jeton compris. */
+function invitationEmise(token: string) {
+  return {
+    ok: true,
+    data: {
+      user: {
+        id: '11111111-1111-4111-8111-111111111111',
+        email: 'hanta@spa-lumiere.mg',
+        firstName: 'Hanta',
+        lastName: 'Rakoto',
+        phone: null,
+        role: 'staff',
+      },
+      invitationToken: token,
+      expiresIn: 3600,
+    },
+  };
 }
 
 describe('StaffInviteForm — signalement des champs fautifs', () => {
@@ -121,21 +144,7 @@ describe('StaffInviteForm — signalement des champs fautifs', () => {
   });
 
   it('envoie l’invitation quand tout est valide, sans marque résiduelle', async () => {
-    inviteStaffAccountAction.mockResolvedValue({
-      ok: true,
-      data: {
-        user: {
-          id: '11111111-1111-4111-8111-111111111111',
-          email: 'hanta@spa-lumiere.mg',
-          firstName: 'Hanta',
-          lastName: 'Rakoto',
-          phone: null,
-          role: 'staff',
-        },
-        invitationToken: 'jeton-a-recopier',
-        expiresIn: 3600,
-      },
-    });
+    inviteStaffAccountAction.mockResolvedValue(invitationEmise('jeton-a-recopier'));
 
     renderForm();
 
@@ -153,7 +162,54 @@ describe('StaffInviteForm — signalement des champs fautifs', () => {
     expect(invalide(PRENOM)).toBe(false);
     expect(invalide(NOM)).toBe(false);
     expect(invalide(EMAIL)).toBe(false);
-    expect((screen.getByLabelText(/Jeton/) as HTMLInputElement).value).toBe('jeton-a-recopier');
+  });
+
+  it('rend le lien d’activation complet, et non le jeton nu (#1143)', async () => {
+    inviteStaffAccountAction.mockResolvedValue(invitationEmise('jeton-a-recopier'));
+
+    renderForm();
+
+    await userEvent.type(screen.getByLabelText(PRENOM), 'Hanta');
+    await userEvent.type(screen.getByLabelText(NOM), 'Rakoto');
+    await userEvent.type(screen.getByLabelText(EMAIL), 'hanta@spa-lumiere.mg');
+    await soumettre();
+
+    // C'est tout l'objet du ticket : ce qui s'affiche est une adresse ouvrable,
+    // celle-là même que la page d'activation attend — et non un jeton que rien
+    // dans l'interface ne savait employer.
+    const lien = screen.getByLabelText(/Lien d’activation/) as HTMLInputElement;
+    expect(lien.value).toBe(
+      'http://localhost:3000/spa-lumiere/admin/invitation?token=jeton-a-recopier',
+    );
+    expect(lien.readOnly).toBe(true);
+  });
+
+  it('dépose le lien dans le presse-papiers et le dit', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });
+
+    inviteStaffAccountAction.mockResolvedValue(invitationEmise('jeton-a-recopier'));
+
+    renderForm();
+
+    await userEvent.type(screen.getByLabelText(PRENOM), 'Hanta');
+    await userEvent.type(screen.getByLabelText(NOM), 'Rakoto');
+    await userEvent.type(screen.getByLabelText(EMAIL), 'hanta@spa-lumiere.mg');
+    await soumettre();
+    await userEvent.click(screen.getByRole('button', { name: /Copier le lien/ }));
+
+    expect(writeText).toHaveBeenCalledWith(
+      'http://localhost:3000/spa-lumiere/admin/invitation?token=jeton-a-recopier',
+    );
+    // Le bouton dit ce qu'il vient de faire : sans retour, rien ne distingue un
+    // clic réussi d'un clic non enregistré.
+    //
+    // `find` et non `get` : l'écriture dans le presse-papiers est asynchrone, et
+    // le libellé ne change qu'une fois sa promesse tenue. Un `get` synchrone lit
+    // le rendu d'avant et échoue par intermittence, selon que la file de
+    // micro-tâches a été vidée ou non — ce qui dépend de la charge de la machine
+    // et non du code.
+    expect(await screen.findByRole('button', { name: /Lien copié/ })).toBeTruthy();
   });
 
   it('affiche le refus du serveur en bandeau, sans marquer de champ', async () => {
