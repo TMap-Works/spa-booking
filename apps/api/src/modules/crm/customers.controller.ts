@@ -29,7 +29,11 @@ import { ownScopeFor } from '../identity/permissions';
 import { CustomerExportService } from './customer-export.service';
 import { CustomerHistoryService } from './customer-history.service';
 import { CustomersService } from './customers.service';
-import { CustomerDataExportDto, toCustomerDataExportDto } from './dto/customer-export.dto';
+import {
+  CustomerDataExportDto,
+  CustomerDataExportQueryDto,
+  toCustomerDataExportDto,
+} from './dto/customer-export.dto';
 import {
   CustomerHistoryQueryDto,
   CustomerVisitHistoryDto,
@@ -252,9 +256,20 @@ export class CustomersController {
   @AuthWith('customers:read:all')
   @ApiOperation({ summary: 'Exporter les données personnelles d’une cliente (RGPD)' })
   @ApiOkResponse({ type: CustomerDataExportDto })
+  @ApiBadRequestResponse({ description: 'Langue inconnue — `locale` attend `fr` ou `en`.' })
   @ApiNotFoundResponse({ description: 'Aucune fiche de cet établissement ne porte cet identifiant.' })
-  public async exportOf(@Param('id', ParseUUIDPipe) id: string): Promise<CustomerDataExportDto> {
-    return toCustomerDataExportDto(await this.dataExport.byCustomerId(id));
+  public async exportOf(
+    @Param('id', ParseUUIDPipe) id: string,
+    // `locale` ne décide que des **mots** du document : les clés JSON, les
+    // instants UTC et les montants entiers n'en dépendent pas, et le 404 du
+    // salon voisin est rendu avant que la langue n'ait servi à quoi que ce soit
+    // (#852). Un paramètre de présentation n'est pas une entrée de périmètre.
+    @Query() query: CustomerDataExportQueryDto,
+  ): Promise<CustomerDataExportDto> {
+    // `query.locale` passé tel quel, absence comprise : le défaut est celui du
+    // service (`DEFAULT_LOCALE`), écrit une seule fois. Le redire ici en aurait
+    // fait deux expressions du même repli, à tenir d'accord.
+    return toCustomerDataExportDto(await this.dataExport.byCustomerId(id, query.locale));
   }
 
   /**

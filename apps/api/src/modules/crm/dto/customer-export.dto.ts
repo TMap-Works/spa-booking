@@ -1,4 +1,7 @@
-import { ApiProperty } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { LOCALES, type Locale } from '@spa/shared';
+import { Transform } from 'class-transformer';
+import { IsIn, IsOptional } from 'class-validator';
 
 import {
   APPOINTMENT_STATUSES,
@@ -39,7 +42,232 @@ import type { CustomerDataExport, ExportedAppointment } from '../crm.types';
  * par machine » est l'exigence de l'art. 20, et c'est exactement ce qu'un
  * document JSON est. Un CSV aurait perdu l'imbrication ; un PDF aurait perdu la
  * lisibilité par machine, qui est l'objet même de la portabilité.
+ *
+ * ## Les en-têtes suivent la langue, les clés jamais — #852, quatrième critère
+ *
+ * Un document lisible par machine **et** remis à un humain a deux jeux de noms,
+ * et les confondre coûte l'une des deux qualités :
+ *
+ * - les **clés JSON** sont le contrat. `firstName`, `startsAt`, `priceAmountMinor`
+ *   ne se traduisent pas : elles sont ce qu'un analyseur lit, et un document
+ *   dont les clés changeraient de langue ne serait plus « couramment utilisé »
+ *   au sens de l'art. 20 — il faudrait deux analyseurs pour un même format ;
+ * - les **en-têtes** sont ce qu'on met au-dessus des colonnes quand on imprime
+ *   le dossier, qu'on le colle dans un tableur ou qu'on le relit au comptoir
+ *   avant de le remettre. Ceux-là suivent la langue de l'interface, et c'est
+ *   toute la raison du bloc `labels`.
+ *
+ * Le document porte donc les deux, plus la langue dans laquelle il a été produit
+ * (`locale`) : deux exports de la même fiche demandés dans deux langues sont
+ * deux documents différents, et sans ce champ rien ne les distinguerait.
+ *
+ * Même geste que le CSV du reporting, qui écrit ses en-têtes et garde ses
+ * valeurs telles quelles, et que `notification-content.ts`, où les tables
+ * `Readonly<Record<Locale, …>>` vivent dans le module qui les sert.
  */
+
+/**
+ * La langue demandée pour les en-têtes — `GET /customers/:id/export?locale=fr`.
+ *
+ * Optionnelle : le dossier se produit sans elle, dans `DEFAULT_LOCALE`. Une
+ * langue **obligatoire** aurait fait de l'absence de paramètre un 400, c'est-à-
+ * dire cassé une route déjà servie par #81 pour un champ de présentation.
+ *
+ * La casse est normalisée avant d'être jugée, comme sur `UpdateUserDto.locale` :
+ * `?locale=FR` recopié d'un en-tête `Accept-Language` désigne la même langue que
+ * `?locale=fr`. Toute autre valeur est refusée en **400** nommant le champ,
+ * jamais repliée en silence sur le défaut — un `?locale=de` qui rendrait de
+ * l'anglais laisserait croire l'allemand servi.
+ *
+ * Aucun `tenantId` ici, ni nulle part ailleurs dans cette query : l'établissement
+ * vient du jeton vérifié (tenant-isolation §2), et ce paramètre ne décide que de
+ * mots.
+ */
+export class CustomerDataExportQueryDto {
+  @ApiPropertyOptional({
+    enum: LOCALES,
+    example: 'fr',
+    description:
+      'Langue des en-têtes du dossier. Absente, le dossier est produit dans la ' +
+      'langue par défaut du système. Les clés JSON, les instants UTC et les ' +
+      'montants entiers ne changent pas.',
+  })
+  @IsOptional()
+  @Transform(({ value }: { value: unknown }) =>
+    typeof value === 'string' ? value.trim().toLowerCase() : value,
+  )
+  @IsIn(LOCALES as readonly string[], {
+    message: `locale : langue attendue parmi ${LOCALES.join(', ')}`,
+  })
+  public locale?: Locale;
+}
+
+/** Ce qui coiffe le document lui-même — titre, date de production, langue. */
+interface ExportDocumentLabels {
+  readonly title: string;
+  readonly generatedAt: string;
+  readonly locale: string;
+}
+
+interface ExportIdentityLabels {
+  readonly section: string;
+  readonly id: string;
+  readonly firstName: string;
+  readonly lastName: string;
+  readonly email: string;
+  readonly phone: string;
+  readonly isActive: string;
+  readonly createdAt: string;
+  readonly anonymizedAt: string;
+}
+
+interface ExportConsentsLabels {
+  readonly section: string;
+  readonly marketing: string;
+  readonly marketingRecordedAt: string;
+}
+
+interface ExportAppointmentLabels {
+  readonly section: string;
+  readonly id: string;
+  readonly status: string;
+  readonly startsAt: string;
+  readonly endsAt: string;
+  readonly serviceName: string;
+  readonly staffName: string;
+  readonly price: string;
+  readonly clientNote: string;
+  readonly staffNote: string;
+  readonly cancelledAt: string;
+  readonly cancellationReason: string;
+  readonly createdAt: string;
+}
+
+/**
+ * Le statut de chaque visite, en toutes lettres.
+ *
+ * La colonne `status` continue d'émettre `COMPLETED` — le format du fil ne
+ * change pas —, et `statusLabel` le double d'un mot lisible. Sans lui, la seule
+ * chose qu'un dossier remis à une personne dirait de sa visite serait une
+ * constante en majuscules.
+ */
+type ExportStatusLabels = Readonly<Record<AppointmentStatus, string>>;
+
+/**
+ * Les en-têtes du dossier, dans les deux langues — #852.
+ *
+ * Une table `Readonly<Record<Locale, …>>` dans le module qui sert le document,
+ * comme `notification-content.ts` le fait des siens : l'API n'a pas de catalogue
+ * de messages — c'est une convention du front (#845) —, et le seul consommateur
+ * de ces mots-là est cette route.
+ *
+ * Le jeu de clés est **le même dans les deux langues**, tenu par le type : un
+ * en-tête ajouté d'un côté et oublié de l'autre casse le `tsc`, ce qui est ici
+ * l'équivalent du test de parité des catalogues du front.
+ */
+interface ExportLabels {
+  readonly document: ExportDocumentLabels;
+  readonly identity: ExportIdentityLabels;
+  readonly consents: ExportConsentsLabels;
+  readonly internalNote: string;
+  readonly appointments: ExportAppointmentLabels;
+  readonly statuses: ExportStatusLabels;
+}
+
+const EXPORT_LABELS: Readonly<Record<Locale, ExportLabels>> = {
+  fr: {
+    document: {
+      title: 'Données personnelles détenues par le salon',
+      generatedAt: 'Export produit le',
+      locale: 'Langue du document',
+    },
+    identity: {
+      section: 'Identité et coordonnées',
+      id: 'Identifiant de la fiche',
+      firstName: 'Prénom',
+      lastName: 'Nom',
+      email: 'Adresse e-mail',
+      phone: 'Téléphone',
+      isActive: 'Fiche active',
+      createdAt: 'Fiche créée le',
+      anonymizedAt: 'Fiche anonymisée le',
+    },
+    consents: {
+      section: 'Consentements',
+      marketing: 'Démarchage commercial',
+      marketingRecordedAt: 'Dernier changement le',
+    },
+    internalNote: 'Note interne du salon',
+    appointments: {
+      section: 'Rendez-vous',
+      id: 'Identifiant du rendez-vous',
+      status: 'Statut',
+      startsAt: 'Début',
+      endsAt: 'Fin',
+      serviceName: 'Prestation',
+      staffName: 'Praticien',
+      price: 'Prix',
+      clientNote: 'Remarque du client',
+      staffNote: 'Note du salon sur ce rendez-vous',
+      cancelledAt: 'Annulé le',
+      cancellationReason: 'Motif d’annulation',
+      createdAt: 'Réservé le',
+    },
+    statuses: {
+      PENDING: 'En attente',
+      CONFIRMED: 'Confirmé',
+      COMPLETED: 'Honoré',
+      CANCELLED: 'Annulé',
+      NO_SHOW: 'Absence non prévenue',
+    },
+  },
+  en: {
+    document: {
+      title: 'Personal data held by the salon',
+      generatedAt: 'Export produced on',
+      locale: 'Document language',
+    },
+    identity: {
+      section: 'Identity and contact details',
+      id: 'Record ID',
+      firstName: 'First name',
+      lastName: 'Last name',
+      email: 'Email address',
+      phone: 'Phone',
+      isActive: 'Active record',
+      createdAt: 'Record created on',
+      anonymizedAt: 'Record anonymised on',
+    },
+    consents: {
+      section: 'Consents',
+      marketing: 'Marketing communications',
+      marketingRecordedAt: 'Last changed on',
+    },
+    internalNote: 'Salon internal note',
+    appointments: {
+      section: 'Appointments',
+      id: 'Appointment ID',
+      status: 'Status',
+      startsAt: 'Start',
+      endsAt: 'End',
+      serviceName: 'Service',
+      staffName: 'Practitioner',
+      price: 'Price',
+      clientNote: 'Client note',
+      staffNote: 'Salon note on this appointment',
+      cancelledAt: 'Cancelled on',
+      cancellationReason: 'Cancellation reason',
+      createdAt: 'Booked on',
+    },
+    statuses: {
+      PENDING: 'Pending',
+      CONFIRMED: 'Confirmed',
+      COMPLETED: 'Completed',
+      CANCELLED: 'Cancelled',
+      NO_SHOW: 'No-show',
+    },
+  },
+};
 
 /** Une visite, telle que le dossier la restitue. */
 export class ExportedAppointmentDto
@@ -54,6 +282,20 @@ export class ExportedAppointmentDto
   // seul endroit, pour l'historique, les rôles et l'agenda à la fois — écart assumé, tranché en #554.
   @ApiProperty({ enum: APPOINTMENT_STATUSES, example: 'COMPLETED' })
   public status!: AppointmentStatus;
+
+  /**
+   * Le même statut, en toutes lettres et dans la langue du document — #852.
+   *
+   * Il double `status` au lieu de le remplacer : la constante est ce qu'un
+   * analyseur lit, le libellé est ce qu'une personne lit. Remplacer l'une par
+   * l'autre aurait fait perdre au dossier sa lisibilité par machine, qui est
+   * l'objet de l'art. 20.
+   */
+  @ApiProperty({
+    example: 'Honoré',
+    description: 'Le statut en toutes lettres, dans la langue demandée à l’export.',
+  })
+  public statusLabel!: string;
 
   @ApiProperty({ format: 'date-time' })
   public startsAt!: string;
@@ -146,10 +388,155 @@ export class ExportedConsentsDto {
   public marketingRecordedAt!: string | null;
 }
 
+/** Ce qui coiffe le document lui-même — titre, date de production, langue. */
+export class ExportDocumentLabelsDto implements ExportDocumentLabels {
+  @ApiProperty({ example: 'Données personnelles détenues par le salon' })
+  public title!: string;
+
+  @ApiProperty({ example: 'Export produit le' })
+  public generatedAt!: string;
+
+  @ApiProperty({ example: 'Langue du document' })
+  public locale!: string;
+}
+
+/** Les en-têtes du bloc d'identité. */
+export class ExportIdentityLabelsDto implements ExportIdentityLabels {
+  @ApiProperty({ example: 'Identité et coordonnées' })
+  public section!: string;
+
+  @ApiProperty({ example: 'Identifiant de la fiche' })
+  public id!: string;
+
+  @ApiProperty({ example: 'Prénom' })
+  public firstName!: string;
+
+  @ApiProperty({ example: 'Nom' })
+  public lastName!: string;
+
+  @ApiProperty({ example: 'Adresse e-mail' })
+  public email!: string;
+
+  @ApiProperty({ example: 'Téléphone' })
+  public phone!: string;
+
+  @ApiProperty({ example: 'Fiche active' })
+  public isActive!: string;
+
+  @ApiProperty({ example: 'Fiche créée le' })
+  public createdAt!: string;
+
+  @ApiProperty({ example: 'Fiche anonymisée le' })
+  public anonymizedAt!: string;
+}
+
+/** Les en-têtes du bloc de consentements. */
+export class ExportConsentsLabelsDto implements ExportConsentsLabels {
+  @ApiProperty({ example: 'Consentements' })
+  public section!: string;
+
+  @ApiProperty({ example: 'Démarchage commercial' })
+  public marketing!: string;
+
+  @ApiProperty({ example: 'Dernier changement le' })
+  public marketingRecordedAt!: string;
+}
+
+/** Les en-têtes de colonnes de la liste des rendez-vous. */
+export class ExportAppointmentLabelsDto implements ExportAppointmentLabels {
+  @ApiProperty({ example: 'Rendez-vous' })
+  public section!: string;
+
+  @ApiProperty({ example: 'Identifiant du rendez-vous' })
+  public id!: string;
+
+  @ApiProperty({ example: 'Statut' })
+  public status!: string;
+
+  @ApiProperty({ example: 'Début' })
+  public startsAt!: string;
+
+  @ApiProperty({ example: 'Fin' })
+  public endsAt!: string;
+
+  @ApiProperty({ example: 'Prestation' })
+  public serviceName!: string;
+
+  @ApiProperty({ example: 'Praticien' })
+  public staffName!: string;
+
+  @ApiProperty({ example: 'Prix' })
+  public price!: string;
+
+  @ApiProperty({ example: 'Remarque du client' })
+  public clientNote!: string;
+
+  @ApiProperty({ example: 'Note du salon sur ce rendez-vous' })
+  public staffNote!: string;
+
+  @ApiProperty({ example: 'Annulé le' })
+  public cancelledAt!: string;
+
+  @ApiProperty({ example: 'Motif d’annulation' })
+  public cancellationReason!: string;
+
+  @ApiProperty({ example: 'Réservé le' })
+  public createdAt!: string;
+}
+
+/**
+ * Les en-têtes du dossier, dans la langue demandée — #852.
+ *
+ * Ils ne décrivent aucune donnée : ce sont les mots qu'on écrit **au-dessus**
+ * des valeurs quand le dossier s'imprime ou s'ouvre dans un tableur. Les clés,
+ * elles, ne bougent pas d'une langue à l'autre — voir l'en-tête de ce fichier.
+ */
+export class ExportLabelsDto implements ExportLabels {
+  @ApiProperty({ type: ExportDocumentLabelsDto })
+  public document!: ExportDocumentLabelsDto;
+
+  @ApiProperty({ type: ExportIdentityLabelsDto })
+  public identity!: ExportIdentityLabelsDto;
+
+  @ApiProperty({ type: ExportConsentsLabelsDto })
+  public consents!: ExportConsentsLabelsDto;
+
+  @ApiProperty({ example: 'Note interne du salon' })
+  public internalNote!: string;
+
+  @ApiProperty({ type: ExportAppointmentLabelsDto })
+  public appointments!: ExportAppointmentLabelsDto;
+
+  @ApiProperty({
+    type: 'object',
+    additionalProperties: { type: 'string' },
+    example: { PENDING: 'En attente', COMPLETED: 'Honoré' },
+    description:
+      'Chaque statut de rendez-vous en toutes lettres, indexé par la constante ' +
+      'que `status` émet. C’est la table dont `statusLabel` est tiré.',
+  })
+  public statuses!: ExportStatusLabels;
+}
+
 /** Le dossier complet — ce que rend `GET /customers/:id/export`. */
 export class CustomerDataExportDto {
   @ApiProperty({ format: 'date-time', description: 'Instant UTC auquel l’export a été produit.' })
   public generatedAt!: string;
+
+  @ApiProperty({
+    enum: LOCALES,
+    example: 'fr',
+    description:
+      'La langue dans laquelle ce document a été produit — celle de l’interface ' +
+      'au moment de l’export. Elle ne gouverne que `labels` et `statusLabel`.',
+  })
+  public locale!: Locale;
+
+  @ApiProperty({
+    type: ExportLabelsDto,
+    description: 'Les en-têtes du document, dans la langue ci-dessus.',
+  })
+  public labels!: ExportLabelsDto;
 
   @ApiProperty({ type: ExportedIdentityDto })
   public identity!: ExportedIdentityDto;
@@ -178,8 +565,15 @@ export class CustomerDataExportDto {
  * tout champ ajouté en amont sans que personne ne décide qu'il devait sortir.
  */
 export function toCustomerDataExportDto(dossier: CustomerDataExport): CustomerDataExportDto {
+  // Les en-têtes sont choisis une fois, sur la langue que le dossier porte — et
+  // non relus à chaque rendez-vous : une table indexée dans une boucle de
+  // cinquante visites relirait cinquante fois la même branche.
+  const labels = EXPORT_LABELS[dossier.locale];
+
   return {
     generatedAt: dossier.generatedAt.toISOString(),
+    locale: dossier.locale,
+    labels,
     identity: {
       id: dossier.identity.id,
       firstName: dossier.identity.firstName,
@@ -198,6 +592,7 @@ export function toCustomerDataExportDto(dossier: CustomerDataExport): CustomerDa
     appointments: dossier.appointments.map((visit) => ({
       id: visit.id,
       status: visit.status,
+      statusLabel: labels.statuses[visit.status],
       startsAt: visit.startsAt.toISOString(),
       endsAt: visit.endsAt.toISOString(),
       serviceName: visit.serviceName,

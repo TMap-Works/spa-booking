@@ -1,3 +1,5 @@
+import type { Locale } from '@spa/shared';
+
 import type {
   AppointmentCancelledBy,
   AppointmentStatus,
@@ -105,6 +107,17 @@ export interface Customer extends CustomerSummary {
    * corrige pas du tout.
    */
   emailSuppressionReason: EmailSuppressionReason | null;
+  /**
+   * La langue dans laquelle cette personne veut qu'on lui parle, ou `null` —
+   * #844, projetée sur la fiche par #852.
+   *
+   * `null` se lit « aucune préférence enregistrée », jamais « français » : c'est
+   * alors `tenants.default_locale` qui tranche, pour les notifications comme
+   * pour les pages. Ce module ne l'écrit pas — elle se pose depuis l'espace
+   * client ou à la réservation —, il la lit pour que le comptoir sache dans
+   * quelle langue décrocher.
+   */
+  locale: Locale | null;
 }
 
 /** Une page de fiches, avec de quoi afficher un sélecteur de page. */
@@ -275,6 +288,21 @@ export interface ExportedAppointment {
 export interface CustomerDataExport {
   /** Instant UTC auquel la photographie a été prise. */
   generatedAt: Date;
+  /**
+   * La langue dans laquelle le dossier se **lit** — #852, quatrième critère.
+   *
+   * Elle ne change pas une donnée du document : les clés JSON restent celles du
+   * contrat, les instants restent en UTC, les montants restent des entiers. Elle
+   * décide des **en-têtes** — ce qui coiffe chaque section et chaque colonne
+   * quand le dossier est mis en page ou ouvert dans un tableur — et du libellé
+   * de chaque statut de rendez-vous.
+   *
+   * Elle est portée par le dossier plutôt que déduite à la frontière, pour que
+   * le document dise lui-même dans quelle langue il a été produit : deux exports
+   * de la même fiche demandés dans deux langues sont deux documents différents,
+   * et rien d'autre ne permettrait de les distinguer.
+   */
+  locale: Locale;
   /** L'identité et les coordonnées — la fiche telle que le salon la détient. */
   identity: {
     id: string;
