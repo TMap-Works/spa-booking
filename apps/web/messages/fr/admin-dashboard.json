@@ -27,9 +27,9 @@
       "detailEmpty": "Aucun encaissement pour l’instant"
     },
     "pending": {
-      "label": "À confirmer",
+      "label": "À confirmer · {days} prochains jours",
       "detail": "Demandes en attente de réponse",
-      "detailNone": "Tout est confirmé"
+      "detailNone": "Aucune demande en attente sur {days} jours"
     },
     "noShow": {
       "label": "Non honorés · 30 jours",

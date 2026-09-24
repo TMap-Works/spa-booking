@@ -1,5 +1,6 @@
 # Marqueur de lint i18n — voir eslint-rules/i18n-markers.mjs.
-# Le tableau de bord du back-office, traduit par #1104 : sa page et son
-# squelette. Le sous-arbre entier est sous la règle — il n'y reste aucun écran
+# Le tableau de bord du back-office, traduit par #1104 : sa page, son squelette
+# et la fenêtre de son compteur « À confirmer » (#1159, sans texte). Le
+# sous-arbre entier est sous la règle — il n'y reste aucun écran
 # non traduit. Le composant interactif de « Mon planning » vit dans
 # `../components/` et porte sa ligne dans le marqueur de ce répertoire-là.
