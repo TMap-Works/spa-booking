@@ -1,5 +1,5 @@
 import type { Appointment, AppointmentStatus, SaleSettlement } from '@spa/shared';
-import { cleanup, render, screen, waitFor, type RenderResult } from '@testing-library/react';
+import { cleanup, render, screen, waitFor, within, type RenderResult } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { ReactElement } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -484,6 +484,57 @@ describe('le règlement par carte au TPE', () => {
     expect(settleTicketAction).not.toHaveBeenCalled();
   });
 
+  it('pose sur le champ le 400 que l’API oppose à la référence — #1025, critère 3', async () => {
+    // Seize chiffres collés : **bien formés** pour l'écran — alphanumériques,
+    // sous 32 caractères — et refusés par l'API sur la clé de Luhn, qui ne vit
+    // que là. C'est le seul chemin par lequel ce 400 arrive jusqu'ici, et c'est
+    // celui qui tombait en bloc sous le bouton, avec « La requête est
+    // invalide. » pour toute explication.
+    openCheckoutTicketAction.mockResolvedValue({ ok: true, data: sale() });
+    settleTicketAction.mockResolvedValue({
+      ok: false,
+      code: 'VALIDATION_ERROR',
+      message: 'La requête est invalide.',
+      details: {
+        violations: [
+          'terminalReference : ce champ n’est pas celui d’un numéro de carte — saisir le numéro du ticket du terminal',
+        ],
+      },
+    });
+    await goToTerminal();
+
+    await userEvent.type(screen.getByLabelText(/N° de ticket TPE/), '4242424242424242');
+    await userEvent.click(screen.getByRole('button', { name: 'Paiement accepté sur le TPE' }));
+
+    // Un seul message, et il est **sur le champ** : même identifiant que celui
+    // qu'`aria-describedby` désigne, et `aria-invalid` posé sur la saisie.
+    const alerts = await screen.findAllByRole('alert');
+
+    expect(alerts).toHaveLength(1);
+    expect(alerts[0]?.id).toBe('tpe-reference-erreur');
+    expect(screen.getByLabelText(/N° de ticket TPE/).getAttribute('aria-invalid')).toBe('true');
+    // Le texte est celui du catalogue, dans la langue de l'écran — jamais le
+    // message de l'API, qui n'est traduit nulle part (web-frontend §2).
+    expect(screen.queryByText('La requête est invalide.')).toBeNull();
+    expect(alerts[0]?.textContent).toMatch(/numéro de ticket TPE a été refusé/i);
+  });
+
+  it('désactive l’acceptation TPE dès le premier clic — #1025, critère 4', async () => {
+    openCheckoutTicketAction.mockResolvedValue({ ok: true, data: sale() });
+    settleTicketAction.mockReturnValue(new Promise(() => undefined));
+    await goToTerminal();
+
+    const accept = screen.getByRole('button', { name: 'Paiement accepté sur le TPE' });
+    await userEvent.click(accept);
+
+    await waitFor(() => {
+      expect(accept).toHaveProperty('disabled', true);
+    });
+    await userEvent.click(accept);
+
+    expect(settleTicketAction).toHaveBeenCalledTimes(1);
+  });
+
   it('ramène au choix du moyen sur « Paiement refusé », sans rien enregistrer', async () => {
     // Deuxième critère de #835, dernier point : rien n'est parti chez nous, il
     // n'y a donc rien à inscrire ni à annuler.
@@ -605,6 +656,128 @@ describe('le règlement mixte — quatrième critère de #835', () => {
       expect(settleTicketAction).toHaveBeenCalledTimes(1);
     });
     expect(openCheckoutTicketAction).not.toHaveBeenCalled();
+  });
+});
+
+describe('la clé d’idempotence est celle du geste — #1025, critère 2', () => {
+  it('rejoue la **même** clé quand le premier essai n’a pas abouti', async () => {
+    // Le cœur du critère : la clé est engendrée au **montage du geste**, pas au
+    // clic. Engendrée au clic, le second essai en porterait une neuve, l'API
+    // n'aurait aucun moyen de le reconnaître pour une répétition, et deux
+    // règlements de 78,00 € seraient inscrits là où la cliente n'a payé
+    // qu'une fois. Un réseau qui tombe entre le clic et la réponse suffit à
+    // produire ce second essai — et c'est le cas ordinaire d'un poste de
+    // comptoir, pas un cas limite.
+    openCheckoutTicketAction.mockResolvedValue({ ok: true, data: sale() });
+    settleTicketAction.mockRejectedValueOnce(new Error('Failed to fetch'));
+    settleTicketAction.mockResolvedValueOnce({
+      ok: true,
+      data: { ...settlement(7800, 'cash', 0), replayed: true },
+    });
+    loadReceiptAction.mockResolvedValue({ ok: false, code: 'X', message: 'x' });
+    renderPanel();
+
+    const button = screen.getByRole('button', { name: CASH_BUTTON });
+    await userEvent.click(button);
+
+    expect((await screen.findByRole('alert')).textContent).toMatch(/n’a pas répondu/);
+    await waitFor(() => {
+      expect(button).toHaveProperty('disabled', false);
+    });
+    await userEvent.click(button);
+
+    await waitFor(() => {
+      expect(settleTicketAction).toHaveBeenCalledTimes(2);
+    });
+
+    const keys = settleTicketAction.mock.calls.map((call) => call[3] as string);
+
+    expect(keys[0]).toBe(keys[1]);
+    // Et le ticket n'a été composé qu'une fois : le second essai vise la même
+    // pièce, sans quoi la clé rejouée ne désignerait rien.
+    expect(openCheckoutTicketAction).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('une soumission rejouée — #1025, critère 6', () => {
+  it('rend le même état, sans compter le règlement deux fois', async () => {
+    // `replayed: true` veut dire « l'API a reconnu la clé et n'a rien écrit ».
+    // L'écran doit donc montrer exactement ce qu'il montrerait si le premier
+    // essai avait abouti : un règlement de 50,00 €, 28,00 € de reste dû — et
+    // non deux lignes, ni un reste dû rogné une seconde fois.
+    openCheckoutTicketAction.mockResolvedValue({ ok: true, data: sale() });
+    settleTicketAction.mockResolvedValue({
+      ok: true,
+      data: { ...settlement(5000, 'cash', 2800), replayed: true },
+    });
+    renderPanel();
+
+    await userEvent.click(screen.getByLabelText(/Régler une partie/));
+    await userEvent.type(screen.getByLabelText(/Montant de ce règlement/), '50,00');
+    await userEvent.click(screen.getByRole('button', { name: CASH_BUTTON }));
+
+    const settlements = await screen.findByRole('list', {
+      name: /Règlements déjà enregistrés/,
+    });
+
+    expect(within(settlements).getAllByRole('listitem')).toHaveLength(1);
+    // Les montants sont ceux que le serveur rend, et il les rend inchangés.
+    expect(screen.getByText('Reste dû')).toBeDefined();
+    expect(screen.getAllByText(/28,00/).length).toBeGreaterThan(0);
+  });
+
+  it('dit que rien n’a été encaissé une seconde fois, sans annoncer un second débit', async () => {
+    openCheckoutTicketAction.mockResolvedValue({ ok: true, data: sale() });
+    settleTicketAction.mockResolvedValue({
+      ok: true,
+      data: { ...settlement(5000, 'cash', 2800), replayed: true },
+    });
+    renderPanel();
+
+    await userEvent.click(screen.getByLabelText(/Régler une partie/));
+    await userEvent.type(screen.getByLabelText(/Montant de ce règlement/), '50,00');
+    await userEvent.click(screen.getByRole('button', { name: CASH_BUTTON }));
+
+    // L'annonce est un `status` et non une alerte : rien n'a échoué, et la
+    // répétition n'appelle aucun geste de l'opérateur.
+    const notice = await screen.findByText(/Soumission rejouée/);
+
+    expect(notice.getAttribute('role')).toBe('status');
+    expect(notice.textContent).toMatch(/Rien n’a été encaissé une seconde fois/);
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('n’annonce plus la répétition au règlement suivant', async () => {
+    // L'annonce porte sur **ce** geste. La laisser à l'écran ferait lire au
+    // comptoir qu'un règlement neuf est une répétition — et douter de ce qui a
+    // réellement été pris.
+    //
+    // Le second règlement laisse un reste dû, et ce n'est pas un détail : un
+    // ticket soldé fait basculer le panneau sur le reçu, où l'annonce n'est de
+    // toute façon plus rendue. Le cas serait alors vrai sans que l'écran ait
+    // rien oublié — et resterait vert si la mention devenait collante.
+    openCheckoutTicketAction.mockResolvedValue({ ok: true, data: sale() });
+    settleTicketAction.mockResolvedValueOnce({
+      ok: true,
+      data: { ...settlement(5000, 'cash', 2800), replayed: true },
+    });
+    settleTicketAction.mockResolvedValueOnce({
+      ok: true,
+      data: settlement(1400, 'cash', 1400),
+    });
+    renderPanel();
+
+    await userEvent.click(screen.getByLabelText(/Régler une partie/));
+    await userEvent.type(screen.getByLabelText(/Montant de ce règlement/), '50,00');
+    await userEvent.click(screen.getByRole('button', { name: CASH_BUTTON }));
+
+    await screen.findByText(/Soumission rejouée/);
+    await userEvent.click(screen.getByRole('button', { name: CASH_BUTTON }));
+
+    await waitFor(() => {
+      expect(settleTicketAction).toHaveBeenCalledTimes(2);
+    });
+    expect(screen.queryByText(/Soumission rejouée/)).toBeNull();
   });
 });
 
