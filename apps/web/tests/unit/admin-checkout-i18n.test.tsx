@@ -225,6 +225,51 @@ describe('les moyens de paiement et leurs états', () => {
     expect(settlementBadge({ kind: 'du' }, 'en').label).toBe('to settle');
   });
 
+  it('nomme le règlement partiel dans les deux langues — #1240', () => {
+    // Un ticket de 78,00 € dont 50,00 € ont été pris : la pastille disait
+    // « réglé », et le gérant relisait sa journée en y croyant.
+    const partial: SettlementState = {
+      kind: 'partiel',
+      payment: CASH_TRANSACTION,
+      ticket: {
+        id: 'dddddddd-0000-4000-8000-000000000009',
+        appointmentId: CASH_TRANSACTION.appointmentId,
+        cashierUserId: 'cccccccc-0000-4000-8000-000000000003',
+        subtotal: { amountMinor: 6500, currency: 'EUR' },
+        tax: { amountMinor: 1300, currency: 'EUR' },
+        tip: { amountMinor: 0, currency: 'EUR' },
+        total: { amountMinor: 7800, currency: 'EUR' },
+        settled: { amountMinor: 5000, currency: 'EUR' },
+        remaining: { amountMinor: 2800, currency: 'EUR' },
+        settledAt: null,
+        createdAt: '2026-09-04T08:45:00.000Z',
+      },
+    };
+
+    expect(settlementBadge(partial, 'fr').label).toBe('partiellement réglé');
+    expect(settlementBadge(partial, 'en').label).toBe('partially settled');
+    // Et il ne ferme rien : le reste dû se prend encore, par l'un ou l'autre moyen.
+    expect(checkoutBlocker('completed', partial, 'fr')).toBeNull();
+    expect(checkoutBlocker('completed', partial, 'en')).toBeNull();
+  });
+
+  it('explique l’écart de tarif avant le clic, dans les deux langues — #1240', () => {
+    // Le refus qui tombait après : `POST /sales` relit le catalogue, et l'écran
+    // n'avait sous la main que le prix figé à la réservation.
+    for (const [locale, needle] of [
+      ['fr', /tarif de cette prestation a changé/i],
+      ['en', /price changed since the booking/i],
+    ] as const) {
+      expect(
+        checkout(locale)('ticket.priceDriftAhead', {
+          catalogue: '65,00 €',
+          booked: '78,00 €',
+          charged: '65,00 €',
+        }),
+      ).toMatch(needle);
+    }
+  });
+
   it('explique dans les deux langues pourquoi un moyen est fermé', () => {
     expect(checkoutBlocker('cancelled', { kind: 'du' }, 'fr')).toMatch(/annulé/i);
     expect(checkoutBlocker('cancelled', { kind: 'du' }, 'en')).toMatch(/cancelled/i);

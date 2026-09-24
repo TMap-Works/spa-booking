@@ -120,6 +120,126 @@ export function amountDue(appointment: Appointment): Money {
   return appointment.price;
 }
 
+// ---------------------------------------------------------------------------
+// Le tarif qui a bougé entre la réservation et le comptoir — #1240
+// ---------------------------------------------------------------------------
+
+/**
+ * Le tarif **courant** de la prestation, tel que le catalogue le porte
+ * aujourd'hui.
+ *
+ * `GET /appointments` sert les deux prix côte à côte, et le dit en propres
+ * termes (`appointments.repository.ts` : « le tarif **courant** du catalogue, à
+ * ne pas confondre avec le prix figé […] le comptoir a besoin des deux pour le
+ * dire »). Aucune lecture de plus n'est donc nécessaire pour savoir que l'un a
+ * quitté l'autre — c'est ce qui permet à ce ticket de ne pas ouvrir de route.
+ */
+export function catalogPrice(appointment: Appointment): Money {
+  return appointment.service.price;
+}
+
+/**
+ * L'écart de tarif qu'il faut expliquer **avant** le clic — `null` quand les
+ * deux prix coïncident (#1240, deuxième critère).
+ *
+ * ## Le refus qu'il fait disparaître
+ *
+ * Le premier règlement d'un rendez-vous compose son ticket par `POST /v1/sales`,
+ * qui relit le prix **au catalogue** ; le panneau, lui, n'avait sous la main que
+ * le prix figé à la réservation. Tarif baissé depuis, et le montant envoyé
+ * dépassait le total du ticket qui venait de naître : `422 SALE_OVERPAYMENT`,
+ * rouge, devant la cliente, pour une raison qui n'était pas du fait de
+ * l'opérateur. L'échec était sans perte — rien n'était encaissé, le second clic
+ * passait — mais il n'avait pas à arriver.
+ *
+ * ## Deux écarts, deux phrases, parce qu'ils ne se lisent pas au même moment
+ *
+ * | `kind` | Quand | Ce que l'écran annonce |
+ * |---|---|---|
+ * | `catalogue` | le ticket n'existe pas encore | le prix auquel il **sera** composé |
+ * | `ticket` | le ticket existe | le total qu'il **porte**, qui fait foi |
+ *
+ * La seconde phrase existait déjà (`ticket.priceDrift`, #835) ; il manquait la
+ * première, et c'est exactement l'instant où elle sert.
+ *
+ * ## Une comparaison, jamais une soustraction
+ *
+ * Ce module n'additionne ni ne soustrait aucun montant, et cette fonction ne
+ * fait pas exception : elle **compare** deux entiers de même devise et rend
+ * celui qui s'appliquera. L'écart lui-même n'est jamais calculé — l'écran montre
+ * les deux prix et laisse l'opérateur lire la différence, plutôt que d'afficher
+ * un troisième chiffre que la caisse ne confirmerait pas (payments-stripe §5).
+ *
+ * La devise est comparée avec le montant : un catalogue libellé dans une autre
+ * devise que le rendez-vous est un écart, pas une coïncidence de chiffres, et
+ * `POST /sales` le refusera en 422 `SALE_CURRENCY_MISMATCH`. Mieux vaut le dire
+ * avant.
+ */
+export type PriceDrift = {
+  readonly kind: 'catalogue' | 'ticket';
+  /** Le montant que la caisse appliquera — celui à annoncer à voix haute. */
+  readonly charged: Money;
+  /** Le prix figé à la réservation, celui que la cliente a accepté. */
+  readonly booked: Money;
+};
+
+/** `true` si les deux montants sont le même montant — devise comprise. */
+function sameAmount(one: Money, other: Money): boolean {
+  return one.currency === other.currency && one.amountMinor === other.amountMinor;
+}
+
+export function priceDriftOf(
+  appointment: Appointment,
+  ticket: SaleSummary | null,
+): PriceDrift | null {
+  const booked = amountDue(appointment);
+
+  // Le ticket, dès qu'il existe, est la pièce : son total fait foi, pourboire et
+  // articles ajoutés compris, et le catalogue n'a plus rien à dire.
+  if (ticket !== null) {
+    return sameAmount(ticket.total, booked)
+      ? null
+      : { kind: 'ticket', charged: ticket.total, booked };
+  }
+
+  const catalog = catalogPrice(appointment);
+
+  return sameAmount(catalog, booked) ? null : { kind: 'catalogue', charged: catalog, booked };
+}
+
+/**
+ * Ce que le **premier** règlement peut prendre au plus — le plafond du ticket
+ * qui n'existe pas encore (#1240).
+ *
+ * C'est la moitié agissante du deuxième critère : expliquer l'écart évite la
+ * surprise, mais seul ce plafond évite le refus. Le ticket sera composé au tarif
+ * du catalogue — une ligne `SERVICE`, quantité 1, taxe **extraite** du prix
+ * affiché et non ajoutée (`pos.totals.ts`, #816), donc un total égal à ce tarif —
+ * et l'API refuse en 422 tout règlement qui le dépasserait. Envoyer le prix figé
+ * quand le catalogue a **baissé** ne pouvait donc qu'échouer.
+ *
+ * Le plafond ne joue que dans ce sens-là, et c'est délibéré :
+ *
+ * - **catalogue plus bas** — on prend le tarif du catalogue. C'est le seul
+ *   montant que la caisse accepte, et il est en faveur de la cliente.
+ * - **catalogue plus haut** — on garde le prix figé. La cliente doit ce qu'elle a
+ *   accepté ; le reste demeure sur le ticket, visible, et c'est au salon d'en
+ *   décider — pas à cet écran de facturer en silence une hausse qu'elle n'a
+ *   jamais vue.
+ *
+ * Un `min` par comparaison, pas une arithmétique : aucun montant n'est composé
+ * ici, l'un des deux est rendu tel quel. Devises différentes : on garde le prix
+ * figé, et `priceDriftOf` a déjà mis l'écart sous les yeux de l'opérateur.
+ */
+export function firstSettlementCeiling(appointment: Appointment): Money {
+  const booked = amountDue(appointment);
+  const catalog = catalogPrice(appointment);
+
+  return catalog.currency === booked.currency && catalog.amountMinor < booked.amountMinor
+    ? catalog
+    : booked;
+}
+
 /*
  * ## `NOT_PAYABLE_ONLINE` n'existe plus — #835
  *
@@ -152,16 +272,16 @@ const NOT_SETTLEABLE: readonly AppointmentStatus[] = ['cancelled'];
  * encaissé est la base, et une lecture d'écran ne peut pas gagner une course
  * contre le poste d'à côté. Ce qui change est le chemin **normal**.
  *
- * ## Quatre états, et pas un booléen
+ * ## Cinq états, et pas un booléen
  *
- * La table `payments` porte au plus une ligne par rendez-vous
- * (`@@unique([tenantId, appointmentId])`), mais cette ligne a cinq statuts
- * possibles, et ils n'appellent pas la même conduite au comptoir :
+ * Une ligne de `payments` a cinq statuts possibles, et ils n'appellent pas la
+ * même conduite au comptoir :
  *
  * | Statut de la ligne | État | Ce que le comptoir peut encore faire |
  * |---|---|---|
  * | aucune ligne | `du` | encaisser, par l'un ou l'autre moyen |
- * | `succeeded`, `refunded`, `partially_refunded` | `regle` | rien — l'argent a été pris |
+ * | `succeeded`, `refunded`, `partially_refunded`, ticket soldé | `regle` | rien — l'argent a été pris |
+ * | `succeeded`…, ticket dont le reste dû est non nul, **aucune carte en vol** | `partiel` | prendre le reste |
  * | `pending` | `ouvert` | reprendre la carte ; les espèces sont refusées en 409 |
  * | `failed` | `echoue` | reprendre la carte ; les espèces sont refusées en 409 |
  *
@@ -169,11 +289,36 @@ const NOT_SETTLEABLE: readonly AppointmentStatus[] = ['cancelled'];
  * API refuse un règlement en espèces dès qu'une intention carte existe, quel
  * que soit son sort. Un booléen « réglé ou non » aurait laissé l'écran proposer
  * les espèces sur une intention en échec — et le refus serait revenu après le
- * clic, ce que ce ticket corrige précisément.
+ * clic, ce que #828 corrigeait précisément.
+ *
+ * ## `partiel`, et pourquoi il a fallu l'ajouter — #1240
+ *
+ * L'unique `@@unique([tenantId, appointmentId])` de la table ne tient plus ce
+ * qu'on lui faisait dire. Depuis #817 un règlement de comptoir ne porte
+ * **plus** `appointment_id` : il désigne sa vente, et c'est la vente qui porte
+ * le rendez-vous — `payments.repository.ts` résout l'un par l'autre avant de
+ * servir la ligne. La contrainte ne couvre donc que les intentions en ligne, et
+ * un même rendez-vous porte autant d'encaissements de comptoir que son ticket a
+ * reçu de règlements. Une part de 50,00 € sur un ticket de 78,00 € en inscrit
+ * une, aboutie : l'état se lisait « réglé », et la liste de la journée
+ * l'affirmait d'une prestation à moitié payée.
+ *
+ * Ce qui tranche est le **reste dû du ticket**, jamais le cumul des lignes
+ * d'encaissement : `SaleSummary.remaining` est `total − settled` **calculé par
+ * le serveur** et relu sous verrou à chaque règlement (payments-stripe §5). Le
+ * front n'additionne rien — il lirait un second reste dû, susceptible de
+ * diverger de celui que la base tient, et c'est devant la cliente que l'écart se
+ * verrait.
  */
 export type SettlementState =
   | { readonly kind: 'du' }
   | { readonly kind: 'regle'; readonly payment: PaymentTransaction }
+  /** Le ticket porte un règlement abouti **et** un reste dû non nul (#1240). */
+  | {
+      readonly kind: 'partiel';
+      readonly payment: PaymentTransaction;
+      readonly ticket: SaleSummary;
+    }
   | { readonly kind: 'ouvert'; readonly payment: PaymentTransaction }
   | { readonly kind: 'echoue'; readonly payment: PaymentTransaction };
 
@@ -183,28 +328,96 @@ export function isCapturedPayment(status: PaymentStatus): boolean {
 }
 
 /**
- * L'état de règlement d'un rendez-vous, lu dans les encaissements de la journée.
+ * Le ticket qui porte encore un reste dû sur ce rendez-vous — `null` sinon, et
+ * `null` aussi quand aucun ticket n'a pu être lu (#1240).
  *
- * Le rapprochement se fait sur `appointmentId` et il est **sans ambiguïté** :
- * la contrainte d'unicité de la table n'autorise qu'une ligne par rendez-vous.
- * `find` plutôt qu'un filtre suivi d'un tri n'est donc pas un raccourci — il n'y
- * a rien à départager.
+ * L'appelant passe ce que `readDaySettlements` a pu relire ; `undefined` veut
+ * dire « pas relu », et ce n'est pas la même chose que « rien à devoir ». C'est
+ * la distinction que tient `settlementOf` juste en dessous : sans ticket sous la
+ * main, elle **ne conclut pas** au règlement complet — c'est la page qui tait la
+ * colonne plutôt que de risquer l'affirmation que ce ticket corrige.
+ */
+export function outstandingTicketOf(
+  tickets: ReadonlyMap<string, SaleSummary> | undefined,
+  appointmentId: string,
+): SaleSummary | null {
+  const ticket = tickets?.get(appointmentId);
+
+  // Le seul test, et il porte sur le champ que le serveur calcule : « il reste
+  // un centime dû ». `settledAt` dit la même chose du même ticket — l'API refuse
+  // alors en 409 `SALE_ALREADY_SETTLED` — mais c'est `remaining` que le critère
+  // nomme, et c'est lui que la pastille doit ne jamais démentir.
+  return ticket !== undefined && ticket.remaining.amountMinor > 0 ? ticket : null;
+}
+
+/**
+ * L'état de règlement d'un rendez-vous, lu dans les encaissements de la journée
+ * — et dans le **reste dû** du ticket, quand il a pu être relu (#1240).
+ *
+ * ## Le rapprochement n'est plus « une ligne par rendez-vous »
+ *
+ * Il l'a été, et l'en-tête de `SettlementState` dit pourquoi il ne l'est plus :
+ * un rendez-vous réglé en plusieurs fois porte autant de lignes que de
+ * règlements. La ligne retenue est donc la **première dans l'ordre de l'API** —
+ * `GET /payments` sert du plus récent au plus ancien —, c'est-à-dire le dernier
+ * règlement pris ; mais l'**état** se décide sur l'ensemble des lignes, et non
+ * plus sur celle-là seule. Un `pending` qui suit un `succeeded` ne rouvre pas la
+ * carte d'un ticket déjà encaissé.
+ *
+ * ## Sans ticket relu, l'état reste `regle`, et c'est la page qui se tait
+ *
+ * Conclure `partiel` faute de preuve serait l'erreur inverse — et la plus
+ * courante, puisque l'écrasante majorité des rendez-vous se règlent d'un geste.
+ * La prudence se joue un cran plus haut : la page n'affiche la colonne que
+ * lorsque **les deux** lectures ont abouti (`page.tsx`), exactement comme elle
+ * la taisait déjà quand l'historique ne répondait pas.
+ *
+ * ## `partiel` ne passe **pas** devant une intention carte en vol
+ *
+ * L'ordre des trois questions ci-dessous n'est pas cosmétique, et c'est le seul
+ * endroit du module où il compte :
+ *
+ * 1. un encaissement abouti **et** plus rien à devoir — `regle`. Un `pending`
+ *    qui suit un ticket soldé ne rouvre rien, et c'est ce que #1240 voulait ;
+ * 2. une intention carte encore en vol — `ouvert`, **même s'il a déjà été pris
+ *    une part au comptoir**. `hasLiveCardIntent` refuse en 409 tout règlement de
+ *    comptoir sur un ticket qui porte une ligne `CARD` + `PENDING`
+ *    (`settlement.repository.ts`), et le cas est atteignable depuis #817 : 50,00 €
+ *    d'espèces au comptoir, puis la cliente règle le reste depuis son
+ *    navigateur. Conclure `partiel` ici aurait rouvert les deux moyens pour
+ *    faire retomber le refus **après** le clic — ce que #828 corrigeait ;
+ * 3. un encaissement abouti et un reste dû — `partiel`, le reste se prend.
+ *
+ * Une intention en **échec** ne passe pas devant, elle : la garde de l'API ne
+ * porte que sur `PENDING`, une carte refusée n'immobilise donc pas la pièce, et
+ * le reste dû doit rester encaissable au comptoir.
  */
 export function settlementOf(
   payments: readonly PaymentTransaction[],
   appointmentId: string,
+  tickets?: ReadonlyMap<string, SaleSummary>,
 ): SettlementState {
-  const payment = payments.find((one) => one.appointmentId === appointmentId);
+  const own = payments.filter((one) => one.appointmentId === appointmentId);
+  const captured = own.find((one) => isCapturedPayment(one.status));
+  const ticket = outstandingTicketOf(tickets, appointmentId);
 
-  if (payment === undefined) {
-    return { kind: 'du' };
+  if (captured !== undefined && ticket === null) {
+    return { kind: 'regle', payment: captured };
   }
 
-  if (isCapturedPayment(payment.status)) {
-    return { kind: 'regle', payment };
+  const pending = own.find((one) => one.status === 'pending');
+
+  if (pending !== undefined) {
+    return { kind: 'ouvert', payment: pending };
   }
 
-  return payment.status === 'failed' ? { kind: 'echoue', payment } : { kind: 'ouvert', payment };
+  if (captured !== undefined && ticket !== null) {
+    return { kind: 'partiel', payment: captured, ticket };
+  }
+
+  const failed = own[0];
+
+  return failed === undefined ? { kind: 'du' } : { kind: 'echoue', payment: failed };
 }
 
 /** Le rendez-vous est réglé — plus aucun encaissement à proposer. */
@@ -218,6 +431,17 @@ export function isSettled(settlement: SettlementState): boolean {
  * Le libellé est toujours écrit : la couleur ne fait qu'accélérer le balayage
  * d'une journée, elle ne porte jamais l'information seule (WCAG 1.4.1). C'est
  * la règle que les pastilles de statut du planning tiennent déjà.
+ *
+ * ## Six libellés pour cinq nuances — #1240
+ *
+ * « Partiellement réglé » emprunte la nuance `open`, celle de la rampe
+ * d'avertissement, plutôt que d'en réclamer une sixième. Ce n'est pas une
+ * économie de feuille de style : c'est la même conduite que
+ * « partiellement remboursé », qui emprunte `refunded` depuis #828, et elle
+ * repose sur la propriété que la section entière garantit — **le libellé est
+ * écrit en toutes lettres**, la teinte ne dit jamais rien seule. Les deux états
+ * que `open` peint ont d'ailleurs la même conséquence au comptoir : un ticket
+ * inachevé, sur lequel il reste un geste à faire.
  */
 export function settlementBadge(
   settlement: SettlementState,
@@ -235,6 +459,8 @@ export function settlementBadge(
         default:
           return { label: words.settled, modifier: 'settled' };
       }
+    case 'partiel':
+      return { label: words.partiallySettled, modifier: 'open' };
     case 'ouvert':
       return { label: words.cardOpen, modifier: 'open' };
     case 'echoue':
@@ -261,6 +487,13 @@ export function settlementBlocker(
   switch (settlement.kind) {
     case 'regle':
       return words.alreadySettled;
+    // Un ticket partiellement réglé ne ferme **rien** — c'est tout le sens de
+    // l'état (#1240). Le reste dû se prend par l'un ou l'autre moyen, et la
+    // seule chose que #828 voulait empêcher est le règlement de trop sur une
+    // pièce soldée. Renvoyer `alreadySettled` ici rendait les 28,00 € restants
+    // inatteignables dès que l'écran se rechargeait entre les deux gestes.
+    case 'partiel':
+      return null;
     // Une intention en ligne, en vol ou en échec, ferme désormais les **deux**
     // moyens du comptoir et non les seules espèces : `SettlementRepository`
     // refuse tout règlement de comptoir sur un ticket qui porte une intention

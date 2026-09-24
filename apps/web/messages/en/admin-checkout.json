@@ -42,6 +42,7 @@
   },
   "badge": {
     "settled": "settled",
+    "partiallySettled": "partially settled",
     "refunded": "refunded",
     "partiallyRefunded": "partially refunded",
     "cardOpen": "online payment in progress",
@@ -75,12 +76,11 @@
     "alreadySettledTitle": "Appointment already settled"
   },
   "ticket": {
-    "opening": "Opening the till receipt…",
-    "unavailableTitle": "Till receipt unavailable",
     "totalLabel": "Receipt total",
     "settledLabel": "Already settled",
     "remainingLabel": "Left to pay",
     "priceDrift": "The receipt total ({ticket}) differs from the amount fixed at booking ({booked}). The receipt is what counts at checkout: announce that amount.",
+    "priceDriftAhead": "This service’s price changed since the booking: the catalogue says {catalogue}, the booking said {booked}. The receipt will be composed at the catalogue price — announce {charged}, and settle a part of it if the client owes something else.",
     "settlementsTitle": "Recorded settlements",
     "settlementsCaption": "Settlements already recorded on this receipt",
     "settlementReference": "Terminal no. {reference}",

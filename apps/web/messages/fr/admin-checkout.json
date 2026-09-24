@@ -42,6 +42,7 @@
   },
   "badge": {
     "settled": "réglé",
+    "partiallySettled": "partiellement réglé",
     "refunded": "remboursé",
     "partiallyRefunded": "partiellement remboursé",
     "cardOpen": "paiement en ligne en cours",
@@ -75,12 +76,11 @@
     "alreadySettledTitle": "Rendez-vous déjà encaissé"
   },
   "ticket": {
-    "opening": "Ouverture du ticket de caisse…",
-    "unavailableTitle": "Ticket de caisse indisponible",
     "totalLabel": "Total du ticket",
     "settledLabel": "Déjà réglé",
     "remainingLabel": "Reste dû",
     "priceDrift": "Le total du ticket ({ticket}) diffère du montant figé à la réservation ({booked}). C’est le ticket qui fait foi à l’encaissement : annoncez ce montant-là.",
+    "priceDriftAhead": "Le tarif de cette prestation a changé depuis la réservation : le catalogue dit {catalogue}, la réservation disait {booked}. Le ticket sera composé au tarif du catalogue — annoncez {charged}, et désignez une part si la cliente doit payer autre chose.",
     "settlementsTitle": "Règlements enregistrés",
     "settlementsCaption": "Règlements déjà enregistrés sur ce ticket",
     "settlementReference": "N° TPE {reference}",

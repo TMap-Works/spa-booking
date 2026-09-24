@@ -1,6 +1,7 @@
 import type { CalendarDate, TimeZone } from '@spa/shared';
 import { MAX_PAGE_SIZE } from '@spa/shared';
 
+import { isCapturedPayment } from '@/lib/admin/checkout-summary';
 import type { PaymentTransaction, SaleSummary } from '@/lib/admin/payment-contract';
 import { windowOfRange } from '@/lib/admin/reporting-window';
 import { fetchAppointmentSales, fetchPayments } from '@/lib/api-client';
@@ -97,6 +98,133 @@ export async function readDaySettlements(
   }
 
   return collected;
+}
+
+/**
+ * Le plafond de tickets relus pour une seule journée — #1240.
+ *
+ * Il borne une lecture **par rendez-vous déjà encaissé**, et c'est ce qui la
+ * rend acceptable : au-delà, la journée est d'un volume que cet écran n'est pas
+ * l'outil pour relire, et `readDayTickets` rend `null` — la colonne se tait
+ * plutôt que d'affirmer « réglé » sans l'avoir vérifié, ce qui est précisément le
+ * défaut que ce ticket corrige.
+ *
+ * Trente-deux et non cinq ou cent : c'est l'ordre de grandeur d'une journée de
+ * salon entièrement encaissée (CDC §1.2 — spas, salons, barbershops, studios de
+ * massage), et le seuil au-delà duquel une vague de lectures concurrentes cesse
+ * d'être un détail pour la caisse.
+ */
+const MAX_TICKET_READS = 32;
+
+/**
+ * Les tickets qui portent le reste dû des rendez-vous **déjà encaissés** de la
+ * journée — #1240, premier critère.
+ *
+ * ## Pourquoi cette lecture existe
+ *
+ * Parce que `GET /payments` ne dit pas ce qu'un ticket doit encore. Il sert des
+ * lignes d'encaissement — un moyen, un montant, un statut — et depuis le
+ * règlement mixte (#817) un rendez-vous en porte plusieurs. Une part de 50,00 €
+ * sur un ticket de 78,00 € y figure, aboutie, et la liste en concluait
+ * « réglé ». Le seul champ qui tranche est `SaleSummary.remaining`, que le
+ * serveur recalcule et relit sous verrou : il faut donc le ticket.
+ *
+ * ## Le périmètre : les rendez-vous **affichés**, et eux seuls
+ *
+ * `inScope` porte les identifiants de la journée que la liste montre, et rien de
+ * ce qui n'y figure pas n'est relu. Ce n'est pas une précaution de principe :
+ * `readDaySettlements` lit une fenêtre de **trois** journées — la veille et le
+ * lendemain avec celle-ci, parce que le filtre de `GET /payments` porte sur
+ * l'ouverture de l'encaissement et non sur le rendez-vous qu'il règle. Sans ce
+ * tamis, deux journées de rendez-vous qu'aucune ligne n'affiche se payaient une
+ * requête chacune, et surtout comptaient dans le plafond ci-dessous : une veille
+ * chargée suffisait à faire disparaître la colonne d'une journée qui n'avait, à
+ * elle, que quinze prestations réglées.
+ *
+ * ## Le coût, et comment il est tenu
+ *
+ * Une requête par rendez-vous **affiché dont la journée porte déjà un
+ * encaissement abouti**, et aucune autre. Ce n'est pas une requête par ligne de
+ * la liste :
+ *
+ * | Moment de la journée | Lectures ajoutées |
+ * |---|---|
+ * | à l'ouverture, rien d'encaissé | **0** — la fonction sort sans appeler personne |
+ * | en cours de journée | autant que de prestations déjà réglées |
+ * | journée close, au-delà de 32 | **0**, et la colonne se tait |
+ *
+ * Elles partent **ensemble** — `Promise.all` — là où la pagination des
+ * encaissements est séquentielle : ici le nombre d'appels est connu d'avance, et
+ * les attendre l'un après l'autre aurait ajouté autant d'allers-retours que de
+ * rendez-vous à une page que le comptoir recharge souvent.
+ *
+ * Et elle ne sert que la **liste** : un rendez-vous ouvert à l'écran n'en
+ * déclenche aucune, `readAppointmentTicket` lisant déjà son ticket, exactement
+ * un. Le panneau de règlement n'a donc rien payé pour ce correctif.
+ *
+ * ## Un refus n'est pas une panne, et « inconnu » n'est pas « rien dû »
+ *
+ * Même conduite que la journée de caisse : `null` veut dire inconnu. La page
+ * n'affiche alors pas la colonne — la taire est la seule conduite qui ne mente
+ * pas, et c'est celle qu'elle tenait déjà quand l'historique ne répondait pas.
+ */
+export async function readDayTickets(
+  accessToken: string,
+  payments: readonly PaymentTransaction[] | null,
+  /** Les rendez-vous que la liste affiche — la fenêtre de caisse en couvre trois. */
+  inScope: ReadonlySet<string>,
+): Promise<ReadonlyMap<string, SaleSummary> | null> {
+  if (payments === null) {
+    return null;
+  }
+
+  // Seuls les rendez-vous dont une ligne est **aboutie** ont un reste dû à
+  // vérifier : sur les quatre autres états, la pastille ne prononce pas le mot
+  // « réglé » et n'a donc rien à démentir. Et seuls ceux que la liste montre —
+  // voir « Le périmètre » ci-dessus.
+  const settled = new Set<string>();
+
+  for (const payment of payments) {
+    if (
+      payment.appointmentId !== null &&
+      inScope.has(payment.appointmentId) &&
+      isCapturedPayment(payment.status)
+    ) {
+      settled.add(payment.appointmentId);
+    }
+  }
+
+  if (settled.size === 0) {
+    return new Map();
+  }
+
+  if (settled.size > MAX_TICKET_READS) {
+    return null;
+  }
+
+  const ids = [...settled];
+
+  try {
+    const read = await Promise.all(
+      ids.map(async (appointmentId) => await fetchAppointmentSales(accessToken, appointmentId)),
+    );
+
+    return new Map(
+      read.flatMap((sales, index) => {
+        // Le ticket qui doit encore quelque chose d'abord : un rendez-vous peut
+        // porter une vente retail ajoutée après coup, et c'est bien « il reste
+        // à prendre » qu'il faut annoncer si l'une des deux n'est pas soldée.
+        const outstanding = sales.find((sale) => sale.remaining.amountMinor > 0) ?? sales[0];
+        const appointmentId = ids[index];
+
+        return outstanding === undefined || appointmentId === undefined
+          ? []
+          : [[appointmentId, outstanding] as const];
+      }),
+    );
+  } catch {
+    return null;
+  }
 }
 
 /**

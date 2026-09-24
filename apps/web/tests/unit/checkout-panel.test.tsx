@@ -950,3 +950,89 @@ describe('le ticket de caisse de la vente (#818)', () => {
     ).toBeDefined();
   });
 });
+
+/**
+ * Le tarif qui a bougé entre la réservation et le comptoir — #1240, deuxième
+ * critère.
+ *
+ * Le repère : un massage réservé 78,00 €, dont le catalogue dit maintenant
+ * 65,00 €. `POST /v1/sales` relit le catalogue ; le panneau, lui, n'avait sous la
+ * main que le prix figé, et envoyait donc 78,00 € sur un ticket qui venait de
+ * naître à 65,00 € — `422 SALE_OVERPAYMENT`, rouge, devant la cliente, pour une
+ * raison qui n'était pas de son fait.
+ *
+ * Les deux prix arrivent du **même** appel — `GET /appointments` sert `price` et
+ * `service.price` côte à côte —, et c'est ce qui permet de tenir le critère sans
+ * ouvrir de route.
+ */
+describe('l’écart de tarif, avant le clic — #1240', () => {
+  /** Le même rendez-vous, avec un tarif de catalogue à part. */
+  function drifted(catalogMinor: number): ReactElement {
+    const base = appointment('completed');
+
+    return (
+      <CheckoutPanel
+        appointment={{
+          ...base,
+          service: { ...base.service, price: { amountMinor: catalogMinor, currency: 'EUR' } },
+        }}
+        settlement={null}
+        tenantSlug={SLUG}
+        ticket={null}
+        timeZone={TIMEZONE}
+      />
+    );
+  }
+
+  it('explique l’écart sans attendre que l’opérateur clique', () => {
+    render(drifted(6500));
+
+    // Les deux prix sont nommés, et le montant à annoncer avec eux : « la requête
+    // est invalide » ne lui aurait rien appris une fois le refus tombé.
+    const notice = screen.getByText(/tarif de cette prestation a changé/i);
+
+    expect(notice.textContent).toContain('65,00');
+    expect(notice.textContent).toContain('78,00');
+  });
+
+  it('n’annonce plus un montant que la caisse refuserait', async () => {
+    openCheckoutTicketAction.mockResolvedValue({ ok: true, data: sale() });
+    settleTicketAction.mockResolvedValue({ ok: true, data: settlement(6500, 'cash', 0) });
+    // Le ticket soldé fait place au reçu, qui va le chercher. Ce qu'il rend est
+    // sans intérêt ici — mais sans doublure du tout, l'action rendrait
+    // `undefined` et la promesse partirait en l'air.
+    loadReceiptAction.mockResolvedValue({
+      ok: false,
+      code: 'SERVICE_UNAVAILABLE',
+      message: 'Le service est momentanément injoignable.',
+    });
+    render(drifted(6500));
+
+    // Le bouton porte le plafond du ticket, pas le prix figé : c'est le seul
+    // montant que `POST /sales/{id}/payments` puisse accepter sur cette pièce.
+    expect(screen.getByRole('button', { name: /65,00/ })).toBeDefined();
+    expect(screen.queryByRole('button', { name: /78,00/ })).toBeNull();
+
+    await userEvent.click(screen.getByRole('button', { name: CASH_BUTTON }));
+
+    await waitFor(() => {
+      expect(settleTicketAction).toHaveBeenCalled();
+    });
+    expect(settleTicketAction.mock.calls[0]?.[2]).toEqual({ method: 'CASH', amountMinor: 6500 });
+  });
+
+  it('ne facture jamais une hausse que la cliente n’a pas vue', () => {
+    render(drifted(9000));
+
+    // Le catalogue a monté : la cliente doit ce qu'elle a accepté, et le reste
+    // demeure sur le ticket, visible. C'est au salon d'en décider, pas à l'écran.
+    expect(screen.getByRole('button', { name: /78,00/ })).toBeDefined();
+    expect(screen.getByText(/tarif de cette prestation a changé/i)).toBeDefined();
+  });
+
+  it('se tait quand le catalogue dit encore le prix de la réservation', () => {
+    render(drifted(7800));
+
+    expect(screen.queryByText(/tarif de cette prestation a changé/i)).toBeNull();
+  });
+});
