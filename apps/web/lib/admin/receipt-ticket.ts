@@ -9,6 +9,7 @@ import {
 } from '@spa/shared';
 
 import { CHECKOUT_FALLBACK_LOCALE, checkoutWords } from '@/lib/admin/checkout-summary';
+import { formattingLocale, type DisplayLocale } from '@/lib/format';
 
 /**
  * La mise en forme du ticket de caisse imprimé au comptoir — ce qui se décide
@@ -21,22 +22,38 @@ import { CHECKOUT_FALLBACK_LOCALE, checkoutWords } from '@/lib/admin/checkout-su
  * comme sur un ticket de grande surface : taux, HT, TVA, TTC.
  */
 
-const LEGAL_ID_LABELS: Readonly<Record<NonNullable<ReceiptIssuer['legalIdType']>, string>> = {
+/**
+ * Les registres nommés par leur sigle — des **noms propres**, qui ne se
+ * traduisent pas : un SIRET s'appelle SIRET sur un ticket anglais comme sur un
+ * ticket français, et le traduire empêcherait de rapprocher le numéro du
+ * registre qui l'a émis. Les deux natures qui ne sont pas des sigles — « autre
+ * registre » et « registre inconnu » — sont des phrases, et viennent donc du
+ * catalogue.
+ */
+const LEGAL_ID_ACRONYMS: Readonly<Record<'SIRET' | 'SIREN' | 'NIF' | 'STAT', string>> = {
   SIRET: 'SIRET',
   SIREN: 'SIREN',
   NIF: 'NIF',
   STAT: 'STAT',
-  OTHER: 'Immatriculation',
 };
 
 /** « SIRET 123 456 789 00012 » — l'identifiant d'entreprise et sa nature. */
-export function legalIdLine(issuer: ReceiptIssuer): string | null {
+export function legalIdLine(
+  issuer: ReceiptIssuer,
+  locale: Locale = CHECKOUT_FALLBACK_LOCALE,
+): string | null {
   if (issuer.legalId === undefined) {
     return null;
   }
 
+  const words = checkoutWords(locale);
+  const type = issuer.legalIdType;
   const nature =
-    issuer.legalIdType === undefined ? 'Identifiant' : LEGAL_ID_LABELS[issuer.legalIdType];
+    type === undefined
+      ? words.receipt.legalIdUnknown
+      : type === 'OTHER'
+        ? words.receipt.legalIdOther
+        : LEGAL_ID_ACRONYMS[type];
 
   return `${nature} ${issuer.legalId}`;
 }
@@ -82,10 +99,31 @@ export function issuerAddressLines(issuer: ReceiptIssuer): readonly string[] {
  * « 20 % », « 5,5 % » — un taux en points de base, jamais un flottant stocké.
  *
  * La division n'a lieu qu'à l'affichage : `550` points de base font 5,5 %, et
- * `Intl` écrit la virgule décimale française.
+ * `Intl` écrit la virgule décimale française — ou le point décimal anglais, la
+ * région du salon décidant du séparateur comme elle décide déjà de celui d'un
+ * montant (`lib/format.ts`). Le **taux ne change pas** avec la langue : seule
+ * son écriture suit, comme pour un montant (`CLAUDE.md`).
+ *
+ * Le signe est posé par `Intl` (`style: 'percent'`) et non concaténé ici :
+ * l'espace qui le précède est une convention **française**, et un « 20 % »
+ * écrit à la main était la dernière typographie française du rouleau anglais,
+ * qui écrit « 20% » sans espace. `Intl` pose en outre une espace insécable là où
+ * la langue en veut une — un taux ne doit pas se couper en fin de ligne sur un
+ * rouleau de 80 mm.
+ *
+ * `display` est facultatif pour la raison qui vaut dans tout `lib/format.ts` :
+ * les appelants pas encore branchés sur la langue résolue gardent le français
+ * d'avant.
  */
-export function formatTaxRate(rateBps: number): string {
-  return `${new Intl.NumberFormat('fr-FR', { maximumFractionDigits: 2 }).format(rateBps / 100)} %`;
+export function formatTaxRate(rateBps: number, display?: DisplayLocale): string {
+  const intlTag = formattingLocale(display?.locale, display?.countryCode);
+
+  // `style: 'percent'` multiplie par cent : la valeur passée est donc la
+  // fraction, `2000` points de base pour `0,2`. Le flottant est cantonné à
+  // l'affichage, comme la division de `formatMoney` — rien n'en dépend.
+  return new Intl.NumberFormat(intlTag, { style: 'percent', maximumFractionDigits: 2 }).format(
+    rateBps / 10000,
+  );
 }
 
 /** Une ligne de la table de TVA : taux, assiette HT, taxe, et leur somme TTC. */
@@ -96,9 +134,12 @@ export interface TaxTableRow {
   readonly total: Money;
 }
 
-export function taxTableRows(breakdown: readonly ReceiptTaxLine[]): readonly TaxTableRow[] {
+export function taxTableRows(
+  breakdown: readonly ReceiptTaxLine[],
+  display?: DisplayLocale,
+): readonly TaxTableRow[] {
   return breakdown.map((line) => ({
-    rate: formatTaxRate(line.rateBps),
+    rate: formatTaxRate(line.rateBps, display),
     base: line.base,
     tax: line.tax,
     total: addMoney(line.base, line.tax),
@@ -161,12 +202,11 @@ export function soldLines(lines: readonly ReceiptLine[]): readonly ReceiptLine[]
  * canal est le nom d'un tuyau, et la référence est le numéro d'opération que le
  * terminal imprime — du même rang qu'un `pi_…` (payments-stripe §1).
  *
- * `locale` a le défaut du comptoir, `fr`, pour la raison qui vaut déjà pour
- * `lib/appointment-status.ts` : le composant qui appelle cette fonction
- * (`admin/components/receipt-ticket.tsx`) n'est pas encore branché sur la langue
- * résolue, et le reste de son rouleau est en français. Basculer cette seule
- * ligne en anglais ferait un ticket bilingue. Le jour où l'écran passe à
- * l'épique #843, il passera la langue et le défaut tombera.
+ * `locale` garde le défaut du comptoir, `fr`, pour les seuls appelants qui ne la
+ * passent pas encore — aujourd'hui les suites antérieures à #1248. Le composant
+ * qui imprime le rouleau (`admin/components/receipt-ticket.tsx`) la passe depuis
+ * ce ticket-là : tout le ticket est désormais dans la langue de la session, et
+ * la ligne de règlement ne pouvait pas rester la seule en français.
  */
 export function settlementLabel(
   settlement: Pick<ReceiptSettlement, 'method' | 'cardChannel' | 'terminalReference'>,

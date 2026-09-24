@@ -50,42 +50,28 @@ const webDir = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..
 /** Les extensions qui portent du code — le JSON lu ici n'en est pas. */
 const SOURCE_EXTENSIONS: readonly string[] = ['.ts', '.tsx', '.mts', '.mjs', '.js', '.jsx'];
 
-/**
- * Les clés que le **ticket imprimé** attend, et que personne ne lit encore.
+/*
+ * ## Il n'y a plus de dérogation — #1248
  *
- * `app/(admin)/[tenantSlug]/admin/components/receipt-ticket.tsx` écrit ses
- * libellés en dur, en français — « Client », « Praticien », « Article », « Qté »,
- * « Total TTC », « Merci de votre visite ! » — alors que le catalogue porte déjà
- * les treize phrases dans les deux langues. Ce n'est donc pas un catalogue en
- * trop : c'est un composant en retard, et retirer les clés entérinerait les
- * libellés en dur que `CLAUDE.md` interdit.
+ * `PENDING_RECEIPT_KEYS` tenait ici les treize clés que le **ticket imprimé**
+ * attendait pendant que `receipt-ticket.tsx` écrivait ses libellés en dur, en
+ * français. Le composant les lit depuis #1248, et la liste est donc tombée avec
+ * la dérogation qu'elle portait : plus aucune clé de ce catalogue n'est
+ * exemptée, et l'assertion ci-dessous porte sur le catalogue entier.
  *
- * La dérogation est nominative et vouée à disparaître avec l'issue de suivi qui
- * la porte. Toute clé orpheline hors de cette liste fait échouer ce test.
+ * Deux des treize n'ont pas trouvé de place sur le rouleau et ont été retirées
+ * du catalogue plutôt que branchées de force — `receipt.label`, qui redisait le
+ * titre du document, et `receipt.kept` (« Reste acquis »), qui nomme un montant
+ * net des avoirs que l'API ne rend pas et que le front n'a pas le droit de
+ * calculer (`CLAUDE.md`). Ce n'était plus « entériner un libellé en dur » : les
+ * onze autres sont lues, et le rouleau ne porte plus un seul mot écrit en dur.
  */
-const PENDING_RECEIPT_KEYS: readonly string[] = [
-  'receipt.label',
-  'receipt.finalTitle',
-  'receipt.client',
-  'receipt.staff',
-  'receipt.linesCaption',
-  'receipt.item',
-  'receipt.quantity',
-  'receipt.amount',
-  'receipt.refunded',
-  'receipt.total',
-  'receipt.kept',
-  'receipt.payment',
-  'receipt.thanks',
-];
 
 /**
  * Ce qui n'est pas lu — et `tests/` en fait partie, délibérément.
  *
  * Une clé que seule une suite cite reste orpheline **dans le produit** : c'est
- * précisément le cas qu'on veut voir échouer, et non se justifier tout seul. La
- * liste ci-dessous en serait d'ailleurs la première victime, elle qui nomme onze
- * clés en clair.
+ * précisément le cas qu'on veut voir échouer, et non se justifier tout seul.
  */
 const IGNORED_DIRS: readonly string[] = ['node_modules', '.next', 'messages', 'tests', 'mockups'];
 
@@ -179,7 +165,7 @@ describe('les clés du catalogue d’encaissement', () => {
   });
 
   it('n’en laisse aucune que personne ne lise', () => {
-    const orphans = keys.filter((key) => !isRead(key) && !PENDING_RECEIPT_KEYS.includes(key));
+    const orphans = keys.filter((key) => !isRead(key));
 
     expect(orphans).toEqual([]);
   });
@@ -194,13 +180,39 @@ describe('les clés du catalogue d’encaissement', () => {
     expect(isRead('badge.partiallySettled')).toBe(true);
   });
 
-  it('garde la dérogation du ticket imprimé nominative, et vraiment orpheline', () => {
-    // Le jour où `receipt-ticket.tsx` lira ces clés, cette liste doit rétrécir.
-    // Sans cette assertion, elle resterait en place comme une exemption
-    // permanente — et une clé retirée du catalogue y survivrait en silence.
-    for (const key of PENDING_RECEIPT_KEYS) {
-      expect(keys).toContain(key);
-      expect(isRead(key)).toBe(false);
+  it('branche le ticket imprimé, qui écrivait ses libellés en dur — #1248', () => {
+    // L'assertion générale suffirait à faire échouer un retour en arrière, mais
+    // elle échouerait en nommant « une clé orpheline » sans dire laquelle des
+    // deux causes. Celle-ci nomme le composant : c'est ce qu'on veut lire si
+    // quelqu'un remet un libellé en dur sur le rouleau.
+    for (const key of [
+      'receipt.finalTitle',
+      'receipt.provisionalTitle',
+      'receipt.client',
+      'receipt.staff',
+      'receipt.cashier',
+      'receipt.linesCaption',
+      'receipt.item',
+      'receipt.quantity',
+      'receipt.amount',
+      'receipt.itemCount',
+      'receipt.subtotal',
+      'receipt.tax',
+      'receipt.tip',
+      'receipt.total',
+      'receipt.totalIncludingTax',
+      'receipt.payment',
+      'receipt.refunded',
+      'receipt.thanks',
+    ]) {
+      expect(isRead(key), `« ${key} » n’est lue par aucun module de production`).toBe(true);
     }
+  });
+
+  it('ne garde plus aucune clé du ticket que le catalogue seul connaisse', () => {
+    // Le pendant du test précédent : les deux clés que le rouleau n'a pas
+    // reprises ont quitté le catalogue, elles n'y dorment pas.
+    expect(keys).not.toContain('receipt.label');
+    expect(keys).not.toContain('receipt.kept');
   });
 });

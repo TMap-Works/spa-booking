@@ -1,4 +1,7 @@
-import type { SaleReceipt } from '@spa/shared';
+'use client';
+
+import type { Locale, SaleReceipt } from '@spa/shared';
+import { useLocale, useTranslations } from 'next-intl';
 import { Fragment } from 'react';
 
 import {
@@ -9,7 +12,7 @@ import {
   soldLines,
   taxTableRows,
 } from '@/lib/admin/receipt-ticket';
-import { formatMoney, formatTicketDateTime } from '@/lib/format';
+import { formatMoney, formatTicketDateTime, type DisplayLocale } from '@/lib/format';
 
 /**
  * Le ticket de caisse, mis en page comme un rouleau thermique de 80 mm.
@@ -32,25 +35,77 @@ import { formatMoney, formatTicketDateTime } from '@/lib/format';
  *
  * Un composant de présentation pur : il s'affiche en aperçu dans l'écran
  * d'encaissement et s'imprime tel quel — voir `TicketPrinter`.
+ *
+ * ## Dans la langue de la session — #1248
+ *
+ * Tous les mots du rouleau viennent du catalogue `admin-checkout`, aucun n'est
+ * écrit ici. Le produit sert l'**anglais par défaut** depuis
+ * l'internationalisation : un salon dont la session est en anglais tendait à sa
+ * cliente une pièce comptable en français, et treize clés du catalogue que
+ * personne ne lisait n'étaient relues, ni corrigées, ni traduites par personne.
+ *
+ * `useTranslations` et non `getTranslations`, malgré l'absence de `'use
+ * client'` dans le fichier d'origine : ce composant **n'est pas** un Server
+ * Component. Son seul consommateur, `checkout-receipt.tsx`, porte `'use
+ * client'` et l'importe directement — le rouleau est donc compilé dans le
+ * *bundle* client, où `next-intl/server` lève « not supported in Client
+ * Components ». La directive est posée en tête pour que la frontière soit lue
+ * sur le fichier plutôt que déduite de son importateur (web-frontend §1).
+ *
+ * ## La langue ne touche pas aux chiffres
+ *
+ * Aucun montant, aucune date et aucun numéro de pièce ne change de **valeur**
+ * avec la langue : les montants restent les entiers que l'API a figés, les
+ * instants restent en UTC, et le fuseau d'affichage reste celui du salon
+ * (`receipt.timezone`). Seule leur **mise en forme** suit la langue, et elle
+ * passe par `lib/format.ts` — jamais par un `toLocaleString` posé ici
+ * (`CLAUDE.md`).
+ *
+ * La région de cette mise en forme est celle du **pays de l'établissement**,
+ * `Tenant.countryCode` — la même que celle dont se sert tout le reste du
+ * comptoir, et que `CheckoutReceipt` tient déjà de sa page. Elle est donc
+ * **passée**, comme aux autres briques du comptoir.
+ *
+ * L'adresse de la pièce ne sert que de repli : elle porte bien le même pays
+ * (`toIssuerDto`, `apps/api`), mais l'API **omet l'adresse entière** tant que la
+ * rue, la ville et le pays ne sont pas tous les trois renseignés. Un salon
+ * malgache qui n'a pas publié sa rue retomberait alors sur la région par défaut
+ * de la langue — et daterait son rouleau « 09/05/2026 » à l'américaine sous un
+ * bandeau qui dit « 05/09/2026 ».
  */
-export function ReceiptTicket({ receipt }: { readonly receipt: SaleReceipt }) {
+export function ReceiptTicket({
+  countryCode = null,
+  receipt,
+}: {
+  /** `Tenant.countryCode` — la région de la mise en forme, jamais le fuseau. */
+  readonly countryCode?: string | null;
+  readonly receipt: SaleReceipt;
+}) {
+  const t = useTranslations('admin-checkout');
+  const locale = useLocale() as Locale;
   const { issuer } = receipt;
-  const legalId = legalIdLine(issuer);
+  const display: DisplayLocale = { locale, countryCode: countryCode ?? issuer.address?.country };
+  const legalId = legalIdLine(issuer, locale);
   const contacts = [
     issuer.contactPhone === undefined ? undefined : formatReceiptPhone(issuer.contactPhone),
     issuer.contactEmail,
   ].filter((value): value is string => value !== undefined);
   const lines = soldLines(receipt.lines);
   const itemCount = lines.reduce((count, line) => count + line.quantity, 0);
-  const taxes = taxTableRows(receipt.taxBreakdown);
+  const taxes = taxTableRows(receipt.taxBreakdown, display);
   const taxed = taxes.length > 0;
   const issuedAt = receipt.issuedAt ?? receipt.openedAt;
+  // Le nom du document, et le seul : il coiffe le rouleau à l'écran et donne
+  // son nom accessible à la région. Deux formulations différentes pour la même
+  // pièce feraient annoncer au lecteur d'écran autre chose que ce qui est
+  // imprimé.
+  const documentTitle =
+    receipt.number === null
+      ? t('receipt.provisionalTitle')
+      : t('receipt.finalTitle', { number: receipt.number });
 
   return (
-    <article
-      aria-label={receipt.number === null ? 'Ticket provisoire' : `Ticket n° ${receipt.number}`}
-      className="spa-ticket"
-    >
+    <article aria-label={documentTitle} className="spa-ticket">
       <header className="spa-ticket__header">
         <p className="spa-ticket__brand">{issuer.name}</p>
         {issuer.legalName !== undefined && issuer.legalName !== issuer.name ? (
@@ -61,23 +116,19 @@ export function ReceiptTicket({ receipt }: { readonly receipt: SaleReceipt }) {
         ))}
         {contacts.length > 0 ? <p>{contacts.join(' · ')}</p> : null}
         {legalId === null ? null : <p>{legalId}</p>}
-        {issuer.vatNumber === undefined ? null : <p>TVA intracom. {issuer.vatNumber}</p>}
+        {issuer.vatNumber === undefined ? null : (
+          <p>{t('receipt.vatNumber', { number: issuer.vatNumber })}</p>
+        )}
       </header>
 
       <hr className="spa-ticket__rule" />
 
       <div className="spa-ticket__identity">
+        <p className="spa-ticket__title">{documentTitle}</p>
         {receipt.number === null ? (
-          <>
-            <p className="spa-ticket__title">Ticket provisoire</p>
-            <p className="spa-ticket__note">
-              Vente non close — ce document n’est pas une pièce comptable.
-            </p>
-          </>
-        ) : (
-          <p className="spa-ticket__title">Ticket n° {receipt.number}</p>
-        )}
-        <p>{formatTicketDateTime(issuedAt, receipt.timezone)}</p>
+          <p className="spa-ticket__note">{t('receipt.provisionalNote')}</p>
+        ) : null}
+        <p>{formatTicketDateTime(issuedAt, receipt.timezone, display)}</p>
       </div>
 
       <hr className="spa-ticket__rule" />
@@ -85,18 +136,18 @@ export function ReceiptTicket({ receipt }: { readonly receipt: SaleReceipt }) {
       <dl className="spa-ticket__rows">
         {receipt.client === null ? null : (
           <div className="spa-ticket__row">
-            <dt>Client</dt>
+            <dt>{t('receipt.client')}</dt>
             <dd>{receipt.client.displayName}</dd>
           </div>
         )}
         {receipt.practitioner === null ? null : (
           <div className="spa-ticket__row">
-            <dt>Praticien</dt>
+            <dt>{t('receipt.staff')}</dt>
             <dd>{receipt.practitioner.displayName}</dd>
           </div>
         )}
         <div className="spa-ticket__row">
-          <dt>Caisse</dt>
+          <dt>{t('receipt.cashier')}</dt>
           <dd>{receipt.cashier.displayName}</dd>
         </div>
       </dl>
@@ -104,15 +155,15 @@ export function ReceiptTicket({ receipt }: { readonly receipt: SaleReceipt }) {
       <hr className="spa-ticket__rule" />
 
       <table className="spa-ticket__items">
-        <caption className="spa-visually-hidden">Articles</caption>
+        <caption className="spa-visually-hidden">{t('receipt.linesCaption')}</caption>
         <thead>
           <tr>
-            <th scope="col">Article</th>
+            <th scope="col">{t('receipt.item')}</th>
             <th className="spa-ticket__num" scope="col">
-              Qté
+              {t('receipt.quantity')}
             </th>
             <th className="spa-ticket__num" scope="col">
-              Montant
+              {t('receipt.amount')}
             </th>
           </tr>
         </thead>
@@ -123,20 +174,21 @@ export function ReceiptTicket({ receipt }: { readonly receipt: SaleReceipt }) {
                 {line.label}
                 {line.quantity === 1 ? null : (
                   <span className="spa-ticket__detail">
-                    {line.quantity} × {formatMoney(line.unitPrice)}
+                    {line.quantity} × {formatMoney(line.unitPrice, display)}
                   </span>
                 )}
               </td>
               <td className="spa-ticket__num">{line.quantity}</td>
-              <td className="spa-ticket__num">{formatMoney(line.total)}</td>
+              <td className="spa-ticket__num">{formatMoney(line.total, display)}</td>
             </tr>
           ))}
         </tbody>
       </table>
 
-      <p className="spa-ticket__count">
-        {itemCount} article{itemCount > 1 ? 's' : ''}
-      </p>
+      {/* L'accord se décide dans le catalogue, par une forme plurielle ICU : le
+          pluriel n'a pas les mêmes règles d'une langue à l'autre, et un « s »
+          concaténé ici les fixerait sur celles du français. */}
+      <p className="spa-ticket__count">{t('receipt.itemCount', { count: itemCount })}</p>
 
       <hr className="spa-ticket__rule spa-ticket__rule--dashed" />
 
@@ -144,49 +196,50 @@ export function ReceiptTicket({ receipt }: { readonly receipt: SaleReceipt }) {
         {taxed ? (
           <>
             <div className="spa-ticket__row">
-              <dt>Total HT</dt>
-              <dd>{formatMoney(receipt.subtotal)}</dd>
+              <dt>{t('receipt.subtotal')}</dt>
+              <dd>{formatMoney(receipt.subtotal, display)}</dd>
             </div>
             <div className="spa-ticket__row">
-              <dt>TVA</dt>
-              <dd>{formatMoney(receipt.taxTotal)}</dd>
+              <dt>{t('receipt.tax')}</dt>
+              <dd>{formatMoney(receipt.taxTotal, display)}</dd>
             </div>
           </>
         ) : null}
         {receipt.tip.amountMinor === 0 ? null : (
           <div className="spa-ticket__row">
-            <dt>Pourboire</dt>
-            <dd>{formatMoney(receipt.tip)}</dd>
+            <dt>{t('receipt.tip')}</dt>
+            <dd>{formatMoney(receipt.tip, display)}</dd>
           </div>
         )}
         <div className="spa-ticket__row spa-ticket__row--grand">
-          <dt>{taxed ? 'Total TTC' : 'Total'}</dt>
-          <dd>{formatMoney(receipt.total)}</dd>
+          <dt>{taxed ? t('receipt.totalIncludingTax') : t('receipt.total')}</dt>
+          <dd>{formatMoney(receipt.total, display)}</dd>
         </div>
       </dl>
 
       <hr className="spa-ticket__rule" />
 
+      <p className="spa-ticket__section">{t('receipt.payment')}</p>
       {receipt.settlements.length === 0 ? (
-        <p className="spa-ticket__note">Aucun règlement enregistré.</p>
+        <p className="spa-ticket__note">{t('receipt.noSettlement')}</p>
       ) : (
         <dl className="spa-ticket__rows">
           {receipt.settlements.map((settlement, index) => (
             <Fragment key={`${settlement.method}-${String(index)}`}>
               <div className="spa-ticket__row">
-                <dt>{settlementLabel(settlement)}</dt>
-                <dd>{formatMoney(settlement.amount)}</dd>
+                <dt>{settlementLabel(settlement, locale)}</dt>
+                <dd>{formatMoney(settlement.amount, display)}</dd>
               </div>
               {settlement.tendered === undefined ? null : (
                 <div className="spa-ticket__row spa-ticket__row--sub">
-                  <dt>Reçu</dt>
-                  <dd>{formatMoney(settlement.tendered)}</dd>
+                  <dt>{t('receipt.tendered')}</dt>
+                  <dd>{formatMoney(settlement.tendered, display)}</dd>
                 </div>
               )}
               {settlement.change === undefined ? null : (
                 <div className="spa-ticket__row spa-ticket__row--sub">
-                  <dt>Rendu</dt>
-                  <dd>{formatMoney(settlement.change)}</dd>
+                  <dt>{t('receipt.change')}</dt>
+                  <dd>{formatMoney(settlement.change, display)}</dd>
                 </div>
               )}
             </Fragment>
@@ -198,18 +251,18 @@ export function ReceiptTicket({ receipt }: { readonly receipt: SaleReceipt }) {
         <>
           <hr className="spa-ticket__rule spa-ticket__rule--dashed" />
           <table className="spa-ticket__taxes">
-            <caption className="spa-visually-hidden">Détail de la TVA</caption>
+            <caption className="spa-visually-hidden">{t('receipt.taxCaption')}</caption>
             <thead>
               <tr>
-                <th scope="col">Taux</th>
+                <th scope="col">{t('receipt.taxRate')}</th>
                 <th className="spa-ticket__num" scope="col">
-                  HT
+                  {t('receipt.taxBase')}
                 </th>
                 <th className="spa-ticket__num" scope="col">
-                  TVA
+                  {t('receipt.taxAmount')}
                 </th>
                 <th className="spa-ticket__num" scope="col">
-                  TTC
+                  {t('receipt.taxGross')}
                 </th>
               </tr>
             </thead>
@@ -217,9 +270,9 @@ export function ReceiptTicket({ receipt }: { readonly receipt: SaleReceipt }) {
               {taxes.map((row) => (
                 <tr key={row.rate}>
                   <td>{row.rate}</td>
-                  <td className="spa-ticket__num">{formatMoney(row.base)}</td>
-                  <td className="spa-ticket__num">{formatMoney(row.tax)}</td>
-                  <td className="spa-ticket__num">{formatMoney(row.total)}</td>
+                  <td className="spa-ticket__num">{formatMoney(row.base, display)}</td>
+                  <td className="spa-ticket__num">{formatMoney(row.tax, display)}</td>
+                  <td className="spa-ticket__num">{formatMoney(row.total, display)}</td>
                 </tr>
               ))}
             </tbody>
@@ -230,18 +283,18 @@ export function ReceiptTicket({ receipt }: { readonly receipt: SaleReceipt }) {
       {receipt.refunds.length === 0 ? null : (
         <>
           <hr className="spa-ticket__rule spa-ticket__rule--dashed" />
-          <p className="spa-ticket__section">Avoirs</p>
+          <p className="spa-ticket__section">{t('receipt.refunded')}</p>
           <dl className="spa-ticket__rows">
             {receipt.refunds.map((refund, index) => (
               <div className="spa-ticket__row" key={refund.number ?? `avoir-${String(index)}`}>
                 <dt>
-                  {refund.number ?? `Avoir ${String(index + 1)}`}
+                  {refund.number ?? t('receipt.creditNote', { index: index + 1 })}
                   <span className="spa-ticket__detail">
-                    {formatTicketDateTime(refund.issuedAt, receipt.timezone)}
+                    {formatTicketDateTime(refund.issuedAt, receipt.timezone, display)}
                     {refund.reason === undefined ? '' : ` — ${refund.reason}`}
                   </span>
                 </dt>
-                <dd>− {formatMoney(refund.amount)}</dd>
+                <dd>− {formatMoney(refund.amount, display)}</dd>
               </div>
             ))}
           </dl>
@@ -252,7 +305,7 @@ export function ReceiptTicket({ receipt }: { readonly receipt: SaleReceipt }) {
 
       <footer className="spa-ticket__footer">
         {issuer.footer === undefined ? null : <p className="spa-ticket__legal">{issuer.footer}</p>}
-        <p className="spa-ticket__thanks">Merci de votre visite !</p>
+        <p className="spa-ticket__thanks">{t('receipt.thanks')}</p>
       </footer>
     </article>
   );
