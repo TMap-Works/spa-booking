@@ -15,6 +15,7 @@ import type {
   AvailabilityResponse,
   BookedAppointment,
   CalendarDate,
+  PublicService,
   UtcInstant,
 } from '@spa/shared';
 import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react';
@@ -22,8 +23,14 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { BookingTunnel } from '@/app/(booking)/[tenantSlug]/reservation/booking-tunnel';
+import { initialBookingDraft } from '@/app/(booking)/[tenantSlug]/reservation/initial-draft';
 import type { AccountPresence } from '@/lib/account-presence';
-import { emptyBookingDraft, readBookingDraft, writeBookingDraft } from '@/lib/booking/draft';
+import {
+  emptyBookingDraft,
+  readBookingDraft,
+  writeBookingDraft,
+  type BookingDraft,
+} from '@/lib/booking/draft';
 
 import { contact, contactAccount, presence as connectee, service, tenant } from './fixtures';
 
@@ -173,11 +180,24 @@ afterEach(() => {
  * donc l'état sous lequel le parcours se déroule, et les cas qui parlent d'une
  * visiteuse sans compte passent `null` explicitement.
  */
-function renderTunnel(presence: AccountPresence | null = connectee) {
+/**
+ * Ce qu'un scénario peut changer du montage — le catalogue et l'état de départ.
+ *
+ * Les deux vont de pair : l'état de départ est celui que le serveur résout
+ * **contre le catalogue de la page** (`initial-draft.ts`), et monter l'un sans
+ * l'autre éprouverait un tunnel qui n'existe pas. Absents, on garde le montage
+ * par défaut — un catalogue d'une prestation, ouvert sur la première étape.
+ */
+interface MontageOptions {
+  readonly services?: readonly PublicService[];
+  readonly initialDraft?: BookingDraft;
+}
+
+function renderTunnel(presence: AccountPresence | null = connectee, options: MontageOptions = {}) {
   render(
     <BookingTunnel
       tenant={tenant}
-      services={[service]}
+      services={options.services ?? [service]}
       exitHref={`/${tenant.slug}`}
       presence={presence}
       loginHref={CONNEXION}
@@ -185,7 +205,7 @@ function renderTunnel(presence: AccountPresence | null = connectee) {
       // L'état de départ que le serveur lit dans l'adresse (#1055). Ces cas-ci
       // arrivent tous par la première étape : c'est le brouillon vierge, et
       // l'effet d'hydratation prend ensuite le relais sur `sessionStorage`.
-      initialDraft={emptyBookingDraft()}
+      initialDraft={options.initialDraft ?? emptyBookingDraft()}
     />,
   );
 
@@ -1179,5 +1199,205 @@ describe('un brouillon laissé par une autre cliente (#1151)', () => {
 
     expect(await screen.findByLabelText(/Un mot pour le salon/)).toHaveProperty('value', MOT);
     expect(readBookingDraft(tenant.slug).contact.clientNote).toBe(MOT);
+  });
+});
+
+/**
+ * Le lien « Choisir » ouvert après une réservation (#1152).
+ *
+ * La campagne `20260922-complet` l'a relevé : revenue sur la vitrine dans le
+ * même onglet, la cliente clique « Choisir — Coupe homme » et tombe sur une
+ * confirmation. Pas la sienne : la prestation du lien y est affichée à côté du
+ * rendez-vous que le brouillon garde, si bien que l'écran annonçait un
+ * rendez-vous qui n'existe nulle part — et que son bouton « Annuler ce
+ * rendez-vous » visait le vrai.
+ *
+ * Ce que ces cas tiennent, et que `draft.test.ts` ne dit pas : l'écran
+ * réellement rendu, l'adresse qu'il laisse derrière lui, et le calendrier que le
+ * lien devait ouvrir.
+ */
+describe('un lien « Choisir » ouvert après une réservation (#1152)', () => {
+  /**
+   * La seconde prestation du catalogue — celle que le lien de la vitrine nomme.
+   *
+   * Durée et prix différents de `service` : ce sont précisément les faits que
+   * l'écran inventait en les empruntant au lien.
+   */
+  const AUTRE: PublicService = {
+    ...service,
+    id: '88888888-8888-4888-8888-888888888888',
+    slug: 'coupe-homme',
+    name: 'Coupe homme',
+    durationMinutes: 30,
+    price: { amountMinor: 2000, currency: 'EUR' },
+  };
+
+  const CATALOGUE = [service, AUTRE];
+
+  /**
+   * L'onglet d'une cliente qui vient de réserver, rouvert sur le lien d'une
+   * prestation.
+   *
+   * Le brouillon est le sien — `contactAccount` posé — sans quoi c'est #1151 qui
+   * ferait tomber le rendez-vous, et le cas de ce ticket-ci ne serait pas
+   * éprouvé.
+   */
+  function lienDepuisLaVitrine(serviceId: string): void {
+    writeBookingDraft(tenant.slug, {
+      ...emptyBookingDraft(),
+      step: 'confirmation',
+      serviceId: service.id,
+      staffId: null,
+      startsAt: APRES_MIDI,
+      contact,
+      contactAccount,
+      appointment: rendezVous(),
+    });
+    // Ce que `serviceBookingHref` écrit (`components/salon/booking-link.ts`) :
+    // l'étape du créneau, et la prestation choisie sur la vitrine.
+    window.history.replaceState(null, '', `${ADRESSE}?etape=creneau&prestation=${serviceId}`);
+  }
+
+  /** Le montage de la page, tel que le serveur le résout pour cette adresse. */
+  function monterSurLeLien(serviceId: string) {
+    return renderTunnel(connectee, {
+      services: CATALOGUE,
+      initialDraft: initialBookingDraft({ etape: 'creneau', prestation: serviceId }, CATALOGUE),
+    });
+  }
+
+  it('ouvre le calendrier de la prestation demandée, et non une confirmation', async () => {
+    lienDepuisLaVitrine(AUTRE.id);
+
+    monterSurLeLien(AUTRE.id);
+
+    expect(await screen.findByRole('heading', { name: AUTRE.name })).toBeDefined();
+    // Ni la confirmation, ni la référence d'un rendez-vous qu'on n'a pas
+    // demandé à revoir.
+    expect(screen.queryByText(/RDV-8F3K-27/)).toBeNull();
+    expect(screen.queryByText('Votre dernière réservation dans cet onglet')).toBeNull();
+    // Et le calendrier interrogé est bien celui de cette prestation-là.
+    expect(loadAvailabilityAction).toHaveBeenCalledWith(
+      tenant.slug,
+      expect.objectContaining({ serviceId: AUTRE.id }),
+    );
+  });
+
+  it('laisse l’adresse sur l’étape demandée plutôt que de la réécrire', async () => {
+    lienDepuisLaVitrine(AUTRE.id);
+
+    monterSurLeLien(AUTRE.id);
+
+    await screen.findByRole('heading', { name: AUTRE.name });
+    await waitFor(() => {
+      expect(query().get('etape')).toBe('creneau');
+    });
+    expect(query().get('prestation')).toBe(AUTRE.id);
+    // Le rendez-vous est sorti du brouillon : il décrivait un parcours que
+    // cette adresse ne décrit plus.
+    expect(readBookingDraft(tenant.slug).appointment).toBeNull();
+  });
+
+  it('rouvre aussi le calendrier sur la prestation qu’on vient de réserver', async () => {
+    // Un nouveau tunnel ne réutilise jamais la confirmation d'un rendez-vous
+    // précédent — même prestation comprise : le lien ne porte pas de créneau,
+    // il décrit donc un parcours arrêté avant celui qui a produit ce
+    // rendez-vous.
+    lienDepuisLaVitrine(service.id);
+
+    monterSurLeLien(service.id);
+
+    expect(await screen.findByRole('button', { name: '09 h 00' })).toBeDefined();
+    expect(screen.queryByText(/RDV-8F3K-27/)).toBeNull();
+  });
+
+  it('garde la confirmation quand l’adresse est la sienne (#45)', async () => {
+    // La contre-épreuve : le rafraîchissement de l'écran de confirmation, dont
+    // l'adresse décrit exactement le rendez-vous que le brouillon porte.
+    writeBookingDraft(tenant.slug, {
+      ...emptyBookingDraft(),
+      step: 'confirmation',
+      serviceId: service.id,
+      staffId: null,
+      startsAt: APRES_MIDI,
+      contact,
+      contactAccount,
+      appointment: rendezVous(),
+    });
+    window.history.replaceState(
+      null,
+      '',
+      `${ADRESSE}?etape=confirmation&prestation=${service.id}&creneau=${APRES_MIDI}`,
+    );
+
+    renderTunnel();
+
+    expect(await screen.findByText(/RDV-8F3K-27/)).toBeDefined();
+    expect(readBookingDraft(tenant.slug).appointment).not.toBeNull();
+  });
+
+  it('garde le rendez-vous jusqu’au fond de l’historique de l’onglet (#732)', async () => {
+    // La seconde contre-épreuve, et le piège de ce ticket : l'entrée de l'étape
+    // « Créneau » ne porte pas de `creneau` — elle a été écrite en y arrivant,
+    // avant que l'horaire ne soit retenu. Elle n'est pas un lien pour autant :
+    // c'est ce tunnel-ci qui l'a écrite, et le rendez-vous ne doit pas en
+    // tomber, sans quoi la cliente perd sa référence et repart confirmer une
+    // seconde fois ce qu'elle vient de réserver.
+    bookAppointmentAction.mockResolvedValue({ ok: true, data: rendezVous() });
+
+    const user = renderTunnel();
+    await allerJusquAuRecapitulatif(user, '09 h 00');
+    await user.click(screen.getByRole('button', { name: /Confirmer la réservation/ }));
+    await screen.findByText('C’est réservé !');
+
+    // Retour sur « Coordonnées », dont l'entrée porte le créneau.
+    await retourNavigateur();
+    expect(screen.getByText('C’est réservé !')).toBeDefined();
+
+    // Puis sur « Créneau », dont l'entrée n'en porte pas.
+    await retourNavigateur();
+    expect(screen.getByText('C’est réservé !')).toBeDefined();
+    expect(readBookingDraft(tenant.slug).appointment).not.toBeNull();
+  });
+
+  it('ne repose pas le rendez-vous sur l’entrée d’une autre prestation', async () => {
+    // Le défaut de ce ticket, pris par l'autre bout : deux réservations se
+    // suivent dans le même onglet, et l'historique garde les entrées de la
+    // première derrière celles de la seconde. Le geste retour qui y ramène ne
+    // doit pas plus recomposer un rendez-vous inventé que le lien de la
+    // vitrine.
+    writeBookingDraft(tenant.slug, {
+      ...emptyBookingDraft(),
+      step: 'confirmation',
+      serviceId: service.id,
+      staffId: null,
+      startsAt: APRES_MIDI,
+      contact,
+      contactAccount,
+      appointment: rendezVous(),
+    });
+    // L'entrée du parcours précédent, sur l'autre prestation…
+    window.history.replaceState(null, '', `${ADRESSE}?etape=creneau&prestation=${AUTRE.id}`);
+    // … puis celle de la confirmation qu'on tient à l'écran.
+    window.history.pushState(
+      null,
+      '',
+      `${ADRESSE}?etape=confirmation&prestation=${service.id}&creneau=${APRES_MIDI}`,
+    );
+
+    renderTunnel(connectee, {
+      services: CATALOGUE,
+      initialDraft: initialBookingDraft(
+        { etape: 'confirmation', prestation: service.id, creneau: APRES_MIDI },
+        CATALOGUE,
+      ),
+    });
+
+    await screen.findByText(/RDV-8F3K-27/);
+
+    await retourNavigateur();
+
+    expect(await screen.findByRole('heading', { name: AUTRE.name })).toBeDefined();
+    expect(screen.queryByText(/RDV-8F3K-27/)).toBeNull();
   });
 });

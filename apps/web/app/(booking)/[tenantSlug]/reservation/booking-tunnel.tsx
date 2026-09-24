@@ -193,6 +193,43 @@ function keepChosenSlot(current: BookingDraft, merged: BookingDraft): BookingDra
 }
 
 /**
+ * Le rendez-vous obtenu ne tombe pas non plus au geste retour (#732, #1152).
+ *
+ * `draftFromSearch` fait tomber le rendez-vous dès que l'adresse ne décrit plus
+ * le parcours qui l'a produit — c'est ce qui empêche le lien « Choisir » de la
+ * vitrine de rouvrir la confirmation précédente (#1152). Mais une entrée
+ * d'historique n'est pas un lien : elle a été écrite par ce tunnel-ci, dans cet
+ * onglet, **avant** la réservation, et elle est donc par construction en retard
+ * sur elle — exactement pour la même raison que le créneau ci-dessus.
+ *
+ * Sans ce repli, deux gestes retour depuis la confirmation retrouvaient l'entrée
+ * de l'étape « Créneau », qui ne porte pas de `creneau` : le rendez-vous sortait
+ * du brouillon — donc du `sessionStorage`, que l'autosauvegarde réécrit —, la
+ * cliente perdait sa référence et son bouton « Annuler ce rendez-vous », et le
+ * tunnel la laissait repartir confirmer une seconde fois ce qu'elle venait de
+ * réserver, ce que #732 interdit.
+ *
+ * Le repli s'arrête là où le défaut reprendrait : une entrée qui nomme **une
+ * autre prestation**. Deux réservations peuvent se suivre dans le même onglet —
+ * la seconde ouverte par un lien de la vitrine, qui fait justement tomber le
+ * rendez-vous de la première —, et l'historique garde alors les entrées de la
+ * première derrière celles de la seconde. Y reposer le rendez-vous en cours
+ * recomposerait le récapitulatif inventé de #1152, par l'autre bout. Une entrée
+ * qui ne nomme **aucune** prestation, elle, ne contredit rien : c'est la
+ * première du tunnel, et le rendez-vous y reste — c'est le « on ressort du
+ * tunnel sans jamais retomber sur un récapitulatif » de #732.
+ */
+function keepBookedAppointment(current: BookingDraft, merged: BookingDraft): BookingDraft {
+  const booked = current.appointment;
+  const rewound =
+    merged.appointment === null &&
+    booked !== null &&
+    (merged.serviceId === null || merged.serviceId === booked.serviceId);
+
+  return rewound ? { ...merged, appointment: booked } : merged;
+}
+
+/**
  * Le tunnel de réservation (#45) — prestation, créneau, coordonnées,
  * récapitulatif, confirmation.
  *
@@ -552,7 +589,10 @@ export function BookingTunnel({
       // un retour arrière ne crée jamais d'entrée.
       cameFromHistoryRef.current = true;
       setDraft((current) => {
-        const merged = keepChosenSlot(current, draftFromSearch(window.location.search, current));
+        const merged = keepBookedAppointment(
+          current,
+          keepChosenSlot(current, draftFromSearch(window.location.search, current)),
+        );
 
         return { ...merged, step: reachableStep(merged) };
       });
