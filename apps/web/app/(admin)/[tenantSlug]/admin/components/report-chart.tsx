@@ -1,5 +1,7 @@
 import type { ReactElement } from 'react';
 
+import { formattingLocale, type DisplayLocale } from '@/lib/format';
+
 /**
  * Le graphique du tableau de bord — troisième critère de #75, « graphiques
  * lisibles en thème clair et sombre ».
@@ -49,6 +51,20 @@ import type { ReactElement } from 'react';
  * est enveloppé dans une `<div class="spa-visually-hidden">` plutôt que de
  * porter la classe lui-même — une table ne descend pas sous la largeur de son
  * contenu, et celle-ci élargissait la page à 690 px sur un écran de 360 px.
+ *
+ * ## Les mots viennent de l'appelant, les chiffres d'`Intl` — #851
+ *
+ * Ce composant n'écrit **aucun mot** : titre, résumé, légendes, étiquettes de
+ * barres et en-têtes du tableau arrivent tous en propriétés, déjà traduits par
+ * l'écran qui les compose. C'est ce qui lui permet de rester un Server Component
+ * sans crochet, et ce qui évite qu'un graphique du tableau de bord et un
+ * graphique du reporting lisent deux namespaces différents.
+ *
+ * La seule exception est la **graduation par défaut** de l'axe : elle met en
+ * forme un nombre, donc elle a besoin d'une étiquette `Intl` — d'où `display`,
+ * facultatif et par défaut français, comme partout dans l'épique #843. Un
+ * graphique monétaire, lui, passe son propre `formatScaleValue` et n'en dépend
+ * pas.
  */
 
 /** Une barre : sa valeur, son étiquette, et ce qu'elle contient d'anormal. */
@@ -97,9 +113,20 @@ interface ReportChartProps {
   readonly seriesLabel: string;
   readonly innerSeriesLabel?: string;
   readonly emptyLabel: string;
+  /**
+   * L'en-tête de la **première** colonne du tableau en lecture d'écran — celle
+   * des étiquettes de barres.
+   *
+   * Une propriété et non un littéral (#851) : l'axe n'est pas toujours une
+   * période. « Rendez-vous par praticien » range des noms sous un en-tête qui
+   * disait « Période », ce qu'un lecteur d'écran annonçait tel quel.
+   */
+  readonly labelHeader: string;
   /** L'en-tête de la colonne de valeurs du tableau en lecture d'écran. */
   readonly valueHeader: string;
   readonly innerHeader?: string;
+  /** La langue et la région de la graduation par défaut — voir l'en-tête. */
+  readonly display?: DisplayLocale;
 }
 
 /** Hauteur de la zone de tracé d'un graphique en colonnes, en unités du viewBox. */
@@ -145,15 +172,19 @@ export function ReportChart({
   title,
   summary,
   layout,
-  formatScaleValue = compactNumber,
+  formatScaleValue,
   bars,
   seriesLabel,
   innerSeriesLabel,
   emptyLabel,
+  labelHeader,
   valueHeader,
   innerHeader,
+  display = FALLBACK_DISPLAY,
 }: ReportChartProps): ReactElement {
   const hasValues = bars.some((bar) => bar.value > 0);
+  const scaleFormatter =
+    formatScaleValue ?? ((value: number): string => compactNumber(value, display));
 
   return (
     <figure className="spa-admin-chart">
@@ -178,7 +209,7 @@ export function ReportChart({
             {layout === 'colonnes' ? (
               <ColumnChart
                 bars={bars}
-                formatScaleValue={formatScaleValue}
+                formatScaleValue={scaleFormatter}
                 summary={summary}
                 title={title}
               />
@@ -208,7 +239,7 @@ export function ReportChart({
           <caption>{summary}</caption>
           <thead>
             <tr>
-              <th scope="col">Période</th>
+              <th scope="col">{labelHeader}</th>
               <th scope="col">{valueHeader}</th>
               {innerHeader === undefined ? null : <th scope="col">{innerHeader}</th>}
             </tr>
@@ -547,9 +578,13 @@ function HatchPattern({ id }: { readonly id: string }): ReactElement {
   );
 }
 
+/** Le repli transitoire de l'épique #843 — voir l'en-tête du module. */
+const FALLBACK_DISPLAY: DisplayLocale = { locale: 'fr' };
+
 /** « 1,4 k » plutôt que « 1400 » sur une échelle étroite. */
-function compactNumber(value: number): string {
-  return new Intl.NumberFormat('fr-FR', { notation: 'compact', maximumFractionDigits: 1 }).format(
-    value,
-  );
+function compactNumber(value: number, display: DisplayLocale): string {
+  return new Intl.NumberFormat(formattingLocale(display.locale, display.countryCode), {
+    notation: 'compact',
+    maximumFractionDigits: 1,
+  }).format(value);
 }

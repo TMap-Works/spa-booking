@@ -162,6 +162,52 @@ describe('Export du reporting — URL présignée', () => {
     it('refuse en 422 une fenêtre de plus d’un an', async () => {
       await creer({ from: '2020-01-01T00:00:00Z', to: TO }, 422);
     });
+
+    describe('la langue du fichier — #851', () => {
+      it('écrit l’en-tête et les libellés dans la langue demandée', async () => {
+        await creer({ from: FROM, to: TO, locale: 'en' });
+        const [objet] = [...harness.storage.objects.values()];
+
+        expect(objet?.body).toContain('section,key,label,measure,value,currency');
+        expect(objet?.body).toContain('No-show appointments');
+        // Les codes de section et de mesure, eux, ne bougent pas : un export
+        // français et un export anglais doivent rester empilables.
+        expect(objet?.body).toContain('revenu_total,CARD-EUR,CARD,net_minor,12000,EUR');
+      });
+
+      it('écrit en français quand la demande ne porte aucune langue', async () => {
+        // Le repli d'avant le ticket : un appelant qui ne demande rien reçoit le
+        // fichier qu'il recevait.
+        await creer();
+        const [objet] = [...harness.storage.objects.values()];
+
+        expect(objet?.body).toContain('section;cle;libelle;mesure;valeur;devise');
+      });
+
+      it('accepte une langue écrite en capitales', async () => {
+        // `submittedLocaleSchema` normalise la casse : refuser sur un `EN`
+        // ferait échouer un export pour une raison qui n'en est pas une.
+        await creer({ from: FROM, to: TO, locale: 'EN' });
+        const [objet] = [...harness.storage.objects.values()];
+
+        expect(objet?.body).toContain('section,key,label,measure,value,currency');
+      });
+
+      it('refuse en 400 une langue hors du contrat, sans rien déposer', async () => {
+        await creer({ from: FROM, to: TO, locale: 'de' }, 400);
+
+        expect(harness.storage.objects.size).toBe(0);
+      });
+
+      it('ne change ni les montants, ni le fuseau de découpage des journées', async () => {
+        await creer({ from: FROM, to: TO, locale: 'en' });
+        const [objet] = [...harness.storage.objects.values()];
+
+        // La langue dit comment on écrit, jamais ce qu'on compte.
+        expect(objet?.body).toContain('Europe/Paris');
+        expect(objet?.body).toContain(',ht_minor,10000,EUR');
+      });
+    });
   });
 
   describe('GET /reports/export/:exportId', () => {

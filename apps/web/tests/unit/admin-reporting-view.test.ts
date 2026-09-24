@@ -7,7 +7,6 @@ import type {
   NoShowReport,
 } from '@/lib/admin/reporting-contract';
 import {
-  WHOLE_TENANT,
   filterOptions,
   formatReportScope,
   noShowRate,
@@ -18,6 +17,7 @@ import {
   scopedActivity,
   volumePoints,
   volumeQualification,
+  wholeTenant,
 } from '@/lib/admin/reporting-view';
 
 /**
@@ -102,17 +102,17 @@ describe('le filtre lu de l’URL', () => {
     // Un praticien qui n'a vu personne en septembre n'a pas de ligne : afficher
     // son nom au-dessus de zéros pris ailleurs serait un mensonge. Le lien reste
     // valide, il montre simplement l'établissement.
-    expect(parseReportScope('praticien:inconnu', staff, services)).toEqual(WHOLE_TENANT);
-    expect(parseReportScope('quelquechose:a', staff, services)).toEqual(WHOLE_TENANT);
-    expect(parseReportScope('praticien', staff, services)).toEqual(WHOLE_TENANT);
-    expect(parseReportScope(undefined, staff, services)).toEqual(WHOLE_TENANT);
+    expect(parseReportScope('praticien:inconnu', staff, services)).toEqual(wholeTenant('fr'));
+    expect(parseReportScope('quelquechose:a', staff, services)).toEqual(wholeTenant('fr'));
+    expect(parseReportScope('praticien', staff, services)).toEqual(wholeTenant('fr'));
+    expect(parseReportScope(undefined, staff, services)).toEqual(wholeTenant('fr'));
   });
 
   it('fait l’aller-retour avec ce que l’URL porte', () => {
     const scope = parseReportScope('prestation:s1', staff, services);
 
     expect(formatReportScope(scope)).toBe('prestation:s1');
-    expect(formatReportScope(WHOLE_TENANT)).toBeNull();
+    expect(formatReportScope(wholeTenant('fr'))).toBeNull();
   });
 });
 
@@ -261,7 +261,7 @@ describe('l’activité du périmètre', () => {
   ]);
 
   it('sans filtre, prend les no-shows du rapport dédié', () => {
-    const activity = scopedActivity(WHOLE_TENANT, byDay, NO_SHOW_REPORT, byDay);
+    const activity = scopedActivity(wholeTenant('fr'), byDay, NO_SHOW_REPORT, byDay);
 
     expect(activity.appointments).toBe(164);
     expect(activity.noShows.rate).toBe(0.0328);
@@ -313,7 +313,7 @@ describe('ce que la tuile du volume dit de son compte', () => {
 
   function activityOf(report: NoShowReport) {
     return scopedActivity(
-      WHOLE_TENANT,
+      wholeTenant('fr'),
       volumeReport('day', []),
       report,
       volumeReport('day', [
@@ -405,7 +405,7 @@ describe('les barres du graphique de volume', () => {
   ]);
 
   it('couvre toute la période sur l’axe temporel, journées vides comprises', () => {
-    const points = volumePoints(WHOLE_TENANT, byDay, RANGE, (date) => date);
+    const points = volumePoints(wholeTenant('fr'), byDay, RANGE, (date) => date);
 
     expect(points.map((point) => point.key)).toEqual([
       '2026-09-01',
@@ -433,7 +433,7 @@ describe('les barres du graphique de volume', () => {
       { key: 'x', label: null, total: 5, byStatus: counts({ completed: 5 }) },
     ]);
 
-    expect(volumePoints(WHOLE_TENANT, orphan, RANGE, (date) => date)[0]?.label).toBe(
+    expect(volumePoints(wholeTenant('fr'), orphan, RANGE, (date) => date)[0]?.label).toBe(
       'Non attribué',
     );
   });

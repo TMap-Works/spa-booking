@@ -1,0 +1,7 @@
+# Marqueur de lint i18n — voir eslint-rules/i18n-markers.mjs.
+# L'écran des indicateurs d'activité et son action d'export — #851.
+#
+# Vide, donc tout le sous-arbre : ce répertoire ne contient que le reporting.
+# Les trois composants de l'écran vivent, eux, dans `../components/`, partagé
+# avec les autres écrans du back-office : ils sont déclarés dans le marqueur de
+# ce répertoire-là, sous le bloc #851.

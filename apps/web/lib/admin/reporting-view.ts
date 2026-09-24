@@ -42,7 +42,10 @@
  * un sous-ensemble.
  */
 
-import type { CalendarDate } from '@spa/shared';
+import type { CalendarDate, Locale } from '@spa/shared';
+
+import en from '@/messages/en/admin-reporting.json';
+import fr from '@/messages/fr/admin-reporting.json';
 
 import {
   appointmentStatusLabelInSentence,
@@ -60,6 +63,47 @@ import type {
 } from './reporting-contract';
 import type { ReportRange } from './reporting-window';
 
+/**
+ * ## La langue de ce module (#851)
+ *
+ * Les quelques mots de ce fichier — « Tout l'établissement », « Non attribué »,
+ * « À venir », la qualification de la tuile de volume — viennent de
+ * `messages/<langue>/admin-reporting.json`, lus par **import direct des deux
+ * JSON**. Même construction, et même raison, que `lib/format.ts` : ce sont des
+ * fonctions pures, appelées d'un Server Component et de tests sans DOM, où
+ * aucun crochet de `next-intl` n'est disponible.
+ *
+ * Le paramètre de langue est **facultatif, par défaut le français** : le tableau
+ * de bord (#1104) lit `formatCount`, `formatRate` et `revenueByCurrency` de ce
+ * module sans lui demander un seul mot.
+ *
+ * Les **tris** la prennent aussi, et ce n'est pas un détail d'esthétique :
+ * `localeCompare` range « Élodie » avant « Emma » en français et après en
+ * anglais, et un sélecteur de praticiens qui ne suit pas la langue de l'écran se
+ * lit de travers.
+ */
+
+/** Les catalogues, dans les deux langues — la même source que les composants. */
+const CATALOG = { fr, en } as const;
+
+/** La langue employée quand l'appelant n'en passe pas encore — voir ci-dessus. */
+const FALLBACK_LOCALE: Locale = 'fr';
+
+/**
+ * Le même repli, sous la forme que `lib/format.ts` attend.
+ *
+ * `formatRate` et `formatCount` sont les deux seules sorties de ce module que le
+ * **tableau de bord** lit — c'est l'empreinte que #1104 a eue sur ce fichier, le
+ * reste appartenant à l'écran de reporting. Elles prennent, comme tout le
+ * module, le même contexte d'affichage que `lib/format.ts` : une langue et le
+ * pays de l'établissement, d'où sort l'étiquette `Intl`.
+ *
+ * Un séparateur de milliers n'est pas un détail : `1 200` s'écrit « 1 200 » en
+ * français et « 1,200 » en anglais, et c'est la même règle que celle des
+ * montants — seule la mise en forme suit la langue, jamais la valeur.
+ */
+const FALLBACK_DISPLAY: DisplayLocale = { locale: FALLBACK_LOCALE };
+
 /** L'axe sur lequel le filtre porte — ou l'établissement entier. */
 export const REPORT_SCOPE_KINDS = ['etablissement', 'praticien', 'prestation'] as const;
 
@@ -74,12 +118,16 @@ export interface ReportScope {
   readonly label: string;
 }
 
-/** L'établissement entier — ce que l'écran affiche sans filtre. */
-export const WHOLE_TENANT: ReportScope = {
-  kind: 'etablissement',
-  key: null,
-  label: 'Tout l’établissement',
-};
+/**
+ * L'établissement entier — ce que l'écran affiche sans filtre.
+ *
+ * Une fonction depuis #851, parce que son `label` est un mot : « Tout
+ * l'établissement », « Whole salon ». Le `kind` et la `key`, eux, ne bougent
+ * pas — `etablissement` est du vocabulaire d'URL, pas de l'interface.
+ */
+export function wholeTenant(locale: Locale = FALLBACK_LOCALE): ReportScope {
+  return { kind: 'etablissement', key: null, label: CATALOG[locale].view.wholeTenant };
+}
 
 /** Une valeur proposée par le sélecteur de filtre. */
 export interface ReportFilterOption {
@@ -97,11 +145,16 @@ export interface ReportFilterOption {
  * de ces rendez-vous reste dans le total de l'établissement, qui lui ne filtre
  * rien.
  */
-export function filterOptions(report: AppointmentVolumeReport): ReportFilterOption[] {
+export function filterOptions(
+  report: AppointmentVolumeReport,
+  display: DisplayLocale = FALLBACK_DISPLAY,
+): ReportFilterOption[] {
+  const tag = formattingLocale(display.locale, display.countryCode);
+
   return report.rows
     .filter((row): row is AppointmentVolumeRow & { label: string } => row.label !== null)
     .map((row) => ({ key: row.key, label: row.label, total: row.total }))
-    .sort((left, right) => right.total - left.total || left.label.localeCompare(right.label, 'fr'));
+    .sort((left, right) => right.total - left.total || left.label.localeCompare(right.label, tag));
 }
 
 /**
@@ -116,15 +169,16 @@ export function parseReportScope(
   raw: string | undefined,
   staff: readonly ReportFilterOption[],
   services: readonly ReportFilterOption[],
+  locale: Locale = FALLBACK_LOCALE,
 ): ReportScope {
   if (raw === undefined) {
-    return WHOLE_TENANT;
+    return wholeTenant(locale);
   }
 
   const separator = raw.indexOf(':');
 
   if (separator < 0) {
-    return WHOLE_TENANT;
+    return wholeTenant(locale);
   }
 
   const kind = raw.slice(0, separator);
@@ -133,7 +187,7 @@ export function parseReportScope(
   const found = options?.find((option) => option.key === key);
 
   return found === undefined || (kind !== 'praticien' && kind !== 'prestation')
-    ? WHOLE_TENANT
+    ? wholeTenant(locale)
     : { kind, key: found.key, label: found.label };
 }
 
@@ -331,6 +385,7 @@ export function volumePoints(
   report: AppointmentVolumeReport,
   range: ReportRange,
   dayLabel: (date: CalendarDate) => string,
+  display: DisplayLocale = FALLBACK_DISPLAY,
 ): readonly VolumePoint[] {
   if (report.groupBy === 'day') {
     const rows = new Map(report.rows.map((row) => [row.key, row]));
@@ -348,15 +403,18 @@ export function volumePoints(
     });
   }
 
+  const tag = formattingLocale(display.locale, display.countryCode);
+  const unassigned = CATALOG[display.locale].view.unassigned;
+
   return report.rows
     .map((row) => ({
       key: row.key,
-      label: row.label ?? 'Non attribué',
+      label: row.label ?? unassigned,
       total: row.total,
       noShows: row.byStatus.no_show,
       selected: row.key === scope.key,
     }))
-    .sort((left, right) => right.total - left.total || left.label.localeCompare(right.label, 'fr'));
+    .sort((left, right) => right.total - left.total || left.label.localeCompare(right.label, tag));
 }
 
 /** Le volume et les no-shows du périmètre retenu. */
@@ -419,8 +477,12 @@ function emptyCounts(): AppointmentStatusCounts {
  * Il n'a pas sa place dans `lib/appointment-status.ts` : ce n'est pas un statut
  * du contrat, c'est une **agrégation** que seul le rapport de no-shows impose —
  * il fond les deux comptes et ne les rend pas séparément.
+ *
+ * Une fonction depuis #851, comme les autres mots de ce module.
  */
-export const UPCOMING_PLURAL_LABEL = 'À venir';
+export function upcomingPluralLabel(locale: Locale = FALLBACK_LOCALE): string {
+  return CATALOG[locale].view.upcoming;
+}
 
 /**
  * Ce que la tuile du volume dit de son compte — « dont 8 annulés · 7 à venir ».
@@ -450,11 +512,16 @@ export const UPCOMING_PLURAL_LABEL = 'À venir';
  *
  * `null` sur une période vide : il n'y a pas de zéro à qualifier.
  */
-export function volumeQualification(activity: ScopedActivity): string | null {
+export function volumeQualification(
+  activity: ScopedActivity,
+  display: DisplayLocale = FALLBACK_DISPLAY,
+): string | null {
   if (activity.appointments === 0) {
     return null;
   }
 
+  const locale = display.locale;
+  const words = CATALOG[locale].view.qualification;
   const cancelled = activity.noShows.cancelled;
   const setAside = [
     {
@@ -464,42 +531,38 @@ export function volumeQualification(activity: ScopedActivity): string | null {
       // « à venir » est invariable, il n'a pas de singulier à choisir.
       label:
         cancelled === 1
-          ? appointmentStatusLabelInSentence('cancelled')
-          : appointmentStatusPluralLabelInSentence('cancelled'),
+          ? appointmentStatusLabelInSentence('cancelled', locale)
+          : appointmentStatusPluralLabelInSentence('cancelled', locale),
       count: cancelled,
     },
-    { label: inSentence(UPCOMING_PLURAL_LABEL), count: activity.noShows.pending },
+    { label: inSentence(upcomingPluralLabel(locale), locale), count: activity.noShows.pending },
   ].filter((part) => part.count > 0);
 
   if (setAside.length === 0) {
     // Même accord : « 1 rendez-vous · tous arrivés à échéance » parlerait d'un
     // pluriel que la tuile vient d'écrire au singulier.
-    return activity.appointments === 1 ? 'arrivé à échéance' : 'tous arrivés à échéance';
+    return activity.appointments === 1 ? words.allDueOne : words.allDue;
   }
 
-  return `dont ${setAside.map((part) => `${formatCount(part.count)} ${part.label}`).join(' · ')}`;
+  const parts = setAside
+    .map((part) =>
+      fill(words.part, { count: formatCount(part.count, display), label: part.label }),
+    )
+    .join(words.separator);
+
+  return fill(words.setAside, { parts });
 }
 
 /**
- * ## La langue des deux formateurs de nombres (#1104)
- *
- * `formatRate` et `formatCount` sont les deux seules sorties de ce module que le
- * **tableau de bord** lit — c'est l'empreinte que #1104 a sur ce fichier, le
- * reste appartenant à l'écran de reporting (#851). Elles prennent donc, en
- * dernier paramètre, le même contexte d'affichage que `lib/format.ts` : une
- * langue et le pays de l'établissement, d'où sort l'étiquette `Intl`.
- *
- * Le paramètre est **facultatif et le défaut est le français**, comme partout
- * ailleurs dans l'épique #843 : les appelants de l'écran de reporting sont hors
- * de l'empreinte de ce ticket et passeront leur langue dans le leur. Le défaut
- * garde jusque-là l'affichage d'avant le ticket, plutôt que de faire basculer en
- * anglais un écran dont personne n'a encore relu la traduction.
- *
- * Un séparateur de milliers n'est pas un détail : `1 200` s'écrit « 1 200 » en
- * français et « 1,200 » en anglais, et c'est la même règle que celle des
- * montants — seule la mise en forme suit la langue, jamais la valeur.
+ * Le remplacement des paramètres d'un message lu hors de React — jumeau de celui
+ * de `lib/format.ts` et de `reporting-window.ts`, pour la même raison.
  */
-const FALLBACK_DISPLAY: DisplayLocale = { locale: 'fr' };
+function fill(message: string, values: Readonly<Record<string, string>>): string {
+  return Object.entries(values).reduce(
+    (text, [name, value]) => text.replaceAll(`{${name}}`, value),
+    message,
+  );
+}
 
 /** Le taux tel que l'écran l'écrit — « 3,3 % », ou « — » faute de dénominateur. */
 export function formatRate(
@@ -531,7 +594,10 @@ export function formatCount(value: number, display: DisplayLocale = FALLBACK_DIS
  * l'empreinte d'un ticket qui ne touche que l'écran d'indicateurs. Deux lignes
  * recopiées valent mieux qu'une modification non recettée d'un module partagé ;
  * la mutualisation est une issue de suivi.
+ *
+ * La langue est passée à `toLocaleLowerCase` (#851), comme dans le module de
+ * vocabulaire : la mise en casse dépend de l'alphabet, pas du goût.
  */
-function inSentence(label: string): string {
-  return label.charAt(0).toLocaleLowerCase('fr-FR') + label.slice(1);
+function inSentence(label: string, locale: Locale): string {
+  return label.charAt(0).toLocaleLowerCase(locale) + label.slice(1);
 }

@@ -25,9 +25,63 @@
  * afficher « au 1er octobre » à qui a demandé septembre.
  */
 
-import type { CalendarDate, TimeZone } from '@spa/shared';
+import type { CalendarDate, Locale, TimeZone } from '@spa/shared';
+
+import en from '@/messages/en/admin-reporting.json';
+import fr from '@/messages/fr/admin-reporting.json';
 
 import { addCalendarDays } from '../booking/calendar';
+import { formattingLocale, type DisplayLocale } from '../format';
+
+/**
+ * ## La langue de ce module (#851)
+ *
+ * Trois sorties de ce fichier sont des **mots** : le libellé d'une période, le
+ * refus d'une plage impossible, et les deux mises en forme de date. Elles
+ * prennent donc la langue, en dernier paramètre — `DisplayLocale` pour ce qui
+ * passe par `Intl`, une simple `Locale` pour ce qui se lit dans le catalogue.
+ *
+ * Les messages viennent de `messages/<langue>/admin-reporting.json`, lus par
+ * **import direct des deux JSON** et non par `useTranslations` : ce module est
+ * fait de fonctions pures, appelées depuis un Server Component (`page.tsx`),
+ * depuis un Client Component (`report-filters.tsx`) et depuis des tests sans
+ * DOM. Un crochet de React l'aurait rendu inappelable dans les deux derniers.
+ * C'est exactement la construction de `lib/format.ts` et de
+ * `lib/appointment-status.ts`.
+ *
+ * Le paramètre est **facultatif et le défaut est le français**, comme partout
+ * dans l'épique #843 : `rangeOfPeriod` et `windowOfRange` sont aussi lus par le
+ * tableau de bord (#1104), qui ne demande aucun mot à ce module — le défaut lui
+ * évite une signature à changer pour rien.
+ *
+ * Ce que la langue ne touche **pas** : les valeurs de `REPORT_PERIODS`, qui sont
+ * des segments d'URL (`?periode=sept-jours`) et non des mots, et le fuseau du
+ * salon, qui décide des journées et pas de la façon de les écrire.
+ */
+
+/** Les catalogues, dans les deux langues — la même source que les composants. */
+const CATALOG = { fr, en } as const;
+
+/** La langue employée quand l'appelant n'en passe pas encore — voir ci-dessus. */
+const FALLBACK_LOCALE: Locale = 'fr';
+
+/** Le repli transitoire de l'épique #843 — voir ci-dessus. */
+const FALLBACK_DISPLAY: DisplayLocale = { locale: FALLBACK_LOCALE };
+
+/**
+ * Le remplacement des paramètres d'un message lu hors de React.
+ *
+ * Même fonction, pour la même raison, que celle de `lib/format.ts` : les deux
+ * messages paramétrés de ce module n'ont ni forme plurielle ni sélection, et un
+ * remplacement littéral évite d'embarquer un formateur ICU dans le chemin d'un
+ * refus de saisie.
+ */
+function fill(message: string, values: Readonly<Record<string, string>>): string {
+  return Object.entries(values).reduce(
+    (text, [name, value]) => text.replaceAll(`{${name}}`, value),
+    message,
+  );
+}
 
 /**
  * Le plafond de la fenêtre, en journées — `MAX_REPORT_WINDOW_DAYS` du module
@@ -81,14 +135,19 @@ export interface ReportWindowQuery {
   readonly to: string;
 }
 
-/** Le libellé d'une période, pour le sélecteur. */
-export const REPORT_PERIOD_LABELS: Readonly<Record<ReportPeriod, string>> = {
-  'sept-jours': '7 derniers jours',
-  'trente-jours': '30 derniers jours',
-  'mois-courant': 'Mois en cours',
-  'mois-precedent': 'Mois précédent',
-  personnalisee: 'Période personnalisée',
-};
+/**
+ * Le libellé d'une période, pour le sélecteur.
+ *
+ * Une fonction et non une table figée depuis #851 : le sélecteur parle la langue
+ * de l'interface, alors que la **valeur** qu'il pose dans l'URL reste française
+ * — `?periode=sept-jours` est un segment d'URL, pas un mot, et le traduire
+ * casserait tout lien partagé.
+ */
+export function reportPeriodLabels(
+  locale: Locale = FALLBACK_LOCALE,
+): Readonly<Record<ReportPeriod, string>> {
+  return CATALOG[locale].window.periods;
+}
 
 /**
  * La date civile qu'il est **dans le salon**, pas dans le navigateur ni sur le
@@ -154,24 +213,26 @@ export function daysInRange(range: ReportRange): number {
  * plutôt qu'en retour d'un aller-retour (web-frontend §4). La garde qui compte
  * reste celle du serveur ; celle-ci n'est qu'un confort.
  */
-export function rangeRefusal(range: ReportRange): string | null {
+export function rangeRefusal(range: ReportRange, locale: Locale = FALLBACK_LOCALE): string | null {
+  const words = CATALOG[locale].window.refusal;
+
   // Une borne vidée n'est pas une borne : un champ de date rendu vide donne
   // `''`, dont la comparaison et le comptage de journées ne disent rien
   // (`NaN > 366` est faux). Sans ce refus, la saisie partait telle quelle,
   // l'URL portait `du=`, et l'écran retombait en silence sur les trente
   // derniers jours — en affichant toujours « Période personnalisée ».
   if (parseReportDate(range.from) === null || parseReportDate(range.to) === null) {
-    return 'Renseignez les deux bornes de la période, au format jour/mois/année.';
+    return words.bounds;
   }
 
   if (range.to < range.from) {
-    return 'La date de fin précède la date de début.';
+    return words.inverted;
   }
 
   const days = daysInRange(range);
 
   return days > MAX_REPORT_WINDOW_DAYS
-    ? `Une période s’arrête à ${String(MAX_REPORT_WINDOW_DAYS)} jours — celle-ci en compte ${String(days)}.`
+    ? fill(words.tooWide, { max: String(MAX_REPORT_WINDOW_DAYS), days: String(days) })
     : null;
 }
 
@@ -314,31 +375,36 @@ export function resolveReportRange(
   return rangeOfPeriod(period, timeZone, now);
 }
 
-const LOCALE = 'fr-FR';
-
 /**
- * La période telle que l'écran l'annonce — « 1 – 30 septembre 2026 ».
+ * La période telle que l'écran l'annonce — « 1 – 30 septembre 2026 », « 1 – 30
+ * September 2026 ».
  *
  * Les dates civiles sont mises en forme **en UTC** : elles sont déjà celles de
  * l'établissement, et les reprojeter dans son fuseau les décalerait d'un jour
  * pour tout salon à l'est de Greenwich. Même raison que `formatCalendarDate` de
  * `lib/format.ts`.
+ *
+ * L'étiquette `Intl` vient de `formattingLocale` (#851) : la langue de
+ * l'interface, la **région** du pays de l'établissement — un salon montréalais
+ * écrit ses dates comme le Québec, en français comme en anglais.
  */
-export function rangeLabel(range: ReportRange): string {
+export function rangeLabel(range: ReportRange, display: DisplayLocale = FALLBACK_DISPLAY): string {
+  const tag = formattingLocale(display.locale, display.countryCode);
+
   if (range.from === range.to) {
-    return new Intl.DateTimeFormat(LOCALE, { timeZone: 'UTC', dateStyle: 'long' }).format(
+    return new Intl.DateTimeFormat(tag, { timeZone: 'UTC', dateStyle: 'long' }).format(
       new Date(`${range.from}T00:00:00Z`),
     );
   }
 
   const sameMonth = range.from.slice(0, 7) === range.to.slice(0, 7);
-  const start = new Intl.DateTimeFormat(LOCALE, {
+  const start = new Intl.DateTimeFormat(tag, {
     timeZone: 'UTC',
     day: 'numeric',
     ...(sameMonth ? {} : { month: 'long' }),
     ...(range.from.slice(0, 4) === range.to.slice(0, 4) ? {} : { year: 'numeric' }),
   }).format(new Date(`${range.from}T00:00:00Z`));
-  const end = new Intl.DateTimeFormat(LOCALE, {
+  const end = new Intl.DateTimeFormat(tag, {
     timeZone: 'UTC',
     day: 'numeric',
     month: 'long',
@@ -348,9 +414,21 @@ export function rangeLabel(range: ReportRange): string {
   return `${start} – ${end}`;
 }
 
-/** « 3 sept. » — l'abscisse d'un graphique quotidien. */
-export function shortDayLabel(date: CalendarDate): string {
-  return new Intl.DateTimeFormat(LOCALE, {
+/**
+ * « 3 sept. », « 3 Sep » — l'abscisse d'un graphique quotidien.
+ *
+ * Le paramètre d'affichage est en **second** et facultatif, comme les
+ * formateurs de `lib/format.ts` : la fonction est passée **par référence** à
+ * `volumePoints(scope, axis, range, dayLabel)`, qui n'appelle son argument
+ * qu'avec la date. L'écran l'enveloppe donc dans une lambda qui referme sur la
+ * langue — plutôt que de faire voyager un contexte d'affichage à travers une
+ * signature qui n'a rien à en connaître.
+ */
+export function shortDayLabel(
+  date: CalendarDate,
+  display: DisplayLocale = FALLBACK_DISPLAY,
+): string {
+  return new Intl.DateTimeFormat(formattingLocale(display.locale, display.countryCode), {
     timeZone: 'UTC',
     day: 'numeric',
     month: 'short',

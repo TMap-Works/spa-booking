@@ -32,3 +32,8 @@ checkout-receipt.tsx
 #
 # Le rouleau de caisse imprime — #1248.
 receipt-ticket.tsx
+#
+# Les trois briques de l'écran des indicateurs d'activité — #851.
+report-chart.tsx
+report-export-button.tsx
+report-filters.tsx

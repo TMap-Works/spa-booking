@@ -29,21 +29,31 @@
  * perdu sur un cumul d'année est une erreur qu'on ne retrouve plus. Le nom des
  * mesures le dit : `brut_minor`, `rembourse_minor`, `net_minor`.
  *
- * ## Le point-virgule, et l'assumer
+ * ## Les deux séparateurs suivent la langue — #851
  *
- * RFC 4180 ne normalise que la virgule. Mais ce fichier s'ouvre dans le tableur
- * d'une gérante en locale française, où la virgule est le séparateur décimal et
- * où un CSV à virgules atterrit en une seule colonne. Le point-virgule est le
- * séparateur que cette locale attend, et l'échappement reste celui de la RFC :
- * guillemets doublés, champ encadré dès qu'il contient un séparateur, un
- * guillemet ou un saut de ligne. La marque d'ordre d'octets UTF-8 est ajoutée
- * pour la même raison — sans elle, « Prestations bien-être » s'ouvre en
- * « PrestationsÂ bien-Ãªtre ».
+ * RFC 4180 ne normalise que la virgule. Mais un CSV à virgules atterrit en une
+ * seule colonne dans le tableur d'une gérante en locale française, où la virgule
+ * est le séparateur décimal. Les deux choix vont donc ensemble, et c'est la même
+ * convention lue deux fois : `;` avec la virgule décimale en français, `,` avec
+ * le point décimal en anglais.
+ *
+ * L'échappement reste celui de la RFC dans les deux cas — guillemets doublés,
+ * champ encadré dès qu'il contient **le séparateur en vigueur**, un guillemet ou
+ * un saut de ligne. La marque d'ordre d'octets UTF-8 est ajoutée pour une raison
+ * distincte, qui ne dépend d'aucune langue : sans elle, « Prestations bien-être »
+ * s'ouvre en « PrestationsÂ bien-Ãªtre ».
+ *
+ * Comme pour le fichier produit par l'API (`report-export.csv.ts`), seule la
+ * **ligne d'en-tête** et la colonne `libelle` se traduisent : `section` et
+ * `mesure` restent des identifiants stables, sur lesquels on filtre et on croise
+ * dans un tableur.
  */
 
-import type { PaymentMethod } from '@spa/shared';
+import type { Locale, PaymentMethod } from '@spa/shared';
 
-import { PAYMENT_METHOD_LABELS } from './reporting-contract';
+import en from '@/messages/en/admin-reporting.json';
+import fr from '@/messages/fr/admin-reporting.json';
+
 import type { ReportRange } from './reporting-window';
 import type {
   DailyRevenuePoint,
@@ -54,8 +64,25 @@ import type {
   VolumePoint,
 } from './reporting-view';
 
-/** Le séparateur de colonnes — voir l'en-tête du module. */
-const SEPARATOR = ';';
+/** Les catalogues, dans les deux langues — la même source que les composants. */
+const CATALOG = { fr, en } as const;
+
+/** La langue employée quand l'appelant n'en passe pas — le comportement d'avant #851. */
+const FALLBACK_LOCALE: Locale = 'fr';
+
+/**
+ * Les signes de ponctuation du fichier, par langue.
+ *
+ * Portés **ensemble** plutôt qu'en deux tables : un fichier à virgules *et* à
+ * virgule décimale serait illisible dans les deux langues, et deux constantes
+ * séparées sont exactement ce qu'un ticket futur désaccorde.
+ */
+const PUNCTUATION: Readonly<
+  Record<Locale, { readonly column: string; readonly decimal: string }>
+> = {
+  fr: { column: ';', decimal: ',' },
+  en: { column: ',', decimal: '.' },
+};
 
 /** Fin de ligne CSV, telle que RFC 4180 la définit. */
 const LINE_BREAK = '\r\n';
@@ -63,13 +90,28 @@ const LINE_BREAK = '\r\n';
 /** Marque d'ordre d'octets UTF-8 — ce qui fait ouvrir les accents correctement. */
 const BYTE_ORDER_MARK = '﻿';
 
-/** L'en-tête, écrit une fois. Toute ligne du fichier a ces six colonnes. */
-export const REPORT_CSV_HEADER = ['section', 'cle', 'libelle', 'mesure', 'valeur', 'devise'];
+/**
+ * L'en-tête, écrit une fois. Toute ligne du fichier a ces six colonnes.
+ *
+ * Rendu par langue depuis #851 : ce sont les **noms** des colonnes qui se
+ * traduisent, jamais leur nombre ni leur ordre.
+ */
+export function reportCsvHeader(locale: Locale = FALLBACK_LOCALE): string[] {
+  const words = CATALOG[locale].csv.header;
+
+  return [words.section, words.key, words.label, words.measure, words.value, words.currency];
+}
 
 /** Ce qu'il faut pour écrire le fichier — exactement ce que l'écran affiche. */
 export interface ReportCsvInput {
   readonly range: ReportRange;
   readonly timeZone: string;
+  /**
+   * La langue de l'interface au moment de l'export — l'en-tête, les deux
+   * séparateurs (#851). Facultative, par défaut le français : c'est ce que ce
+   * module écrivait avant le ticket.
+   */
+  readonly locale?: Locale;
   readonly scope: ReportScope;
   readonly revenueTotals: readonly RevenueIndicator[];
   readonly revenueSeries: readonly RevenueSeries[];
@@ -109,9 +151,12 @@ export function reportCsvFilename(tenantSlug: string, range: ReportRange): strin
 
 /** Le fichier entier, marque d'ordre d'octets comprise. */
 export function buildReportCsv(input: ReportCsvInput): string {
-  const rows: string[][] = [REPORT_CSV_HEADER, ...reportCsvRows(input)];
+  const locale = input.locale ?? FALLBACK_LOCALE;
+  const rows: string[][] = [reportCsvHeader(locale), ...reportCsvRows(input)];
 
-  return BYTE_ORDER_MARK + rows.map(formatRow).join(LINE_BREAK) + LINE_BREAK;
+  return (
+    BYTE_ORDER_MARK + rows.map((row) => formatRow(row, locale)).join(LINE_BREAK) + LINE_BREAK
+  );
 }
 
 /**
@@ -127,10 +172,10 @@ export function reportCsvRows(input: ReportCsvInput): string[][] {
     ['periode', '', '', 'fuseau', input.timeZone, ''],
     ['filtre', input.scope.key ?? '', input.scope.label, 'type', input.scope.kind, ''],
     ...revenueTotalRows(input.revenueTotals),
-    ...revenueMethodRows(input.revenueByMethod),
+    ...revenueMethodRows(input.revenueByMethod, input.locale ?? FALLBACK_LOCALE),
     ...revenueDayRows(input.revenueSeries),
     ...volumeRows(input.volumeAxis, input.volume),
-    ...activityRows(input.appointments, input.noShows),
+    ...activityRows(input.appointments, input.noShows, input.locale ?? FALLBACK_LOCALE),
   ];
 }
 
@@ -143,9 +188,23 @@ function revenueTotalRows(totals: readonly RevenueIndicator[]): string[][] {
   ]);
 }
 
-function revenueMethodRows(methods: ReportCsvInput['revenueByMethod']): string[][] {
+/**
+ * Le cumul par moyen d'encaissement.
+ *
+ * Le `libelle` suit la langue (#851), comme celui de toutes les autres sections :
+ * la colonne `cle` porte déjà le code stable (`card`, `cash`) sur lequel on
+ * filtre et on croise, et c'est elle qui doit rester invariante — pas le mot.
+ * Les deux moyens du contrat sont énumérés à la main plutôt que lus par clé
+ * dynamique, pour que `tsc` refuse le jour où un troisième apparaît.
+ */
+function revenueMethodRows(
+  methods: ReportCsvInput['revenueByMethod'],
+  locale: Locale,
+): string[][] {
+  const words = CATALOG[locale].methods;
+
   return methods.flatMap((row) => {
-    const label = PAYMENT_METHOD_LABELS[row.method];
+    const label = row.method === 'card' ? words.card : words.cash;
 
     return [
       ['revenu-moyen', row.method, label, 'transactions', String(row.transactions), row.currency],
@@ -195,21 +254,49 @@ function volumeRows(axis: ReportCsvInput['volumeAxis'], points: readonly VolumeP
  * honorer : la distinction que porte l'écran doit survivre à l'export, sans quoi
  * une période sans activité ressemblerait, dans le tableur, à une période
  * parfaite.
+ *
+ * C'est aussi la **seule valeur fractionnaire du fichier** — tous les montants
+ * sont des entiers en plus petite unité monétaire —, donc la seule que le
+ * séparateur décimal de la langue concerne (#851).
  */
-function activityRows(appointments: number, noShows: NoShowIndicator): string[][] {
+function activityRows(
+  appointments: number,
+  noShows: NoShowIndicator,
+  locale: Locale,
+): string[][] {
   return [
     ['indicateurs', '', '', 'rendez_vous', String(appointments), ''],
     ['indicateurs', '', '', 'honores', String(noShows.honored), ''],
     ['indicateurs', '', '', 'no_shows', String(noShows.noShows), ''],
     ['indicateurs', '', '', 'annules', String(noShows.cancelled), ''],
     ['indicateurs', '', '', 'a_venir', String(noShows.pending), ''],
-    ['indicateurs', '', '', 'taux_no_show', noShows.rate === null ? '' : String(noShows.rate), ''],
+    [
+      'indicateurs',
+      '',
+      '',
+      'taux_no_show',
+      noShows.rate === null ? '' : decimal(noShows.rate, locale),
+      '',
+    ],
   ];
 }
 
+/**
+ * Un nombre fractionnaire écrit avec le séparateur décimal de la langue.
+ *
+ * `String(value).replace(…)` plutôt qu'`Intl.NumberFormat` : le formateur
+ * poserait aussi des séparateurs de milliers et arrondirait, là où le taux porte
+ * quatre décimales que l'écran a déjà calculées.
+ */
+function decimal(value: number, locale: Locale): string {
+  return String(value).replace('.', PUNCTUATION[locale].decimal);
+}
+
 /** Une ligne, séparateurs et échappements posés. */
-function formatRow(cells: readonly string[]): string {
-  return cells.map(escapeCell).join(SEPARATOR);
+function formatRow(cells: readonly string[], locale: Locale): string {
+  return cells
+    .map((cell) => escapeCell(cell, locale))
+    .join(PUNCTUATION[locale].column);
 }
 
 /**
@@ -220,10 +307,11 @@ function formatRow(cells: readonly string[]): string {
  * de texte, ce qui est précisément l'usage qu'on fait d'un export quand il
  * surprend.
  */
-function escapeCell(value: string): string {
+function escapeCell(value: string, locale: Locale): string {
   const neutralized = neutralizeFormula(value);
+  const separator = PUNCTUATION[locale].column;
 
-  return /["\r\n;]/.test(neutralized)
+  return /["\r\n]/.test(neutralized) || neutralized.includes(separator)
     ? `"${neutralized.replace(/"/g, '""')}"`
     : neutralized;
 }

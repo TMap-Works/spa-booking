@@ -17,6 +17,7 @@ reproductible n'est pas un état métier — c'est une photographie de lectures.
 | #74 | Les trois rapports, leurs agrégats SQL et les deux index qui les servent |
 | #563 | L'export CSV servi par URL présignée : sérialisation serveur, dépôt S3, deux routes |
 | #891 | Le montant **hors taxes** dans l'export, extrait du brut par le `netOf` de `payments` au taux de l'établissement |
+| #851 | L'export **bilingue** : en-tête, libellés et séparateurs suivent la langue passée dans la demande |
 
 Hors périmètre MVP, et donc non livré : insights de performance, reporting
 transactionnel détaillé, comparaisons entre périodes, objectifs, prévisions. Le
@@ -219,8 +220,7 @@ signerait la clé d'un objet absent. Sans ce contrôle, la route rendrait une UR
 
 ### Le fichier
 
-Une table longue, `section;cle;libelle;mesure;valeur;devise`, en UTF-8 avec sa
-marque d'ordre d'octets, séparée par des points-virgules (locale française) et
+Une table longue à six colonnes, en UTF-8 avec sa marque d'ordre d'octets, et
 échappée selon RFC 4180.
 
 Les sections sont, dans l'ordre : `periode`, `revenu_jour`, `revenu_total`,
@@ -236,6 +236,34 @@ devise dans la colonne prévue (`brut_minor`, `ht_minor`, `rembourse_minor`,
 `net_minor`). Convertir en unité principale pour faire joli dans le tableur aurait
 introduit exactement le flottant que CLAUDE.md interdit. Le taux de no-show est la
 seule valeur non entière du fichier, et c'en est une par nature : c'est un ratio.
+
+#### La langue du fichier (#851)
+
+`?locale=fr|en`, validée par `reportExportLocaleSchema` du contrat partagé. Elle
+vient de **l'interface au moment de l'export**, pas de `Accept-Language` — qui
+est la préférence du navigateur — ni de `tenants.default_locale` — qui est la
+langue des notifications envoyées aux clientes. Absente, elle vaut `fr` :
+c'est ce que le fichier contenait avant ce ticket, et un appelant qui ne demande
+rien doit continuer de recevoir ce qu'il recevait.
+
+Ce qui la suit, et ce qui ne la suit pas :
+
+| Colonne | Suit la langue | Pourquoi |
+|---|---|---|
+| ligne d'en-tête | **oui** | `section;cle;libelle;…` ou `section,key,label,…` — c'est ce qu'on lit en ouvrant le tableur |
+| `libelle` | **oui** | c'est de la phrase — « Rendez-vous non honorés » / « No-show appointments » |
+| `section`, `mesure` | **non** | ce sont des **identifiants** : on filtre et on croise dessus, et un export français de septembre doit s'empiler avec un export anglais d'octobre |
+| `cle`, `valeur`, `devise` | **non** | de la donnée — une date ISO, un entier, un code ISO 4217 |
+
+Les **deux séparateurs** la suivent ensemble, et c'est la même convention lue
+deux fois : `;` avec la virgule décimale en `fr`, `,` avec le point décimal en
+`en`. RFC 4180 ne normalise que la virgule, mais un CSV à virgules atterrit en
+une seule colonne dans un tableur en locale française. L'échappement encadre donc
+tout champ qui contient **le séparateur en vigueur** — « Forfait duo, 90 min » ne
+gêne pas le fichier français et couperait la ligne anglaise en deux.
+
+Ni les montants, ni les devises, ni le fuseau de découpage des journées n'en
+dépendent : la langue dit comment on écrit, jamais ce qu'on compte.
 
 #### `ht_minor` — le hors-taxes, et ce qu'il n'est pas (#891)
 

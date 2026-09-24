@@ -1,6 +1,6 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
-import type { ReportExport } from '@spa/shared';
+import { REPORT_EXPORT_FALLBACK_LOCALE, type Locale, type ReportExport } from '@spa/shared';
 
 import { NotFoundError } from '../../../common/errors';
 import { requireTenantId } from '../../../common/tenant/tenant-context';
@@ -84,12 +84,22 @@ export class ReportExportService {
    * période ne s'écrasent pas, et une clé ne se devine pas
    * (`report-export.key.ts`).
    *
+   * **La langue est celle de l'interface** qui demande l'export (#851), pas
+   * celle de l'établissement : elle décide de la ligne d'en-tête, des libellés
+   * et des deux séparateurs du fichier, et de rien d'autre. Les chiffres, les
+   * devises et le fuseau de découpage des journées n'en dépendent pas — un
+   * export anglais et un export français de la même fenêtre portent exactement
+   * les mêmes valeurs.
+   *
    * @throws {ReportWindowInvalidError} fenêtre inversée ou vide — 422.
    * @throws {ReportWindowTooWideError} fenêtre de plus d'un an — 422.
    * @throws {NotFoundError} l'établissement a disparu sous la requête — 404.
    * @throws {ReportExportUnavailableError} aucun bucket branché — 503.
    */
-  public async create(window: ReportWindow): Promise<ReportExport> {
+  public async create(
+    window: ReportWindow,
+    locale: Locale = REPORT_EXPORT_FALLBACK_LOCALE,
+  ): Promise<ReportExport> {
     const ttlSeconds = this.requireTtlSeconds();
     const tenantId = requireTenantId('Tenant', 'createReportExport');
 
@@ -113,6 +123,7 @@ export class ReportExportService {
       body: buildReportExportCsv({
         window,
         timeZone: revenue.timeZone,
+        locale,
         taxRateBps,
         revenue,
         volumes: [byDay, byStaff, byService],

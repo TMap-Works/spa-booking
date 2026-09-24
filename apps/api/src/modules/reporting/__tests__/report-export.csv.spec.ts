@@ -1,7 +1,7 @@
 import { netOf } from '../../payments/pos.totals';
 import {
-  REPORT_EXPORT_CSV_HEADER,
   buildReportExportCsv,
+  reportExportCsvHeader,
   type ReportExportContent,
 } from '../export/report-export.csv';
 
@@ -103,7 +103,7 @@ describe('buildReportExportCsv', () => {
     // Sans la marque, « Prestations bien-être » s'ouvre en « PrestationsÂ
     // bien-Ãªtre » dans le tableur d'une gérante en locale française.
     expect(csv.startsWith('\uFEFF')).toBe(true);
-    expect(lines(csv)[0]).toBe(REPORT_EXPORT_CSV_HEADER.join(';'));
+    expect(lines(csv)[0]).toBe(reportExportCsvHeader('fr').join(';'));
   });
 
   it('termine chaque ligne par CRLF, comme RFC 4180', () => {
@@ -254,7 +254,7 @@ describe('buildReportExportCsv', () => {
 
     expect(rows).toContain('no_shows;;Rendez-vous non honorés;no_shows;1;');
     expect(rows).toContain(
-      'no_shows;;Taux de no-show sur les rendez-vous arrivés à échéance;taux;0.5;',
+      'no_shows;;Taux de no-show sur les rendez-vous arrivés à échéance;taux;0,5;',
     );
   });
 
@@ -307,5 +307,112 @@ describe('buildReportExportCsv', () => {
     });
 
     expect(lines(csv).some((line) => line.startsWith('revenu_jour;'))).toBe(false);
+  });
+});
+
+/**
+ * La langue du fichier — #851, troisième et quatrième critères.
+ *
+ * Trois propriétés, et chacune se casse en silence : l'en-tête suit la langue,
+ * les deux séparateurs la suivent **ensemble**, et les chiffres ne la suivent
+ * pas du tout.
+ */
+describe('buildReportExportCsv — la langue', () => {
+  /** La ligne du taux de no-show, la seule valeur fractionnaire du fichier. */
+  const taux = (csv: string): string =>
+    lines(csv).find((line) => line.includes('taux')) ?? '';
+
+  it('traduit la ligne d’en-tête', () => {
+    expect(lines(buildReportExportCsv({ ...CONTENT, locale: 'fr' }))[0]).toBe(
+      'section;cle;libelle;mesure;valeur;devise',
+    );
+    expect(lines(buildReportExportCsv({ ...CONTENT, locale: 'en' }))[0]).toBe(
+      'section,key,label,measure,value,currency',
+    );
+  });
+
+  it('traduit la colonne des libellés, et **pas** les codes de section ni de mesure', () => {
+    // Traduire `section` et `mesure` ferait qu'un export de septembre en
+    // français et un export d'octobre en anglais cessent de s'empiler dans le
+    // même tableau croisé — alors que la forme longue a été choisie pour cela.
+    const rows = lines(buildReportExportCsv({ ...CONTENT, locale: 'en' }));
+
+    expect(rows).toContain('periode,,Window start (inclusive),debut_utc,2026-08-31T22:00:00.000Z,');
+    expect(rows).toContain('no_shows,,No-show appointments,no_shows,1,');
+    expect(rows).toContain('volume_day,,All groups combined,rendez_vous,3,');
+    expect(rows).toContain('revenu_total,CARD-EUR,CARD,net_minor,10500,EUR');
+  });
+
+  it('sépare par « ; » et écrit la décimale « , » en français', () => {
+    // Un CSV à virgules atterrit en une seule colonne dans un tableur français,
+    // où la virgule est le séparateur décimal : les deux choix vont ensemble.
+    expect(taux(buildReportExportCsv({ ...CONTENT, locale: 'fr' }))).toBe(
+      'no_shows;;Taux de no-show sur les rendez-vous arrivés à échéance;taux;0,5;',
+    );
+  });
+
+  it('sépare par « , » et écrit la décimale « . » en anglais', () => {
+    expect(taux(buildReportExportCsv({ ...CONTENT, locale: 'en' }))).toBe(
+      'no_shows,,No-show rate over appointments that came due,taux,0.5,',
+    );
+  });
+
+  it('écrit en français quand la demande ne porte aucune langue', () => {
+    // Le repli d'avant le ticket : un appelant qui ne demande rien reçoit le
+    // fichier qu'il recevait.
+    expect(buildReportExportCsv(CONTENT)).toBe(
+      buildReportExportCsv({ ...CONTENT, locale: 'fr' }),
+    );
+  });
+
+  it('échappe le champ qui contient le séparateur **de sa langue**', () => {
+    const avecVirgule = {
+      ...CONTENT,
+      volumes: [
+        {
+          window: CONTENT.window,
+          timeZone: CONTENT.timeZone,
+          groupBy: 'service' as const,
+          rows: [
+            {
+              key: 'sv-1',
+              label: 'Forfait duo, 90 min',
+              total: 1,
+              byStatus: { PENDING: 0, CONFIRMED: 0, COMPLETED: 1, CANCELLED: 0, NO_SHOW: 0 },
+            },
+          ],
+          total: 1,
+        },
+      ],
+    };
+
+    // La virgule ne gêne pas le fichier français et couperait la ligne anglaise
+    // en deux colonnes de plus.
+    expect(buildReportExportCsv({ ...avecVirgule, locale: 'en' })).toContain(
+      '"Forfait duo, 90 min"',
+    );
+    expect(buildReportExportCsv({ ...avecVirgule, locale: 'fr' })).not.toContain(
+      '"Forfait duo, 90 min"',
+    );
+  });
+
+  it('ne touche ni aux montants, ni à leur devise, ni au fuseau', () => {
+    // L'argent reste un entier de la plus petite unité monétaire quelle que soit
+    // la langue (`CLAUDE.md`), et le fuseau de découpage des journées est celui
+    // de l'établissement — la langue dit comment on écrit, pas ce qu'on compte.
+    for (const [locale, separator] of [
+      ['fr', ';'],
+      ['en', ','],
+    ] as const) {
+      const rows = lines(buildReportExportCsv({ ...CONTENT, locale }));
+      const montants = rows.filter((line) => line.includes('_minor'));
+
+      expect(montants).not.toHaveLength(0);
+      for (const line of montants) {
+        expect(line.split(separator)[4]).toMatch(/^-?\d+$/);
+      }
+
+      expect(rows.some((line) => line.includes('Europe/Paris'))).toBe(true);
+    }
   });
 });

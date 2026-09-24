@@ -40,7 +40,14 @@
  * `reportExportSchema` de `@spa/shared` plutôt que de le rejouer ici.
  */
 
-import { ERROR_CODES, reportExportSchema, slugSchema, type ReportExport } from '@spa/shared';
+import {
+  ERROR_CODES,
+  reportExportLocaleSchema,
+  reportExportSchema,
+  slugSchema,
+  type ReportExport,
+} from '@spa/shared';
+import { getTranslations } from 'next-intl/server';
 
 import { ApiClientError } from '@/lib/api-client';
 
@@ -65,17 +72,29 @@ export interface ReportExportWindow {
 export async function createReportExportAction(
   tenantSlug: string,
   window: unknown,
+  locale: unknown,
 ): Promise<AdminActionResult<ReportExport>> {
+  const t = await getTranslations('admin-reporting');
   const slug = slugSchema.safeParse(tenantSlug);
 
   if (!slug.success) {
-    return invalid('Établissement inconnu.');
+    return invalid(t('actions.unknownTenant'));
   }
 
   const parsed = parseWindow(window);
 
   if (parsed === null) {
-    return invalid('La période à exporter est invalide.');
+    return invalid(t('actions.invalidWindow'));
+  }
+
+  // La langue vient d'un composant client : elle est **revalidée** ici contre le
+  // contrat partagé, exactement comme le slug et la fenêtre. Un appel d'action
+  // est une frontière HTTP comme une autre — rien n'empêche de l'appeler avec
+  // autre chose que ce que le bouton envoie.
+  const language = reportExportLocaleSchema.safeParse(locale);
+
+  if (!language.success) {
+    return invalid(t('actions.invalidLocale'));
   }
 
   const access = await adminActionAccess(slug.data);
@@ -87,9 +106,16 @@ export async function createReportExportAction(
   const { accessToken } = access;
 
   try {
-    const query = new URLSearchParams({ from: parsed.from, to: parsed.to }).toString();
+    const query = new URLSearchParams({
+      from: parsed.from,
+      to: parsed.to,
+      locale: language.data,
+    }).toString();
 
-    return { ok: true, data: await callExportApi('POST', `/reports/export?${query}`, accessToken) };
+    return {
+      ok: true,
+      data: await callExportApi('POST', `/reports/export?${query}`, accessToken, t),
+    };
   } catch (error) {
     return failure(error);
   }
@@ -109,14 +135,15 @@ export async function refreshReportExportAction(
   tenantSlug: string,
   exportId: unknown,
 ): Promise<AdminActionResult<ReportExport>> {
+  const t = await getTranslations('admin-reporting');
   const slug = slugSchema.safeParse(tenantSlug);
 
   if (!slug.success) {
-    return invalid('Établissement inconnu.');
+    return invalid(t('actions.unknownTenant'));
   }
 
   if (typeof exportId !== 'string' || !UUID_PATTERN.test(exportId)) {
-    return invalid('Export inconnu.');
+    return invalid(t('actions.unknownExport'));
   }
 
   const access = await adminActionAccess(slug.data);
@@ -130,7 +157,7 @@ export async function refreshReportExportAction(
   try {
     return {
       ok: true,
-      data: await callExportApi('GET', `/reports/export/${exportId}`, accessToken),
+      data: await callExportApi('GET', `/reports/export/${exportId}`, accessToken, t),
     };
   } catch (error) {
     return failure(error);
@@ -182,6 +209,7 @@ async function callExportApi(
   method: 'GET' | 'POST',
   path: string,
   accessToken: string,
+  t: ReportingTranslator,
 ): Promise<ReportExport> {
   let response: Response;
 
@@ -192,12 +220,9 @@ async function callExportApi(
       cache: 'no-store',
     });
   } catch (cause) {
-    throw new ApiClientError(
-      ERROR_CODES.SERVICE_UNAVAILABLE,
-      'Le service d’export est momentanément injoignable. Merci de réessayer dans un instant.',
-      503,
-      { cause: cause instanceof Error ? cause.message : String(cause) },
-    );
+    throw new ApiClientError(ERROR_CODES.SERVICE_UNAVAILABLE, t('actions.unreachable'), 503, {
+      cause: cause instanceof Error ? cause.message : String(cause),
+    });
   }
 
   const payload: unknown = await response.json().catch(() => null);
@@ -207,7 +232,7 @@ async function callExportApi(
 
     throw new ApiClientError(
       typeof body?.code === 'string' ? body.code : `HTTP_${String(response.status)}`,
-      typeof body?.message === 'string' ? body.message : 'Une erreur inattendue est survenue.',
+      typeof body?.message === 'string' ? body.message : t('actions.unexpected'),
       response.status,
     );
   }
@@ -215,12 +240,18 @@ async function callExportApi(
   const parsed = reportExportSchema.safeParse(payload);
 
   if (!parsed.success) {
-    throw new ApiClientError(
-      ERROR_CODES.INTERNAL_ERROR,
-      'La réponse de l’API ne respecte pas le contrat sur l’export du reporting.',
-      response.status,
-    );
+    throw new ApiClientError(ERROR_CODES.INTERNAL_ERROR, t('actions.contract'), response.status);
   }
 
   return parsed.data;
 }
+
+/**
+ * Le traducteur du namespace, passé de main en main.
+ *
+ * Il est **résolu une fois par action** et non redemandé dans chaque fonction :
+ * `getTranslations` lit le contexte de la requête, et le rappeler au fond de
+ * l'appel HTTP ne dirait rien de plus tout en rendant les fonctions privées
+ * asynchrones sans raison.
+ */
+type ReportingTranslator = Awaited<ReturnType<typeof getTranslations<'admin-reporting'>>>;

@@ -1,5 +1,6 @@
 'use client';
 
+import { useLocale, useTranslations } from 'next-intl';
 import { useId, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 
@@ -9,8 +10,8 @@ import { Select } from '@/components/ui/select';
 import type { ReportFilterOption, ReportScope } from '@/lib/admin/reporting-view';
 import {
   REPORT_PERIODS,
-  REPORT_PERIOD_LABELS,
   rangeRefusal,
+  reportPeriodLabels,
   type ReportPeriod,
   type ReportRange,
 } from '@/lib/admin/reporting-window';
@@ -67,6 +68,19 @@ import { adminReportingPath } from '../paths';
  * un `useEffect` ne corrigerait qu'après une première image affichée. Et
  * l'ajustement ne se déclenche pas sous la saisie — seule une navigation change
  * ces trois propriétés.
+ *
+ * ## Les mots changent, les valeurs jamais — #851
+ *
+ * Les libellés viennent du namespace `admin-reporting`. Les **valeurs** que ces
+ * contrôles posent dans l'URL, elles, restent celles qu'elles ont toujours été :
+ * `?periode=sept-jours`, `?filtre=praticien:<id>`. Ce sont des segments d'URL et
+ * non des mots — les traduire ferait qu'un lien partagé entre deux collègues qui
+ * ne lisent pas la même langue n'ouvrirait pas le même écran.
+ *
+ * Les libellés de période sont lus par `reportPeriodLabels(locale)` et non par
+ * `t('…')` : la clé est la valeur d'URL, connue à l'exécution seulement, et un
+ * accès dynamique dans un traducteur typé n'aurait plus rien garanti. La table
+ * vit donc là où vivent les périodes.
  */
 
 interface ReportFiltersProps {
@@ -104,6 +118,9 @@ export function ReportFilters({
   services,
   timeZone,
 }: ReportFiltersProps) {
+  const t = useTranslations('admin-reporting');
+  const locale = useLocale();
+  const periodLabels = reportPeriodLabels(locale);
   const router = useRouter();
   const fieldId = useId();
   const [pending, startTransition] = useTransition();
@@ -135,7 +152,7 @@ export function ReportFilters({
   const submit = (): void => {
     // Les deux refus sont ceux de l'API (422). Les dire ici évite un
     // aller-retour, et le message se pose sur le champ (web-frontend §4).
-    const refusal = isCustom ? rangeRefusal({ from, to }) : null;
+    const refusal = isCustom ? rangeRefusal({ from, to }, locale) : null;
 
     if (refusal !== null) {
       setError(refusal);
@@ -166,7 +183,7 @@ export function ReportFilters({
     >
       <Select
         id={`${fieldId}-periode`}
-        label="Période"
+        label={t('filters.period')}
         value={selectedPeriod}
         onChange={(event) => {
           setSelectedPeriod(event.target.value as ReportPeriod);
@@ -175,7 +192,7 @@ export function ReportFilters({
       >
         {REPORT_PERIODS.map((value) => (
           <option key={value} value={value}>
-            {REPORT_PERIOD_LABELS[value]}
+            {periodLabels[value]}
           </option>
         ))}
       </Select>
@@ -184,7 +201,7 @@ export function ReportFilters({
         <>
           <Field
             id={`${fieldId}-du`}
-            label="Du"
+            label={t('filters.from')}
             type="date"
             value={from}
             onChange={(event) => {
@@ -194,10 +211,10 @@ export function ReportFilters({
           />
           <Field
             id={`${fieldId}-au`}
-            label="Au (inclus)"
+            label={t('filters.to')}
             type="date"
             value={to}
-            hint={`Journées du salon — ${timeZone}.`}
+            hint={t('filters.timeZoneHint', { timeZone })}
             {...(error === null ? {} : { error })}
             onChange={(event) => {
               setTo(event.target.value);
@@ -220,16 +237,16 @@ export function ReportFilters({
       <div>
         <Select
           id={`${fieldId}-filtre`}
-          label="Filtrer"
+          label={t('filters.scope')}
           value={selectedScope}
-          hint="Un praticien ou une prestation — les deux ne se croisent pas."
+          hint={t('filters.scopeHint')}
           onChange={(event) => {
             setSelectedScope(event.target.value);
           }}
         >
-          <option value="">Tout l’établissement</option>
+          <option value="">{t('view.wholeTenant')}</option>
           {staff.length === 0 ? null : (
-            <optgroup label="Praticiens">
+            <optgroup label={t('filters.staffGroup')}>
               {staff.map((option) => (
                 <option key={option.key} value={`praticien:${option.key}`}>
                   {option.label}
@@ -238,7 +255,7 @@ export function ReportFilters({
             </optgroup>
           )}
           {services.length === 0 ? null : (
-            <optgroup label="Prestations">
+            <optgroup label={t('filters.servicesGroup')}>
               {services.map((option) => (
                 <option key={option.key} value={`prestation:${option.key}`}>
                   {option.label}
@@ -248,8 +265,13 @@ export function ReportFilters({
           )}
         </Select>
 
-        <Button type="submit" variant="accent" loading={pending} loadingLabel="Chargement…">
-          Afficher
+        <Button
+          type="submit"
+          variant="accent"
+          loading={pending}
+          loadingLabel={t('filters.loading')}
+        >
+          {t('filters.submit')}
         </Button>
       </div>
     </form>

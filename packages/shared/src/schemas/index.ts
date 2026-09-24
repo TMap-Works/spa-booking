@@ -350,7 +350,13 @@ export type {
   SaleReceipt,
 } from './receipt';
 
-export { MAX_REPORT_EXPORT_TTL_SECONDS, reportExportSchema } from './reporting';
+export {
+  MAX_REPORT_EXPORT_TTL_SECONDS,
+  REPORT_EXPORT_FALLBACK_LOCALE,
+  reportExportLocaleSchema,
+  reportExportSchema,
+  resolveReportExportLocale,
+} from './reporting';
 export type { ReportExport } from './reporting';
 
 export {

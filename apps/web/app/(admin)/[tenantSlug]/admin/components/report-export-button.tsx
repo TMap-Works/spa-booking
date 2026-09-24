@@ -1,6 +1,7 @@
 'use client';
 
 import { ERROR_CODES } from '@spa/shared';
+import { useLocale, useTranslations } from 'next-intl';
 import { useState } from 'react';
 
 import { Button } from '@/components/ui/button';
@@ -64,6 +65,18 @@ import { useAdminSessionRenewal } from './use-admin-session-renewal';
  * #458). Afficher « votre session a expiré » aurait été un cul-de-sac là où un
  * aller-retour suffit. Le départ passe par le helper commun (#856), qui lit la
  * destination dans la barre d'adresse — seule à porter la période et le filtre.
+ *
+ * ## La langue du fichier part d'ici — #851
+ *
+ * Le CSV est écrit par le serveur : c'est donc à ce bouton de lui dire dans
+ * quelle langue l'écrire, et cette langue est celle de **l'interface au moment
+ * du clic** (`useLocale`). Ni celle du navigateur, ni celle de l'établissement —
+ * une gérante qui bascule le back-office en anglais s'attend à ouvrir un fichier
+ * anglais, sans avoir à régler autre chose.
+ *
+ * Elle est revalidée à l'arrivée, côté action serveur puis côté API, contre
+ * `reportExportLocaleSchema` du contrat partagé : un composant client n'est pas
+ * une frontière de confiance.
  */
 
 interface ReportExportButtonProps {
@@ -73,6 +86,8 @@ interface ReportExportButtonProps {
 }
 
 export function ReportExportButton({ tenantSlug, window: reportWindow }: ReportExportButtonProps) {
+  const t = useTranslations('admin-reporting');
+  const locale = useLocale();
   const { renewIfExpired } = useAdminSessionRenewal(tenantSlug);
   const [busy, setBusy] = useState(false);
   const [downloaded, setDownloaded] = useState<string | null>(null);
@@ -82,7 +97,7 @@ export function ReportExportButton({ tenantSlug, window: reportWindow }: ReportE
     setBusy(true);
     setFailure(null);
 
-    const result = await createReportExportAction(tenantSlug, reportWindow);
+    const result = await createReportExportAction(tenantSlug, reportWindow, locale);
 
     if (!result.ok) {
       // La page revient telle quelle une fois la session rouverte : le bouton
@@ -95,8 +110,8 @@ export function ReportExportButton({ tenantSlug, window: reportWindow }: ReportE
       setDownloaded(null);
       setFailure(
         result.code === ERROR_CODES.REPORT_EXPORT_UNAVAILABLE
-          ? 'L’export n’est pas disponible sur cet environnement.'
-          : `L’export n’a pas pu être produit : ${result.message}`,
+          ? t('export.unavailable')
+          : t('export.failed', { message: result.message }),
       );
       setBusy(false);
       return;
@@ -124,15 +139,15 @@ export function ReportExportButton({ tenantSlug, window: reportWindow }: ReportE
         type="button"
         variant="neutral"
         loading={busy}
-        loadingLabel="Préparation…"
+        loadingLabel={t('export.preparing')}
         onClick={() => {
           void download();
         }}
       >
-        Exporter en CSV
+        {t('export.label')}
       </Button>
       <p aria-live="polite" className="spa-admin-report-export__status">
-        {failure ?? (downloaded === null ? '' : `Fichier téléchargé : ${downloaded}`)}
+        {failure ?? (downloaded === null ? '' : t('export.downloaded', { filename: downloaded }))}
       </p>
     </div>
   );

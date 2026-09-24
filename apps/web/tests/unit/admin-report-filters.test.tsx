@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { ReportFilters } from '@/app/(admin)/[tenantSlug]/admin/components/report-filters';
-import { WHOLE_TENANT } from '@/lib/admin/reporting-view';
+import { wholeTenant } from '@/lib/admin/reporting-view';
 
 /**
  * La barre de filtres du tableau de bord (#75, premier critère).
@@ -37,7 +37,7 @@ function renderFilters(overrides: Partial<Parameters<typeof ReportFilters>[0]> =
     <ReportFilters
       period="trente-jours"
       range={{ from: '2026-09-01', to: '2026-09-30' }}
-      scope={WHOLE_TENANT}
+      scope={wholeTenant('fr')}
       services={SERVICES}
       staff={STAFF}
       tenantSlug="maison-lotus"
@@ -106,7 +106,7 @@ describe('la resynchronisation sur l’URL', () => {
       <ReportFilters
         period="mois-precedent"
         range={{ from: '2026-08-01', to: '2026-08-31' }}
-        scope={WHOLE_TENANT}
+        scope={wholeTenant('fr')}
         services={SERVICES}
         staff={STAFF}
         tenantSlug="maison-lotus"
@@ -133,7 +133,7 @@ describe('la resynchronisation sur l’URL', () => {
       <ReportFilters
         period="personnalisee"
         range={{ from: '2026-09-01', to: '2026-09-30' }}
-        scope={WHOLE_TENANT}
+        scope={wholeTenant('fr')}
         services={SERVICES}
         staff={STAFF}
         tenantSlug="maison-lotus"

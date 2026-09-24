@@ -1,13 +1,13 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-  REPORT_CSV_HEADER,
   buildReportCsv,
   reportCsvFilename,
+  reportCsvHeader,
   reportCsvRows,
   type ReportCsvInput,
 } from '@/lib/admin/reporting-csv';
-import { WHOLE_TENANT } from '@/lib/admin/reporting-view';
+import { wholeTenant } from '@/lib/admin/reporting-view';
 
 /**
  * L'export CSV (#75, quatrième critère) et son nom de fichier (cinquième
@@ -25,7 +25,7 @@ const RANGE = { from: '2026-09-01', to: '2026-09-30' };
 const INPUT: ReportCsvInput = {
   range: RANGE,
   timeZone: 'Indian/Antananarivo',
-  scope: WHOLE_TENANT,
+  scope: wholeTenant('fr'),
   revenueTotals: [
     {
       currency: 'MGA',
@@ -145,7 +145,7 @@ describe('les lignes du fichier', () => {
       '',
       '',
       'taux_no_show',
-      '0.0328',
+      '0,0328',
       '',
     ]);
   });
@@ -160,7 +160,7 @@ describe('les lignes du fichier', () => {
   });
 
   it('donne six colonnes à chaque ligne, en-tête compris', () => {
-    for (const row of [REPORT_CSV_HEADER, ...rows]) {
+    for (const row of [reportCsvHeader('fr'), reportCsvHeader('en'), ...rows]) {
       expect(row).toHaveLength(6);
     }
   });
@@ -228,5 +228,99 @@ describe('la mise en forme du fichier', () => {
 
     expect(csv).toContain(';net_minor;-1200;EUR');
     expect(csv).not.toContain("'-1200");
+  });
+});
+
+describe('la langue du fichier — #851', () => {
+  /** La première ligne du fichier, marque d'ordre d'octets retirée. */
+  const headerOf = (csv: string): string => (csv.split('\r\n')[0] ?? '').replace('﻿', '');
+
+  /** La ligne du taux de no-show, la seule valeur fractionnaire du fichier. */
+  const rateLine = (csv: string): string =>
+    csv.split('\r\n').find((line) => line.includes('taux_no_show')) ?? '';
+
+  it('traduit la ligne d’en-tête, et elle seule', () => {
+    // Les noms de colonnes sont ce qu'une gérante lit en ouvrant le tableur. Les
+    // **valeurs** des colonnes `section` et `mesure`, elles, restent des
+    // identifiants : c'est ce qui permet à un export français de septembre et à
+    // un export anglais d'octobre de s'empiler dans le même tableau croisé.
+    expect(headerOf(buildReportCsv({ ...INPUT, locale: 'fr' }))).toBe(
+      'section;cle;libelle;mesure;valeur;devise',
+    );
+    expect(headerOf(buildReportCsv({ ...INPUT, locale: 'en' }))).toBe(
+      'section,key,label,measure,value,currency',
+    );
+
+    const english = buildReportCsv({ ...INPUT, locale: 'en' });
+
+    expect(english).toContain('revenu-total,,,net_minor,75000,MGA');
+  });
+
+  it('traduit le libellé du moyen d’encaissement, et jamais son code', () => {
+    // Le constat de la revue : cette section-là lisait encore une table
+    // française figée, si bien qu'un fichier anglais annonçait « Carte » sous un
+    // en-tête `label`. La colonne `cle`, elle, porte le code stable sur lequel
+    // on croise — c'est elle qui doit rester invariante, pas le mot.
+    const ligne = (locale: 'fr' | 'en'): string =>
+      buildReportCsv({ ...INPUT, locale })
+        .split('\r\n')
+        .find((line) => line.startsWith('revenu-moyen')) ?? '';
+
+    expect(ligne('fr')).toBe('revenu-moyen;card;Carte;transactions;2;MGA');
+    expect(ligne('en')).toBe('revenu-moyen,card,Card,transactions,2,MGA');
+  });
+
+  it('sépare les colonnes par « ; » et les décimales par « , » en français', () => {
+    // Un CSV à virgules atterrit en une seule colonne dans un tableur français,
+    // où la virgule est le séparateur décimal. Les deux choix vont ensemble.
+    const csv = buildReportCsv({ ...INPUT, locale: 'fr' });
+
+    expect(rateLine(csv)).toBe('indicateurs;;;taux_no_show;0,0328;');
+  });
+
+  it('sépare les colonnes par « , » et les décimales par « . » en anglais', () => {
+    const csv = buildReportCsv({ ...INPUT, locale: 'en' });
+
+    expect(rateLine(csv)).toBe('indicateurs,,,taux_no_show,0.0328,');
+  });
+
+  it('écrit en français quand la langue n’est pas demandée', () => {
+    // Le repli est celui d'avant #851 : un appelant qui ne demande rien continue
+    // de recevoir le fichier qu'il recevait.
+    expect(buildReportCsv(INPUT)).toBe(buildReportCsv({ ...INPUT, locale: 'fr' }));
+  });
+
+  it('encadre le champ qui contient le séparateur **de sa langue**', () => {
+    // « Forfait duo, 90 min » ne gênait pas le fichier français et coupait la
+    // ligne anglaise en deux. L'échappement suit donc le séparateur en vigueur,
+    // pas un point-virgule figé.
+    const scope = { kind: 'prestation', key: 's1', label: 'Forfait duo, 90 min' } as const;
+
+    expect(buildReportCsv({ ...INPUT, locale: 'en', scope })).toContain(
+      '"Forfait duo, 90 min"',
+    );
+    expect(buildReportCsv({ ...INPUT, locale: 'fr', scope })).toContain('Forfait duo, 90 min');
+    expect(buildReportCsv({ ...INPUT, locale: 'fr', scope })).not.toContain(
+      '"Forfait duo, 90 min"',
+    );
+  });
+
+  it('ne touche ni aux montants ni à leur devise', () => {
+    // L'argent reste un entier de la plus petite unité monétaire, quelle que
+    // soit la langue : seule sa **mise en forme à l'écran** la suit, jamais sa
+    // valeur (`CLAUDE.md`).
+    for (const locale of ['fr', 'en'] as const) {
+      const montants = buildReportCsv({ ...INPUT, locale })
+        .split('\r\n')
+        .filter((line) => line.includes('_minor'));
+
+      expect(montants.length).toBeGreaterThan(0);
+      for (const line of montants) {
+        const cells = line.split(locale === 'fr' ? ';' : ',');
+
+        expect(cells[4]).toMatch(/^-?\d+$/);
+        expect(cells[5]).toBe('MGA');
+      }
+    }
   });
 });

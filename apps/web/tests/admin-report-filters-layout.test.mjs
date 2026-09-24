@@ -229,9 +229,13 @@ describe('Le bouton « Afficher » n’ouvre jamais une ligne à lui seul', () =
     // redevient un élément de la barre : il s'enroule seul dès que les champs
     // de la dernière ligne tiennent sans lui — la bande ~800-900 px en période
     // personnalisée — et sa marge d'étiquette devient ~26 px de vide (#656).
+    // L'étiquette vient du catalogue depuis #851 : le motif désigne donc la
+    // **clé** du message (`filters.scope`) et non le mot français, qui n'est
+    // plus dans le fichier. L'invariant, lui, est inchangé — c'est le groupe qui
+    // compte, pas la langue du libellé.
     assert.match(
       filters,
-      /<div>\s*<Select[\s\S]*?label="Filtrer"[\s\S]*?<\/Select>\s*<Button[\s\S]*?<\/Button>\s*<\/div>/,
+      /<div>\s*<Select[\s\S]*?label=\{t\('filters\.scope'\)\}[\s\S]*?<\/Select>\s*<Button[\s\S]*?<\/Button>\s*<\/div>/,
       'report-filters.tsx ne groupe plus le sélecteur « Filtrer » et le bouton ' +
         '« Afficher » dans un même `<div>`. C’est ce groupe, et lui seul, qui ' +
         'empêche le bouton d’ouvrir une ligne sans étiquette au-dessus de lui ' +
