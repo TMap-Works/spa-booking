@@ -57,6 +57,8 @@
     "confirm": "Confirm the appointment",
     "mark": "Mark {status}",
     "saving": "Saving…",
-    "serverSilent": "The server is not answering. Try again in a moment."
+    "serverSilent": "The server is not answering. Try again in a moment.",
+    "notStarted": "This appointment hasn’t started: wait for its time before recording how it went.",
+    "notStartedHint": "Wait for the appointment time"
   }
 }

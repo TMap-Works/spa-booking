@@ -116,6 +116,9 @@
     "save": "Enregistrer",
     "confirmAppointment": "Confirmer le rendez-vous",
     "mark": "Marquer {status}",
+    "notStartedTitle": "Le rendez-vous n’a pas commencé",
+    "notStarted": "« Marquer honoré » et « Marquer non honoré » constatent ce qui s’est passé au salon : ils s’ouvriront à l’heure du rendez-vous. D’ici là, vous pouvez encore le déplacer ou l’annuler.",
+    "notStartedHint": "Attendre l’heure du rendez-vous",
     "notificationsUnreadable": "Le journal d’envois n’a pas pu être lu."
   },
   "cancellation": {

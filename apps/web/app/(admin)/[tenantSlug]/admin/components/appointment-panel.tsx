@@ -3,6 +3,8 @@
 import {
   ERROR_CODES,
   REASON_MAX_LENGTH,
+  canRecordAppointmentOutcome,
+  isAppointmentNotStartedRefusal,
   type Appointment,
   type AppointmentStatus,
   type CalendarDate,
@@ -70,6 +72,7 @@ import { adminCatalogPath } from '../paths';
 
 import { ClientPicker } from './client-picker';
 import { NotificationStatusList } from './notification-status-list';
+import { BEFORE_ANY_HOUR, useAppointmentClock } from './use-appointment-clock';
 
 /**
  * Le tiroir de rendez-vous du comptoir — création et édition (#50).
@@ -260,11 +263,46 @@ export function AppointmentPanel({
   // de l'échec de lecture.
   const [notifications, setNotifications] = useState<readonly NotificationTrace[] | null>(null);
   const [notificationsFailure, setNotificationsFailure] = useState<string | null>(null);
+  // L'horloge des constats — #1210. Sans graine : le tiroir n'existe qu'à la
+  // suite d'un clic, il n'est donc jamais rendu par le serveur avec un
+  // rendez-vous dedans, et `null` avant le montage est la réponse qui ne peut
+  // pas diverger à l'hydratation. Elle avance ensuite, parce qu'un tiroir reste
+  // ouvert et que l'heure du soin peut passer pendant qu'il l'est.
+  const now = useAppointmentClock();
 
   // L'identifiant seul plutôt que l'objet en dépendance d'effet : `editing` est
   // une nouvelle référence à chaque rendu du parent, et l'effet rechargerait le
   // journal à chaque frappe dans le formulaire.
   const editingId = editing?.id ?? null;
+
+  /**
+   * `true` si ce passage de statut peut être posé **maintenant** — #1210.
+   *
+   * La règle vient du contrat partagé, qui est aussi celle que le cycle de vie
+   * fait respecter côté serveur : « honoré » et « non présenté » constatent ce
+   * qui a eu lieu au salon, et ne s'écrivent donc pas avant l'heure du soin
+   * (#1137). Le tiroir les offrait quelle que soit la date : cliqués sur un
+   * rendez-vous du mois prochain, ils rendaient 422 à tous les coups.
+   *
+   * L'heure lue est celle que l'API **rend** — l'intervalle facturé, celui que
+   * la cliente lit sur sa confirmation —, la même que compare le serveur.
+   */
+  const canRecord = (status: AppointmentStatus): boolean =>
+    canRecordAppointmentOutcome(status, editing?.startsAt ?? null, now ?? BEFORE_ANY_HOUR);
+
+  /**
+   * `true` s'il y a au moins un constat que l'heure retient — ce qui se dit,
+   * plutôt que de laisser deviner pourquoi deux boutons sont éteints.
+   *
+   * Conditionné à `now !== null` : tant que l'horloge n'a pas parlé, les boutons
+   * sont déjà inertes — c'est le sens du premier rendu —, mais rien ne prouve
+   * encore qu'il y ait quoi que ce soit à attendre, et afficher le motif pour
+   * l'effacer à la frappe suivante ferait clignoter un avertissement.
+   */
+  const waitingForStart =
+    now !== null &&
+    editing !== null &&
+    deskStatusActions(editing.status).some((action) => !canRecord(action.status));
 
   const service = services.find((candidate) => candidate.id === serviceId) ?? null;
   // La prestation d'un rendez-vous **posé** peut avoir quitté le catalogue actif
@@ -602,9 +640,21 @@ export function AppointmentPanel({
         return;
       }
 
+      // Le refus « le rendez-vous n'a pas commencé » a beau porter le code de la
+      // transition interdite, il n'appelle pas la même conduite : il n'y a rien
+      // à recharger ni à reprendre, il y a à **attendre** (#1137, #1210). Il
+      // peut remonter alors même que le tiroir avait ouvert le geste — l'heure
+      // passe entre le rendu et le clic, et l'horloge du poste n'est pas celle
+      // du serveur, qui tranche.
+      if (isAppointmentNotStartedRefusal(result.code, result.details)) {
+        setConflict(null);
+        setFailure(t('desk.notStarted'));
+        return;
+      }
+
       refuse(result.code, result.message);
     },
-    [editing, tenantSlug, onReload, onClose, refuse],
+    [editing, tenantSlug, onReload, onClose, refuse, t],
   );
 
   /**
@@ -826,6 +876,25 @@ export function AppointmentPanel({
           <div className="spa-admin-appointment__conflict">
             <Notification tone="danger" title={t('desk.failureTitle')}>
               <p>{failure}</p>
+            </Notification>
+          </div>
+        )}
+
+        {/* Pourquoi « Marquer honoré » et « Marquer non honoré » sont éteints —
+            #1210.
+
+            En `info` et non en `warning` : rien n'a échoué, et rien n'appelle de
+            correction. C'est l'ordre des choses qui est dit — on constate après,
+            pas avant —, et un ton d'alerte aurait fait passer pour un incident
+            un rendez-vous parfaitement normal.
+
+            Après les deux alertes, qui portent sur ce que l'opérateur vient de
+            tenter, et avant le reste : il cherche ces boutons dans le pied, et
+            c'est en haut du tiroir qu'il lira pourquoi ils n'y répondent pas. */}
+        {!waitingForStart ? null : (
+          <div className="spa-admin-appointment__conflict">
+            <Notification tone="info" title={t('desk.notStartedTitle')}>
+              <p>{t('desk.notStarted')}</p>
             </Notification>
           </div>
         )}
@@ -1187,6 +1256,12 @@ export function AppointmentPanel({
                     key={action.status}
                     variant={action.variant}
                     loading={saving}
+                    // Inerte tant que le soin n'a pas commencé, plutôt qu'absent :
+                    // un bouton qui disparaît ne dit pas pourquoi, et c'est le
+                    // motif qui manquait (#1210). Le titre le porte au survol, la
+                    // notification du corps le dit à tout le monde.
+                    disabled={!canRecord(action.status)}
+                    title={canRecord(action.status) ? undefined : t('desk.notStartedHint')}
                     onClick={() => {
                       void mark(action.status);
                     }}

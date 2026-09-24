@@ -116,6 +116,9 @@
     "save": "Save",
     "confirmAppointment": "Confirm the appointment",
     "mark": "Mark as {status}",
+    "notStartedTitle": "The appointment hasn’t started",
+    "notStarted": "“Mark as completed” and “Mark as no-show” record what happened at the salon: they open at the appointment time. Until then, you can still move or cancel it.",
+    "notStartedHint": "Wait for the appointment time",
     "notificationsUnreadable": "The message log could not be read."
   },
   "cancellation": {

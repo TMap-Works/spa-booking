@@ -57,6 +57,8 @@
     "confirm": "Confirmer le rendez-vous",
     "mark": "Marquer {status}",
     "saving": "Enregistrement…",
-    "serverSilent": "Le serveur ne répond pas. Réessayez dans un instant."
+    "serverSilent": "Le serveur ne répond pas. Réessayez dans un instant.",
+    "notStarted": "Ce rendez-vous n’a pas commencé : attendez l’heure du rendez-vous pour dire s’il a été honoré.",
+    "notStartedHint": "Attendre l’heure du rendez-vous"
   }
 }
