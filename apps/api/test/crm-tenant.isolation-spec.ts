@@ -18,9 +18,9 @@ import { UNKNOWN_ID } from './utils/tenant-harness';
  * | Route | Ce qui est vérifié |
  * |---|---|
  * | `GET /customers` | la liste ne contient rien du voisin, même à nom et adresse identiques |
- * | `GET /customers/:id` | 404 sur la fiche du voisin |
+ * | `GET /customers/:id` | 404 sur la fiche du voisin, et la langue préférée lue est celle de ce salon |
  * | `GET /customers/:id/history` | 404, et aucune visite du voisin ne fuit |
- * | `GET /customers/:id/export` | 404, et aucun fragment du dossier du voisin ne sort |
+ * | `GET /customers/:id/export` | 404 **dans les deux langues**, et aucun fragment du dossier du voisin ne sort |
  * | `POST /customers` | l'adresse du voisin reste libre — l'unicité est par tenant |
  * | `POST /customers/:id/anonymize` | 404, et la fiche du voisin **non anonymisée** |
  * | `PATCH /customers/:id` | 404, et la fiche du voisin intacte |
@@ -378,5 +378,116 @@ describe('Isolation inter-tenant — module crm', () => {
       cliente: 'note de la cliente du salon B',
       salon: 'note du praticien du salon B',
     });
+  });
+
+  /**
+   * Les deux routes que #852 modifie — la fiche, qui gagne `locale`, et l'export,
+   * qui gagne son paramètre de langue.
+   *
+   * La Definition of Done exige un test de fuite pour **tout endpoint modifié**,
+   * et la modification n'est pas anodine dans les deux cas : la première ajoute
+   * une donnée personnelle de plus à une projection, la seconde ajoute une
+   * **entrée contrôlée par l'appelant** à une route gardée. C'est exactement la
+   * forme d'ajout par laquelle un périmètre s'élargit sans qu'on s'en aperçoive.
+   */
+  it('la langue préférée lue sur une fiche est celle de ce salon, pas celle du voisin (#852)', async () => {
+    // La même personne, cliente des deux salons sous la même adresse, et qui
+    // n'a pas dit la même chose aux deux : `users.locale` est une colonne par
+    // ligne, donc par établissement. Une projection qui aurait perdu son filtre
+    // de tenant afficherait ici la préférence enregistrée chez le voisin.
+    const chezA = harness.repository.addCustomer({
+      tenantId: a,
+      email: ADRESSE,
+      lastName: NOM,
+      locale: 'fr',
+    }).id;
+    const chezB = harness.repository.addCustomer({
+      tenantId: b,
+      email: ADRESSE,
+      lastName: NOM,
+      locale: 'en',
+    }).id;
+    const bearer = await harness.bearer('MANAGER');
+
+    const fiche = await request(server())
+      .get(`${BASE}/${chezA}`)
+      .set('Authorization', bearer)
+      .expect(200);
+
+    expect((fiche.body as { locale: string | null }).locale).toBe('fr');
+
+    // Et la fiche du voisin reste introuvable — le champ ajouté n'ouvre aucune
+    // porte de plus (tenant-isolation §4).
+    const voisine = await request(server())
+      .get(`${BASE}/${chezB}`)
+      .set('Authorization', bearer)
+      .expect(404);
+
+    expect(JSON.stringify(voisine.body)).not.toContain(chezB);
+  });
+
+  it('le paramètre de langue de l’export n’ouvre rien — 404 dans les deux langues (#852)', async () => {
+    const { chezA, chezB } = semerDesDeuxCotes();
+    harness.repository.addVisit({
+      tenantId: b,
+      clientId: chezB,
+      serviceName: 'soin chez B',
+      staffNote: 'note de rendez-vous du salon B',
+    });
+    const bearer = await harness.bearer('MANAGER');
+
+    // `locale` ne décide que des **mots** du document : il ne désigne aucune
+    // ressource, et le 404 du salon voisin tombe avant que la langue n'ait servi
+    // à quoi que ce soit. Les deux valeurs sont jouées, parce qu'une garde qui
+    // ne tiendrait que sur le défaut ne tiendrait pas.
+    await expectCrossTenantNotFound({
+      attempts: [
+        {
+          label: 'export en français',
+          send: () =>
+            request(server())
+              .get(`${BASE}/${chezB}/export`)
+              .query({ locale: 'fr' })
+              .set('Authorization', bearer),
+        },
+        {
+          label: 'export en anglais',
+          send: () =>
+            request(server())
+              .get(`${BASE}/${chezB}/export`)
+              .query({ locale: 'en' })
+              .set('Authorization', bearer),
+        },
+      ],
+      hidden: [chezB, b, 'note du salon B', 'note de rendez-vous du salon B', 'soin chez B'],
+      intact: () => ficheDuVoisin(chezB),
+    });
+
+    // Chez soi, la langue demandée est bien celle du document — et le dossier
+    // reste borné à l'établissement de l'appelant.
+    const dossier = await request(server())
+      .get(`${BASE}/${chezA}/export`)
+      .query({ locale: 'en' })
+      .set('Authorization', bearer)
+      .expect(200);
+
+    const corps = dossier.body as { locale: string; labels: { identity: { section: string } } };
+    expect({ langue: corps.locale, entete: corps.labels.identity.section }).toEqual({
+      langue: 'en',
+      entete: 'Identity and contact details',
+    });
+    expectExcludesForeignIds(dossier.body, [chezB, b, 'note du salon B']);
+  });
+
+  it('une langue hors vocabulaire est refusée en 400, pas repliée en silence (#852)', async () => {
+    const { chezA } = semerDesDeuxCotes();
+
+    // Replier `?locale=de` sur l'anglais aurait laissé croire l'allemand servi.
+    // Le refus nomme le champ, comme tout refus de validation du contrat.
+    await request(server())
+      .get(`${BASE}/${chezA}/export`)
+      .query({ locale: 'de' })
+      .set('Authorization', await harness.bearer('MANAGER'))
+      .expect(400);
   });
 });
