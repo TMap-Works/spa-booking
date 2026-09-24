@@ -63,7 +63,12 @@
  * un changement de propriétaire les fait tomber — voir `draftForAccount`.
  */
 
-import { bookedAppointmentSchema, uuidSchema, utcInstantSchema } from '@spa/shared';
+import {
+  bookedAppointmentSchema,
+  uuidSchema,
+  utcInstantSchema,
+  type BookedAppointment,
+} from '@spa/shared';
 import { z } from 'zod';
 
 /**
@@ -152,7 +157,13 @@ export const bookingDraftSchema = z.object({
    * conduite qu'on veut au déploiement.
    */
   contactAccount: z.string().nullable().catch(null),
-  /** Le rendez-vous obtenu, qui fait vivre l'écran de confirmation après un F5. */
+  /**
+   * Le rendez-vous obtenu, qui fait vivre l'écran de confirmation après un F5.
+   *
+   * Il décrit le parcours qui l'a produit — sa prestation, son créneau —, et
+   * c'est à ce titre qu'une adresse qui en décrit un autre le fait tomber
+   * (#1152) : voir `stillDescribed`.
+   */
   appointment: bookedAppointmentSchema.nullable(),
 });
 
@@ -385,6 +396,78 @@ export function bookingSearch(draft: BookingDraft, current?: string | URLSearchP
 }
 
 /**
+ * Les choix que l'adresse porte — la part du brouillon qu'elle décide.
+ *
+ * Nommée pour ce qu'en fait `stillDescribed` : le rendez-vous obtenu se juge
+ * contre eux, et contre eux seuls.
+ */
+type UrlChoices = Pick<BookingDraft, 'serviceId' | 'startsAt'>;
+
+/**
+ * Le rendez-vous obtenu décrit-il encore le parcours que cette adresse ouvre ?
+ * (#1152)
+ *
+ * ## Le défaut
+ *
+ * Le rendez-vous ne voyage pas dans l'URL, et venait donc **toujours** du
+ * stockage. Or `reachableStep` lui donne la priorité absolue : un brouillon qui
+ * en porte un affiche la confirmation, quelle que soit l'étape demandée. Le
+ * bouton « Choisir — Coupe homme » de la vitrine — `?etape=creneau&prestation=…`
+ * (`components/salon/booking-link.ts`) — rouvrait ainsi la confirmation de la
+ * réservation précédente, avec **la prestation du lien** à côté du rendez-vous
+ * stocké : `ConfirmationStep` reçoit le `service` que le catalogue résout depuis
+ * le brouillon, et l'`appointment` du stockage. L'écran annonçait « Coupe homme,
+ * ven 25 15:00–16:30 · 1 h 30, avec Premier disponible, 110,00 €,
+ * Réf. RDV-PF29-84 » — le nom d'une coupe, l'horaire et le prix d'un massage,
+ * et un rendez-vous qui n'existe nulle part. Le bouton « Annuler ce
+ * rendez-vous » de cet écran visait, lui, le vrai (campagne `20260922-complet`).
+ *
+ * ## La règle
+ *
+ * L'URL fait foi dès qu'elle porte une de nos clés, et le rendez-vous est un
+ * choix comme les autres — le dernier du parcours. Il ne survit donc à une
+ * adresse qui fait foi que si elle décrit encore **le parcours qui l'a
+ * produit** :
+ *
+ * - **la même prestation.** C'est l'égalité qui manquait, et c'est elle qui
+ *   décide de ce que l'écran affiche : le **nom** de la carte vient de la
+ *   prestation du brouillon, et c'est dans **sa** liste de praticiens que le
+ *   `staffId` du rendez-vous est cherché, tandis que l'horaire, la durée, le
+ *   prix et la référence viennent du rendez-vous (`confirmation-step.tsx`). Une
+ *   prestation étrangère suffit donc à composer un rendez-vous qui n'existe
+ *   nulle part — le nom de l'une, les faits de l'autre, et un praticien
+ *   introuvable rendu « Premier disponible » ;
+ * - **un créneau retenu.** Un rendez-vous est l'aboutissement d'un créneau
+ *   choisi ; une adresse qui n'en porte pas décrit un parcours arrêté **avant**
+ *   lui, c'est-à-dire un tunnel neuf — le lien de la vitrine, un favori sur
+ *   l'étape « Créneau ». Sans cette seconde condition, rouvrir la prestation
+ *   qu'on vient de réserver représenterait la confirmation au lieu du calendrier.
+ *
+ * Ce qui n'est **pas** comparé, et pourquoi : la **valeur** du créneau, et le
+ * praticien. L'horaire affiché est celui du rendez-vous (`appointment.startsAt`)
+ * et non celui du brouillon, si bien qu'un créneau divergent ne peut rien
+ * inventer — il ne dirait qu'une adresse en retard sur elle-même. Le praticien,
+ * lui, ne se compare pas du tout : `staffId` vaut `null` pour « premier
+ * disponible » (CDC §1.4) là où le rendez-vous nomme celui qui a réellement été
+ * assigné, et une égalité sèche ferait tomber la confirmation de toutes les
+ * réservations prises sans praticien choisi. La prestation une fois retrouvée,
+ * son nom est de toute façon cherché à la bonne place.
+ *
+ * ## Ce que cela préserve
+ *
+ * Le geste retour depuis la confirmation retrouve l'entrée du récapitulatif —
+ * même prestation, même créneau — et retombe donc sur la confirmation : on ne
+ * revient jamais confirmer deux fois un rendez-vous déjà pris (#732). Et le
+ * rafraîchissement de `?etape=confirmation&prestation=…&creneau=…` la retrouve
+ * pour la même raison (#45).
+ */
+function stillDescribed(chosen: UrlChoices, appointment: BookedAppointment | null): boolean {
+  return (
+    appointment !== null && chosen.serviceId === appointment.serviceId && chosen.startsAt !== null
+  );
+}
+
+/**
  * Le brouillon que décrit une query string, complété par celui qu'on a déjà.
  *
  * **L'URL fait foi dès qu'elle porte une de nos clés** : un lien partagé décrit
@@ -396,6 +479,11 @@ export function bookingSearch(draft: BookingDraft, current?: string | URLSearchP
  * Ce qui ne voyage pas dans l'URL — coordonnées, rendez-vous obtenu — vient
  * toujours de `base`, c'est-à-dire du stockage : un retour arrière ne doit
  * jamais coûter un formulaire déjà rempli.
+ *
+ * Le rendez-vous obtenu fait exception depuis #1152, et c'est la seule : il ne
+ * décrit pas une personne mais **un parcours**, celui-là même que l'adresse
+ * décrit. Gardé sans regarder l'adresse, il mêlait la prestation du lien à la
+ * confirmation du stockage — voir `stillDescribed`.
  *
  * Une valeur illisible (URL bricolée, lien tronqué, contrat qui a changé) est
  * **ignorée** plutôt que propagée : elle vaut « pas choisi », et l'étape
@@ -413,13 +501,17 @@ export function draftFromSearch(search: string | URLSearchParams, base: BookingD
   const serviceId = uuidSchema.safeParse(params.get(BOOKING_QUERY_KEYS.service));
   const staffId = uuidSchema.safeParse(params.get(BOOKING_QUERY_KEYS.staff));
   const startsAt = utcInstantSchema.safeParse(params.get(BOOKING_QUERY_KEYS.slot));
+  const chosen: UrlChoices = {
+    serviceId: serviceId.success ? serviceId.data : null,
+    startsAt: startsAt.success ? startsAt.data : null,
+  };
 
   return {
     ...base,
+    ...chosen,
     step: step.success ? step.data : base.step,
-    serviceId: serviceId.success ? serviceId.data : null,
     staffId: staffId.success ? staffId.data : null,
-    startsAt: startsAt.success ? startsAt.data : null,
+    appointment: stillDescribed(chosen, base.appointment) ? base.appointment : null,
   };
 }
 
