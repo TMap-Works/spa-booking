@@ -52,6 +52,7 @@
     "legend": "Moyen de paiement",
     "cash": "Espèces",
     "card": "Carte bancaire (TPE)",
+    "cardOnline": "Carte bancaire (en ligne)",
     "cashPhrase": "en espèces",
     "cardPhrase": "par carte bancaire (TPE)",
     "cashHint": "Enregistré avec l’opérateur et l’horodatage ; la caisse fait foi au rapprochement.",
@@ -137,6 +138,7 @@
     "total": "Total",
     "kept": "Reste acquis",
     "payment": "Règlement",
+    "settlementReference": "{method} — réf. {reference}",
     "thanks": "Merci de votre visite !",
     "cashDisclaimer": "Règlement inscrit et horodaté, avec son opérateur. C’est la caisse et le relevé du terminal qui font foi au rapprochement."
   },
