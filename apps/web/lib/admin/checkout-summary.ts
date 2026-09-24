@@ -566,8 +566,8 @@ export function meanHint(
 }
 
 /**
- * Le même moyen, mais **dans une phrase** — « réglé par carte », « réglé en
- * espèces ».
+ * Le même moyen, mais **dans une phrase** — « réglé par carte bancaire (TPE) »,
+ * « réglé en espèces ».
  *
  * Deux formes plutôt qu'une parce que la première est un libellé de case à
  * cocher et la seconde un complément : « Réglé par Espèces » se lit comme une
@@ -577,14 +577,53 @@ export function meanHint(
  * Les deux langues portent la distinction : « en espèces » / « par carte » et
  * « in cash » / « by card ». Elle n'est donc pas une particularité du français
  * qu'on pourrait laisser tomber à la traduction.
+ *
+ * ## Le règlement entier, et non le seul `method` — #1245
+ *
+ * Elle lisait `method` seul, et c'était juste tant que la phrase ne servait qu'à
+ * nommer un geste que le comptoir venait de faire : au comptoir, une carte est
+ * toujours passée par le TPE du salon (`COUNTER_MEANS`, ADR 0015). Le bandeau du
+ * rendez-vous réglé, lui, relit le règlement **préexistant** de la pièce, Stripe
+ * compris : il annonçait « par carte bancaire (TPE) » sur un règlement pris par
+ * le tunnel public, et envoyait le rapprochement de fin de journée chercher sur
+ * le relevé du terminal une opération qui n'y est pas.
+ *
+ * La règle appliquée n'est pas nouvelle : c'est celle que #1217 a figée pour le
+ * ticket affiché et le PDF du reçu — `settlementLabel`
+ * (`lib/admin/receipt-ticket.ts`) et `formatSettlementMethod`
+ * (`apps/api/.../receipt-pdf.format.ts`). **`cardChannel !== 'TERMINAL'`**, au
+ * mot près, pour la raison qui y est écrite : le canal nul — ou absent du fil,
+ * le contrat le déclarant `optional` — ne peut désigner qu'une carte antérieure
+ * à #834, donc une intention du tunnel, le TPE n'existant pas alors. La
+ * comparaison range ce nul du bon côté sans avoir à l'énumérer, là où un
+ * `=== 'STRIPE'` aurait inventé un passage au terminal qui n'a jamais eu lieu.
+ *
+ * Le paramètre est le **règlement** et non deux valeurs positionnelles : c'est
+ * la forme de `settlementLabel`, et elle met le canal sous les yeux de qui
+ * appelle plutôt que de le laisser se perdre en route — ce qui était exactement
+ * le défaut. Elle ne l'**impose** pas pour autant : le contrat déclare
+ * `cardChannel` `optional`, donc `{ method }` seul compile — et rend « en
+ * ligne », qui est la lecture sûre du canal inconnu, celle que le test du canal
+ * absent fige juste à côté.
+ *
+ * Aucune donnée de carte n'entre ici : le canal est le nom d'un tuyau, ni marque,
+ * ni porteur, ni chiffre (payments-stripe §1).
  */
 export function methodPhrase(
-  method: PaymentMethod,
+  settlement: Pick<PaymentTransaction, 'method' | 'cardChannel'>,
   locale: Locale = CHECKOUT_FALLBACK_LOCALE,
 ): string {
   const words = checkoutWords(locale).method;
 
-  return method === 'cash' ? words.cashPhrase : words.cardPhrase;
+  if (settlement.method === 'cash') {
+    return words.cashPhrase;
+  }
+
+  if (settlement.cardChannel !== 'TERMINAL') {
+    return words.cardOnlinePhrase;
+  }
+
+  return words.cardPhrase;
 }
 
 /**

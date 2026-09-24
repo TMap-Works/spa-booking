@@ -563,8 +563,30 @@ describe('ce qu’un reçu peut affirmer', () => {
   });
 
   it('accorde le moyen de paiement à la phrase qui le porte', () => {
-    expect(methodPhrase('card')).toBe('par carte bancaire (TPE)');
-    expect(methodPhrase('cash')).toBe('en espèces');
+    expect(methodPhrase({ method: 'card', cardChannel: 'TERMINAL' })).toBe(
+      'par carte bancaire (TPE)',
+    );
+    expect(methodPhrase({ method: 'cash', cardChannel: null })).toBe('en espèces');
+  });
+
+  it('nomme le canal de la carte, et non son seul moyen — #1245', () => {
+    // Le bandeau du rendez-vous réglé relit la pièce **préexistante**, tunnel
+    // public compris : « TPE » sur une carte Stripe envoyait le rapprochement
+    // chercher sur le relevé du terminal une opération qui n'y est pas. Même
+    // règle que le ticket et le PDF depuis #1217 (`receipt-ticket.ts`).
+    expect(methodPhrase({ method: 'card', cardChannel: 'STRIPE' })).toBe(
+      'par carte bancaire (en ligne)',
+    );
+  });
+
+  it('range la carte sans canal du côté du tunnel, jamais du terminal — #1245', () => {
+    // `null` ou absent ne peut désigner qu'un règlement antérieur à #834, que la
+    // migration n'a pas repris : le TPE n'existait pas alors. L'énoncer « TPE »
+    // inventerait un passage au terminal qui n'a jamais eu lieu.
+    expect(methodPhrase({ method: 'card', cardChannel: null })).toBe(
+      'par carte bancaire (en ligne)',
+    );
+    expect(methodPhrase({ method: 'card' })).toBe('par carte bancaire (en ligne)');
   });
 });
 

@@ -799,6 +799,20 @@ describe('un rendez-vous déjà réglé (#828)', () => {
     expect(screen.getByText(/Encaissement inscrit le/)).toBeDefined();
   });
 
+  it('nomme le tunnel, et non le TPE, sur une carte réglée en ligne — #1245', () => {
+    // Ce bandeau relit la pièce **préexistante** du rendez-vous : à la différence
+    // de la liste des règlements pris à ce poste, il peut porter une carte du
+    // tunnel public. Annoncer « TPE » envoyait le rapprochement de fin de journée
+    // chercher sur le relevé du terminal une opération Stripe qui n'y est pas.
+    renderPanel('completed', {
+      kind: 'regle',
+      payment: { ...CASH_TRANSACTION, method: 'card', cardChannel: 'STRIPE' },
+    });
+
+    expect(screen.getByText(/Réglé par carte bancaire \(en ligne\)/)).toBeDefined();
+    expect(screen.queryByText(/TPE/)).toBeNull();
+  });
+
   it('ferme le comptoir tant qu’une intention en ligne n’est pas conclue', () => {
     renderPanel('confirmed', { kind: 'ouvert', payment: CASH_TRANSACTION });
 

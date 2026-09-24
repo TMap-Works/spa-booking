@@ -506,6 +506,12 @@ export function CheckoutPanel({
   // n'ouvre aucun moyen de paiement, et n'en montre aucun. C'est ce que le CDC
   // §1.4 attend d'une vente déjà inscrite — elle se consulte et se réimprime.
   if (known.kind === 'regle') {
+    // Le règlement **entier** part à `methodPhrase`, et non son seul `method`
+    // (#1245) : ce bandeau relit la pièce préexistante du rendez-vous, tunnel en
+    // ligne compris, et c'est `cardChannel` qui nomme le tuyau à rapprocher.
+    // Contrairement à la liste des règlements pris à ce poste, il peut donc
+    // porter une carte Stripe — qu'annoncer « TPE » enverrait chercher sur le
+    // relevé du terminal.
     const { payment } = known;
     const refunded = payment.refunded.amountMinor > 0;
     const settledAt = payment.capturedAt ?? payment.createdAt;
@@ -515,7 +521,7 @@ export function CheckoutPanel({
         <Notification
           tone={refunded ? 'info' : 'success'}
           title={t('settlement.title', {
-            method: methodPhrase(payment.method, locale),
+            method: methodPhrase(payment, locale),
             amount: formatMoney(payment.amount, display),
           })}
         >

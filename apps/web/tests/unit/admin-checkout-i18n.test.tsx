@@ -184,8 +184,51 @@ describe('les moyens de paiement et leurs états', () => {
     expect(methodLabel('card', 'fr')).toBe('Carte bancaire (TPE)');
     expect(methodLabel('cash', 'en')).toBe('Cash');
     expect(methodLabel('card', 'en')).toBe('Bank card (terminal)');
-    expect(methodPhrase('cash', 'fr')).toBe('en espèces');
-    expect(methodPhrase('card', 'en')).toBe('by bank card (terminal)');
+    expect(methodPhrase({ method: 'cash', cardChannel: null }, 'fr')).toBe('en espèces');
+    expect(methodPhrase({ method: 'card', cardChannel: 'TERMINAL' }, 'en')).toBe(
+      'by bank card (terminal)',
+    );
+  });
+
+  it('fige les quatre phrases du règlement dans les deux langues — #1245', () => {
+    /*
+     * Le tableau de #1245, et rien d'autre : la phrase se décide sur le **canal**
+     * de la carte, jamais sur son seul moyen. Le bandeau du rendez-vous réglé
+     * relit la pièce préexistante — tunnel public compris —, là où la liste des
+     * règlements pris à ce poste ne peut porter qu'un passage au TPE.
+     *
+     * Les deux langues sont figées ensemble parce que le produit sert l'anglais
+     * par défaut : une clé posée dans un seul catalogue laisserait l'autre
+     * afficher son identifiant brut, et c'est précisément ce que le troisième
+     * critère interdit.
+     *
+     * Le canal nul est du côté du tunnel : `null` — ou la clé absente, le contrat
+     * la déclarant `optional` — ne peut désigner qu'une carte antérieure à #834,
+     * le TPE n'existant pas alors (`receipt-ticket.ts`, #1217).
+     */
+    const table = [
+      { channel: 'TERMINAL', fr: 'par carte bancaire (TPE)', en: 'by bank card (terminal)' },
+      { channel: 'STRIPE', fr: 'par carte bancaire (en ligne)', en: 'by bank card (online)' },
+      { channel: null, fr: 'par carte bancaire (en ligne)', en: 'by bank card (online)' },
+    ] as const;
+
+    for (const row of table) {
+      const card = { ...CASH_TRANSACTION, method: 'card', cardChannel: row.channel } as const;
+
+      expect(methodPhrase(card, 'fr')).toBe(row.fr);
+      expect(methodPhrase(card, 'en')).toBe(row.en);
+    }
+
+    expect(methodPhrase(CASH_TRANSACTION, 'fr')).toBe('en espèces');
+    expect(methodPhrase(CASH_TRANSACTION, 'en')).toBe('in cash');
+
+    // Aucune donnée de carte dans la phrase : ni marque, ni porteur, ni chiffre
+    // (payments-stripe §1). Le canal est le nom d'un tuyau.
+    for (const locale of ['fr', 'en'] as const) {
+      for (const channel of ['TERMINAL', 'STRIPE', null] as const) {
+        expect(methodPhrase({ method: 'card', cardChannel: channel }, locale)).not.toMatch(/\d/);
+      }
+    }
   });
 
   it('garde le français par défaut, pour les appelants pas encore branchés', () => {
