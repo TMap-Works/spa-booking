@@ -1,6 +1,7 @@
 'use client';
 
 import { CUSTOMER_SEARCH_MAX_LENGTH, CUSTOMER_SEARCH_MIN_LENGTH } from '@spa/shared';
+import { useTranslations } from 'next-intl';
 import { useRouter } from 'next/navigation';
 import { useId, useState, useTransition } from 'react';
 
@@ -74,6 +75,7 @@ interface ClientSearchFormProps {
 }
 
 export function ClientSearchForm({ tenantSlug, term, hint }: ClientSearchFormProps) {
+  const t = useTranslations('admin-clients.list.search');
   const router = useRouter();
   const fieldId = useId();
   const [value, setValue] = useState(term);
@@ -110,9 +112,7 @@ export function ClientSearchForm({ tenantSlug, term, hint }: ClientSearchFormPro
     // évite un aller-retour qui reviendrait en 400 — et le message est posé
     // **sur le champ**, pas en bloc en haut de l'écran (web-frontend §4).
     if (trimmed.length < CUSTOMER_SEARCH_MIN_LENGTH) {
-      setError(
-        `Il faut au moins ${String(CUSTOMER_SEARCH_MIN_LENGTH)} caractères pour chercher — une lettre seule ramènerait tout le fichier.`,
-      );
+      setError(t('tooShort', { min: CUSTOMER_SEARCH_MIN_LENGTH }));
       return;
     }
 
@@ -121,9 +121,7 @@ export function ClientSearchForm({ tenantSlug, term, hint }: ClientSearchFormPro
     // `parseSearchTerm` le rejetait en silence, la page affichait le fichier
     // entier — et le champ, remis à l'URL, effaçait la saisie sans rien dire.
     if (trimmed.length > CUSTOMER_SEARCH_MAX_LENGTH) {
-      setError(
-        `La recherche s’arrête à ${String(CUSTOMER_SEARCH_MAX_LENGTH)} caractères — au-delà, aucune fiche ne peut correspondre.`,
-      );
+      setError(t('tooLong', { max: CUSTOMER_SEARCH_MAX_LENGTH }));
       return;
     }
 
@@ -143,7 +141,7 @@ export function ClientSearchForm({ tenantSlug, term, hint }: ClientSearchFormPro
     >
       <Field
         id={`${fieldId}-recherche`}
-        label="Rechercher un client"
+        label={t('label')}
         type="search"
         value={value}
         hint={hint}
@@ -153,8 +151,8 @@ export function ClientSearchForm({ tenantSlug, term, hint }: ClientSearchFormPro
           setValue(event.target.value);
         }}
       />
-      <Button type="submit" variant="accent" block loading={pending} loadingLabel="Recherche…">
-        Rechercher
+      <Button type="submit" variant="accent" block loading={pending} loadingLabel={t('searching')}>
+        {t('submit')}
       </Button>
     </form>
   );

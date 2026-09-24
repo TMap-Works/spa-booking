@@ -34,6 +34,7 @@
  */
 
 import { slugSchema, updateCustomerRequestSchema, uuidSchema, type Customer } from '@spa/shared';
+import { getTranslations } from 'next-intl/server';
 import { revalidatePath } from 'next/cache';
 
 import { updateCustomer } from '@/lib/api-client';
@@ -57,7 +58,13 @@ async function openCall(
   const slug = slugSchema.safeParse(tenantSlug);
 
   if (!slug.success) {
-    return invalid('Établissement inconnu.');
+    // `getTranslations` et non un littéral : ce refus s'affiche dans le
+    // formulaire, dans la langue de la session (#852). Il est lu ici et non passé
+    // par l'appelant, pour que les deux formulaires de l'écran ne puissent pas
+    // le dire de deux façons.
+    const t = await getTranslations('admin-clients.actions');
+
+    return invalid(t('unknownTenant'));
   }
 
   const access = await adminActionAccess(slug.data);
@@ -93,16 +100,19 @@ export async function updateCustomerAction(
     return call;
   }
 
+  const t = await getTranslations('admin-clients.actions');
   const id = uuidSchema.safeParse(customerId);
   const parsed = updateCustomerRequestSchema.safeParse(input);
 
   if (!id.success) {
-    return invalid('Fiche client inconnue.');
+    return invalid(t('unknownCustomer'));
   }
   if (!parsed.success) {
-    return invalid(
-      parsed.error.issues[0]?.message ?? 'Les informations saisies sont invalides.',
-    );
+    // Le message de zod passe d'abord : il nomme le champ fautif, là où le
+    // repli ne dit que « invalides ». Il vient du contrat partagé, dont les
+    // bornes sont dites par `zodErrorMap(locale)` côté formulaire ; ce chemin-ci
+    // n'est atteint que par un appel qui n'est pas venu du formulaire.
+    return invalid(parsed.error.issues[0]?.message ?? t('invalidInput'));
   }
 
   try {

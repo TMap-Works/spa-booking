@@ -1,0 +1,131 @@
+{
+  "denied": {
+    "title": "Accès réservé",
+    "hint": "Le fichier client est réservé aux comptes du salon. Demandez l’accès à l’administrateur.",
+    "failedTitle": "Fichier client indisponible"
+  },
+  "list": {
+    "title": "Fichier client",
+    "searchTitle": "Rechercher",
+    "search": {
+      "label": "Rechercher un client",
+      "submit": "Rechercher",
+      "searching": "Recherche…",
+      "hintField": "Nom, téléphone ou e-mail.",
+      "hintAll": "Nom, téléphone ou e-mail — le fichier compte {count, plural, one {# fiche} other {# fiches}}.",
+      "hintTerm": "Nom, téléphone ou e-mail — {count, plural, one {# fiche} other {# fiches}} pour « {term} ».",
+      "tooShort": "Il faut au moins {min} caractères pour chercher — une lettre seule ramènerait tout le fichier.",
+      "tooLong": "La recherche s’arrête à {max} caractères — au-delà, aucune fiche ne peut correspondre."
+    },
+    "pageEmpty": {
+      "title": "Cette page est vide",
+      "description": "Le fichier compte {count, plural, one {# fiche} other {# fiches}}, mais aucune sur cette page. <link>Revenir à la première page</link>."
+    },
+    "empty": {
+      "title": "Aucune fiche client",
+      "titleTerm": "Aucune fiche pour « {term} »",
+      "descriptionAll": "Le fichier se remplit à la première réservation, ou depuis <link>le planning</link> — la prise de rendez-vous au comptoir crée la fiche au passage.",
+      "descriptionTerm": "La recherche porte sur le début du nom, du téléphone ou de l’adresse. Essayez les premières lettres seulement, ou créez la fiche depuis <link>le planning</link>."
+    },
+    "pager": {
+      "label": "Pages du fichier client",
+      "previous": "Page précédente",
+      "next": "Page suivante",
+      "position": "Page {page} sur {total}"
+    }
+  },
+  "record": {
+    "headingNone": "Aucune fiche ouverte",
+    "heading": "Fiche de {name}",
+    "missing": {
+      "title": "Fiche introuvable",
+      "body": "Aucune fiche de ce salon ne porte cet identifiant. Cherchez la personne par son nom, son téléphone ou son adresse dans le volet de gauche."
+    },
+    "empty": {
+      "title": "Aucune fiche ouverte",
+      "description": "Choisissez une personne dans le fichier pour voir ses coordonnées, sa note interne et son historique de visites."
+    },
+    "noPhone": "Pas de numéro",
+    "createdAt": "Fiche créée le {date}",
+    "language": {
+      "known": "Parle {language}",
+      "unknown": "Langue non renseignée"
+    },
+    "badges": {
+      "emailSuppressed": "Adresse supprimée",
+      "inactive": "Fiche désactivée"
+    },
+    "suppression": {
+      "title": "Adresse e-mail supprimée — plus aucun envoi",
+      "since": "Depuis le {date} à {time} · {reason}.",
+      "body": "Ni confirmation, ni rappel, ni avis d’annulation ne partent vers {email}. Prévenez le client autrement — par téléphone ou au comptoir. Son adresse ne se corrige pas d’ici : le back-office ne la modifie pas, faute de pouvoir vérifier la nouvelle.",
+      "reasons": {
+        "hard_bounce": "rebond définitif — la boîte n’existe pas ou refuse nos messages",
+        "complaint": "plainte — le message a été signalé comme indésirable",
+        "unknown": "motif non enregistré"
+      }
+    },
+    "noShow": {
+      "title": "{count, plural, one {# absence non prévenue} other {# absences non prévenues}}",
+      "body": "À prendre en compte avant d’accorder un créneau de forte affluence."
+    },
+    "metrics": {
+      "honored": "{count, plural, one {Visite honorée} other {Visites honorées}}",
+      "upcoming": "À venir",
+      "cancelled": "{count, plural, one {Annulé} other {Annulés}}",
+      "rescheduled": "{count, plural, one {Déplacé} other {Déplacés}}",
+      "noShow": "{count, plural, one {Absence non prévenue} other {Absences non prévenues}}",
+      "totalSpent": "Total honoré",
+      "none": "—"
+    },
+    "summary": {
+      "none": "Aucun rendez-vous à ce jour.",
+      "counts": "{count, plural, one {# rendez-vous au total} other {# rendez-vous au total}} · première venue le {first} · dernière le {last}.",
+      "caption": "Les compteurs portent sur la totalité des rendez-vous ; « Total honoré » ne somme que les visites honorées, et affiche « — » tant qu’il n’y en a aucune ou quand la fiche mêle plusieurs devises."
+    },
+    "history": {
+      "title": "Historique des visites",
+      "emptyTitle": "Aucune visite pour l’instant",
+      "emptyDescription": "L’historique se remplit dès le premier rendez-vous posé — honoré, annulé ou non honoré.",
+      "staffRemoved": "praticien retiré du salon",
+      "withStaff": "avec {name}",
+      "clientNote": "Remarque du client, écrite à la réservation",
+      "truncated": "Les {shown} visites les plus récentes sont affichées ; les compteurs ci-dessus portent sur la totalité des {total} rendez-vous."
+    }
+  },
+  "contact": {
+    "edit": "Modifier les coordonnées",
+    "savedTitle": "Coordonnées enregistrées",
+    "savedBody": "Les prochaines confirmations partiront sur ces coordonnées.",
+    "failureTitle": "L’enregistrement a échoué",
+    "firstName": "Prénom",
+    "lastName": "Nom",
+    "phone": "Téléphone",
+    "phoneHint": "Laissez vide pour retirer le numéro — le rappel J-1 partira alors par e-mail seulement.",
+    "email": "Adresse e-mail",
+    "emailHint": "Identifiant de la fiche dans ce salon. Le MVP ne sait pas encore vérifier une nouvelle adresse : elle ne se modifie pas ici.",
+    "save": "Enregistrer",
+    "saving": "Enregistrement…",
+    "cancel": "Annuler",
+    "errors": {
+      "required": "ce champ est obligatoire",
+      "tooLong": "ce champ fait au plus {max} caractères"
+    }
+  },
+  "note": {
+    "title": "Note interne",
+    "private": "Interne au salon",
+    "savedTitle": "Note enregistrée",
+    "savedBody": "Elle n’est visible que du personnel du salon.",
+    "failureTitle": "L’enregistrement a échoué",
+    "label": "Ce que le salon doit savoir",
+    "hint": "Préférences, allergies, sensibilités. Jamais transmise au client — ni dans un e-mail, ni dans un SMS. Enregistrer remplace la note précédente ; vider le champ l’efface.",
+    "save": "Enregistrer la note",
+    "saving": "Enregistrement…"
+  },
+  "actions": {
+    "unknownTenant": "Établissement inconnu.",
+    "unknownCustomer": "Fiche client inconnue.",
+    "invalidInput": "Les informations saisies sont invalides."
+  }
+}

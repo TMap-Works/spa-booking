@@ -1,9 +1,10 @@
 'use client';
 
 import { zodResolver } from '@hookform/resolvers/zod';
-import { longTextSchema } from '@spa/shared';
+import { longTextSchema, zodErrorMap, type Locale } from '@spa/shared';
+import { useLocale, useTranslations } from 'next-intl';
 import { useRouter } from 'next/navigation';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
 
@@ -77,17 +78,28 @@ interface ClientNoteFormProps {
 }
 
 export function ClientNoteForm({ tenantSlug, customerId, internalNote }: ClientNoteFormProps) {
+  const t = useTranslations('admin-clients.note');
+  const locale = useLocale() as Locale;
   const router = useRouter();
   const { renewIfExpired } = useAdminSessionRenewal(tenantSlug);
   const [saved, setSaved] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
+
+  // La seule borne de ce formulaire est celle de `longTextSchema`, et c'est
+  // `zodErrorMap(locale)` qui la dit — « au plus 2 000 caractères » et non
+  // « String must contain at most 2000 character(s) », ni l'inverse d'une langue
+  // à l'autre (#852).
+  const resolver = useMemo(
+    () => zodResolver(noteFormSchema, { errorMap: zodErrorMap(locale), path: [], async: true }),
+    [locale],
+  );
 
   const {
     register,
     handleSubmit,
     formState: { errors, isSubmitting },
   } = useForm<NoteFormValues, unknown, z.output<typeof noteFormSchema>>({
-    resolver: zodResolver(noteFormSchema),
+    resolver,
     defaultValues: { internalNote: internalNote ?? '' },
     mode: 'onTouched',
   });
@@ -120,17 +132,17 @@ export function ClientNoteForm({ tenantSlug, customerId, internalNote }: ClientN
   return (
     <div className="spa-admin-notes">
       <h3 className="spa-admin__section-title">
-        Note interne <span className="spa-admin-notes__private">Interne au salon</span>
+        {t('title')} <span className="spa-admin-notes__private">{t('private')}</span>
       </h3>
 
       {saved ? (
-        <Notification tone="success" title="Note enregistrée">
-          <p>Elle n’est visible que du personnel du salon.</p>
+        <Notification tone="success" title={t('savedTitle')}>
+          <p>{t('savedBody')}</p>
         </Notification>
       ) : null}
 
       {failure === null ? null : (
-        <Notification tone="danger" title="L’enregistrement a échoué">
+        <Notification tone="danger" title={t('failureTitle')}>
           <p>{failure}</p>
         </Notification>
       )}
@@ -138,19 +150,14 @@ export function ClientNoteForm({ tenantSlug, customerId, internalNote }: ClientN
       <form onSubmit={(event) => void submit(event)} noValidate>
         <TextArea
           id={`client-note-${customerId}`}
-          label="Ce que le salon doit savoir"
+          label={t('label')}
           rows={4}
-          hint="Préférences, allergies, sensibilités. Jamais transmise au client — ni dans un e-mail, ni dans un SMS. Enregistrer remplace la note précédente ; vider le champ l’efface."
+          hint={t('hint')}
           error={errors.internalNote?.message}
           {...register('internalNote')}
         />
-        <Button
-          type="submit"
-          variant="accent"
-          loading={isSubmitting}
-          loadingLabel="Enregistrement…"
-        >
-          Enregistrer la note
+        <Button type="submit" variant="accent" loading={isSubmitting} loadingLabel={t('saving')}>
+          {t('save')}
         </Button>
       </form>
     </div>
