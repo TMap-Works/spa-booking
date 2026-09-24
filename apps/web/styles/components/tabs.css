@@ -14,8 +14,27 @@
  * (BM-SERVICE-02) ; la barre de défilement est masquée, le geste reste.
  */
 
+/*
+ * `position: relative` sur la rangée n'est pas décoratif — #1154.
+ *
+ * Un conteneur de défilement ne rogne **pas** un descendant absolument
+ * positionné dont le bloc conteneur lui est extérieur : la boîte sort alors du
+ * cadre et agrandit la zone défilable de la **page**. Or les onglets logent des
+ * textes réservés aux lecteurs d'écran — le « · » qui sépare le libellé de son
+ * effectif, la phrase de la marque —, et `.spa-visually-hidden` (`base.css`) est
+ * précisément une boîte en `position: absolute`. Sans référent positionné, la
+ * leur remontait jusqu'au bloc conteneur initial : à 360 px, le « · » du
+ * troisième onglet se posait à x=459, la vitrine mesurait 434 px de document et
+ * l'étape 1 du tunnel 460 px, la page entière défilant latéralement.
+ *
+ * Le référent est posé sur la rangée elle-même, et non sur l'onglet : le bloc
+ * conteneur devient alors le conteneur de défilement, ce qui rogne **tout**
+ * descendant absolument positionné de la rangée, y compris ceux qu'un appelant
+ * poserait ailleurs que dans un onglet.
+ */
 .spa-tabs,
 .spa-tabs__list {
+  position: relative;
   display: flex;
   gap: var(--spa-space-1);
   overflow-x: auto;
