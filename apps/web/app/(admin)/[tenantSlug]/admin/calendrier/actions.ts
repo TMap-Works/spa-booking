@@ -39,12 +39,14 @@ import {
   customerSearchQuerySchema,
   rescheduleAppointmentRequestSchema,
   slugSchema,
+  timeZoneSchema,
   uuidSchema,
   type Appointment,
   type AvailabilitySlot,
   type BookedAppointment,
   type Customer,
   type CustomerSummary,
+  type StaffTimeOff,
   // Aliasé : `Notification` est aussi le composant du design system, et le nom
   // nu prêterait à confusion dans un module que le tiroir consomme.
   type Notification as NotificationTrace,
@@ -61,6 +63,7 @@ import {
   fetchAppointmentNotifications,
   fetchAppointments,
   fetchServiceStaff,
+  fetchStaffTimeOff,
   rescheduleDeskAppointment,
   searchCustomers,
 } from '@/lib/api-client';
@@ -69,13 +72,16 @@ import {
   parseCalendarView,
   rangeOf,
   type CalendarView,
+  type WeekStart,
 } from '@/lib/admin/calendar-range';
+import { calendarTimeOffWindow } from '@/lib/admin/calendar-time-off';
 
 import { failure, invalid, type AdminActionResult } from '../action-result';
 import { adminActionAccess } from '../session';
 
 /**
- * Les rendez-vous d'une période, pour le planning du comptoir.
+ * Les rendez-vous d'une période **et les absences qui la recoupent**, pour le
+ * planning du comptoir.
  *
  * `view` et `date` arrivent en chaînes : ce sont les valeurs de l'URL, et une
  * action serveur est un point d'entrée public que rien n'oblige à appeler depuis
@@ -85,6 +91,12 @@ import { adminActionAccess } from '../session';
  *
  * L'établissement ne circule pas : `tenantSlug` ne sert qu'à retrouver le cookie
  * de session. C'est le jeton qui désigne l'établissement à l'API.
+ *
+ * Les congés voyagent avec la période parce qu'ils en dépendent (#1158) : les
+ * semaines de travail, elles, sont hebdomadaires et le rendu serveur les a déjà
+ * passées une fois pour toutes. Leur échec ne fait pas tomber la réponse — un
+ * planning sans congés reste l'écran d'avant ce ticket, un planning sans agenda
+ * n'est plus un planning.
  */
 export async function loadCalendarRangeAction(
   tenantSlug: string,
@@ -100,7 +112,25 @@ export async function loadCalendarRangeAction(
    * lui, a déjà été normalisé côté écran.
    */
   weekStart?: number,
-): Promise<AdminActionResult<{ readonly appointments: Appointment[] }>> {
+  /**
+   * Le fuseau de l'établissement, pour borner la fenêtre d'absences (#1158).
+   *
+   * Il arrive de l'écran pour la même raison que `weekStart`, et se juge de la
+   * même façon : `timeZoneSchema` le refuse s'il n'est pas un fuseau IANA, et le
+   * repli est UTC. Il ne désigne **rien** — l'établissement reste celui du jeton
+   * — et ne sert qu'à poser deux bornes que `calendarTimeOffWindow` élargit
+   * d'une journée de part et d'autre, précisément pour qu'un repli ne fasse
+   * perdre aucune absence. Le lire sur la vitrine publique à chaque flèche
+   * « jour suivant » aurait coûté un aller-retour de plus sur le chemin que le
+   * planning existe pour rendre instantané.
+   */
+  timeZone?: string,
+): Promise<
+  AdminActionResult<{
+    readonly appointments: Appointment[];
+    readonly timeOff: readonly StaffTimeOff[];
+  }>
+> {
   const t = await getTranslations('admin-planning');
   const slug = slugSchema.safeParse(tenantSlug);
 
@@ -123,10 +153,20 @@ export async function loadCalendarRangeAction(
   const { accessToken } = access;
 
   const parsedView: CalendarView = parseCalendarView(view);
-  const range = rangeOf(parsedView, anchor, weekStart === 0 ? 0 : 1);
+  const start: WeekStart = weekStart === 0 ? 0 : 1;
+  const range = rangeOf(parsedView, anchor, start);
+  const zone = timeZoneSchema.safeParse(timeZone);
 
   try {
-    return { ok: true, data: { appointments: await fetchAppointments(accessToken, range) } };
+    const [appointments, timeOff] = await Promise.all([
+      fetchAppointments(accessToken, range),
+      fetchStaffTimeOff(
+        accessToken,
+        calendarTimeOffWindow(parsedView, anchor, start, zone.success ? zone.data : 'UTC'),
+      ).catch((): readonly StaffTimeOff[] => []),
+    ]);
+
+    return { ok: true, data: { appointments, timeOff } };
   } catch (error) {
     return failure(error);
   }

@@ -1,4 +1,12 @@
-import type { Appointment, Locale, PublicTenant, Service, StaffMember } from '@spa/shared';
+import type {
+  Appointment,
+  Locale,
+  PublicTenant,
+  Service,
+  StaffMember,
+  StaffSchedule,
+  StaffTimeOff,
+} from '@spa/shared';
 import { getLocale, getTranslations } from 'next-intl/server';
 import { redirect } from 'next/navigation';
 
@@ -8,8 +16,11 @@ import {
   fetchPublicTenant,
   fetchServices,
   fetchStaffMembers,
+  fetchStaffSchedule,
+  fetchStaffTimeOff,
 } from '@/lib/api-client';
 import { calendarFailureMessage } from '@/lib/admin/calendar-failure';
+import { calendarTimeOffWindow } from '@/lib/admin/calendar-time-off';
 import {
   anchorOf,
   parseCalendarDate,
@@ -91,6 +102,21 @@ import { adminCalendarPath } from '../paths';
  * La route est au seuil `STAFF`, comme l'agenda : elle n'exclut donc personne de
  * ceux à qui le rail annonce « Planning ».
  *
+ * ## Les horaires et les congés des praticiens peignent la grille (#1158)
+ *
+ * Les heures d'ouverture disent quand le salon reçoit ; elles ne disent pas qui
+ * tient la cabine. La grille peignait donc « libre » une colonne de praticienne
+ * en congé, et les heures qu'aucun horaire ne couvre — le moteur, lui, refusait :
+ * le tiroir ouvert sur ces cellules répondait « Aucun créneau ce jour-là », et le
+ * dépôt d'un bloc s'y heurtait à un 409. L'écran promettait ce que l'API refuse.
+ *
+ * Deux lectures de plus le corrigent, et **aucune route nouvelle** :
+ * `GET /v1/staff/{id}/schedule` pour la semaine de travail de chaque fiche, et
+ * `GET /v1/staff-time-off` pour les absences de la période. Les deux sont au
+ * seuil `STAFF`, comme l'agenda et le répertoire : ce qui ouvre cet écran suffit
+ * à les lire. L'échec de l'une ou de l'autre ne ferme rien — la grille ne
+ * restreint que ce qu'elle sait, et retombe sur le comportement d'avant.
+ *
  * ## Les écritures que l'API ne sert pas encore
  *
  * `GET /appointments` existe depuis #444, et cette page la consomme. Les
@@ -105,6 +131,21 @@ import { adminCalendarPath } from '../paths';
  */
 
 export const dynamic = 'force-dynamic';
+
+/**
+ * Ce qu'une période amorcée rend — sa charge, ou l'échec qui l'a remplacée.
+ *
+ * Nommée plutôt que laissée à l'inférence : sans elle, TypeScript réunit les
+ * deux formes en un seul objet aux champs optionnels, et le `'appointments' in
+ * result` qui trie la boucle ne narrow plus rien.
+ */
+type LoadedPeriod =
+  | {
+      readonly key: string;
+      readonly appointments: readonly Appointment[];
+      readonly timeOff: readonly StaffTimeOff[];
+    }
+  | { readonly key: string; readonly error: unknown };
 
 interface CalendarPageProps {
   readonly params: Promise<{ readonly tenantSlug: string }>;
@@ -186,34 +227,71 @@ export default async function CalendarPage({ params, searchParams }: CalendarPag
   // installé » à un salon qui l'est. Les deux cas se rendent pareil — un
   // catalogue et un répertoire vides —, mais un seul des deux autorise le
   // diagnostic.
-  const [loadedServices, loadedStaff, loaded] = await Promise.all([
+  // Les praticiens **actifs** seuls : ce sont les colonnes de la vue jour, et
+  // une fiche suspendue ne prend plus de rendez-vous — lui ouvrir une colonne
+  // inviterait à en poser un. Celles qui portent déjà un rendez-vous ce
+  // jour-là gardent malgré tout leur colonne (`buildCalendarBoard`).
+  //
+  // Même régime d'échec que le catalogue : le planning se consulte sans le
+  // répertoire, et le faire tomber pour lui reviendrait à fermer l'agenda
+  // parce qu'une liste annexe n'a pas répondu. Sans lui, la vue jour retrouve
+  // simplement son comportement d'avant #507.
+  const staffRequest = fetchStaffMembers(accessToken, { activeOnly: true }).catch(
+    (): readonly StaffMember[] | null => null,
+  );
+
+  /*
+   * Les semaines de travail des praticiens — ce que #1158 corrige.
+   *
+   * `GET /v1/staff/{id}/schedule` se demande fiche par fiche : il n'y a pas de
+   * lecture d'ensemble, et l'inventer demanderait une route de plus côté API. La
+   * chaîne part donc **du** répertoire, et non après lui : elle s'enchaîne sur
+   * `staffRequest` au lieu d'attendre le `Promise.all` entier, si bien que les
+   * appels partent pendant que l'agenda des trois périodes se charge. L'écran le
+   * plus regardé du back-office ne paie pas un aller-retour de plus en série.
+   *
+   * Une semaine qui n'a pas pu être lue est **absente** de la liste, jamais
+   * remplacée par une semaine vide : la grille traite l'absence comme « on n'en
+   * sait rien » et laisse la colonne telle qu'elle était avant ce ticket, là où
+   * une semaine vide l'aurait peinte en repos toute la journée.
+   */
+  const schedulesRequest = staffRequest.then(async (members) =>
+    members === null
+      ? []
+      : (
+          await Promise.all(
+            members.map((member) =>
+              fetchStaffSchedule(accessToken, member.id).catch((): StaffSchedule | null => null),
+            ),
+          )
+        ).filter((schedule): schedule is StaffSchedule => schedule !== null),
+  );
+
+  const [loadedServices, loadedStaff, staffSchedules, loaded] = await Promise.all([
     fetchServices(accessToken, { activeOnly: true }).catch((): readonly Service[] | null => null),
-    // Les praticiens **actifs** seuls : ce sont les colonnes de la vue jour, et
-    // une fiche suspendue ne prend plus de rendez-vous — lui ouvrir une colonne
-    // inviterait à en poser un. Celles qui portent déjà un rendez-vous ce
-    // jour-là gardent malgré tout leur colonne (`buildCalendarBoard`).
-    //
-    // Même régime d'échec que le catalogue : le planning se consulte sans le
-    // répertoire, et le faire tomber pour lui reviendrait à fermer l'agenda
-    // parce qu'une liste annexe n'a pas répondu. Sans lui, la vue jour retrouve
-    // simplement son comportement d'avant #507.
-    fetchStaffMembers(accessToken, { activeOnly: true }).catch(
-      (): readonly StaffMember[] | null => null,
-    ),
+    staffRequest,
+    schedulesRequest,
     Promise.all(
       [
         anchor,
         shiftAnchor(view, anchor, -1, weekStart),
         shiftAnchor(view, anchor, 1, weekStart),
-      ].map(async (target) => {
+      ].map(async (target): Promise<LoadedPeriod> => {
         try {
-          return {
-            key: rangeKey(view, target, weekStart),
-            appointments: await fetchAppointments(
+          const [appointments, timeOff] = await Promise.all([
+            fetchAppointments(accessToken, rangeOf(view, target, weekStart)),
+            // Les congés voyagent avec la période, comme les rendez-vous : ils
+            // dépendent des dates affichées, là où les semaines de travail n'en
+            // dépendent pas. Leur échec ne fait pas tomber la période — un
+            // planning sans congés reste l'écran d'avant ce ticket, un planning
+            // sans agenda n'est plus un planning.
+            fetchStaffTimeOff(
               accessToken,
-              rangeOf(view, target, weekStart),
-            ),
-          };
+              calendarTimeOffWindow(view, target, weekStart, tenant.timezone),
+            ).catch((): readonly StaffTimeOff[] => []),
+          ]);
+
+          return { key: rangeKey(view, target, weekStart), appointments, timeOff };
         } catch (error) {
           return { key: rangeKey(view, target, weekStart), error };
         }
@@ -227,11 +305,13 @@ export default async function CalendarPage({ params, searchParams }: CalendarPag
   const setupKnown = loadedServices !== null && loadedStaff !== null;
 
   const periods: Record<string, readonly Appointment[]> = {};
+  const timeOffPeriods: Record<string, readonly StaffTimeOff[]> = {};
   let loadError: string | null = null;
 
   for (const result of loaded) {
     if ('appointments' in result) {
       periods[result.key] = result.appointments;
+      timeOffPeriods[result.key] = result.timeOff;
       continue;
     }
 
@@ -267,11 +347,13 @@ export default async function CalendarPage({ params, searchParams }: CalendarPag
         countryCode={countryCode}
         date={anchor}
         initialPeriods={periods}
+        initialTimeOff={timeOffPeriods}
         loadError={loadError}
         openingHours={tenant.openingHours ?? []}
         services={services}
         setupKnown={setupKnown}
         staff={staff}
+        staffSchedules={staffSchedules}
         tenantSlug={tenantSlug}
         timeZone={tenant.timezone}
         view={view}
