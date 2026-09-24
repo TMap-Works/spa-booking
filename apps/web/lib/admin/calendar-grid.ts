@@ -31,6 +31,8 @@ import type {
   CalendarDate,
   OpeningHoursEntry,
   StaffMemberSummary,
+  StaffSchedule,
+  StaffTimeOff,
   TimeZone,
 } from '@spa/shared';
 // `isoWeekdayOf` vient du contrat et non d'un calcul local : c'est lui qui
@@ -301,7 +303,11 @@ export interface CalendarClosedCell {
   readonly key: string;
   readonly slot: number;
   readonly span: number;
-  /** « Fermé », « Pause », « Hors horaires » — les libellés de la maquette. */
+  /**
+   * « Fermé », « Pause », « Hors horaires » — les libellés de la maquette —, et
+   * depuis #1158 « Congé » et « Repos », qui disent la même chose du praticien
+   * de la colonne plutôt que de l'établissement.
+   */
   readonly label: string;
   /**
    * Position du trait d'heure courante dans le **bloc entier**, en pourcentage.
@@ -475,6 +481,39 @@ interface BuildOptions {
    * (`components/salon/opening-hours.ts`) et l'écran de réglages (#764).
    */
   readonly openingHours?: readonly OpeningHoursEntry[];
+  /**
+   * Les semaines de travail des praticiens — `GET /v1/staff/{id}/schedule` (#1158).
+   *
+   * Les heures d'ouverture disent quand le **salon** reçoit ; elles ne disent pas
+   * qui tient la cabine. Le moteur, lui, part des fenêtres de travail du
+   * personnel et y retranche les heures d'ouverture (`booking-engine` §3,
+   * étape 1) : une rangée qu'aucun horaire de praticien ne couvre n'est
+   * réservable pour personne, et l'agenda la peignait pourtant « libre ». Le
+   * tiroir ouvert depuis ces cellules répondait « Aucun créneau ce jour-là », et
+   * le dépôt d'un bloc s'y heurtait à un 409.
+   *
+   * La liste est **partielle par nature** : un praticien qui n'y figure pas est
+   * un praticien dont on ne sait rien — fiche arrivée après la lecture, ou appel
+   * tombé —, et sa colonne garde alors le comportement d'avant ce ticket. C'est
+   * la même distinction que celle d'`openingHours` : ne rien savoir n'autorise
+   * pas à peindre une fermeture. Un praticien présent avec `entries` vide, lui,
+   * ne travaille bien jamais — c'est ainsi qu'une fiche cesse d'être proposable
+   * sans être désactivée (`setStaffScheduleRequestSchema`).
+   */
+  readonly staffSchedules?: readonly StaffSchedule[];
+  /**
+   * Les congés et plages bloquées de la période — `GET /v1/staff-time-off` (#1158).
+   *
+   * Le moteur les soustrait des fenêtres de travail, et la grille doit faire de
+   * même : une praticienne en congé n'a pas une journée libre de 09 h à 19 h.
+   * Les bornes sont des instants UTC, ramenés ici à la journée du salon comme
+   * tout le reste de ce module.
+   *
+   * Vide par défaut, et une fenêtre qui n'a pas pu être lue arrive vide elle
+   * aussi : ne pas savoir ne ferme rien, dans le sens le plus prudent — l'écran
+   * montre alors ce qu'il montrait avant ce ticket.
+   */
+  readonly timeOff?: readonly StaffTimeOff[];
   /** Instant de référence du trait d'heure courante. */
   readonly now?: Date;
   /**
@@ -594,6 +633,231 @@ function windowsOfDay(week: OpeningWeek, day: CalendarDate): readonly OpeningWin
   return week === null ? null : (week.get(isoWeekdayOf(day)) ?? []);
 }
 
+// ---------------------------------------------------------------------------
+// Ce que les praticiens travaillent — #1158
+// ---------------------------------------------------------------------------
+
+/**
+ * Les semaines de travail, rangées par praticien puis par jour ISO.
+ *
+ * Un praticien **absent** de cette table est un praticien dont on ne sait rien ;
+ * un praticien présent dont un jour est absent ne travaille pas ce jour-là. La
+ * distinction est la même que celle d'`OpeningWeek`, et elle décide du même
+ * arbitrage : ignorer n'est pas fermer.
+ */
+type StaffWeeks = ReadonlyMap<string, ReadonlyMap<number, readonly OpeningWindow[]>>;
+
+function staffWeeksOf(schedules: readonly StaffSchedule[]): StaffWeeks {
+  const byStaff = new Map<string, Map<number, OpeningWindow[]>>();
+
+  for (const schedule of schedules) {
+    // Posée avant la boucle des plages : une semaine **vide** doit rester
+    // connue. C'est ainsi qu'une fiche cesse d'être proposable sans être
+    // désactivée, et la confondre avec un horaire illisible rouvrirait sa
+    // journée entière.
+    const byWeekday = byStaff.get(schedule.staffId) ?? new Map<number, OpeningWindow[]>();
+    byStaff.set(schedule.staffId, byWeekday);
+
+    for (const entry of schedule.entries) {
+      const start = wallMinutes(entry.startsAt);
+      const end = wallMinutes(entry.endsAt);
+
+      if (start === null || end === null || end <= start) {
+        continue;
+      }
+
+      byWeekday.set(entry.weekday, [...(byWeekday.get(entry.weekday) ?? []), { start, end }]);
+    }
+  }
+
+  for (const byWeekday of byStaff.values()) {
+    for (const [weekday, windows] of byWeekday) {
+      byWeekday.set(weekday, mergeWindows(windows));
+    }
+  }
+
+  return byStaff;
+}
+
+/**
+ * Une absence ramenée à la journée du salon — `null` si elle ne la touche pas.
+ *
+ * Les bornes sont des instants UTC lus à l'horloge de l'établissement, comme
+ * tout le reste de ce module : un congé posé « du 30 septembre au 1er octobre »
+ * à Antananarivo commence à 21:00 UTC la veille, et le lire au fuseau du
+ * navigateur décalerait la journée grisée d'un cran.
+ *
+ * Une absence qui couvre plusieurs journées est écrêtée à celle qu'on regarde —
+ * de minuit à minuit pour les journées pleines du milieu.
+ */
+function timeOffOnDay(
+  entry: StaffTimeOff,
+  day: CalendarDate,
+  timeZone: TimeZone,
+): OpeningWindow | null {
+  const start = zonedFields(entry.startsAt, timeZone);
+  const end = zonedFields(entry.endsAt, timeZone);
+
+  // Des dates ISO se comparent comme des chaînes — c'est ce que leur format
+  // garantit, et cela évite de reconstruire deux `Date` par absence et par jour.
+  if (end.date < day || start.date > day) {
+    return null;
+  }
+
+  const from = start.date === day ? start.minutes : 0;
+  const to = end.date === day ? end.minutes : SLOTS_PER_DAY * SLOT_MINUTES;
+
+  // Une borne haute à minuit tombe sur la journée **suivante** : l'absence
+  // s'arrête donc avant celle-ci, et n'a rien à y griser.
+  return to > from ? { start: from, end: to } : null;
+}
+
+/** Les absences d'un praticien une journée donnée, fusionnées. */
+function timeOffWindowsOf(
+  entries: readonly StaffTimeOff[],
+  staffId: string,
+  day: CalendarDate,
+  timeZone: TimeZone,
+): OpeningWindow[] {
+  const windows: OpeningWindow[] = [];
+
+  for (const entry of entries) {
+    if (entry.staffId !== staffId) {
+      continue;
+    }
+
+    const window = timeOffOnDay(entry, day, timeZone);
+
+    if (window !== null) {
+      windows.push(window);
+    }
+  }
+
+  return mergeWindows(windows);
+}
+
+/**
+ * La journée civile entière — le repli quand les heures d'ouverture sont
+ * inconnues et qu'il faut malgré tout savoir si une absence tombe « dedans ».
+ */
+const WHOLE_DAY: readonly OpeningWindow[] = [{ start: 0, end: SLOTS_PER_DAY * SLOT_MINUTES }];
+
+/** Ce que deux jeux de plages couvrent **tous les deux**. */
+function intersectWindows(
+  left: readonly OpeningWindow[],
+  right: readonly OpeningWindow[],
+): OpeningWindow[] {
+  const shared: OpeningWindow[] = [];
+
+  for (const first of left) {
+    for (const second of right) {
+      const start = Math.max(first.start, second.start);
+      const end = Math.min(first.end, second.end);
+
+      if (end > start) {
+        shared.push({ start, end });
+      }
+    }
+  }
+
+  return mergeWindows(shared);
+}
+
+/** Ce que `left` couvre et que `cuts` ne couvre pas — une plage peut s'y scinder. */
+function subtractWindows(
+  left: readonly OpeningWindow[],
+  cuts: readonly OpeningWindow[],
+): OpeningWindow[] {
+  let remaining: OpeningWindow[] = [...left];
+
+  for (const cut of cuts) {
+    const next: OpeningWindow[] = [];
+
+    for (const window of remaining) {
+      if (cut.end <= window.start || cut.start >= window.end) {
+        next.push(window);
+        continue;
+      }
+
+      if (window.start < cut.start) {
+        next.push({ start: window.start, end: cut.start });
+      }
+      if (cut.end < window.end) {
+        next.push({ start: cut.end, end: window.end });
+      }
+    }
+
+    remaining = next;
+  }
+
+  return remaining;
+}
+
+/**
+ * Ce qu'un praticien travaille une journée donnée, congés déduits — `null`
+ * quand sa semaine de travail est inconnue.
+ */
+function workedWindowsOf(
+  staffId: string,
+  day: CalendarDate,
+  weeks: StaffWeeks,
+  timeOff: readonly StaffTimeOff[],
+  timeZone: TimeZone,
+): readonly OpeningWindow[] | null {
+  const weekdays = weeks.get(staffId);
+
+  if (weekdays === undefined) {
+    return null;
+  }
+
+  return subtractWindows(
+    weekdays.get(isoWeekdayOf(day)) ?? [],
+    timeOffWindowsOf(timeOff, staffId, day, timeZone),
+  );
+}
+
+/**
+ * Ce que la **colonne** travaille — l'intersection des heures d'ouverture et de
+ * ce que ses praticiens tiennent, congés déduits. `null` renonce à restreindre.
+ *
+ * Une colonne de la vue jour n'a qu'un praticien ; une colonne de la vue semaine
+ * agrège toute l'équipe, et une rangée y reste réservable dès qu'**un seul**
+ * praticien peut la prendre — d'où l'union. Le congé d'une seule personne n'y
+ * ferme donc rien, et c'est juste : la journée du salon, elle, n'est pas fermée.
+ *
+ * Un seul praticien dont on ignore l'horaire suffit à renoncer : fermer une
+ * rangée qu'il tient peut-être coûterait un rendez-vous, là où la laisser
+ * ouverte ne fait que rendre l'écran d'avant ce ticket.
+ */
+function columnWorkOf(
+  staffIds: readonly string[],
+  day: CalendarDate,
+  opening: readonly OpeningWindow[] | null,
+  weeks: StaffWeeks,
+  timeOff: readonly StaffTimeOff[],
+  timeZone: TimeZone,
+): readonly OpeningWindow[] | null {
+  if (staffIds.length === 0) {
+    return null;
+  }
+
+  const worked: OpeningWindow[] = [];
+
+  for (const staffId of staffIds) {
+    const windows = workedWindowsOf(staffId, day, weeks, timeOff, timeZone);
+
+    if (windows === null) {
+      return null;
+    }
+
+    worked.push(...windows);
+  }
+
+  const union = mergeWindows(worked);
+
+  return opening === null ? union : intersectWindows(union, opening);
+}
+
 /**
  * Le planning complet, prêt à rendre.
  *
@@ -618,6 +882,8 @@ export function buildCalendarBoard(options: BuildOptions): CalendarBoard {
     timeZone,
     staff = [],
     openingHours = [],
+    staffSchedules = [],
+    timeOff = [],
     display = FALLBACK_DISPLAY,
   } = options;
   const words = planningWords(display.locale).grid;
@@ -628,19 +894,36 @@ export function buildCalendarBoard(options: BuildOptions): CalendarBoard {
   }
 
   const week = openingWeekOf(openingHours);
+  const weeks = staffWeeksOf(staffSchedules);
   const { firstSlot, lastSlot } = displayedSlots([...spans.values()], daysOf(range), week);
   const inputs = columnInputs(view, range, appointments, spans, staff, display);
-  const columns = inputs.map((input) =>
-    buildColumn(input, spans, {
+  // Les praticiens qu'une colonne de la vue **semaine** agrège : le répertoire
+  // reçu, et lui seul. Une fiche désactivée depuis ne prend plus de rendez-vous,
+  // et lui faire rouvrir une rangée que personne ne tient serait exactement la
+  // promesse que ce ticket supprime.
+  const teamIds = staff.map((member) => member.id);
+  const columns = inputs.map((input) => {
+    const opening = windowsOfDay(week, input.day);
+    const staffIds = input.staffId === null ? teamIds : [input.staffId];
+
+    return buildColumn(input, spans, {
       view,
       firstSlot,
       lastSlot,
       timeZone,
       words,
-      windows: windowsOfDay(week, input.day),
+      opening,
+      working: columnWorkOf(staffIds, input.day, opening, weeks, timeOff, timeZone),
+      // Seule la vue jour nomme un congé : sa colonne est une personne. En vue
+      // semaine la colonne est une journée de toute l'équipe, et l'absence de
+      // l'une n'y est pas ce qui ferme la rangée.
+      timeOff:
+        input.staffId === null
+          ? []
+          : timeOffWindowsOf(timeOff, input.staffId, input.day, timeZone),
       ...(options.now === undefined ? {} : { now: options.now }),
-    }),
-  );
+    });
+  });
 
   const hours: string[] = [];
   for (let hour = firstSlot / SLOTS_PER_HOUR; hour < lastSlot / SLOTS_PER_HOUR; hour += 1) {
@@ -778,7 +1061,15 @@ interface ColumnContext {
   /** Les mots de la grille, dans la langue résolue. */
   readonly words: GridWords;
   /** Ce que le salon ouvre ce jour-là, `null` si ses horaires sont inconnus. */
-  readonly windows: readonly OpeningWindow[] | null;
+  readonly opening: readonly OpeningWindow[] | null;
+  /**
+   * Ce que la colonne **travaille** vraiment — les heures d'ouverture réduites à
+   * celles que ses praticiens tiennent, congés déduits. `null` quand on ne sait
+   * pas, auquel cas les heures d'ouverture décident seules (#1158).
+   */
+  readonly working: readonly OpeningWindow[] | null;
+  /** Les congés du praticien de la colonne ce jour-là — vides en vue semaine. */
+  readonly timeOff: readonly OpeningWindow[];
   readonly now?: Date;
 }
 
@@ -925,26 +1216,29 @@ function buildColumn(
   });
 
   const nowSlot = currentSlot(input.day, context);
-  // La rangée où commence la fermeture courante, tant qu'elle dure. Les rangées
-  // fermées se fusionnent (`CalendarClosedCell`) : on ne ferme la cellule qu'à
-  // la première rangée qui ne l'est pas — ouverte, occupée, ou hors amplitude.
-  let closedFrom: number | null = null;
+  // La fermeture courante, tant qu'elle dure — sa première rangée et son nom.
+  // Les rangées fermées se fusionnent (`CalendarClosedCell`) : on ne ferme la
+  // cellule qu'à la première rangée qui ne l'est pas — ouverte, occupée, ou hors
+  // amplitude —, **ou** qui ne se nomme plus pareil. Une coupure méridienne que
+  // prolonge le repos d'une praticienne est bien deux choses, et les fondre en
+  // un seul bloc ferait porter à l'une le nom de l'autre.
+  let run: { from: number; label: string } | null = null;
 
   const closeRun = (until: number): void => {
-    if (closedFrom === null) {
+    if (run === null) {
       return;
     }
 
     cells.push({
       kind: 'closed',
-      key: `ferme-${input.id}-${String(closedFrom)}`,
-      slot: closedFrom - context.firstSlot,
-      span: until - closedFrom,
-      label: closedLabel(closedFrom, context.windows ?? [], context.words),
-      nowOffset: nowOffsetWithin(nowSlot, closedFrom, until),
+      key: `ferme-${input.id}-${String(run.from)}`,
+      slot: run.from - context.firstSlot,
+      span: until - run.from,
+      label: run.label,
+      nowOffset: nowOffsetWithin(nowSlot, run.from, until),
     });
 
-    closedFrom = null;
+    run = null;
   };
 
   for (let slot = context.firstSlot; slot < context.lastSlot; slot += 1) {
@@ -953,8 +1247,14 @@ function buildColumn(
       continue;
     }
 
-    if (isClosed(slot, context.windows)) {
-      closedFrom ??= slot;
+    if (isClosed(slot, context)) {
+      const label = closedLabel(slot, context);
+
+      if (run !== null && run.label !== label) {
+        closeRun(slot);
+      }
+
+      run ??= { from: slot, label };
       continue;
     }
 
@@ -983,74 +1283,114 @@ function buildColumn(
   return {
     id: input.id,
     name: input.name,
-    meta: columnMeta(input.appointments.length, context.windows, context.words),
+    meta: columnMeta(input.appointments.length, context),
     staffId: input.staffId,
     laneCount,
     cells,
   };
 }
 
+/** `true` si `minutes` tombe dans l'une des plages, borne haute exclue. */
+function covers(windows: readonly OpeningWindow[], minutes: number): boolean {
+  return windows.some((window) => minutes >= window.start && minutes < window.end);
+}
+
 /**
- * `true` si le salon ne travaille pas cette rangée.
+ * `true` si la colonne ne travaille pas cette rangée.
  *
  * C'est l'**heure de départ** de la rangée qui décide, et non son recouvrement :
  * le bouton d'un créneau libre promet « poser un rendez-vous à partir de cette
  * heure » (#611), et une rangée de 12 h 30 dont le salon ferme à 12 h 45 ne
  * permet de poser aucun rendez-vous.
  *
- * Horaires inconnus (`null`) : rien n'est fermé. Voir `BuildOptions.openingHours`.
+ * Ce sont les plages **travaillées** qui tranchent dès qu'on les connaît — les
+ * heures d'ouverture réduites à celles que le praticien de la colonne tient,
+ * congés déduits (#1158) —, et les heures d'ouverture seules sinon. Inconnues
+ * l'une et l'autre (`null`) : rien n'est fermé. Voir `BuildOptions`.
  */
-function isClosed(slot: number, windows: readonly OpeningWindow[] | null): boolean {
+function isClosed(slot: number, context: ColumnContext): boolean {
+  const windows = context.working ?? context.opening;
+
   if (windows === null) {
     return false;
   }
 
-  const minutes = slot * SLOT_MINUTES;
-
-  return !windows.some((window) => minutes >= window.start && minutes < window.end);
+  return !covers(windows, slot * SLOT_MINUTES);
 }
 
 /**
- * Le nom du fond inactif — les trois libellés de `mockups/admin/calendrier.html`.
+ * Le nom du fond inactif — les trois libellés de `mockups/admin/calendrier.html`,
+ * et les deux que #1158 y ajoute.
  *
  * Nommer plutôt que griser : une rangée grise sans mot ne distingue pas une
  * fermeture d'un défaut d'affichage, et l'opérateur qui cherche pourquoi il ne
  * peut pas poser à 13 h doit lire la réponse sur la rangée même.
+ *
+ * L'établissement passe en premier : quand le salon est fermé, savoir qu'une
+ * praticienne est en congé n'apprend rien — personne ne travaille. Ce n'est que
+ * sur une rangée que le salon **ouvre** qu'il reste à dire pourquoi cette
+ * colonne-là ne la prend pas : un congé, ou un jour que son horaire ne couvre
+ * pas.
  */
-function closedLabel(
-  slot: number,
-  windows: readonly OpeningWindow[],
-  words: GridWords,
-): string {
-  if (windows.length === 0) {
-    return words.closed;
+function closedLabel(slot: number, context: ColumnContext): string {
+  const words = context.words;
+  const minutes = slot * SLOT_MINUTES;
+  const opening = context.opening;
+
+  if (opening !== null) {
+    if (opening.length === 0) {
+      return words.closed;
+    }
+
+    if (!covers(opening, minutes)) {
+      // Une fermeture encadrée par deux plages du même jour est la coupure
+      // méridienne — « Pause » —, jamais la fermeture du salon.
+      const enclosed =
+        opening.some((window) => window.end <= minutes) &&
+        opening.some((window) => window.start > minutes);
+
+      return enclosed ? words.break : words.outsideHours;
+    }
   }
 
-  const minutes = slot * SLOT_MINUTES;
-  // Une fermeture encadrée par deux plages du même jour est la coupure
-  // méridienne — « Pause » —, jamais la fermeture du salon.
-  const enclosed =
-    windows.some((window) => window.end <= minutes) &&
-    windows.some((window) => window.start > minutes);
-
-  return enclosed ? words.break : words.outsideHours;
+  return covers(context.timeOff, minutes) ? words.timeOff : words.offDuty;
 }
 
 /**
- * L'en-tête de colonne : le compte de rendez-vous, ou « Fermé ».
+ * L'en-tête de colonne : le compte de rendez-vous, ou ce qui l'empêche.
  *
  * « Fermé » l'emporte sur « Aucun rendez-vous », qui se lit comme une journée
  * ouverte et creuse — celle qu'on propose de remplir. Un jour fermé qui porte
  * malgré tout un rendez-vous garde son compte : c'est lui l'information.
+ *
+ * Une colonne de la vue jour qui ne travaille aucune rangée d'une journée pourtant
+ * ouverte le dit à son tour — « Congé », « Repos » —, parce que c'est là que le
+ * salon lit **qui travaille, et quand** (#1158). En vue semaine la colonne est
+ * une journée de toute l'équipe : seul l'établissement peut y être fermé.
  */
-function columnMeta(
-  count: number,
-  windows: readonly OpeningWindow[] | null,
-  words: GridWords,
-): string {
-  return count === 0 && windows !== null && windows.length === 0
-    ? words.closed
-    : countLabel(count, words);
+function columnMeta(count: number, context: ColumnContext): string {
+  const words = context.words;
+
+  if (count > 0) {
+    return countLabel(count, words);
+  }
+
+  if (context.opening !== null && context.opening.length === 0) {
+    return words.closed;
+  }
+
+  if (context.view !== 'semaine' && context.working !== null && context.working.length === 0) {
+    // « Congé » seulement si l'absence recoupe vraiment les heures que le salon
+    // ouvre — et non dès qu'il en existe une ce jour-là. Une plage bloquée
+    // posée après la fermeture n'est pas ce qui vide la journée d'un praticien
+    // que son horaire n'y plaçait pas : l'en-tête aurait annoncé « Congé »
+    // au-dessus d'une colonne dont chaque rangée dit « Repos ».
+    return intersectWindows(context.timeOff, context.opening ?? WHOLE_DAY).length > 0
+      ? words.timeOff
+      : words.offDuty;
+  }
+
+  return countLabel(count, words);
 }
 
 /**
