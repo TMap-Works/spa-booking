@@ -27,9 +27,9 @@
       "detailEmpty": "No payment taken yet"
     },
     "pending": {
-      "label": "To be confirmed",
+      "label": "To be confirmed · next {days} days",
       "detail": "Requests awaiting an answer",
-      "detailNone": "Everything is confirmed"
+      "detailNone": "No request pending in the next {days} days"
     },
     "noShow": {
       "label": "No shows · 30 days",

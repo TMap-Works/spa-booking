@@ -38,6 +38,7 @@ import {
   adminReportingPath,
 } from '../paths';
 import { adminStaffPath } from '../personnel/paths';
+import { PENDING_WINDOW_DAYS, pendingWindow } from './pending-window';
 
 /**
  * Le tableau de bord — l'écran d'arrivée de la gérance.
@@ -72,6 +73,25 @@ import { adminStaffPath } from '../personnel/paths';
  * …}`) plutôt que par un `s` ajouté en JavaScript : « 1 encaissement » et
  * « 1 payment » ne se pluralisent pas aux mêmes seuils, et un ternaire sur
  * `> 1` est une règle française déguisée en code.
+ *
+ * ## Deux comptes de demandes en attente, et pourquoi (#1159)
+ *
+ * L'écran lit **deux** listes de rendez-vous, et les confondre est précisément
+ * le bug qu'a relevé la campagne de QA :
+ *
+ * - la journée du salon (`rangeOf('jour', today)`) — ce qui est au programme
+ *   aujourd'hui, d'où sortent les trois indicateurs du jour et les prochains
+ *   rendez-vous. L'amorce du héros en tire aussi son « dont N à confirmer », et
+ *   c'est juste : sa phrase parle d'aujourd'hui ;
+ * - les demandes en attente **à venir** (`pendingWindow(today)`) — le signal de
+ *   travail de la gérance, puisque c'est le salon qui confirme à la main. Il ne
+ *   se borne pas à la journée : le compteur affichait « Tout est confirmé » quand
+ *   six demandes attendaient la semaine suivante.
+ *
+ * La seconde lecture est un appel séparé, filtré `statuses=['pending']`, plutôt
+ * qu'un élargissement de la première : un mois d'agenda porte plusieurs centaines
+ * de lignes, chacune avec sa cliente, son praticien et sa prestation imbriqués,
+ * là où l'écran n'a besoin que de la journée en entier et du compte des demandes.
  */
 
 export const dynamic = 'force-dynamic';
@@ -124,6 +144,7 @@ export default async function DashboardPage({ params }: DashboardPageProps) {
 
   let firstName: string | null;
   let appointments: Appointment[];
+  let pendingAhead: Appointment[];
   let revenueToday: Awaited<ReturnType<typeof fetchRevenueReport>>;
   let revenueWeek: Awaited<ReturnType<typeof fetchRevenueReport>>;
   let volumeWeek: AppointmentVolumeReport;
@@ -132,20 +153,24 @@ export default async function DashboardPage({ params }: DashboardPageProps) {
     const [profile, ...rest] = await Promise.all([
       fetchOwnProfile(accessToken).catch(() => null),
       fetchAppointments(accessToken, rangeOf('jour', today)),
+      fetchAppointments(accessToken, { ...pendingWindow(today), statuses: ['pending'] }),
       fetchRevenueReport(accessToken, windowOfRange({ from: today, to: today }, timeZone)),
       fetchRevenueReport(accessToken, windowOfRange(week, timeZone)),
       fetchAppointmentVolumeReport(accessToken, windowOfRange(week, timeZone), 'day'),
       fetchNoShowReport(accessToken, windowOfRange(month, timeZone)),
     ]);
     firstName = profile?.firstName ?? null;
-    [appointments, revenueToday, revenueWeek, volumeWeek, noShows] = rest;
+    [appointments, pendingAhead, revenueToday, revenueWeek, volumeWeek, noShows] = rest;
   } catch (error) {
     return adminLoadFailure(error, tenantSlug, denial);
   }
 
   const now = Date.now();
   const booked = appointments.filter((one) => one.status !== 'cancelled');
-  const pending = booked.filter((one) => one.status === 'pending');
+  // Les demandes en attente **de la journée**, et elles seules : c'est ce que
+  // l'amorce du héros annonce, dans une phrase qui dit « aujourd'hui ». Le
+  // compteur « À confirmer », lui, lit `pendingAhead` (#1159).
+  const pendingToday = booked.filter((one) => one.status === 'pending');
   const done = booked.filter((one) => one.status === 'completed');
   const upcoming = booked
     .filter((one) => Date.parse(one.endsAt) > now && one.status !== 'no_show')
@@ -165,11 +190,11 @@ export default async function DashboardPage({ params }: DashboardPageProps) {
             {firstName === null ? t('hero.greeting') : t('hero.greetingNamed', { firstName })}
           </h1>
           <p className="spa-admin-dashboard__lead">
-            {pending.length === 0
+            {pendingToday.length === 0
               ? t('hero.lead', { count: booked.length, salon: tenant.name })
               : t('hero.leadPending', {
                   count: booked.length,
-                  pending: formatCount(pending.length, display),
+                  pending: formatCount(pendingToday.length, display),
                   salon: tenant.name,
                 })}
           </p>
@@ -220,10 +245,14 @@ export default async function DashboardPage({ params }: DashboardPageProps) {
         />
         <Kpi
           icon="bell"
-          label={t('kpi.pending.label')}
+          label={t('kpi.pending.label', { days: PENDING_WINDOW_DAYS })}
           tone="warning"
-          value={formatCount(pending.length, display)}
-          detail={pending.length === 0 ? t('kpi.pending.detailNone') : t('kpi.pending.detail')}
+          value={formatCount(pendingAhead.length, display)}
+          detail={
+            pendingAhead.length === 0
+              ? t('kpi.pending.detailNone', { days: PENDING_WINDOW_DAYS })
+              : t('kpi.pending.detail')
+          }
         />
         <Kpi
           icon="chart"

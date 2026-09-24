@@ -123,6 +123,33 @@ describe('les indicateurs du jour', () => {
     expect(dashboard('en')('kpi.revenue.detailEmpty')).toBe('No payment taken yet');
   });
 
+  it('dit sur quelle fenêtre le compteur « À confirmer » porte (#1159)', () => {
+    // Le compteur ne peut pas porter sur « toutes dates confondues » — l'agenda
+    // de l'API refuse au-delà de 31 journées —, et le critère d'acceptation
+    // ouvrait alors une seconde branche : dire sa portée. C'est le libellé qui la
+    // porte, dans les deux langues, et c'est donc ici qu'elle se prouve.
+    expect(dashboard('fr')('kpi.pending.label', { days: 30 })).toBe(
+      'À confirmer · 30 prochains jours',
+    );
+    expect(dashboard('en')('kpi.pending.label', { days: 30 })).toBe(
+      'To be confirmed · next 30 days',
+    );
+  });
+
+  it('borne aussi son état vide, plutôt que d’annoncer que tout est confirmé', () => {
+    // « Tout est confirmé » était le constat de la campagne de QA : la phrase
+    // était fausse dès qu'une demande attendait au-delà de la journée. L'état
+    // vide dit maintenant sur quoi il se prononce.
+    expect(dashboard('fr')('kpi.pending.detailNone', { days: 30 })).toBe(
+      'Aucune demande en attente sur 30 jours',
+    );
+    expect(dashboard('en')('kpi.pending.detailNone', { days: 30 })).toBe(
+      'No request pending in the next 30 days',
+    );
+    expect(dashboard('fr')('kpi.pending.detail')).toBe('Demandes en attente de réponse');
+    expect(dashboard('en')('kpi.pending.detail')).toBe('Requests awaiting an answer');
+  });
+
   it('dit le dénominateur du taux de non-présentation dans les deux langues', () => {
     expect(dashboard('fr')('kpi.noShow.detail', { noShows: '2', total: 30 })).toBe(
       '2 sur 30 rendez-vous échus',
