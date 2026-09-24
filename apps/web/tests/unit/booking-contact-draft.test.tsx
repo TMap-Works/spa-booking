@@ -34,7 +34,7 @@ import {
 } from '@/app/(booking)/[tenantSlug]/reservation/use-draft-autosave';
 import { emptyBookingDraft, readBookingDraft, writeBookingDraft } from '@/lib/booking/draft';
 
-import { contact, presence, service, tenant } from './fixtures';
+import { contact, contactAccount, presence, service, tenant } from './fixtures';
 
 vi.mock('@/app/(booking)/[tenantSlug]/reservation/actions', () => ({
   loadAvailabilityAction: vi.fn(),
@@ -215,6 +215,10 @@ describe('« Un mot pour le salon » face à un rechargement', () => {
       serviceId: service.id,
       startsAt: CRENEAU,
       contact: { ...contact, clientNote: '' },
+      // Le brouillon est celui de la cliente connectée, et le dit (#1151) :
+      // sans propriétaire, le tunnel le tiendrait pour celui d'une autre et en
+      // viderait les champs avant même le premier rendu de l'étape.
+      contactAccount,
     });
     vi.useFakeTimers();
   });
@@ -364,6 +368,9 @@ describe('une soumission refusée sur le champ en cours de frappe', () => {
       serviceId: service.id,
       startsAt: CRENEAU,
       contact: { ...contact, phone: '' },
+      // Même raison qu'au bloc précédent : le brouillon appartient à la cliente
+      // connectée (#1151).
+      contactAccount,
     });
     vi.useFakeTimers();
   });

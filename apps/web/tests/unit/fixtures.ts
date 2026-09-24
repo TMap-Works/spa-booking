@@ -57,3 +57,15 @@ export const presence: AccountPresence = {
   email: contact.email,
   phone: contact.phone,
 };
+
+/**
+ * Le compte sous lequel `contact` a été saisi — le `contactAccount` du brouillon
+ * (#1151).
+ *
+ * Un brouillon monté avec `presence` doit le porter, sans quoi le tunnel le
+ * traite comme celui d'une autre cliente et en fait tomber les coordonnées. Ce
+ * n'est pas un détail de montage : c'est exactement ce que le ticket ajoute, et
+ * une suite qui l'oublierait éprouverait l'effacement au lieu du cas qu'elle
+ * décrit.
+ */
+export const contactAccount = presence.email;

@@ -13,6 +13,8 @@ import { Notification, type NotificationTone } from '@/components/ui/notificatio
 import type { AccountPresence } from '@/lib/account-presence';
 import {
   bookingSearch,
+  contactAccountKey,
+  draftForAccount,
   draftFromSearch,
   emptyBookingDraft,
   readBookingDraft,
@@ -322,6 +324,18 @@ export function BookingTunnel({
   const [signedOut, setSignedOut] = useState(false);
   /** La cliente connectée, telle que cet écran doit la tenir pour vraie. */
   const account = signedOut ? null : presence;
+  /**
+   * À qui le brouillon de cet onglet a le droit d'appartenir (#1151).
+   *
+   * Lue sur la **propriété** et non sur `account` : c'est l'identité que le
+   * serveur a vouée à cette page, et c'est elle qui doit décider du sort de
+   * coordonnées déjà écrites dans `sessionStorage`. `signedOut`, lui, est un
+   * refus constaté en cours de route — il ramène à l'écran de connexion **sans
+   * rien perdre** (`onSignInRequired`), et la cliente qui se reconnecte sous le
+   * même compte retrouve sa saisie. Si elle se reconnecte sous un autre, la page
+   * est rendue à neuf et c'est cette clé-ci, fraîche, qui tranche.
+   */
+  const presenceAccount = contactAccountKey(presence?.email);
 
   // Relecture du brouillon. Depuis #1055, l'étape et les choix de l'adresse sont
   // déjà là — le serveur les a résolus (`initial-draft.ts`) —, mais
@@ -332,8 +346,19 @@ export function BookingTunnel({
   // L'URL est relue **par-dessus** le stockage : c'est elle qui fait foi dès
   // qu'elle porte l'étape, sans quoi un lien partagé rouvrirait le parcours de
   // l'onglet plutôt que celui qu'on lui a envoyé (#733).
+  //
+  // Le compte a le dernier mot sur les **coordonnées** (#1151) : un brouillon
+  // laissé par une autre cliente dans cet onglet n'entre pas dans cet écran-ci.
+  // Le tri se fait **ici**, avant que l'étape « Coordonnées » ne soit montée :
+  // `ContactStep` est un formulaire non contrôlé, qui ne lit ses valeurs par
+  // défaut qu'au montage — les lui retirer un rendu plus tard les laisserait
+  // dans ses champs. Tant que `hydrated` est faux, c'est le squelette qui est
+  // rendu, et aucun champ n'existe encore.
   useEffect(() => {
-    const merged = draftFromSearch(window.location.search, readBookingDraft(tenant.slug));
+    const merged = draftForAccount(
+      draftFromSearch(window.location.search, readBookingDraft(tenant.slug)),
+      presenceAccount,
+    );
     const step = reachableStep(merged);
 
     // Laissé vide, et non posé à l'étape : l'effet de synchronisation qui suit
@@ -347,7 +372,7 @@ export function BookingTunnel({
     setDraft({ ...merged, step });
     setRestoredAppointment(merged.appointment !== null);
     setHydrated(true);
-  }, [tenant.slug]);
+  }, [tenant.slug, presenceAccount]);
 
   useEffect(() => {
     if (hydrated) {
@@ -593,18 +618,30 @@ export function BookingTunnel({
    */
   const saveContact = useCallback(
     (contact: ContactDraft) => {
-      const persisted = { ...persistedDraftRef.current, contact };
+      // Le propriétaire est posé **à l'écriture**, et c'est la seule façon qu'il
+      // soit juste : ces coordonnées sont celles que la cliente connectée vient
+      // de taper ou de laisser telles quelles, et `draftForAccount` s'en servira
+      // pour les refuser à la suivante (#1151).
+      const persisted = { ...persistedDraftRef.current, contact, contactAccount: presenceAccount };
 
       persistedDraftRef.current = persisted;
       writeBookingDraft(tenant.slug, persisted);
-      setDraft((current) => ({ ...current, contact }));
+      setDraft((current) => ({ ...current, contact, contactAccount: presenceAccount }));
     },
-    [tenant.slug],
+    [tenant.slug, presenceAccount],
   );
 
-  const submitContact = useCallback((contact: ContactDraft) => {
-    setDraft((current) => ({ ...current, contact, step: 'recapitulatif' }));
-  }, []);
+  const submitContact = useCallback(
+    (contact: ContactDraft) => {
+      setDraft((current) => ({
+        ...current,
+        contact,
+        contactAccount: presenceAccount,
+        step: 'recapitulatif',
+      }));
+    },
+    [presenceAccount],
+  );
 
   const goTo = useCallback((target: BookingStep) => {
     setNotice(null);
@@ -950,6 +987,16 @@ export function BookingTunnel({
               />
             ) : step === 'coordonnees' ? (
               <ContactStep
+                // Le compte **est** l'identité de ce formulaire (#1151).
+                // `ContactStep` est non contrôlé : `useForm` ne lit
+                // `defaultValues` qu'au montage, et React réutiliserait
+                // l'instance en place — les champs garderaient les coordonnées
+                // de la cliente précédente alors que le brouillon vient de les
+                // rendre. La clé force le remontage au seul instant où c'est ce
+                // qu'on veut : un changement de compte. Elle est stable tant
+                // que la session l'est, et ne coûte donc aucun remontage
+                // ailleurs.
+                key={presenceAccount ?? ''}
                 contact={draft.contact}
                 tenantSlug={tenant.slug}
                 // Le pays de l'établissement, d'où le téléphone tire son

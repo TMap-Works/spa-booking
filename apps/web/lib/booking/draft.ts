@@ -43,6 +43,24 @@
  * Un brouillon écrit par une version antérieure du tunnel, ou bricolé à la main,
  * ne doit pas faire planter le montage : il est rejoué contre son schéma, et
  * repart de zéro s'il ne le satisfait pas.
+ *
+ * ## Pourquoi le brouillon sait **à qui** ses coordonnées appartiennent (#1151)
+ *
+ * `sessionStorage` meurt avec l'onglet, et non avec la session du compte : entre
+ * les deux, il y a tout l'espace d'une déconnexion suivie d'une connexion sous
+ * un autre compte, dans le même onglet. La campagne du 22/09/2026 l'a relevé —
+ * connectée en Clara, l'étape « Comment vous joindre ? » annonçait « Réservé au
+ * nom de Zoé … · qa.cliente1@recette.test », case de consentement déjà cochée,
+ * et l'écran de confirmation nommait l'adresse de Zoé.
+ *
+ * Le rendez-vous, lui, part désormais au bon compte : la route publique exige le
+ * jeton de la cliente (#1136) et le corps de la demande ne porte plus aucune
+ * coordonnée (#1222). Ce qui restait était **ce que l'écran montre**, et c'est
+ * une donnée personnelle d'une tierce personne (CDC §5.1) autant qu'un
+ * consentement qu'une autre a donné.
+ *
+ * D'où `contactAccount` : les coordonnées d'un brouillon ont un propriétaire, et
+ * un changement de propriétaire les fait tomber — voir `draftForAccount`.
  */
 
 import { bookedAppointmentSchema, uuidSchema, utcInstantSchema } from '@spa/shared';
@@ -110,11 +128,40 @@ export const bookingDraftSchema = z.object({
   staffId: uuidSchema.nullable(),
   startsAt: utcInstantSchema.nullable(),
   contact: contactDraftSchema,
+  /**
+   * Le compte sous lequel les coordonnées ci-dessus ont été saisies (#1151).
+   *
+   * `null` veut dire « ces coordonnées n'appartiennent à personne » : un
+   * brouillon vierge, un brouillon écrit avant ce ticket, ou un brouillon dont
+   * `draftForAccount` vient de faire tomber les coordonnées. Le repli est
+   * délibérément `null` et non « le compte en cours » — un brouillon dont on
+   * ignore l'auteur est traité comme celui d'une autre personne, ce qui est la
+   * seule lecture prudente d'une donnée personnelle.
+   *
+   * C'est **l'adresse e-mail** du compte qui fait office de clé, parce que c'est
+   * le seul discriminant que le tunnel ait : le cookie de présence ne porte ni
+   * identifiant ni rôle, à dessein (`lib/account-presence.ts`). Elle n'ajoute
+   * aucune donnée au stockage — `contact.email` y est déjà —, et elle est
+   * normalisée par `contactAccountKey` pour qu'une différence de casse ne passe
+   * pas pour un changement de compte.
+   *
+   * `.catch(null)` plutôt qu'un champ requis : un brouillon d'avant ce ticket ne
+   * porte pas la clé, et faire échouer tout le schéma renverrait la cliente à la
+   * première étape en lui prenant sa prestation et son créneau. Il est relu sans
+   * propriétaire, donc traité comme celui d'une autre — c'est exactement la
+   * conduite qu'on veut au déploiement.
+   */
+  contactAccount: z.string().nullable().catch(null),
   /** Le rendez-vous obtenu, qui fait vivre l'écran de confirmation après un F5. */
   appointment: bookedAppointmentSchema.nullable(),
 });
 
 export type BookingDraft = z.infer<typeof bookingDraftSchema>;
+
+/** Des coordonnées que personne n'a encore saisies. */
+export function emptyContactDraft(): ContactDraft {
+  return { firstName: '', lastName: '', email: '', phone: '', clientNote: '', consent: false };
+}
 
 export function emptyBookingDraft(): BookingDraft {
   return {
@@ -122,9 +169,97 @@ export function emptyBookingDraft(): BookingDraft {
     serviceId: null,
     staffId: null,
     startsAt: null,
-    contact: { firstName: '', lastName: '', email: '', phone: '', clientNote: '', consent: false },
+    contact: emptyContactDraft(),
+    contactAccount: null,
     appointment: null,
   };
+}
+
+/**
+ * La clé d'un compte, telle que `contactAccount` la retient (#1151).
+ *
+ * L'adresse e-mail, mise à plat : les espaces de bord et la casse ne distinguent
+ * pas deux comptes, et les laisser passer ferait tomber les coordonnées d'une
+ * cliente qui n'a pourtant pas changé d'identité — le rendu d'un cookie relu
+ * n'est pas garanti identique d'une écriture à l'autre.
+ *
+ * `''` vaut `null`, et non une clé vide : le cookie de présence accepte une
+ * adresse vide — celle d'un cookie posé avant #1086, ou d'un champ que
+ * `presenceSchema` a replié — et deux comptes sans adresse ne sont pas le même
+ * compte. Sans propriétaire nommable, le brouillon n'en a pas.
+ *
+ * Ce que cette clé confond, et qu'on assume : une cliente qui **change
+ * l'adresse de son compte** au milieu de son parcours, depuis
+ * `compte/coordonnees`, est lue comme quelqu'un d'autre au retour sur le tunnel.
+ * Elle y perd son mot au salon et sa case cochée, et repart de l'étape
+ * « Coordonnées », préremplie de sa nouvelle adresse — jamais son rendez-vous,
+ * qui reste dans son espace client. C'est le mauvais côté sur lequel se tromper
+ * quand le signal est ambigu, et le cookie de présence ne porte pas
+ * d'identifiant qui trancherait mieux : il n'en porte aucun, à dessein.
+ */
+export function contactAccountKey(email: string | null | undefined): string | null {
+  const key = email?.trim().toLowerCase() ?? '';
+
+  return key === '' ? null : key;
+}
+
+/**
+ * Le brouillon, rendu au compte qui est en train de s'en servir (#1151).
+ *
+ * Inchangé tant que le compte est celui sous lequel les coordonnées ont été
+ * saisies. Dès qu'il diffère — déconnexion, connexion sous un autre compte,
+ * session échue —, **deux choses tombent**, et seulement elles :
+ *
+ * - les **coordonnées**, consentement compris. Elles décrivent une personne qui
+ *   n'est pas celle qui tient l'écran, et le consentement au traitement des
+ *   données est donné par quelqu'un, pas par un onglet (CDC §5.1). Vidées plutôt
+ *   que recopiées du compte en cours : c'est `ContactStep` qui complète les
+ *   champs vides avec ce que la session connaît (#1050, #1086), et le faire ici
+ *   ferait entrer dans le brouillon une saisie que personne n'a faite ;
+ * - le **rendez-vous obtenu**. Il a été pris par l'autre session, l'écran de
+ *   confirmation le donnerait à lire — référence comprise — à quelqu'un qui n'en
+ *   est pas la cliente, et la phrase « un e-mail a été envoyé à … » nommerait une
+ *   adresse qui vient de disparaître du brouillon. Il reste consultable là où il
+ *   appartient, dans l'espace de sa cliente.
+ *
+ * Ce qui **reste** est ce qui décrit la réservation et non la personne :
+ * prestation, praticien, créneau. Ce sont les choix que l'URL porte déjà et
+ * qu'un lien partage (`bookingSearchParams`) ; les faire tomber ici ne les
+ * effacerait même pas, `draftFromSearch` les relisant aussitôt de l'adresse.
+ * Celle qui vient de se connecter reprend donc le parcours de l'onglet là où il
+ * en était, sur l'étape « Coordonnées » — ce que `reachableStep` rend d'un
+ * brouillon dont les coordonnées sont reparties.
+ *
+ * ## Un brouillon sans propriétaire ne reconnaît **personne**
+ *
+ * Le repli `null` dit « on ignore à qui ces coordonnées sont », et `null` est
+ * aussi ce que `contactAccountKey` rend d'une présence sans adresse — un cookie
+ * posé avant #1086, ou un champ que `presenceSchema` a replié sur `''`. Une
+ * égalité sèche confondrait les deux : le brouillon d'une cliente sans adresse
+ * lisible se représenterait tel quel à la suivante, coordonnées, consentement et
+ * rendez-vous compris, c'est-à-dire exactement la fuite que ce ticket referme.
+ * D'où la garde `owner !== null` — sans propriétaire nommable, le brouillon n'en
+ * a pas, et il n'est rendu à personne.
+ *
+ * Ce que cela coûte, et qu'on assume : cette cliente-là — présence sans adresse,
+ * donc `contactAccount` écrit à `null` — reperd sa saisie à chaque relecture du
+ * brouillon. C'est le même arbitrage que partout ailleurs ici, du côté prudent
+ * d'un signal ambigu.
+ *
+ * Le propriétaire relu est **renormalisé** avant la comparaison : il est écrit
+ * par `contactAccountKey`, mais `sessionStorage` se bricole à la main et un
+ * brouillon d'une autre version du tunnel peut y avoir laissé l'adresse telle
+ * quelle. Une différence de casse n'est pas un changement de compte, ici comme
+ * dans la clé elle-même.
+ */
+export function draftForAccount(draft: BookingDraft, account: string | null): BookingDraft {
+  const owner = contactAccountKey(draft.contactAccount);
+
+  if (owner !== null && owner === account) {
+    return draft;
+  }
+
+  return { ...draft, contact: emptyContactDraft(), contactAccount: null, appointment: null };
 }
 
 function storageKey(tenantSlug: string): string {
