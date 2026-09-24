@@ -88,7 +88,7 @@ export function CheckoutReceipt({
         {t('receipt.heading')}
       </h2>
 
-      <SaleTicket saleId={saleId} tenantSlug={tenantSlug} />
+      <SaleTicket countryCode={countryCode} saleId={saleId} tenantSlug={tenantSlug} />
     </section>
   );
 }
@@ -110,9 +110,12 @@ type TicketState =
  * imprimable seul, et ouvrable en PDF (rouleau 80 mm ou facture A4).
  */
 function SaleTicket({
+  countryCode,
   saleId,
   tenantSlug,
 }: {
+  /** `Tenant.countryCode` — la région de la mise en forme du rouleau. */
+  readonly countryCode: string | null;
   readonly saleId: string;
   readonly tenantSlug: string;
 }) {
@@ -204,10 +207,10 @@ function SaleTicket({
 
   return (
     <>
-      <ReceiptTicket receipt={state.receipt} />
+      <ReceiptTicket countryCode={countryCode} receipt={state.receipt} />
       <div className="spa-ticket-actions">
         <TicketPrinter>
-          <ReceiptTicket receipt={state.receipt} />
+          <ReceiptTicket countryCode={countryCode} receipt={state.receipt} />
         </TicketPrinter>
         {pdfLinks}
       </div>

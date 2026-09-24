@@ -29,3 +29,6 @@ my-planning-client.tsx
 checkout-card-form.tsx
 checkout-panel.tsx
 checkout-receipt.tsx
+#
+# Le rouleau de caisse imprime — #1248.
+receipt-ticket.tsx
