@@ -226,6 +226,110 @@ describe('la progression portée par l’URL (#733)', () => {
 });
 
 /**
+ * Un nouveau tunnel ne réutilise pas la confirmation du précédent (#1152).
+ *
+ * Le rendez-vous obtenu ne voyage pas dans l'URL, et venait donc toujours du
+ * stockage — alors que `reachableStep` lui donne la priorité absolue. Le bouton
+ * « Choisir » de la vitrine, qui ouvre `?etape=creneau&prestation=…`, rouvrait
+ * ainsi la confirmation précédente avec la prestation du lien à côté du
+ * rendez-vous stocké : « Coupe homme, 35,00 €, Réf. RDV-FW87-36 », là où
+ * RDV-FW87-36 est un massage avec un autre praticien.
+ */
+describe('le rendez-vous obtenu décrit un parcours, pas un onglet (#1152)', () => {
+  const AUTRE_PRESTATION = '77777777-7777-4777-8777-777777777777';
+
+  const RENDEZ_VOUS: BookedAppointment = {
+    id: '55555555-5555-4555-8555-555555555555',
+    reference: 'RDV-FW87-36',
+    status: 'pending',
+    serviceId: PRESTATION,
+    staffId: PRATICIEN,
+    clientId: '66666666-6666-4666-8666-666666666666',
+    startsAt: CRENEAU,
+    endsAt: CRENEAU,
+    price: { amountMinor: 3500, currency: 'EUR' },
+    clientNote: null,
+    rescheduledFromId: null,
+    cancelledAt: null,
+    cancelledBy: null,
+  };
+
+  /** Le brouillon d'une cliente qui vient de réserver dans cet onglet. */
+  function apresReservation(): BookingDraft {
+    return draftWith({
+      step: 'confirmation',
+      serviceId: PRESTATION,
+      staffId: PRATICIEN,
+      startsAt: CRENEAU,
+      contact: COORDONNEES,
+      contactAccount: COMPTE,
+      appointment: RENDEZ_VOUS,
+    });
+  }
+
+  it('tombe quand le lien nomme une autre prestation', () => {
+    // Le cas du ticket : « Choisir — Coupe homme » après une réservation.
+    const relu = draftFromSearch(`?etape=creneau&prestation=${AUTRE_PRESTATION}`, apresReservation());
+
+    expect(relu.appointment).toBeNull();
+    expect(relu.serviceId).toBe(AUTRE_PRESTATION);
+    // Et l'écran qui s'ouvre est bien le calendrier de la prestation demandée,
+    // pas une confirmation.
+    expect(reachableStep(relu)).toBe('creneau');
+  });
+
+  it('tombe aussi quand le lien rouvre la prestation qu’on vient de réserver', () => {
+    // Un lien qui ne porte pas de créneau décrit un parcours arrêté avant
+    // lui — c'est-à-dire un tunnel neuf, même sur la même prestation.
+    const relu = draftFromSearch(`?etape=creneau&prestation=${PRESTATION}`, apresReservation());
+
+    expect(relu.appointment).toBeNull();
+    expect(reachableStep(relu)).toBe('creneau');
+  });
+
+  it('tombe sur un lien qui ne nomme aucune prestation', () => {
+    expect(draftFromSearch('?etape=prestation', apresReservation()).appointment).toBeNull();
+  });
+
+  it('survit à l’entrée d’historique du parcours qui l’a produit (#732)', () => {
+    // Le geste retour depuis la confirmation retrouve l'entrée du
+    // récapitulatif : même prestation, même créneau. On ne revient jamais
+    // confirmer une seconde fois un rendez-vous déjà pris.
+    const relu = draftFromSearch(
+      `?etape=recapitulatif&prestation=${PRESTATION}&praticien=${PRATICIEN}&creneau=${CRENEAU}`,
+      apresReservation(),
+    );
+
+    expect(relu.appointment).toEqual(RENDEZ_VOUS);
+    expect(reachableStep(relu)).toBe('confirmation');
+  });
+
+  it('survit au rafraîchissement de l’écran de confirmation (#45)', () => {
+    const adresse = bookingSearch(apresReservation());
+
+    expect(draftFromSearch(adresse, apresReservation()).appointment).toEqual(RENDEZ_VOUS);
+  });
+
+  it('survit à une réservation prise sans praticien choisi', () => {
+    // `staffId` vaut `null` pour « premier disponible » (CDC §1.4) là où le
+    // rendez-vous nomme celui qui a été assigné : comparer les deux ferait
+    // tomber la confirmation de toutes ces réservations-là.
+    const premierDisponible = { ...apresReservation(), staffId: null };
+
+    expect(
+      draftFromSearch(`?etape=confirmation&prestation=${PRESTATION}&creneau=${CRENEAU}`, premierDisponible)
+        .appointment,
+    ).toEqual(RENDEZ_VOUS);
+  });
+
+  it('laisse le brouillon intact quand l’URL ne dit rien du tunnel', () => {
+    const stocke = apresReservation();
+
+    expect(draftFromSearch('?utm_source=insta', stocke)).toEqual(stocke);
+  });
+});
+
+/**
  * Le brouillon a un propriétaire, et change de mains avec le compte (#1151).
  *
  * `sessionStorage` meurt avec l'onglet, pas avec la session : entre les deux il
