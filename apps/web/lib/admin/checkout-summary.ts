@@ -54,6 +54,7 @@ import {
   ERROR_CODES,
   PAYMENT_ERROR_CODES,
   terminalReferenceSchema,
+  validationErrorDetailsSchema,
 } from '@spa/shared';
 
 import type {
@@ -620,6 +621,90 @@ export function terminalReferenceField(
   // et « le caissier a saisi une chaîne vide » deviendraient sinon deux états
   // indiscernables d'une même colonne (`terminalReferenceSchema`).
   return trimmed === '' ? {} : { terminalReference: trimmed };
+}
+
+/**
+ * Le nom du champ, tel que `class-validator` le préfixe dans ses messages.
+ *
+ * Les trois violations que `SettleSaleDto` peut produire sur ce champ
+ * commencent toutes par lui — « chaîne attendue », « seul un passage au
+ * terminal en porte une », « ce champ n'est pas celui d'un numéro de carte »
+ * (`payments/dto/settlement.dto.ts`). C'est ce préfixe qui est lu, et non le
+ * texte qui suit : celui-là est écrit pour un humain et peut changer sans
+ * préavis (web-frontend §2).
+ */
+const TERMINAL_REFERENCE_FIELD = 'terminalReference';
+
+/** `true` si cette violation de l'API parle du numéro du ticket du TPE. */
+function namesTerminalReference(violation: string): boolean {
+  return violation.startsWith(TERMINAL_REFERENCE_FIELD);
+}
+
+/**
+ * Le refus que l'API oppose au **numéro du ticket du TPE** — `null` quand le
+ * refus parle d'autre chose.
+ *
+ * ## Pourquoi ce chemin existe à côté de `terminalReferenceIssue`
+ *
+ * Les deux barrières de la référence ne sont pas au même endroit, et c'est
+ * délibéré : la **forme** — 32 caractères alphanumériques — est jugée à l'écran
+ * par `terminalReferenceIssue`, la **clé de Luhn** ne vit que côté API
+ * (`payments/terminal-reference.ts`), pour n'avoir qu'une implémentation d'un
+ * contrôle de conformité. La conséquence est qu'un numéro parfaitement bien
+ * formé — seize chiffres collés, sans espace ni tiret — passe l'écran et se
+ * fait refuser en 400 par le serveur.
+ *
+ * Ce refus-là arrivait **en bloc**, sous le bouton, avec le message générique de
+ * la validation — « La requête est invalide. » Il ne disait donc ni quel champ
+ * reprendre ni pourquoi, au moment précis où l'opérateur a une cliente devant
+ * lui. Le troisième critère de #1025 l'exige sur le champ, et `web-frontend` §4
+ * en fait la règle générale : un refus de saisie se pose là où la saisie s'est
+ * faite.
+ *
+ * ## Ce qui est lu, et ce qui est affiché
+ *
+ * Lu : le **code** et le nom du champ que l'API cite dans `details.violations`.
+ * Le filtre d'exception y recopie les messages de `class-validator`, qui citent
+ * des noms de champs et jamais de valeurs — la valeur fautive, elle, pourrait
+ * être un numéro de carte, et n'a rien à faire dans un corps d'erreur ni dans
+ * un journal (`payments-stripe` §1, `domain-exception.filter.ts`).
+ *
+ * Affiché : la phrase **du catalogue**, dans la langue de l'écran — pas celle
+ * de l'API, qui n'est traduite nulle part. C'est la même discipline que partout
+ * ailleurs au comptoir : l'écran réagit sur le code, jamais sur le message.
+ *
+ * `HTTP_400` n'est **pas** du lot, et c'est la différence avec `HTTP_404` et
+ * `HTTP_409` lus plus haut : ceux-là se décident sur le code seul, celui-ci
+ * aurait besoin des violations. Or le repli `HTTP_<statut>` d'`ApiClientError`
+ * n'est construit que sur la branche qui ne passe **aucun** `details` — un 400
+ * dont le corps est au contrat garde son vrai code, `VALIDATION_ERROR`. Un cas
+ * `HTTP_400` porteur de violations n'existe donc pas, et l'accepter ici ne
+ * serait qu'une garde qui ne peut jamais se déclencher.
+ *
+ * La forme de `details` est jugée par {@link validationErrorDetailsSchema}, le
+ * schéma du contrat partagé et non une vérification recopiée : le jour où l'API
+ * changera la façon dont elle nomme un champ fautif, c'est lui qui bougera, et
+ * ce chemin suivra sans qu'on ait à s'en souvenir.
+ */
+export function terminalReferenceRefusal(
+  code: string,
+  details: Record<string, unknown> | undefined,
+  locale: Locale = CHECKOUT_FALLBACK_LOCALE,
+): string | null {
+  if (code !== ERROR_CODES.VALIDATION_ERROR) {
+    return null;
+  }
+
+  const parsed = validationErrorDetailsSchema.safeParse(details);
+
+  // Un 400 de validation qui ne nomme pas ce champ n'est pas le sien : il
+  // repart vers le bloc, où un refus qu'aucun champ ne porte doit rester
+  // visible plutôt que de disparaître sous un `input` sans rapport.
+  if (!parsed.success || !parsed.data.violations.some(namesTerminalReference)) {
+    return null;
+  }
+
+  return checkoutWords(locale).failure.terminalReferenceRefused;
 }
 
 // ---------------------------------------------------------------------------
