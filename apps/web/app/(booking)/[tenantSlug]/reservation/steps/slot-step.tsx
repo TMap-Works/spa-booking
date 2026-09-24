@@ -16,6 +16,7 @@ import { BookingActionBar, type BookingSummary } from '@/components/booking/summ
 import { Button } from '@/components/ui/button';
 import { Notification } from '@/components/ui/notification';
 import { Sheet } from '@/components/ui/sheet';
+import { startAvailabilityRefresh } from '@/lib/booking/availability-refresh';
 import { calendarDateInTimeZone } from '@/lib/booking/calendar';
 import {
   addMonths,
@@ -29,17 +30,6 @@ import {
 import type { DisplayLocale } from '@/lib/format';
 
 import { loadAvailabilityAction } from '../actions';
-
-/**
- * Période de revalidation des disponibilités.
- *
- * Une minute est un compromis, pas une valeur ronde : assez court pour qu'une
- * cliente qui hésite ne choisisse pas dans une liste vieille de dix minutes,
- * assez long pour qu'une page laissée ouverte une après-midi ne fasse pas
- * quelques centaines d'appels. Le rendez-vous se joue de toute façon au verrou
- * serveur — ce rafraîchissement réduit la fenêtre d'erreur, il ne la ferme pas.
- */
-const REFRESH_INTERVAL_MS = 60_000;
 
 interface SlotStepProps {
   readonly tenant: PublicTenant;
@@ -138,6 +128,15 @@ interface SlotStepProps {
  * entre le moment où la cliente ouvre la page et celui où elle choisit, un
  * créneau a pu partir. Les recharger ne supprime pas le 409 — seul le verrou
  * serveur le fait — mais évite de proposer longtemps ce qui n'existe plus.
+ *
+ * « Court » valait soixante secondes et vaut **cinq** depuis #1153, tant que
+ * quelqu'un est devant l'écran : un horaire pris ailleurs restait proposé
+ * dix-sept secondes, et la collision n'apparaissait qu'à la confirmation. Le
+ * rythme lui-même — sa cadence, son repli quand l'onglet est caché, laissé seul
+ * ou refusé — vit dans
+ * [`availability-refresh.ts`](../../../../../../lib/booking/availability-refresh.ts),
+ * qui porte aussi la raison pour laquelle le flux SSE des rendez-vous ne peut
+ * pas servir cet écran-ci.
  *
  * ## Les états non nominaux suivent les documents de conception
  *
@@ -255,9 +254,17 @@ export function SlotStep({
     setMonth((current) => current ?? monthOf(retainedDate ?? now));
   }, [retainedDate, tenant.timezone]);
 
-  const load = useCallback(async () => {
+  /**
+   * Recharge les journées du mois regardé, et dit si la réponse est arrivée.
+   *
+   * Le booléen n'est pas pour l'écran — il a déjà `error` — mais pour la boucle
+   * de revalidation, qui s'écarte après un refus au lieu d'insister au même
+   * rythme (`availability-refresh.ts`). « Rien à demander » n'est pas un refus :
+   * un mois hors fenêtre et une réponse périmée rendent `true`.
+   */
+  const load = useCallback(async (): Promise<boolean> => {
     if (month === null) {
-      return;
+      return true;
     }
 
     // Relue à chaque chargement et non prise dans l'état : une page laissée
@@ -279,7 +286,7 @@ export function SlotStep({
       // n'y a rien plutôt que d'attendre une réponse qui ne viendra pas.
       setError(null);
       setDays([]);
-      return;
+      return true;
     }
 
     const query = {
@@ -294,20 +301,23 @@ export function SlotStep({
     const result = await loadAvailabilityAction(tenant.slug, query);
 
     if (ticket !== latestRequest.current) {
-      return;
+      return true;
     }
 
     if (result.ok) {
       setError(null);
       setDays(result.data.days);
-    } else {
-      setError(result.message);
-      // Une revalidation qui échoue ne vide pas une liste déjà affichée : la
-      // panne est passagère, les créneaux montrés restent la meilleure
-      // information disponible. Seul un premier chargement en échec pose la
-      // liste vide, pour que l'écran ne reste pas en squelette indéfiniment.
-      setDays((current) => current ?? []);
+      return true;
     }
+
+    setError(result.message);
+    // Une revalidation qui échoue ne vide pas une liste déjà affichée : la
+    // panne est passagère, les créneaux montrés restent la meilleure
+    // information disponible. Seul un premier chargement en échec pose la
+    // liste vide, pour que l'écran ne reste pas en squelette indéfiniment.
+    setDays((current) => current ?? []);
+
+    return false;
   }, [month, service.id, staffId, tenant.slug, tenant.timezone]);
 
   useEffect(() => {
@@ -319,24 +329,12 @@ export function SlotStep({
     setDays(null);
     setError(null);
     void load();
-
-    const revalidate = () => {
-      // Un onglet caché n'a personne devant lui : le rafraîchir consommerait des
-      // requêtes pour un écran que nul ne regarde.
-      if (document.visibilityState === 'visible') {
-        void load();
-      }
-    };
-
-    const timer = globalThis.setInterval(revalidate, REFRESH_INTERVAL_MS);
-
-    document.addEventListener('visibilitychange', revalidate);
-
-    return () => {
-      globalThis.clearInterval(timer);
-      document.removeEventListener('visibilitychange', revalidate);
-    };
   }, [load]);
+
+  // La revalidation, elle, est à part : elle ne vide rien et ne recharge pas au
+  // montage — elle prend la suite du chargement ci-dessus, à la cadence que
+  // `availability-refresh.ts` décide.
+  useEffect(() => startAvailabilityRefresh(load), [load]);
 
   /**
    * Le réessai explicite de l'état d'erreur — `states.md` étape 3.

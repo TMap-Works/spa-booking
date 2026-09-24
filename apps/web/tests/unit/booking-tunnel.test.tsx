@@ -230,6 +230,47 @@ async function allerJusquAuRecapitulatif(
   await screen.findByRole('button', { name: /Confirmer la réservation/ });
 }
 
+/**
+ * Quelqu'un d'autre prend 09:00 — **à l'instant du refus**, et pas avant.
+ *
+ * Le départ du créneau est daté par le 409 lui-même : c'est à partir de là, et
+ * seulement à partir de là, que les chargements cessent de le proposer. Poser
+ * cet état d'avance avec un `mockResolvedValueOnce` revenait à parier que la
+ * cliente cliquerait avant la deuxième interrogation du serveur — un pari que
+ * la revalidation à cinq secondes de #1153 fait perdre dès que la machine
+ * traîne : 09:00 s'effaçait sous la souris, et le scénario échouait avant même
+ * d'atteindre la collision qu'il décrit.
+ *
+ * `beforeEach` sert les deux horaires ; celui-ci n'en retire qu'un, au bon moment.
+ */
+/**
+ * Le calendrier rouvert derrière une collision, attendu le temps qu'il faut.
+ *
+ * `findBy*` accorde **une seconde**, et cette borne-là n'est pas celle que
+ * `vitest.config.mts` a relevée à trente : `testTimeout` couvre le test entier,
+ * `asyncUtilTimeout` chaque attente. Or ce que celle-ci attend est un
+ * aller-retour complet — refus de l'API, retour à l'étape créneau, nouveau
+ * chargement —, et une vague de jalon fait tourner plusieurs agents sur les
+ * mêmes cœurs : le worker affamé rend la main après la seconde, et le test
+ * échoue sur la famine au lieu du comportement. Le même constat que le
+ * relèvement de `testTimeout` documente, à l'autre bout de la même course.
+ */
+function creneauApresCollision(nom: string): Promise<HTMLElement> {
+  return screen.findByRole('button', { name: nom }, { timeout: 15_000 });
+}
+
+function perdLeCreneauDuMatin(): void {
+  bookAppointmentAction.mockImplementation(() => {
+    loadAvailabilityAction.mockResolvedValue({ ok: true, data: availability([APRES_MIDI]) });
+
+    return Promise.resolve({
+      ok: false,
+      code: 'SLOT_NO_LONGER_AVAILABLE',
+      message: MESSAGE_API,
+    });
+  });
+}
+
 describe('un créneau pris pendant la saisie', () => {
   it('explique la situation avec l’horaire perdu, sans reprendre le message de l’API', async () => {
     bookAppointmentAction.mockResolvedValue({
@@ -255,43 +296,38 @@ describe('un créneau pris pendant la saisie', () => {
   });
 
   it('recharge les créneaux plutôt que de réafficher la liste périmée', async () => {
-    // Le second chargement ne rend plus 09:00 : c'est le créneau que quelqu'un
-    // d'autre vient d'obtenir. S'il restait proposé, la cliente se heurterait au
-    // même 409 en boucle.
-    loadAvailabilityAction
-      .mockResolvedValueOnce({ ok: true, data: availability([MATIN, APRES_MIDI]) })
-      .mockResolvedValue({ ok: true, data: availability([APRES_MIDI]) });
-    bookAppointmentAction.mockResolvedValue({
-      ok: false,
-      code: 'SLOT_NO_LONGER_AVAILABLE',
-      message: MESSAGE_API,
-    });
+    // Le créneau part **au moment du 409**, et les chargements suivants ne le
+    // rendent plus. Dater ainsi le départ plutôt que de le poser d'avance avec
+    // un `mockResolvedValueOnce` n'est pas un détail de forme : l'étape créneau
+    // revalide toutes les cinq secondes depuis #1153, si bien qu'un premier
+    // chargement « une seule fois » se consommait avant même que la cliente
+    // n'ait cliqué — et 09:00 disparaissait sous sa souris, sur une machine
+    // lente. Le scénario décrit maintenant ce qui se passe vraiment.
+    perdLeCreneauDuMatin();
 
     const user = renderTunnel();
     await allerJusquAuRecapitulatif(user, '09 h 00');
+
+    const avantLaCollision = loadAvailabilityAction.mock.calls.length;
     await user.click(screen.getByRole('button', { name: /Confirmer la réservation/ }));
 
-    expect(await screen.findByRole('button', { name: '14 h 00' })).toBeDefined();
-    expect(loadAvailabilityAction).toHaveBeenCalledTimes(2);
+    expect(await creneauApresCollision('14 h 00')).toBeDefined();
+    // Sur l'existence d'un rechargement après la collision, et non sur un total :
+    // compter les appels reviendrait à compter les battements de revalidation,
+    // donc le temps que la machine met à jouer le test.
+    expect(loadAvailabilityAction.mock.calls.length).toBeGreaterThan(avantLaCollision);
     expect(screen.queryByRole('button', { name: '09 h 00' })).toBeNull();
   });
 
   it('conserve la prestation et les coordonnées déjà saisies', async () => {
-    loadAvailabilityAction
-      .mockResolvedValueOnce({ ok: true, data: availability([MATIN, APRES_MIDI]) })
-      .mockResolvedValue({ ok: true, data: availability([APRES_MIDI]) });
-    bookAppointmentAction.mockResolvedValueOnce({
-      ok: false,
-      code: 'SLOT_NO_LONGER_AVAILABLE',
-      message: MESSAGE_API,
-    });
+    perdLeCreneauDuMatin();
 
     const user = renderTunnel();
     await allerJusquAuRecapitulatif(user, '09 h 00');
     await user.click(screen.getByRole('button', { name: /Confirmer la réservation/ }));
 
     // Un seul geste sépare la cliente de sa réservation : reprendre un horaire.
-    await user.click(await screen.findByRole('button', { name: '14 h 00' }));
+    await user.click(await creneauApresCollision('14 h 00'));
 
     expect(screen.getByText(`${contact.firstName} ${contact.lastName}`)).toBeDefined();
     expect(screen.getByLabelText(/Un mot pour le salon/)).toHaveProperty('value', MOT);
@@ -355,6 +391,12 @@ describe('le tunnel trie sur le code d’erreur, jamais sur le message', () => {
 
     const user = renderTunnel();
     await allerJusquAuRecapitulatif(user, '09 h 00');
+
+    // Le point de comparaison est pris ici, et non à zéro : l'étape créneau
+    // revalide toutes les cinq secondes depuis #1153, et le nombre de
+    // battements qu'elle a eu le temps de faire avant ce clic ne dit rien du
+    // comportement éprouvé — seulement de la vitesse de la machine.
+    const avantLaPanne = loadAvailabilityAction.mock.calls.length;
     await user.click(screen.getByRole('button', { name: /Confirmer la réservation/ }));
 
     expect(await screen.findByText('La réservation n’a pas abouti')).toBeDefined();
@@ -364,7 +406,8 @@ describe('le tunnel trie sur le code d’erreur, jamais sur le message', () => {
       false,
     );
     expect(screen.queryByRole('button', { name: '14 h 00' })).toBeNull();
-    expect(loadAvailabilityAction).toHaveBeenCalledTimes(1);
+    // Le récapitulatif ne monte pas l'étape créneau : rien n'a pu recharger.
+    expect(loadAvailabilityAction.mock.calls.length).toBe(avantLaPanne);
   });
 });
 
@@ -854,13 +897,18 @@ describe('l’en-tête et la progression du tunnel (#1047)', () => {
     const user = renderTunnel();
     await allerJusquAuRecapitulatif(user, '09 h 00');
 
+    // Pris avant les retours, pour la même raison qu'ailleurs dans ce fichier :
+    // ce qui est éprouvé est le rechargement **au remontage**, pas le nombre de
+    // battements de revalidation qu'une machine lente aura laissé passer (#1153).
+    const avantLeRetour = loadAvailabilityAction.mock.calls.length;
+
     await user.click(screen.getByRole('button', { name: 'Retour' }));
     await user.click(screen.getByRole('button', { name: 'Retour' }));
 
     // `SlotStep` est remonté, et interroge les disponibilités à son montage : la
     // cliente ne choisit pas dans la liste d'il y a trois écrans.
     expect(await screen.findByRole('button', { name: '09 h 00' })).toBeDefined();
-    expect(loadAvailabilityAction).toHaveBeenCalledTimes(2);
+    expect(loadAvailabilityAction.mock.calls.length).toBeGreaterThan(avantLeRetour);
   });
 
   it('laisse sortir sans rien demander tant que rien n’a été choisi', async () => {

@@ -23,6 +23,11 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { SlotStep } from '@/app/(booking)/[tenantSlug]/reservation/steps/slot-step';
+import {
+  IDLE_REFRESH_MS,
+  PRESENCE_WINDOW_MS,
+  PRESENT_REFRESH_MS,
+} from '@/lib/booking/availability-refresh';
 import { addCalendarDays } from '@/lib/booking/calendar';
 import { BAND_DAYS } from '@/lib/booking/day-band';
 
@@ -559,13 +564,14 @@ describe('états de chargement et état vide', () => {
     await user.click(screen.getByRole('button', { name: 'Ouvrir le calendrier — septembre 2026' }));
     await user.click(screen.getByRole('button', { name: 'Mois suivant' }));
 
+    // Sur le **dernier** appel et non sur leur nombre : la revalidation bat
+    // toutes les cinq secondes depuis #1153, et compter les appels rendrait
+    // cette assertion dépendante du temps que la machine met à jouer le test.
     await waitFor(() => {
-      expect(loadAvailabilityAction).toHaveBeenCalledTimes(2);
-    });
-
-    expect(loadAvailabilityAction.mock.calls.at(-1)?.[1]).toMatchObject({
-      from: '2026-10-01',
-      to: '2026-10-01',
+      expect(loadAvailabilityAction.mock.calls.at(-1)?.[1]).toMatchObject({
+        from: '2026-10-01',
+        to: '2026-10-01',
+      });
     });
     expect(screen.getByRole('button', { name: 'Ouvrir le calendrier — octobre 2026' })).toBeDefined();
   });
@@ -628,14 +634,52 @@ describe('rafraîchissement des disponibilités', () => {
     renderStep();
     await screen.findByRole('button', { name: '09 h 00' });
 
+    // Un écart et non un total : la revalidation bat toutes les cinq secondes
+    // depuis #1153, et un test lent sous charge en verrait passer une.
+    const avant = loadAvailabilityAction.mock.calls.length;
+
     await act(async () => {
       document.dispatchEvent(new Event('visibilitychange'));
     });
 
-    expect(loadAvailabilityAction).toHaveBeenCalledTimes(2);
+    expect(loadAvailabilityAction.mock.calls.length).toBe(avant + 1);
   });
 
-  it('recharge à intervalle court sans attendre un geste', async () => {
+  it('recharge dans les cinq secondes, sans geste ni rechargement', async () => {
+    // #1153 : un horaire pris dans un autre onglet ou au comptoir restait
+    // proposé dix-sept secondes, et la collision n'apparaissait qu'à la
+    // confirmation. Le seuil tenu ici est celui de l'issue.
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+
+    try {
+      renderStep();
+      await vi.waitFor(() => {
+        expect(screen.getByRole('button', { name: '09 h 00' })).toBeDefined();
+      });
+
+      // Un écart et non un total : `shouldAdvanceTime` fait courir l'horloge
+      // feinte avec l'horloge réelle, si bien qu'une machine qui traîne sur le
+      // rendu ci-dessus peut avoir laissé passer un battement avant même qu'on
+      // compte. Ce qui est éprouvé est qu'un battement tombe **dans les cinq
+      // secondes**, pas qu'il n'y en ait jamais eu d'autre.
+      const avant = loadAvailabilityAction.mock.calls.length;
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(PRESENT_REFRESH_MS);
+      });
+
+      expect(loadAvailabilityAction.mock.calls.length).toBeGreaterThan(avant);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('relâche la cadence quand l’écran est resté seul', async () => {
+    // Le pendant du test précédent, et la raison pour laquelle la cadence n'est
+    // pas simplement « cinq secondes » : `GET /public/{slug}/availability`
+    // calcule, et son quota est compté par adresse — celle du serveur Next,
+    // pour tous les visiteurs du tunnel à la fois. Une page oubliée ouverte une
+    // après-midi retombe donc sur la minute d'avant #1153.
     vi.useFakeTimers({ shouldAdvanceTime: true });
 
     try {
@@ -645,12 +689,22 @@ describe('rafraîchissement des disponibilités', () => {
       });
 
       await act(async () => {
-        await vi.advanceTimersByTimeAsync(60_000);
+        await vi.advanceTimersByTimeAsync(PRESENCE_WINDOW_MS + PRESENT_REFRESH_MS);
       });
 
-      // Entre le moment où la cliente ouvre la page et celui où elle choisit, un
-      // créneau a pu partir.
-      expect(loadAvailabilityAction).toHaveBeenCalledTimes(2);
+      loadAvailabilityAction.mockClear();
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(PRESENT_REFRESH_MS * 4);
+      });
+
+      expect(loadAvailabilityAction).not.toHaveBeenCalled();
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(IDLE_REFRESH_MS);
+      });
+
+      expect(loadAvailabilityAction).toHaveBeenCalled();
     } finally {
       vi.useRealTimers();
     }
