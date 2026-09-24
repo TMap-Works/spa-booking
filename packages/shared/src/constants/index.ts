@@ -1,4 +1,5 @@
 export {
+  APPOINTMENT_NOT_STARTED_DETAIL,
   APPOINTMENT_REFERENCE_ALPHABET,
   APPOINTMENT_REFERENCE_GROUP_LENGTH,
   APPOINTMENT_REFERENCE_LENGTH,
@@ -9,14 +10,23 @@ export {
   APPOINTMENT_STATUSES,
   BLOCKING_APPOINTMENT_STATUSES,
   CANCELLATION_ACTORS,
+  OUTCOME_APPOINTMENT_STATUSES,
   TERMINAL_APPOINTMENT_STATUSES,
+  canRecordAppointmentOutcome,
   canTransitionAppointment,
+  hasAppointmentStarted,
+  isAppointmentNotStartedRefusal,
   isAppointmentReference,
   isAppointmentStatus,
   isBlockingAppointmentStatus,
+  isOutcomeAppointmentStatus,
   normalizeAppointmentReference,
 } from './appointment';
-export type { AppointmentStatus, CancellationActor } from './appointment';
+export type {
+  AppointmentStatus,
+  CancellationActor,
+  OutcomeAppointmentStatus,
+} from './appointment';
 
 export {
   ADDRESS_LINE_MAX_LENGTH,
