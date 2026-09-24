@@ -43,6 +43,9 @@ const FARA: Customer = {
   // Une adresse vivante — l'état de la quasi-totalité du fichier (#525).
   emailSuppressedAt: null,
   emailSuppressionReason: null,
+  // « Aucune préférence enregistrée » (#844, #852) : l'état d'une fiche saisie
+  // au comptoir, qui n'a jamais eu d'occasion d'exprimer une langue.
+  locale: null,
 };
 
 afterEach(() => {

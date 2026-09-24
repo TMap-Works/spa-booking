@@ -34,9 +34,68 @@ function flatKeys(tree: MessageTree, prefix = ''): string[] {
     .sort();
 }
 
-/** Les paramètres `{nom}` attendus par un message. */
+/**
+ * Les paramètres `{nom}` attendus par un message.
+ *
+ * ## Pourquoi ce n'est pas une expression régulière — #852
+ *
+ * Parce qu'une accolade ICU veut dire deux choses selon l'endroit où elle est :
+ * dans un **message**, `{` ouvre un paramètre — `{term}`, `{count, plural, …}` ;
+ * dans les **options** d'un `plural` ou d'un `select`, elle ouvre un
+ * sous-message, dont le texte est du français ou de l'anglais et non un nom de
+ * paramètre.
+ *
+ * L'expression régulière d'origine ne faisait pas la différence. Elle tenait
+ * tant qu'une seule branche par pluriel commençait par une lettre — c'est le cas
+ * de `{count, plural, =0 {Aucun salon} one {# salon} …}`, dont le `=0` est
+ * avalé par le premier motif et dont les suivantes commencent par `#`. Le
+ * premier libellé **entièrement** composé de mots l'a mise en défaut :
+ * `{count, plural, one {Visite honorée} other {Visites honorées}}` déclarait
+ * « Visites » comme paramètre en français et « Completed » en anglais, et deux
+ * catalogues corrects se voyaient refusés.
+ *
+ * Le parcours ci-dessous tient une pile de ce qu'il traverse, et il est du même
+ * coup **plus juste** que ce qu'il remplace : un paramètre imbriqué dans une
+ * branche — `other {# rendez-vous de {name}}` — était invisible avant, il est
+ * compté maintenant.
+ */
 function placeholders(message: string): string[] {
-  return [...message.matchAll(/\{(\w+)[^}]*\}/g)].map((match) => match[1] ?? '').sort();
+  const found = new Set<string>();
+  /** Ce qu'on traverse : le corps d'un message, ou les options d'un paramètre. */
+  const stack: ('message' | 'options')[] = ['message'];
+
+  for (let index = 0; index < message.length; index += 1) {
+    const char = message[index];
+
+    if (char === '}') {
+      // Une accolade fermante orpheline est du texte : la pile garde son fond.
+      if (stack.length > 1) {
+        stack.pop();
+      }
+      continue;
+    }
+
+    if (char !== '{') {
+      continue;
+    }
+
+    if (stack[stack.length - 1] === 'options') {
+      // Un sous-message de `plural` ou de `select` : son texte n'est pas un nom,
+      // mais il peut porter des paramètres à lui.
+      stack.push('message');
+      continue;
+    }
+
+    const named = /^\s*(\w+)/.exec(message.slice(index + 1));
+
+    if (named !== null) {
+      found.add(named[1] ?? '');
+    }
+
+    stack.push('options');
+  }
+
+  return [...found].sort();
 }
 
 /** Les feuilles d'un arbre, par clé aplatie. */
