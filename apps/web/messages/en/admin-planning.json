@@ -36,6 +36,8 @@
     "closed": "Closed",
     "break": "Break",
     "outsideHours": "Outside opening hours",
+    "timeOff": "Time off",
+    "offDuty": "Off duty",
     "noAppointment": "No appointments",
     "countOne": "1 appt",
     "countOther": "{count} appts",

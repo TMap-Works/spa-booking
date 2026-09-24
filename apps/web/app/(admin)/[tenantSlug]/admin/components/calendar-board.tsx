@@ -5,6 +5,8 @@ import type {
   OpeningHoursEntry,
   Service,
   StaffMemberSummary,
+  StaffSchedule,
+  StaffTimeOff,
   TimeZone,
 } from '@spa/shared';
 import { ERROR_CODES } from '@spa/shared';
@@ -146,6 +148,17 @@ import { useAdminSessionRenewal } from './use-admin-session-renewal';
 export type CalendarCache = Readonly<Record<string, readonly Appointment[]>>;
 
 /**
+ * Les absences déjà chargées, période par période (#1158).
+ *
+ * Une table à part plutôt qu'un couple rangé dans `CalendarCache` : les deux
+ * n'ont pas la même durée de vie. Une écriture du tiroir périme l'agenda — c'est
+ * tout l'objet du compteur `cacheAge` —, jamais les congés, qui ne se posent que
+ * depuis la fiche du praticien. Les fondre aurait fait disparaître les plages
+ * grisées à chaque rendez-vous posé, le temps d'un aller-retour.
+ */
+export type CalendarTimeOffCache = Readonly<Record<string, readonly StaffTimeOff[]>>;
+
+/**
  * Ce que la grille sait du report en cours — passé de proche en proche jusqu'aux
  * cellules.
  *
@@ -177,6 +190,13 @@ interface CalendarBoardProps {
   /** Ancrage de la période ouverte, déjà normalisé par la page. */
   readonly date: string;
   readonly initialPeriods: CalendarCache;
+  /**
+   * Les congés des trois périodes que la page a amorcées (#1158).
+   *
+   * Facultatif, et vide par défaut : les écrans qui montent ce planning sans
+   * lire le planning d'absences gardent le comportement d'avant ce ticket.
+   */
+  readonly initialTimeOff?: CalendarTimeOffCache;
   /** Message d'indisponibilité du premier chargement, s'il a échoué. */
   readonly loadError: string | null;
   /**
@@ -201,6 +221,21 @@ interface CalendarBoardProps {
    * reste consultable : lire l'agenda ne dépend pas du répertoire.
    */
   readonly staff: readonly StaffMemberSummary[];
+  /**
+   * Les semaines de travail de ces praticiens (#1158).
+   *
+   * Lues par la page en même temps que le répertoire, et pour la même raison :
+   * elles ne changent pas d'une journée à l'autre, et les relire à chaque flèche
+   * coûterait un appel par fiche sur le chemin que le planning existe pour
+   * rendre instantané.
+   *
+   * Une fiche qui n'y figure pas est une fiche dont l'horaire n'a pas pu être
+   * lu : sa colonne garde alors le comportement d'avant ce ticket, plutôt que de
+   * se peindre en repos toute la journée.
+   *
+   * Facultatif, et **vide par défaut** : rien n'est restreint sans elles.
+   */
+  readonly staffSchedules?: readonly StaffSchedule[];
   /**
    * Les deux listes ci-dessus ont bien été lues (#751).
    *
@@ -252,8 +287,16 @@ const NOW_REFRESH_MS = 60_000;
  */
 const EMPTY_OPENING_HOURS: readonly OpeningHoursEntry[] = [];
 
+/** Les deux replis de #1158, hissés hors du composant pour la même raison. */
+const EMPTY_SCHEDULES: readonly StaffSchedule[] = [];
+const EMPTY_TIME_OFF: readonly StaffTimeOff[] = [];
+const EMPTY_TIME_OFF_CACHE: CalendarTimeOffCache = {};
+
 /** Ce que l'action serveur du planning rend — le type que le cache reçoit. */
-type CalendarLoadResult = AdminActionResult<{ readonly appointments: Appointment[] }>;
+type CalendarLoadResult = AdminActionResult<{
+  readonly appointments: Appointment[];
+  readonly timeOff: readonly StaffTimeOff[];
+}>;
 
 export function CalendarBoard({
   tenantSlug,
@@ -261,9 +304,11 @@ export function CalendarBoard({
   view: initialView,
   date: initialDate,
   initialPeriods,
+  initialTimeOff = EMPTY_TIME_OFF_CACHE,
   loadError,
   services,
   staff,
+  staffSchedules = EMPTY_SCHEDULES,
   setupKnown = true,
   openingHours = EMPTY_OPENING_HOURS,
   countryCode = null,
@@ -278,6 +323,10 @@ export function CalendarBoard({
   const [date, setDate] = useState<string>(initialDate);
   const [periods, setPeriods] = useState<Map<string, readonly Appointment[]>>(
     () => new Map(Object.entries(initialPeriods)),
+  );
+  /** Les congés, période par période — voir `CalendarTimeOffCache` (#1158). */
+  const [timeOffPeriods, setTimeOffPeriods] = useState<Map<string, readonly StaffTimeOff[]>>(
+    () => new Map(Object.entries(initialTimeOff)),
   );
   const [loading, setLoading] = useState(false);
   const [failure, setFailure] = useState<string | null>(loadError);
@@ -317,6 +366,7 @@ export function CalendarBoard({
 
   const currentKey = rangeKey(view, date, weekStart);
   const appointments = periods.get(currentKey);
+  const timeOff = timeOffPeriods.get(currentKey) ?? EMPTY_TIME_OFF;
   /** L'URL de la période affichée — celle que l'effet d'historique y écrit. */
   const currentPath = adminCalendarPath(tenantSlug, { view, date });
 
@@ -364,11 +414,25 @@ export function CalendarBoard({
         appointments: appointments ?? [],
         staff,
         openingHours,
+        staffSchedules,
+        timeOff,
         timeZone,
         display,
         ...(now === null ? {} : { now }),
       }),
-    [view, date, weekStart, appointments, staff, openingHours, timeZone, display, now],
+    [
+      view,
+      date,
+      weekStart,
+      appointments,
+      staff,
+      openingHours,
+      staffSchedules,
+      timeOff,
+      timeZone,
+      display,
+      now,
+    ],
   );
 
   // Une période qu'on n'a pas encore n'est pas une période vide : dire « aucun
@@ -462,7 +526,10 @@ export function CalendarBoard({
         // la région du salon, et l'action recalcule la plage à partir de lui.
         // Sans lui, un ancrage posé un dimanche serait ramené au lundi précédent
         // côté serveur, et la semaine chargée ne serait pas celle qu'on affiche.
-        pending = loadCalendarRangeAction(tenantSlug, nextView, anchor, weekStart);
+        // Le fuseau part avec la requête pour la même raison que le jour
+        // d'ouverture : il ne sert qu'à borner la fenêtre d'absences, et
+        // l'action le revalide avant de s'en servir (#1158).
+        pending = loadCalendarRangeAction(tenantSlug, nextView, anchor, weekStart, timeZone);
         inFlight.current.set(key, pending);
       }
 
@@ -504,6 +571,13 @@ export function CalendarBoard({
           setPeriods((known) => new Map(known).set(key, result.data.appointments));
         }
 
+        // Hors du garde-fou de péremption, délibérément : `cacheAge` protège
+        // l'agenda d'une réponse partie avant une écriture du tiroir, et une
+        // écriture du tiroir ne pose ni ne retire de congé. Les ranger sous la
+        // même condition les aurait fait disparaître de la grille le temps d'un
+        // rendez-vous posé.
+        setTimeOffPeriods((known) => new Map(known).set(key, result.data.timeOff));
+
         if (speaks) {
           setFailure(null);
         }
@@ -525,7 +599,7 @@ export function CalendarBoard({
         setFailure(calendarFailureMessage(result.code, result.message, locale));
       }
     },
-    [renewSession, tenantSlug, weekStart, locale],
+    [renewSession, tenantSlug, weekStart, locale, timeZone],
   );
 
   /** Ouvre une période — depuis le cache si elle y est, sinon par l'action. */

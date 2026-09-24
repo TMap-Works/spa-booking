@@ -36,6 +36,8 @@
     "closed": "Fermé",
     "break": "Pause",
     "outsideHours": "Hors horaires",
+    "timeOff": "Congé",
+    "offDuty": "Repos",
     "noAppointment": "Aucun rendez-vous",
     "countOne": "1 RDV",
     "countOther": "{count} RDV",
