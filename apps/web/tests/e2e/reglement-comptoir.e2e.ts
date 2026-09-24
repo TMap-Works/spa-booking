@@ -79,9 +79,15 @@ test.describe('Encaissement au comptoir', () => {
     });
 
     await test.step('Une première part de 50,00 € en espèces', async () => {
-      // Les boutons radio du moyen de paiement sont `spa-visually-hidden` : ils
-      // se cochent de force, comme le ferait le clic sur leur étiquette.
-      await page.locator('#moyen-cash').check({ force: true });
+      // **L'étiquette, et non l'entrée.** Les boutons radio du moyen de
+      // paiement sont `spa-visually-hidden` : un carré d'un pixel, détouré par
+      // `clip-path: inset(50%)`, qui n'a plus de surface cliquable. Un
+      // `check({ force: true })` saute bien le contrôle d'actionnabilité, mais
+      // il clique quand même aux coordonnées de ce pixel — le clic part
+      // ailleurs, React ne voit aucun changement, et Playwright rend
+      // « Clicking the checkbox did not change its state ». C'est aussi le
+      // geste réel de l'opérateur : ce qu'il voit et touche est l'étiquette.
+      await page.locator('label[for="moyen-cash"]').click();
       await page.getByLabel('Régler une partie').check();
       await page.getByLabel('Montant de ce règlement').fill('50,00');
       await page.getByRole('button', { name: /^Encaisser .* en espèces/ }).click();
@@ -93,7 +99,7 @@ test.describe('Encaissement au comptoir', () => {
     });
 
     await test.step('Le solde de 28,00 € sur le terminal du salon', async () => {
-      await page.locator('#moyen-card').check({ force: true });
+      await page.locator('label[for="moyen-card"]').click();
       await page.getByRole('button', { name: /^Régler .* au TPE/ }).click();
 
       // Le montant à recopier sur le terminal est annoncé en grand : c'est le
@@ -144,8 +150,13 @@ test.describe('Encaissement au comptoir', () => {
 
     await connexionComptoir(page, COMPTES.manager);
     await page.goto(chemins.encaissement(jour, rendezVous.id));
+    // Le repère qui dit que l'écran est là avant qu'on ne le manipule : sans
+    // lui, le premier clic part sur une page encore en compilation côté dev.
+    await expect(page.getByRole('heading', { name: 'Encaissement' })).toBeVisible({
+      timeout: 20_000,
+    });
 
-    await page.locator('#moyen-card').check({ force: true });
+    await page.locator('label[for="moyen-card"]').click();
     await page.getByRole('button', { name: /^Régler .* au TPE/ }).click();
     await page.getByRole('button', { name: 'Paiement refusé' }).click();
 
