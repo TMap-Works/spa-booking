@@ -5,6 +5,7 @@ import {
   formatTaxRate,
   issuerAddressLines,
   legalIdLine,
+  settlementLabel,
   soldLines,
   taxTableRows,
 } from '@/lib/admin/receipt-ticket';
@@ -74,5 +75,110 @@ describe('le ticket de caisse', () => {
     expect(formatReceiptPhone('+33142000000')).toBe('01 42 00 00 00');
     expect(formatReceiptPhone('+261341234567')).toBe('034 12 345 67');
     expect(formatReceiptPhone('+14155550100')).toBe('+14155550100');
+  });
+
+  /**
+   * Le libellé d'un règlement — #1217.
+   *
+   * Les trois lignes de la table de l'issue sont figées ici, et avec elles la
+   * seule chose qui compte au rapprochement : de quel relevé la ligne se
+   * rapproche. Ce sont les mots que `formatSettlementMethod` imprime sur le PDF
+   * (`apps/api/.../receipt-pdf/receipt-pdf.format.ts`) — l'écran et le papier
+   * sont la même pièce.
+   */
+  describe('le libellé d’un règlement', () => {
+    it('nomme le tuyau de la carte, et non le seul moyen', () => {
+      expect(settlementLabel({ method: 'CARD', cardChannel: 'TERMINAL' })).toBe(
+        'Carte bancaire (TPE)',
+      );
+      expect(settlementLabel({ method: 'CARD', cardChannel: 'STRIPE' })).toBe(
+        'Carte bancaire (en ligne)',
+      );
+      expect(settlementLabel({ method: 'CASH', cardChannel: null })).toBe('Espèces');
+    });
+
+    /*
+     * Un canal nul ne peut être qu'une carte antérieure à #834 : le TPE
+     * n'existait pas alors. L'imprimer « TPE » inventerait un passage au
+     * terminal, et enverrait le rapprochement sur le mauvais relevé.
+     */
+    it('imprime une carte sans canal comme une carte en ligne, jamais comme un TPE', () => {
+      expect(settlementLabel({ method: 'CARD', cardChannel: null })).toBe(
+        'Carte bancaire (en ligne)',
+      );
+      expect(settlementLabel({ method: 'CARD' })).toBe('Carte bancaire (en ligne)');
+    });
+
+    it('n’accole la référence qu’au canal TERMINAL', () => {
+      expect(
+        settlementLabel({ method: 'CARD', cardChannel: 'TERMINAL', terminalReference: 'A1B2C3' }),
+      ).toBe('Carte bancaire (TPE) — réf. A1B2C3');
+      expect(
+        settlementLabel({ method: 'CARD', cardChannel: 'STRIPE', terminalReference: 'A1B2C3' }),
+      ).toBe('Carte bancaire (en ligne)');
+    });
+
+    /*
+     * `terminalReference` est **omise** par le contrat quand la colonne est
+     * nulle, là où l'API la porte en `string | null` : les deux formes, et la
+     * référence blanche, n'ont rien à accoler.
+     */
+    it('ne laisse pas un tiret orphelin quand la référence manque ou est blanche', () => {
+      expect(settlementLabel({ method: 'CARD', cardChannel: 'TERMINAL' })).toBe(
+        'Carte bancaire (TPE)',
+      );
+      expect(
+        settlementLabel({ method: 'CARD', cardChannel: 'TERMINAL', terminalReference: '   ' }),
+      ).toBe('Carte bancaire (TPE)');
+    });
+
+    /* Les mots viennent du catalogue : le produit sert l'anglais par défaut. */
+    it('dit les mêmes trois choses en anglais', () => {
+      expect(settlementLabel({ method: 'CASH' }, 'en')).toBe('Cash');
+      expect(settlementLabel({ method: 'CARD', cardChannel: 'TERMINAL' }, 'en')).toBe(
+        'Bank card (terminal)',
+      );
+      expect(settlementLabel({ method: 'CARD', cardChannel: 'STRIPE' }, 'en')).toBe(
+        'Bank card (online)',
+      );
+      expect(
+        settlementLabel({ method: 'CARD', cardChannel: 'TERMINAL', terminalReference: 'A1B2C3' }, 'en'),
+      ).toBe('Bank card (terminal) — ref. A1B2C3');
+    });
+
+    /*
+     * La frontière PCI tient par la forme : le libellé ne compose que le canal
+     * et la référence d'opération du terminal — aucune marque, aucun porteur,
+     * aucun chiffre de carte n'existe dans le contrat du reçu
+     * (payments-stripe §1).
+     *
+     * C'est l'**égalité stricte** qui le prouve, et non une borne sur les
+     * chiffres : une référence de TPE est le plus souvent numérique —
+     * `A0000123` est l'exemple même du DTO —, et « aucun groupe de quatre
+     * chiffres » confondrait un numéro d'opération légitime avec une donnée de
+     * carte. La référence est reprise telle quelle, elle n'est pas masquée.
+     */
+    it('ne compose jamais autre chose que le canal et la référence d’opération', () => {
+      expect(
+        settlementLabel({
+          method: 'CARD',
+          cardChannel: 'TERMINAL',
+          terminalReference: 'A0000123',
+        }),
+      ).toBe('Carte bancaire (TPE) — réf. A0000123');
+    });
+
+    /*
+     * La référence est **recopiée**, jamais interprétée : `replaceAll` donne un
+     * sens à `$&` dans une chaîne de remplacement, et le contrat ne borne pas la
+     * forme en lecture (`z.string()` — une reprise de données peut en porter
+     * n'importe quelle ponctuation). Le PDF, qui compose par littéral gabarit,
+     * la recopie déjà telle quelle ; l'écran doit dire le même mot.
+     */
+    it('recopie la référence telle quelle, ponctuation comprise', () => {
+      expect(
+        settlementLabel({ method: 'CARD', cardChannel: 'TERMINAL', terminalReference: "A$&B$'C" }),
+      ).toBe("Carte bancaire (TPE) — réf. A$&B$'C");
+    });
   });
 });
