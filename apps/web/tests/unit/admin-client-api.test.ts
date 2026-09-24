@@ -51,6 +51,11 @@ const CUSTOMER = {
   // note interne.
   emailSuppressedAt: null,
   emailSuppressionReason: null,
+  // La langue préférée (#844), projetée sur la fiche par #852 : elle aussi est
+  // **toujours émise**, à `null` quand la cliente n'en a jamais exprimé — et la
+  // frontière refuse la réponse qui l'omettrait, comme elle refuse une fiche
+  // sans note interne.
+  locale: 'fr',
 };
 
 const HISTORY = {

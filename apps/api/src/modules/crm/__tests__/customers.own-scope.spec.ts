@@ -42,6 +42,9 @@ const FICHE: Customer = {
   anonymizedAt: null,
   emailSuppressedAt: null,
   emailSuppressionReason: null,
+  // Aucune préférence enregistrée (#852) : la fiche n'a d'autre emploi ici que
+  // d'être rendue telle quelle, et `null` est le cas le plus courant en base.
+  locale: null,
 };
 
 /** Le service, réduit aux deux appels que les routes à double portée lui font. */

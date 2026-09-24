@@ -1,0 +1,8 @@
+# Marqueur de lint i18n — voir eslint-rules/i18n-markers.mjs.
+# Le fichier client du back-office, traduit par #852 : la recherche, la liste,
+# la fiche et ses trois formulaires.
+#
+# Vide de motifs, donc tout le sous-arbre : ce répertoire n'appartient qu'à ce
+# ticket — ses trois briques vivent dans `clients/components/` et non dans le
+# `admin/components/` partagé —, et aucun de ses écrans ne reste en français en
+# dur.

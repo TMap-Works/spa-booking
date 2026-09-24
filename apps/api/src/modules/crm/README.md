@@ -14,6 +14,7 @@ ce fait.
 | #465 | `assertBookableWithin` : confirmer qu'une fiche **désignée** est bien du fichier client — le seul battant de cette porte depuis #1222 |
 | #81 | Les droits des personnes : export, anonymisation, consentement marketing — et le [registre des traitements](../../../../../docs/registre-des-traitements.md) |
 | #525 | La projection de l'état de suppression d'adresse sur la fiche — le module lit ce que `notifications` écrit |
+| #852 | La projection de la langue préférée sur la fiche (même régime), et les en-têtes de l'export dans la langue de l'interface |
 
 Hors périmètre MVP, et donc non livré : fusion de doublons, segmentation,
 campagnes. Le CDC §1.4 borne le module à un « CRM client de base » ; chacun de
@@ -121,6 +122,33 @@ Le corollaire est que l'adresse ne se corrige pas d'ici non plus —
 `updateCustomerRequest` ne porte pas `email`, faute de pouvoir vérifier la
 nouvelle au périmètre du MVP.
 
+## La langue préférée — un second état que ce module lit et n'écrit jamais (#852)
+
+`users.locale` est posée par #844, et par un seul endroit : l'espace client,
+`PATCH /users/me`, dans le module `identity`. Depuis #1222 la réservation en
+ligne n'écrit plus aucune fiche — la cliente d'un rendez-vous est celle du jeton
+vérifié —, si bien qu'une préférence vient toujours de la personne elle-même.
+
+Même partage que les deux champs ci-dessus : sur `CUSTOMER_SELECT` et sur
+`CustomerDto`, **pas** sur le résumé. La question qu'elle répond se pose au
+moment où l'on ouvre une fiche pour décrocher — « dans quelle langue est-ce que
+je dis bonjour » —, pas en parcourant deux cents lignes.
+
+`null` s'y lit « aucune préférence enregistrée », jamais « français » : c'est
+alors `tenants.default_locale` qui tranche, pour les notifications comme pour
+les pages. Le back-office l'écrit donc en toutes lettres plutôt que d'afficher la
+langue du salon comme si elle avait été choisie — replier aurait effacé la seule
+information qui dit au comptoir qu'il peut poser la question.
+
+La colonne est un `VARCHAR(5)` borné par `users_locale_check`, que Prisma type
+`string | null`. `CrmRepository.toCustomerRecord` la ramène au vocabulaire du
+contrat par `toAccountLocale` d'`identity` — la conversion est écrite **une
+seule fois**, dans le module qui possède la colonne ; en recopier une seconde
+ici l'aurait fait diverger au premier repli changé.
+
+Aucune route de ce module ne l'écrit : `updateCustomerRequest` ne la porte pas.
+Une langue se choisit par la personne concernée, pas pour elle au comptoir.
+
 ## Aucune donnée personnelle dans les logs
 
 Cinquième critère de #56, et il tient par une règle plus simple qu'une
@@ -224,6 +252,32 @@ Le rang est `MANAGER` et non `STAFF` : la route ne modifie rien, mais elle
 produit en un appel un dossier complet exportable. Le laisser au comptoir
 n'aurait pas été de la minimisation ; le monter à `ADMIN` aurait rendu le droit
 d'accès impraticable.
+
+#### Les en-têtes suivent la langue, les clés jamais (#852)
+
+`?locale=fr` ou `?locale=en` — optionnel, `DEFAULT_LOCALE` sans lui, refusé en
+**400** sur toute autre valeur plutôt que replié en silence. Un `?locale=de` qui
+rendrait de l'anglais laisserait croire l'allemand servi.
+
+Le document a deux jeux de noms, et les confondre coûte l'une de ses deux
+qualités :
+
+| | Ce que c'est | Suit la langue |
+|---|---|---|
+| Les **clés JSON** — `firstName`, `startsAt`, `priceAmountMinor` | ce qu'un analyseur lit | **non**, jamais : un format dont les clés changent de langue demanderait deux analyseurs, et ne serait plus « couramment utilisé » au sens de l'art. 20 |
+| Le bloc **`labels`** et le champ `statusLabel` de chaque visite | ce qu'on écrit au-dessus des colonnes quand le dossier s'imprime, se colle dans un tableur ou se relit au comptoir avant d'être remis | **oui** |
+
+Le document porte aussi `locale`, la langue dans laquelle il a été produit : deux
+exports de la même fiche demandés dans deux langues sont deux documents
+différents, et rien d'autre ne les distinguerait.
+
+La langue est celle de **l'interface**, pas celle de la cliente : le dossier est
+produit par le comptoir, qui le relit et le contrôle avant de le remettre. La
+préférence de la cliente, elle, se lit sur sa fiche (voir ci-dessous).
+
+Les instants restent en UTC et les montants restent des entiers accompagnés de
+leur code devise : `locale` ne décide que de mots, et le 404 d'une fiche du salon
+voisin tombe avant qu'elle ait servi à quoi que ce soit.
 
 ### L'anonymisation — `POST /customers/:id/anonymize`, rang `ADMIN`
 
@@ -445,7 +499,7 @@ jamais par la surface prévue.
 | `__tests__/customer-history.service.spec.ts` | agrégat vs fenêtre, bornes, devises multiples |
 | `__tests__/crm.logging.spec.ts` | le module ne journalise rien ; la rédaction couvrirait ses champs |
 | `apps/api/test/crm.integration-spec.ts` | les huit routes servies, gardes, validation, sérialisation |
-| `apps/api/test/crm-tenant.isolation-spec.ts` | le protocole de fuite sur les huit routes — dont la lecture la plus large du système (l'export) et sa seule écriture irréversible (l'anonymisation) |
+| `apps/api/test/crm-tenant.isolation-spec.ts` | le protocole de fuite sur les huit routes — dont la lecture la plus large du système (l'export) et sa seule écriture irréversible (l'anonymisation) ; depuis #852, la langue préférée lue est bien celle de ce salon, et le paramètre de langue de l'export n'ouvre rien — 404 dans les deux langues, 400 sur une troisième |
 | `apps/api/test/appointments-exclusion.integration-spec.ts` | la porte exercée contre un vrai PostgreSQL : la frontière du tenant sur la fiche désignée, et le rôle jugé à l'instant de l'insertion (#465) |
 | `apps/api/test/appointments-exclusion.concurrency-spec.ts` | la **promotion concurrente** de la fiche, qui prouve que le `FOR SHARE` verrouille vraiment — la suite unitaire ne vérifie que ce que la requête demande |
 

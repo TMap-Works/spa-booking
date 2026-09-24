@@ -1,5 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
+import type { Locale } from '@spa/shared';
+
 import { getTenantId } from '../../../common/tenant';
 import type {
   AppointmentCancelledBy,
@@ -82,6 +84,17 @@ export interface StoredCustomer {
    */
   emailSuppressedAt: Date | null;
   emailSuppressionReason: EmailSuppressionReason | null;
+  /**
+   * La langue préférée de la personne (#844), que la fiche projette depuis #852.
+   *
+   * En lecture seule pour ce module, comme les deux colonnes ci-dessus : aucune
+   * méthode du dépôt ne l'écrit, seule `addCustomer` la sème — comme le font en
+   * vrai l'espace client et la réservation, hors du fichier client.
+   *
+   * `null` par défaut : c'est l'état de toute fiche saisie au comptoir, et il se
+   * lit « aucune préférence ».
+   */
+  locale: Locale | null;
   /**
    * L'empreinte de mot de passe, que le double ne sert à personne mais que
    * l'anonymisation doit pouvoir vider (#81).
@@ -190,6 +203,8 @@ export class FakeCrmRepository {
      */
     emailSuppressedAt?: Date | null;
     emailSuppressionReason?: EmailSuppressionReason | null;
+    /** La préférence de langue, semée sans passer par le module — #852. */
+    locale?: Locale | null;
     passwordHash?: string | null;
   }): StoredCustomer {
     const stored: StoredCustomer = {
@@ -212,6 +227,9 @@ export class FakeCrmRepository {
       // qui est l'état de la quasi-totalité du fichier.
       emailSuppressedAt: input.emailSuppressedAt ?? null,
       emailSuppressionReason: input.emailSuppressionReason ?? null,
+      // `null` par défaut, comme la colonne : « aucune préférence enregistrée »,
+      // et non le français. Une fiche saisie au comptoir n'en porte jamais.
+      locale: input.locale ?? null,
       passwordHash: input.passwordHash ?? null,
     };
     this.customers.push(stored);
@@ -639,6 +657,7 @@ function toCustomer(row: StoredCustomer): Customer {
     anonymizedAt: row.anonymizedAt,
     emailSuppressedAt: row.emailSuppressedAt,
     emailSuppressionReason: row.emailSuppressionReason,
+    locale: row.locale,
   };
 }
 

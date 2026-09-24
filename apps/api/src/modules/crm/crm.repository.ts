@@ -1,10 +1,19 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
+import type { Locale } from '@spa/shared';
 
 import { NotFoundError } from '../../common/errors';
 import { requireTenantId } from '../../common/tenant/tenant-context';
 import { PRISMA, type ScopedPrismaClient } from '../../infrastructure/database/prisma-clients';
 import { billedIntervalOf } from '../appointments/billed-interval';
+// Import **de valeur** d'un module voisin sans dépendance Nest ni Prisma — même
+// geste que le `billedIntervalOf` ci-dessus. `users.locale` est un `VARCHAR(5)`
+// pour Prisma et une `Locale` pour le contrat : la conversion est écrite une
+// seule fois, dans le module qui possède la colonne (#844). En recopier une
+// seconde ici l'aurait fait diverger au premier repli changé — et la fiche
+// cliente et le profil connecté auraient alors lu la même colonne de deux
+// façons.
+import { toAccountLocale } from '../identity/locale';
 import type { ClientDirectoryScope } from './client-directory.service';
 import { CustomerEmailTakenError } from './crm.errors';
 import type {
@@ -129,7 +138,37 @@ const CUSTOMER_SELECT = {
   // client en est un lecteur, et le `select` dit exactement cela.
   emailSuppressedAt: true,
   emailSuppressionReason: true,
+  // La langue préférée de la personne (#844), projetée par #852. Même arbitrage
+  // que les cinq colonnes précédentes : sur la fiche complète, pas sur le
+  // résumé — le comptoir lit la langue au moment où il ouvre une fiche pour
+  // décrocher, jamais en parcourant deux cents lignes.
+  //
+  // Ce module ne l'**écrit** jamais : elle se pose depuis l'espace client
+  // (`PATCH /users/me`) ou à la réservation, dans `identity` et `appointments`.
+  // Le fichier client en est un lecteur, et le `select` dit exactement cela.
+  locale: true,
 } as const;
+
+/**
+ * La ligne de `users` telle que le contrat la veut — #852.
+ *
+ * Le seul écart entre la projection ci-dessus et {@link Customer} est `locale` :
+ * la colonne est un `VARCHAR(5)` borné par `users_locale_check`, que Prisma type
+ * `string | null` faute de pouvoir lire une contrainte `CHECK`. Quelqu'un doit
+ * dire au compilateur ce que la base garantit déjà, et c'est ici — une fois,
+ * pour les quatre lectures de `CUSTOMER_SELECT`, plutôt qu'à chacune.
+ *
+ * `toAccountLocale` plutôt qu'un `as Locale` nu : le `as` serait faux dans le
+ * seul cas qui compte — une valeur posée à la main sur la base sortirait telle
+ * quelle dans une réponse, où le front la rejetterait en validation. Le prédicat
+ * la ramène à `null`, c'est-à-dire à « aucune préférence », qui est exactement
+ * ce qu'une valeur illisible veut dire.
+ */
+function toCustomerRecord<T extends { locale: string | null }>(
+  row: T,
+): Omit<T, 'locale'> & { locale: Locale | null } {
+  return { ...row, locale: toAccountLocale(row.locale) };
+}
 
 /**
  * Un rendez-vous **tel que l'export le lit** — plus large que `VISIT_SELECT`,
@@ -507,10 +546,12 @@ export class CrmRepository {
    * ferme (capture 3).
    */
   public async findById(id: string, ownedByUserId: string | null = null): Promise<Customer | null> {
-    return this.prisma.user.findFirst({
+    const row = await this.prisma.user.findFirst({
       where: { id, role: CUSTOMER_ROLE, ...ownedByPredicate(ownedByUserId) },
       select: CUSTOMER_SELECT,
     });
+
+    return row === null ? null : toCustomerRecord(row);
   }
 
   /**
@@ -541,20 +582,22 @@ export class CrmRepository {
     marketingConsentAt: Date | null;
   }): Promise<Customer> {
     try {
-      return await this.prisma.user.create({
-        data: withScopedTenant<Prisma.UserUncheckedCreateInput>({
-          email: input.email,
-          role: CUSTOMER_ROLE,
-          passwordHash: null,
-          firstName: input.firstName,
-          lastName: input.lastName,
-          phone: input.phone,
-          internalNote: input.internalNote,
-          marketingConsent: input.marketingConsent,
-          marketingConsentAt: input.marketingConsentAt,
+      return toCustomerRecord(
+        await this.prisma.user.create({
+          data: withScopedTenant<Prisma.UserUncheckedCreateInput>({
+            email: input.email,
+            role: CUSTOMER_ROLE,
+            passwordHash: null,
+            firstName: input.firstName,
+            lastName: input.lastName,
+            phone: input.phone,
+            internalNote: input.internalNote,
+            marketingConsent: input.marketingConsent,
+            marketingConsentAt: input.marketingConsentAt,
+          }),
+          select: CUSTOMER_SELECT,
         }),
-        select: CUSTOMER_SELECT,
-      });
+      );
     } catch (error: unknown) {
       if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === UNIQUE_VIOLATION) {
         throw new CustomerEmailTakenError();
@@ -870,7 +913,7 @@ export class CrmRepository {
           });
           return existing === null
             ? { outcome: 'not-found' as const }
-            : { outcome: 'already-anonymized' as const, customer: existing };
+            : { outcome: 'already-anonymized' as const, customer: toCustomerRecord(existing) };
         }
 
         // La ligne est désormais verrouillée par l'`UPDATE` ci-dessus : ce
@@ -911,7 +954,7 @@ export class CrmRepository {
         // un `!` mentirait sur ce qui est garanti par quoi.
         return anonymized === null
           ? { outcome: 'not-found' as const }
-          : { outcome: 'anonymized' as const, customer: anonymized };
+          : { outcome: 'anonymized' as const, customer: toCustomerRecord(anonymized) };
       });
     } catch (error: unknown) {
       if (error instanceof UpcomingAppointmentsAbort) {

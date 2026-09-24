@@ -49,6 +49,12 @@ const VALID_RECORD = {
   anonymizedAt: null,
   emailSuppressedAt: null,
   emailSuppressionReason: null,
+  // La langue préférée (#844), portée par la fiche depuis #852 : `null` s'y lit
+  // « aucune préférence enregistrée », jamais « français ». Le champ est
+  // **obligatoire et nullable**, comme `phone` et les trois dates ci-dessus —
+  // l'API l'émet toujours, et un front qui distingue « absent » de « vide »
+  // finit par afficher `undefined`.
+  locale: null,
 };
 
 describe('fiche cliente', () => {

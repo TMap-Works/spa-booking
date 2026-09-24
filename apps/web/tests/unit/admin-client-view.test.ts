@@ -7,13 +7,12 @@ import {
 import { describe, expect, it } from 'vitest';
 
 import {
-  countedLabel,
   customerContactLine,
   emailSuppressionNotice,
   isVoidVisit,
   parsePageNumber,
   parseSearchTerm,
-  searchHint,
+  searchHintKey,
   visitClientNote,
 } from '@/app/(admin)/[tenantSlug]/admin/clients/client-view';
 import { adminClientsPath } from '@/app/(admin)/[tenantSlug]/admin/clients/paths';
@@ -81,38 +80,18 @@ describe('le numéro de page lu de l’URL', () => {
 });
 
 /**
- * L'accord en nombre des libellés — #763.
- *
- * L'audit de conception relevait « 1 Visites honorées » et « 1 Absences non
- * prévenues » sur les tuiles de la fiche : un compteur et son libellé se lisent
- * d'un seul tenant, et le désaccord se voit avant le chiffre.
- */
-describe('un libellé accordé au nombre qu’il porte', () => {
-  it('bascule au pluriel à partir de deux', () => {
-    expect(countedLabel(2, 'Visite honorée', 'Visites honorées')).toBe('Visites honorées');
-    expect(countedLabel(37, 'Absence non prévenue', 'Absences non prévenues')).toBe(
-      'Absences non prévenues',
-    );
-  });
-
-  it('garde le singulier à un — le cas qui avait produit « 1 Visites honorées »', () => {
-    expect(countedLabel(1, 'Visite honorée', 'Visites honorées')).toBe('Visite honorée');
-  });
-
-  it('garde le singulier à zéro, comme le veut le français', () => {
-    // « 0 visite honorée », et non « 0 visites honorées » : c'est la bascule à
-    // deux, pas à un, et c'est déjà la règle que suivent les autres libellés de
-    // cet écran.
-    expect(countedLabel(0, 'Annulé', 'Annulés')).toBe('Annulé');
-  });
-});
-
-/**
- * La légende du champ de recherche — #763.
+ * La légende du champ de recherche — #763, puis #852.
  *
  * Ce qu'elle protège : que l'absence de résultat ne se lise pas deux fois, une
  * fois sous le champ et une fois dans le bloc de résultat, à trois centimètres
  * d'écart et avec le même terme entre guillemets.
+ *
+ * La fonction rend désormais une **clé** et non la phrase : c'est la page qui la
+ * lit dans la langue de la requête, et l'arbre de décision — le seul endroit où
+ * il y avait quelque chose à décider — n'a pas bougé. L'accord en nombre, qui
+ * vivait ici sous le nom de `countedLabel`, est passé au catalogue : ICU connaît
+ * le seuil du singulier des deux langues, là où une bascule à deux écrite en
+ * TypeScript était une règle française déguisée en code (#763, #852).
  */
 describe('la légende du champ de recherche', () => {
   function directory(totalItems: number): CustomerPage {
@@ -122,25 +101,19 @@ describe('la légende du champ de recherche', () => {
   }
 
   it('compte le fichier entier quand on n’a rien cherché', () => {
-    expect(searchHint(null, directory(12))).toBe(
-      'Nom, téléphone ou e-mail — le fichier compte 12 fiches.',
-    );
+    expect(searchHintKey(null, directory(12))).toBe('list.search.hintAll');
   });
 
-  it('accorde « fiche » au nombre trouvé', () => {
-    expect(searchHint('rako', directory(1))).toBe(
-      'Nom, téléphone ou e-mail — 1 fiche pour « rako ».',
-    );
-    expect(searchHint('rako', directory(3))).toBe(
-      'Nom, téléphone ou e-mail — 3 fiches pour « rako ».',
-    );
+  it('compte les fiches trouvées quand un terme a été tapé', () => {
+    expect(searchHintKey('rako', directory(1))).toBe('list.search.hintTerm');
+    expect(searchHintKey('rako', directory(3))).toBe('list.search.hintTerm');
   });
 
   it('se tait sur le vide — c’est le bloc de résultat qui le dit', () => {
     // Et cela retire du même geste le « le fichier compte aucune fiche » que
     // l'ancienne légende produisait sur un fichier neuf.
-    expect(searchHint('zzzzz', directory(0))).toBe('Nom, téléphone ou e-mail.');
-    expect(searchHint(null, directory(0))).toBe('Nom, téléphone ou e-mail.');
+    expect(searchHintKey('zzzzz', directory(0))).toBe('list.search.hintField');
+    expect(searchHintKey(null, directory(0))).toBe('list.search.hintField');
   });
 });
 
@@ -209,6 +182,10 @@ describe('l’avis d’adresse supprimée', () => {
     anonymizedAt: null,
     emailSuppressedAt: null,
     emailSuppressionReason: null,
+    // « Aucune préférence enregistrée » (#844) : l'état de toute fiche saisie au
+    // comptoir, et celui que la fiche écrit en toutes lettres plutôt que de le
+    // replier sur la langue du salon (#852).
+    locale: null,
   };
 
   /**
@@ -235,7 +212,7 @@ describe('l’avis d’adresse supprimée', () => {
     expect(emailSuppressionNotice(VIVANTE)).toBeNull();
   });
 
-  it('nomme le motif en toutes lettres, jamais par la seule couleur du bandeau', () => {
+  it('désigne le motif par sa clé — c’est l’écran qui l’écrit en toutes lettres', () => {
     const rebond = emailSuppressionNotice({
       ...VIVANTE,
       emailSuppressedAt: '2026-09-05T10:30:00.000Z',
@@ -249,9 +226,11 @@ describe('l’avis d’adresse supprimée', () => {
 
     // Les deux motifs n'appellent pas la même conversation au comptoir : le
     // premier se corrige en redemandant l'adresse, le second ne se corrige pas.
-    expect(rebond?.reason).toMatch(/rebond définitif/);
-    expect(plainte?.reason).toMatch(/plainte/);
-    expect(rebond?.reason).not.toBe(plainte?.reason);
+    // Les deux clés sont donc distinctes, et le catalogue les écrit toutes deux
+    // en toutes lettres — jamais par la seule couleur du bandeau (WCAG 1.4.1).
+    expect(rebond?.reasonKey).toBe('record.suppression.reasons.hard_bounce');
+    expect(plainte?.reasonKey).toBe('record.suppression.reasons.complaint');
+    expect(rebond?.reasonKey).not.toBe(plainte?.reasonKey);
   });
 
   it('rend l’instant tel quel — c’est l’écran qui le passe au fuseau du salon', () => {
@@ -282,7 +261,7 @@ describe('l’avis d’adresse supprimée', () => {
       emailSuppressedAt: '2026-09-05T10:30:00.000Z',
     });
 
-    expect(notice?.reason).toBe('motif non enregistré');
+    expect(notice?.reasonKey).toBe('record.suppression.reasons.unknown');
   });
 
   it('se tait sur une fiche anonymisée — l’adresse visée n’a jamais existé (#529)', () => {

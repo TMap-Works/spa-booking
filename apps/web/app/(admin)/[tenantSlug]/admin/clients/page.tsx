@@ -4,10 +4,13 @@ import {
   type CustomerPage,
   type CustomerSummary,
   type CustomerVisitHistory,
+  type Locale,
   type PublicTenant,
   type TimeZone,
 } from '@spa/shared';
+import { getLocale, getTranslations } from 'next-intl/server';
 import Link from 'next/link';
+import type { ReactNode } from 'react';
 
 import { Notification } from '@/components/ui/notification';
 import {
@@ -20,19 +23,23 @@ import {
 import { initialsOf } from '@/lib/initials';
 import { statusModifier, zonedFields } from '@/lib/admin/calendar-grid';
 import { appointmentOutcomeLabel } from '@/lib/appointment-status';
-import { formatCalendarDate, formatMoney, formatTimeInTimeZone } from '@/lib/format';
+import {
+  formatCalendarDate,
+  formatMoney,
+  formatTimeInTimeZone,
+  type DisplayLocale,
+} from '@/lib/format';
 import { formatPhoneForDisplay } from '@/lib/phone';
 
 import { adminLoadFailure, requireAdminAccessToken } from '../guard';
 import { adminCalendarPath } from '../paths';
 import {
-  countedLabel,
   customerContactLine,
   emailSuppressionNotice,
   isVoidVisit,
   parsePageNumber,
   parseSearchTerm,
-  searchHint,
+  searchHintKey,
   visitClientNote,
 } from './client-view';
 import { ClientContactForm } from './components/client-contact-form';
@@ -90,9 +97,43 @@ import { adminClientsPath } from './paths';
  *    compte du personnel. Cet écran le rend donc comme une fiche introuvable,
  *    sans jamais dire qu'elle existe ailleurs (tenant-isolation §4) — un message
  *    différent selon le cas ferait de `?fiche=…` une sonde du fichier voisin.
+ *
+ * ## La langue de l'écran, et celle de la cliente — #852
+ *
+ * Deux langues se croisent ici, et les confondre serait une faute de fond :
+ *
+ * - **celle de l'écran** vient de la session (`getLocale`) et décide de tous les
+ *   mots que cette page écrit, en-têtes, compteurs et historique compris. Les
+ *   dates et les montants la suivent par `lib/format.ts`, augmentée du pays de
+ *   l'établissement — sans quoi un salon de Montréal lirait ses dates comme
+ *   Paris, ce qui est le même arbitrage que le planning ;
+ * - **celle de la cliente** est une donnée de sa fiche (`customer.locale`, la
+ *   colonne `users.locale` de #844), et elle ne change rien à ce que l'écran
+ *   affiche : elle dit au comptoir dans quelle langue décrocher. `null` s'y lit
+ *   « aucune préférence » et non « français » — la fiche l'écrit donc en toutes
+ *   lettres plutôt que d'afficher la langue du salon comme si elle avait été
+ *   choisie.
+ *
+ * Le vocabulaire du cycle de vie d'un rendez-vous n'est pas au catalogue de cet
+ * écran : il vient de `lib/appointment-status.ts`, qui est le seul endroit du
+ * front où il s'écrit (#917). Le fichier client y passe simplement sa langue.
  */
 
 export const dynamic = 'force-dynamic';
+
+/** Le traducteur de cet écran, passé aux sous-composants plutôt que relu. */
+type ClientsTranslator = Awaited<ReturnType<typeof getTranslations<'admin-clients'>>>;
+
+/**
+ * Le traducteur des **noms de langues**, lu au namespace partagé `locale`.
+ *
+ * Séparé de celui de l'écran parce que ces deux mots-là ne lui appartiennent
+ * pas : « Français » et « English » sont déjà écrits une fois, pour le
+ * sélecteur du parcours public et pour les réglages, et les recopier au
+ * catalogue du fichier client en aurait fait une seconde table à tenir d'accord
+ * (#852).
+ */
+type LanguagesTranslator = Awaited<ReturnType<typeof getTranslations<'locale'>>>;
 
 interface ClientsPageProps {
   readonly params: Promise<{ readonly tenantSlug: string }>;
@@ -109,6 +150,9 @@ interface ClientsPageProps {
 export default async function ClientsPage({ params, searchParams }: ClientsPageProps) {
   const { tenantSlug } = await params;
   const { recherche, fiche, page: requestedPage } = await searchParams;
+  const t = await getTranslations('admin-clients');
+  const languages = await getTranslations('locale');
+  const locale = (await getLocale()) as Locale;
 
   // Les trois paramètres sont lus **avant** la garde : ils ne demandent aucun
   // jeton, et c'est ce qui permet de dire à la garde où revenir. Chacun est
@@ -127,10 +171,9 @@ export default async function ClientsPage({ params, searchParams }: ClientsPageP
   const accessToken = await requireAdminAccessToken(tenantSlug, adminClientsPath(tenantSlug, view));
 
   const denial = {
-    deniedTitle: 'Accès réservé',
-    deniedHint:
-      'Le fichier client est réservé aux comptes du salon. Demandez l’accès à l’administrateur.',
-    failedTitle: 'Fichier client indisponible',
+    deniedTitle: t('denied.title'),
+    deniedHint: t('denied.hint'),
+    failedTitle: t('denied.failedTitle'),
   };
 
   // Le fuseau vient de la **vitrine publique** et non de `GET /tenant`, qui est
@@ -148,6 +191,17 @@ export default async function ClientsPage({ params, searchParams }: ClientsPageP
   } catch (error) {
     return adminLoadFailure(error, tenantSlug, denial);
   }
+
+  /*
+   * La langue de mise en forme des dates, des heures et des montants (#852).
+   *
+   * Avec le pays de l'établissement, lu sur la vitrine qu'on vient de charger :
+   * c'est ce que fait le planning, et pour la même raison — « 09/01 » et
+   * « 01/09 » sont tous deux de l'anglais, et seul le pays tranche. L'omettre
+   * aurait fait dater les visites d'un salon de Toronto comme celles d'un salon
+   * de New York.
+   */
+  const display: DisplayLocale = { locale, countryCode: tenant.address?.country ?? null };
 
   let record: { readonly customer: Customer; readonly history: CustomerVisitHistory } | null = null;
   let missing = false;
@@ -177,25 +231,29 @@ export default async function ClientsPage({ params, searchParams }: ClientsPageP
   return (
     <section aria-labelledby="clients-titre">
       <h1 className="spa-admin__title" id="clients-titre">
-        Fichier client
+        {t('list.title')}
       </h1>
 
       <div className="spa-admin__split">
         <section aria-labelledby="clients-liste-titre" className="spa-admin__section">
           <h2 className="spa-admin__section-title" id="clients-liste-titre">
-            Rechercher
+            {t('list.searchTitle')}
           </h2>
 
           <ClientSearchForm
             tenantSlug={tenantSlug}
             term={term ?? ''}
-            hint={searchHint(term, directory)}
+            hint={t(searchHintKey(term, directory), {
+              count: directory.totalItems,
+              term: term ?? '',
+            })}
           />
 
           <ClientDirectory
             customers={directory.items}
             openCustomerId={record?.customer.id ?? null}
             page={directory.page}
+            t={t}
             tenantSlug={tenantSlug}
             term={term}
             totalItems={directory.totalItems}
@@ -204,6 +262,7 @@ export default async function ClientsPage({ params, searchParams }: ClientsPageP
           <DirectoryPager
             openCustomerId={record?.customer.id ?? null}
             page={directory}
+            t={t}
             tenantSlug={tenantSlug}
             term={term}
           />
@@ -211,15 +270,14 @@ export default async function ClientsPage({ params, searchParams }: ClientsPageP
 
         <section aria-labelledby="clients-fiche-titre" className="spa-admin__section">
           <h2 className="spa-admin__section-title spa-visually-hidden" id="clients-fiche-titre">
-            {record === null ? 'Aucune fiche ouverte' : `Fiche de ${fullName(record.customer)}`}
+            {record === null
+              ? t('record.headingNone')
+              : t('record.heading', { name: fullName(record.customer) })}
           </h2>
 
           {missing ? (
-            <Notification tone="warning" title="Fiche introuvable">
-              <p>
-                Aucune fiche de ce salon ne porte cet identifiant. Cherchez la personne par son
-                nom, son téléphone ou son adresse dans le volet de gauche.
-              </p>
+            <Notification tone="warning" title={t('record.missing.title')}>
+              <p>{t('record.missing.body')}</p>
             </Notification>
           ) : null}
 
@@ -230,17 +288,17 @@ export default async function ClientsPage({ params, searchParams }: ClientsPageP
             // n'avait rien demandé.
             missing ? null : (
               <div className="spa-empty-state">
-                <p className="spa-empty-state__title">Aucune fiche ouverte</p>
-                <p className="spa-empty-state__description">
-                  Choisissez une personne dans le fichier pour voir ses coordonnées, sa note
-                  interne et son historique de visites.
-                </p>
+                <p className="spa-empty-state__title">{t('record.empty.title')}</p>
+                <p className="spa-empty-state__description">{t('record.empty.description')}</p>
               </div>
             )
           ) : (
             <ClientRecord
               customer={record.customer}
+              display={display}
               history={record.history}
+              languages={languages}
+              t={t}
               tenantSlug={tenantSlug}
               timeZone={tenant.timezone}
             />
@@ -273,6 +331,7 @@ function ClientDirectory({
   customers,
   openCustomerId,
   page,
+  t,
   tenantSlug,
   term,
   totalItems,
@@ -280,6 +339,7 @@ function ClientDirectory({
   readonly customers: readonly CustomerSummary[];
   readonly openCustomerId: string | null;
   readonly page: number;
+  readonly t: ClientsTranslator;
   readonly tenantSlug: string;
   readonly term: string | null;
   /** Le total du **fichier**, pas de la page : c'est lui qui distingue les vides. */
@@ -292,14 +352,19 @@ function ClientDirectory({
   if (customers.length === 0 && totalItems > 0) {
     return (
       <div className="spa-empty-state spa-empty-state--inline">
-        <p className="spa-empty-state__title">Cette page est vide</p>
+        <p className="spa-empty-state__title">{t('list.pageEmpty.title')}</p>
         <p className="spa-empty-state__description">
-          Le fichier compte {totalItems} {countedLabel(totalItems, 'fiche', 'fiches')}, mais aucune
-          sur cette page.{' '}
-          <Link href={adminClientsPath(tenantSlug, { ...(term === null ? {} : { term }) })}>
-            Revenir à la première page
-          </Link>
-          .
+          {/* `t.rich` et non une phrase coupée en deux clés : le lien est au
+              milieu du texte, et une découpe figerait l'ordre des morceaux d'une
+              langue à l'autre (#849). */}
+          {t.rich('list.pageEmpty.description', {
+            count: totalItems,
+            link: (parts) => (
+              <Link href={adminClientsPath(tenantSlug, { ...(term === null ? {} : { term }) })}>
+                {parts}
+              </Link>
+            ),
+          })}
         </p>
       </div>
     );
@@ -311,26 +376,22 @@ function ClientDirectory({
     // destination : la laisser en texte obligeait à retrouver le planning dans
     // le rail, au moment précis où l'on a quelqu'un au téléphone. Le chemin vient
     // d'`adminCalendarPath` comme partout ailleurs, jamais d'une URL concaténée.
-    const planning = <Link href={adminCalendarPath(tenantSlug)}>le planning</Link>;
+    const planning = (parts: ReactNode) => <Link href={adminCalendarPath(tenantSlug)}>{parts}</Link>;
 
     return (
       <div className="spa-empty-state spa-empty-state--inline">
         {/*
           Le terme cherché est répété ici, et **seulement** ici : la légende du
-          champ ne dit plus l'absence de résultat (`searchHint`), pour que la
+          champ ne dit plus l'absence de résultat (`searchHintKey`), pour que la
           même phrase ne se lise pas deux fois à trois centimètres d'écart.
         */}
         <p className="spa-empty-state__title">
-          {term === null ? 'Aucune fiche client' : `Aucune fiche pour « ${term} »`}
+          {term === null ? t('list.empty.title') : t('list.empty.titleTerm', { term })}
         </p>
         <p className="spa-empty-state__description">
-          {term === null ? (
-            <>Le fichier se remplit à la première réservation, ou depuis {planning} — la prise de
-            rendez-vous au comptoir crée la fiche au passage.</>
-          ) : (
-            <>La recherche porte sur le début du nom, du téléphone ou de l’adresse. Essayez les
-            premières lettres seulement, ou créez la fiche depuis {planning}.</>
-          )}
+          {term === null
+            ? t.rich('list.empty.descriptionAll', { link: planning })
+            : t.rich('list.empty.descriptionTerm', { link: planning })}
         </p>
       </div>
     );
@@ -394,11 +455,13 @@ function ClientDirectory({
 function DirectoryPager({
   openCustomerId,
   page,
+  t,
   tenantSlug,
   term,
 }: {
   readonly openCustomerId: string | null;
   readonly page: CustomerPage;
+  readonly t: ClientsTranslator;
   readonly tenantSlug: string;
   readonly term: string | null;
 }) {
@@ -413,14 +476,14 @@ function DirectoryPager({
   };
 
   return (
-    <nav aria-label="Pages du fichier client" className="spa-admin-toolbar">
+    <nav aria-label={t('list.pager.label')} className="spa-admin-toolbar">
       <div className="spa-admin-toolbar__group">
         {page.page > 1 ? (
           <Link
             className="spa-button spa-button--quiet"
             href={adminClientsPath(tenantSlug, { ...keep, page: page.page - 1 })}
           >
-            Page précédente
+            {t('list.pager.previous')}
           </Link>
         ) : null}
         {page.page < page.totalPages ? (
@@ -428,12 +491,12 @@ function DirectoryPager({
             className="spa-button spa-button--quiet"
             href={adminClientsPath(tenantSlug, { ...keep, page: page.page + 1 })}
           >
-            Page suivante
+            {t('list.pager.next')}
           </Link>
         ) : null}
       </div>
       <p className="spa-admin-toolbar__caption">
-        Page {page.page} sur {page.totalPages}
+        {t('list.pager.position', { page: page.page, total: page.totalPages })}
       </p>
     </nav>
   );
@@ -442,12 +505,18 @@ function DirectoryPager({
 /** La fiche : coordonnées, compteurs, note interne, historique — critères 2 à 4. */
 function ClientRecord({
   customer,
+  display,
   history,
+  languages,
+  t,
   tenantSlug,
   timeZone,
 }: {
   readonly customer: Customer;
+  readonly display: DisplayLocale;
   readonly history: CustomerVisitHistory;
+  readonly languages: LanguagesTranslator;
+  readonly t: ClientsTranslator;
   readonly tenantSlug: string;
   readonly timeZone: TimeZone;
 }) {
@@ -464,11 +533,14 @@ function ClientRecord({
           <p className="spa-admin-client__name">{fullName(customer)}</p>
           <div className="spa-admin-client__contact">
             <span className="spa-admin-client__contact-item">
-              {customer.phone === null ? 'Pas de numéro' : formatPhoneForDisplay(customer.phone)}
+              {customer.phone === null
+                ? t('record.noPhone')
+                : formatPhoneForDisplay(customer.phone)}
             </span>
             <span className="spa-admin-client__contact-item">{customer.email}</span>
+            <PreferredLanguage languages={languages} locale={customer.locale} t={t} />
             <span className="spa-admin-client__contact-item">
-              Fiche créée le {dayLabel(customer.createdAt, timeZone)}
+              {t('record.createdAt', { date: dayLabel(customer.createdAt, timeZone, display) })}
             </span>
             {/*
               La marque est **collée à l'adresse**, et pas seulement dans le
@@ -478,10 +550,14 @@ function ClientRecord({
               l'aplat ne fait que rendre le balayage rapide (WCAG 1.4.1).
             */}
             {suppression === null ? null : (
-              <span className="spa-admin-badge spa-admin-badge--no-show">Adresse supprimée</span>
+              <span className="spa-admin-badge spa-admin-badge--no-show">
+                {t('record.badges.emailSuppressed')}
+              </span>
             )}
             {customer.isActive ? null : (
-              <span className="spa-admin-badge spa-admin-badge--cancelled">Fiche désactivée</span>
+              <span className="spa-admin-badge spa-admin-badge--cancelled">
+                {t('record.badges.inactive')}
+              </span>
             )}
           </div>
         </div>
@@ -506,45 +582,41 @@ function ClientRecord({
         des établissements.
       */}
       {suppression === null ? null : (
-        <Notification tone="danger" title="Adresse e-mail supprimée — plus aucun envoi">
+        <Notification tone="danger" title={t('record.suppression.title')}>
           <p>
-            Depuis le {dayLabel(suppression.suppressedAt, timeZone)} à{' '}
-            {formatTimeInTimeZone(suppression.suppressedAt, timeZone)} · {suppression.reason}.
+            {t('record.suppression.since', {
+              date: dayLabel(suppression.suppressedAt, timeZone, display),
+              time: formatTimeInTimeZone(suppression.suppressedAt, timeZone, display),
+              reason: t(suppression.reasonKey),
+            })}
           </p>
-          <p>
-            Ni confirmation, ni rappel, ni avis d’annulation ne partent vers{' '}
-            {customer.email}. Prévenez le client autrement — par téléphone ou au comptoir. Son
-            adresse ne se corrige pas d’ici : le back-office ne la modifie pas, faute de pouvoir
-            vérifier la nouvelle.
-          </p>
+          <p>{t('record.suppression.body', { email: customer.email })}</p>
         </Notification>
       )}
 
       {summary.noShowVisits > 0 ? (
         <Notification
           tone="warning"
-          title={`${String(summary.noShowVisits)} ${countedLabel(
-            summary.noShowVisits,
-            'absence non prévenue',
-            'absences non prévenues',
-          )}`}
+          title={t('record.noShow.title', { count: summary.noShowVisits })}
         >
-          <p>À prendre en compte avant d’accorder un créneau de forte affluence.</p>
+          <p>{t('record.noShow.body')}</p>
         </Notification>
       ) : null}
 
       {/*
-        Chaque libellé s'accorde au compteur qu'il porte — #763. « 1 Visites
-        honorées » se lit d'un seul tenant et le désaccord saute aux yeux avant
-        le chiffre. « À venir » et « Total honoré » sont invariables : rien à
-        accorder.
+        Chaque libellé s'accorde au compteur qu'il porte — #763, puis #852 : c'est
+        ICU qui accorde désormais, et non un ternaire sur `> 1`. Le seuil du
+        singulier n'est pas le même dans les deux langues — « 0 visite honorée »
+        en français, « 0 completed visits » en anglais —, et une règle écrite en
+        TypeScript aurait été une règle française déguisée en code. « À venir » et
+        « Total honoré » restent invariables : rien à accorder.
       */}
       <div className="spa-admin-client__metrics">
         <Metric
-          label={countedLabel(summary.honoredVisits, 'Visite honorée', 'Visites honorées')}
+          label={t('record.metrics.honored', { count: summary.honoredVisits })}
           value={String(summary.honoredVisits)}
         />
-        <Metric label="À venir" value={String(summary.upcomingVisits)} />
+        <Metric label={t('record.metrics.upcoming')} value={String(summary.upcomingVisits)} />
         {/*
           Deux compteurs et non un — #917. « 5 Annulés » là où la fiche comptait
           trois abandons et deux déplacements donnait au salon un chiffre de
@@ -553,24 +625,24 @@ function ClientRecord({
           somme reste le nombre de rendez-vous annulés en base.
         */}
         <Metric
-          label={countedLabel(summary.cancelledVisits, 'Annulé', 'Annulés')}
+          label={t('record.metrics.cancelled', { count: summary.cancelledVisits })}
           value={String(summary.cancelledVisits)}
         />
         <Metric
-          label={countedLabel(summary.rescheduledVisits, 'Déplacé', 'Déplacés')}
+          label={t('record.metrics.rescheduled', { count: summary.rescheduledVisits })}
           value={String(summary.rescheduledVisits)}
         />
         <Metric
-          label={countedLabel(
-            summary.noShowVisits,
-            'Absence non prévenue',
-            'Absences non prévenues',
-          )}
+          label={t('record.metrics.noShow', { count: summary.noShowVisits })}
           value={String(summary.noShowVisits)}
         />
         <Metric
-          label="Total honoré"
-          value={summary.totalSpent === null ? '—' : formatMoney(summary.totalSpent)}
+          label={t('record.metrics.totalSpent')}
+          value={
+            summary.totalSpent === null
+              ? t('record.metrics.none')
+              : formatMoney(summary.totalSpent, display)
+          }
         />
       </div>
 
@@ -586,15 +658,19 @@ function ClientRecord({
       */}
       <p className="spa-admin-toolbar__hint">
         {summary.totalVisits === 0
-          ? 'Aucun rendez-vous à ce jour.'
-          : `${String(summary.totalVisits)} rendez-vous au total · première venue le ${
-              summary.firstVisitAt === null ? '—' : dayLabel(summary.firstVisitAt, timeZone)
-            } · dernière le ${
-              summary.lastVisitAt === null ? '—' : dayLabel(summary.lastVisitAt, timeZone)
-            }.`}{' '}
-        Les compteurs portent sur la totalité des rendez-vous ; « Total honoré » ne somme que les
-        visites honorées, et affiche « — » tant qu’il n’y en a aucune ou quand la fiche mêle
-        plusieurs devises.
+          ? t('record.summary.none')
+          : t('record.summary.counts', {
+              count: summary.totalVisits,
+              first:
+                summary.firstVisitAt === null
+                  ? t('record.metrics.none')
+                  : dayLabel(summary.firstVisitAt, timeZone, display),
+              last:
+                summary.lastVisitAt === null
+                  ? t('record.metrics.none')
+                  : dayLabel(summary.lastVisitAt, timeZone, display),
+            })}{' '}
+        {t('record.summary.caption')}
       </p>
 
       <ClientNoteForm
@@ -605,10 +681,51 @@ function ClientRecord({
       />
 
       <div>
-        <h3 className="spa-admin__section-title">Historique des visites</h3>
-        <VisitHistory history={history} timeZone={timeZone} />
+        <h3 className="spa-admin__section-title">{t('record.history.title')}</h3>
+        <VisitHistory display={display} history={history} t={t} timeZone={timeZone} />
       </div>
     </div>
+  );
+}
+
+/**
+ * La langue dans laquelle la cliente veut qu'on lui parle — #852, troisième
+ * critère.
+ *
+ * Sur la ligne de coordonnées, et pas ailleurs : c'est la ligne qu'on lit avant
+ * de décrocher, et une préférence de langue rangée en bas de fiche serait
+ * découverte après avoir dit bonjour.
+ *
+ * `null` est écrit **en toutes lettres** plutôt que replié sur la langue du
+ * salon. La nuance est celle que porte la colonne (`users.locale`, nullable
+ * depuis #844) : replier aurait fait paraître choisie une langue que personne
+ * n'a demandée, et le comptoir n'aurait plus eu aucun moyen de savoir qu'il peut
+ * poser la question.
+ *
+ * Le nom de la langue vient du namespace `locale`, partagé par le sélecteur du
+ * parcours public et par les réglages : « Français » et « English » s'écrivent
+ * dans leur propre langue, quelle que soit celle de l'interface, et les
+ * recopier ici en aurait fait une seconde table à tenir d'accord.
+ */
+function PreferredLanguage({
+  languages,
+  locale,
+  t,
+}: {
+  readonly languages: LanguagesTranslator;
+  readonly locale: Locale | null;
+  readonly t: ClientsTranslator;
+}) {
+  return (
+    <span className="spa-admin-client__contact-item">
+      {locale === null
+        ? t('record.language.unknown')
+        : // L'assertion est l'idiome du sélecteur de langue et des réglages
+          // (`locale-switcher.tsx`, `tenant-settings-form.tsx`) : `Locale` a deux
+          // valeurs, le catalogue a les deux clés, et le type littéral d'une
+          // interpolation ne s'infère pas.
+          t('record.language.known', { language: languages(`names.${locale}` as 'names.en') })}
+    </span>
   );
 }
 
@@ -661,19 +778,21 @@ function Metric({ label, value }: { readonly label: string; readonly value: stri
  * l'absence de l'élément.
  */
 function VisitHistory({
+  display,
   history,
+  t,
   timeZone,
 }: {
+  readonly display: DisplayLocale;
   readonly history: CustomerVisitHistory;
+  readonly t: ClientsTranslator;
   readonly timeZone: TimeZone;
 }) {
   if (history.visits.length === 0) {
     return (
       <div className="spa-empty-state">
-        <p className="spa-empty-state__title">Aucune visite pour l’instant</p>
-        <p className="spa-empty-state__description">
-          L’historique se remplit dès le premier rendez-vous posé — honoré, annulé ou non honoré.
-        </p>
+        <p className="spa-empty-state__title">{t('record.history.emptyTitle')}</p>
+        <p className="spa-empty-state__description">{t('record.history.emptyDescription')}</p>
       </div>
     );
   }
@@ -691,23 +810,26 @@ function VisitHistory({
           return (
             <li className="spa-admin-history__item" key={visit.appointmentId}>
               <span className="spa-admin-history__date">
-                {dayLabel(visit.startsAt, timeZone)}
+                {dayLabel(visit.startsAt, timeZone, display)}
                 <br />
-                {formatTimeInTimeZone(visit.startsAt, timeZone)}
+                {formatTimeInTimeZone(visit.startsAt, timeZone, display)}
               </span>
               <span className="spa-admin-history__body">
                 <span className="spa-admin-history__service">{visit.serviceName}</span>
                 <span className="spa-admin-history__practitioner">
                   {visit.staffName === null
-                    ? 'praticien retiré du salon'
-                    : `avec ${visit.staffName}`}
+                    ? t('record.history.staffRemoved')
+                    : t('record.history.withStaff', { name: visit.staffName })}
                 </span>
                 <span className={`spa-admin-badge spa-admin-badge--${statusModifier(visit.status)}`}>
                   {/* « Déplacé » plutôt qu'« Annulé » sur l'origine d'un report
                       — la visite n'a pas été perdue, elle a changé d'heure
                       (#917). Le mot est celui que l'espace client montre à la
-                      cliente, à la personne grammaticale près. */}
-                  {appointmentOutcomeLabel(visit)}
+                      cliente, à la personne grammaticale près, et il vient du
+                      seul module du front qui écrive ce vocabulaire — d'où la
+                      langue passée en troisième argument plutôt qu'une table de
+                      plus au catalogue de cet écran. */}
+                  {appointmentOutcomeLabel(visit, 'desk', display.locale)}
                 </span>
                 {note === null ? null : (
                   <span className="spa-admin-history__note">
@@ -715,7 +837,7 @@ function VisitHistory({
                         qui interdit de lire cette remarque comme la note interne
                         du salon, y compris sans couleur (WCAG 1.4.1). */}
                     <span className="spa-admin-history__note-label">
-                      Remarque du client, écrite à la réservation
+                      {t('record.history.clientNote')}
                     </span>
                     <span className="spa-admin-history__note-body">{note}</span>
                   </span>
@@ -728,7 +850,7 @@ function VisitHistory({
                     : 'spa-admin-history__amount'
                 }
               >
-                {formatMoney(visit.price)}
+                {formatMoney(visit.price, display)}
               </span>
             </li>
           );
@@ -737,8 +859,10 @@ function VisitHistory({
 
       {history.summary.totalVisits > history.visits.length ? (
         <p className="spa-admin-toolbar__hint">
-          Les {history.visits.length} visites les plus récentes sont affichées ; les compteurs
-          ci-dessus portent sur la totalité des {history.summary.totalVisits} rendez-vous.
+          {t('record.history.truncated', {
+            shown: history.visits.length,
+            total: history.summary.totalVisits,
+          })}
         </p>
       ) : null}
     </>
@@ -746,14 +870,18 @@ function VisitHistory({
 }
 
 /**
- * La date civile d'un instant, dans le fuseau du salon.
+ * La date civile d'un instant, dans le fuseau du salon et la langue de l'écran.
  *
  * Composée de deux fonctions existantes plutôt qu'écrite ici : `zonedFields`
  * découpe l'instant UTC à l'horloge du salon, `formatCalendarDate` met en forme
  * la date civile qui en sort. Aucun `Intl` de plus dans le front — c'est la
  * règle de `lib/format.ts`, et un troisième formateur finirait par diverger des
  * deux autres sur une frontière de jour.
+ *
+ * Le fuseau et la langue sont deux choses distinctes, et le restent : le
+ * découpage se fait toujours à l'heure du salon (ADR 0006), seule la mise en
+ * forme suit la langue de qui regarde (#852).
  */
-function dayLabel(instant: string, timeZone: TimeZone): string {
-  return formatCalendarDate(zonedFields(instant, timeZone).date);
+function dayLabel(instant: string, timeZone: TimeZone, display: DisplayLocale): string {
+  return formatCalendarDate(zonedFields(instant, timeZone).date, display);
 }

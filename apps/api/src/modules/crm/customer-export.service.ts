@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { DEFAULT_LOCALE, type Locale } from '@spa/shared';
 
 import { NotFoundError } from '../../common/errors';
 // Import **de valeur** et non `import type` : Nest lit le type du paramètre de
@@ -69,11 +70,24 @@ export class CustomerExportService {
    * seul moyen de ne pas répondre à la question « que reste-t-il de moi chez
    * vous ? », qui est précisément celle que ce droit permet de poser.
    *
+   * ## La langue est celle de l'interface, pas celle de la fiche — #852
+   *
+   * Le dossier se lit dans la langue que l'appelant demande, et le défaut est
+   * `DEFAULT_LOCALE`. Ce n'est pas la préférence de la cliente (`customer.locale`)
+   * qui décide, et c'est délibéré : le document est produit **par le comptoir**,
+   * qui le relit, le contrôle et le remet — un dossier dont les en-têtes ne
+   * seraient pas dans la langue de qui l'imprime ne serait pas vérifiable avant
+   * d'être remis. La préférence de la cliente reste lisible sur sa fiche, où
+   * elle sert à savoir dans quelle langue lui parler.
+   *
    * @throws {NotFoundError} aucune fiche de cet établissement ne porte cet
    * identifiant — inconnu, du salon voisin, ou compte du personnel,
    * indistinctement.
    */
-  public async byCustomerId(customerId: string): Promise<CustomerDataExport> {
+  public async byCustomerId(
+    customerId: string,
+    locale: Locale = DEFAULT_LOCALE,
+  ): Promise<CustomerDataExport> {
     const generatedAt = this.now();
 
     const customer = await this.repository.findById(customerId);
@@ -85,6 +99,7 @@ export class CustomerExportService {
 
     return {
       generatedAt,
+      locale,
       identity: {
         id: customer.id,
         firstName: customer.firstName,

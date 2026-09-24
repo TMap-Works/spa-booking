@@ -6,6 +6,29 @@
  * elles n'ont leur place ni dans `page.tsx` — qui ne serait plus lisible — ni
  * dans `actions.ts`, dont chaque export est un point d'entrée appelable depuis
  * le navigateur.
+ *
+ * ## Il rend des **clés**, jamais des phrases — #852
+ *
+ * Ce module décidait autrefois du texte : la légende du champ de recherche, le
+ * motif d'une adresse supprimée, l'accord d'un libellé au compteur qu'il porte.
+ * Les trois sont restés des décisions, mais ce qu'elles rendent est désormais
+ * une **clé du catalogue `admin-clients`**, que la page résout dans la langue de
+ * la requête.
+ *
+ * C'est le partage que le catalogue a posé en #849 (`emptyCatalogDescriptionKey`),
+ * et il tient à une contrainte précise : les crochets de `next-intl` ne
+ * s'appellent que depuis React, et ces fonctions-ci sont appelées depuis un
+ * Server Component **et** depuis des tests sans DOM. Les faire lire le catalogue
+ * elles-mêmes les aurait rendues inappelables dans le second cas.
+ *
+ * Les types de retour sont des **unions de clés littérales** et non `string` :
+ * c'est ce qui laisse `tsc` vérifier qu'elles existent au catalogue, exactement
+ * comme il le ferait d'un `t('…')` écrit sur place.
+ *
+ * L'accord au nombre, lui, a disparu d'ici : `countedLabel` ne pouvait pas
+ * suivre les règles de pluriel de deux langues à la fois — le singulier anglais
+ * bascule à un, le français à deux —, et c'est ICU qui les connaît. Chaque
+ * libellé compté est donc un `{count, plural, …}` du catalogue.
  */
 
 import {
@@ -64,28 +87,12 @@ export function parsePageNumber(raw: string | string[] | undefined): number {
 }
 
 /**
- * Un libellé accordé au nombre qu'il porte — #763.
+ * La clé de ce que le champ de recherche dit sous lui — la légende, pas le
+ * résultat.
  *
- * Les tuiles de la fiche affichaient « 1 Visites honorées » et « 1 Absences non
- * prévenues » : un compteur et son libellé se lisent d'un seul tenant, et le
- * désaccord se voit avant le chiffre. Le libellé n'est donc plus une constante
- * mais une fonction du compteur qu'il commente.
- *
- * La bascule est à **deux**, et non à un : en français, zéro prend le singulier
- * — « 0 visite honorée », « 1 visite honorée », « 2 visites honorées ». C'est
- * déjà la règle que suivent les `${n > 1 ? 's' : ''}` de cet écran ; l'écrire
- * une fois évite qu'une tuile l'applique et la suivante non.
- */
-export function countedLabel(count: number, one: string, many: string): string {
-  return count > 1 ? many : one;
-}
-
-/**
- * Ce que le champ de recherche dit sous lui — la légende, pas le résultat.
- *
- * Le nombre est celui de l'API — `totalItems`, pas la longueur de la page :
- * « 3 fiches » alors que le fichier en compte deux cents serait faux dès la
- * deuxième page.
+ * Le nombre que la page passera est celui de l'API — `totalItems`, pas la
+ * longueur de la page : « 3 fiches » alors que le fichier en compte deux cents
+ * serait faux dès la deuxième page.
  *
  * ## Pourquoi le vide ne s'y dit pas — #763
  *
@@ -99,18 +106,17 @@ export function countedLabel(count: number, one: string, many: string): string {
  * Cela retire du même geste un « le fichier compte aucune fiche » qui ne
  * s'accordait avec rien.
  */
-export function searchHint(term: string | null, page: CustomerPage): string {
-  const field = 'Nom, téléphone ou e-mail';
+export type SearchHintKey =
+  | 'list.search.hintField'
+  | 'list.search.hintAll'
+  | 'list.search.hintTerm';
 
+export function searchHintKey(term: string | null, page: CustomerPage): SearchHintKey {
   if (page.totalItems === 0) {
-    return `${field}.`;
+    return 'list.search.hintField';
   }
 
-  const count = `${String(page.totalItems)} ${countedLabel(page.totalItems, 'fiche', 'fiches')}`;
-
-  return term === null
-    ? `${field} — le fichier compte ${count}.`
-    : `${field} — ${count} pour « ${term} ».`;
+  return term === null ? 'list.search.hintAll' : 'list.search.hintTerm';
 }
 
 /**
@@ -182,17 +188,23 @@ export function customerContactLine(customer: CustomerSummary): string {
  * Le libellé est écrit en toutes lettres, jamais porté par la seule couleur du
  * bandeau (WCAG 1.4.1).
  */
-const EMAIL_SUPPRESSION_LABELS: Record<EmailSuppressionReason, string> = {
-  hard_bounce: 'rebond définitif — la boîte n’existe pas ou refuse nos messages',
-  complaint: 'plainte — le message a été signalé comme indésirable',
+const EMAIL_SUPPRESSION_KEYS: Record<EmailSuppressionReason, EmailSuppressionReasonKey> = {
+  hard_bounce: 'record.suppression.reasons.hard_bounce',
+  complaint: 'record.suppression.reasons.complaint',
 };
+
+/** La clé du motif au catalogue `admin-clients`, motif manquant compris. */
+export type EmailSuppressionReasonKey =
+  | 'record.suppression.reasons.hard_bounce'
+  | 'record.suppression.reasons.complaint'
+  | 'record.suppression.reasons.unknown';
 
 /** Ce que l'écran a à dire d'une adresse supprimée : depuis quand, et pourquoi. */
 export interface EmailSuppressionNotice {
   /** L'instant UTC de la suppression, que l'écran affichera au fuseau du salon. */
   readonly suppressedAt: string;
-  /** Le motif en toutes lettres, prêt à lire. */
-  readonly reason: string;
+  /** La clé du motif, que la page lit dans la langue de la requête. */
+  readonly reasonKey: EmailSuppressionReasonKey;
 }
 
 /**
@@ -242,9 +254,9 @@ export function emailSuppressionNotice(customer: Customer): EmailSuppressionNoti
 
   return {
     suppressedAt: customer.emailSuppressedAt,
-    reason:
+    reasonKey:
       customer.emailSuppressionReason === null
-        ? 'motif non enregistré'
-        : EMAIL_SUPPRESSION_LABELS[customer.emailSuppressionReason],
+        ? 'record.suppression.reasons.unknown'
+        : EMAIL_SUPPRESSION_KEYS[customer.emailSuppressionReason],
   };
 }

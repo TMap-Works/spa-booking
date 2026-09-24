@@ -1,0 +1,131 @@
+{
+  "denied": {
+    "title": "Restricted access",
+    "hint": "The client file is reserved for salon accounts. Ask your administrator for access.",
+    "failedTitle": "Client file unavailable"
+  },
+  "list": {
+    "title": "Client file",
+    "searchTitle": "Search",
+    "search": {
+      "label": "Search for a client",
+      "submit": "Search",
+      "searching": "Searching…",
+      "hintField": "Name, phone or email.",
+      "hintAll": "Name, phone or email — the file holds {count, plural, one {# record} other {# records}}.",
+      "hintTerm": "Name, phone or email — {count, plural, one {# record} other {# records}} for “{term}”.",
+      "tooShort": "Searching needs at least {min} characters — a single letter would return the whole file.",
+      "tooLong": "Search stops at {max} characters — beyond that, no record can match."
+    },
+    "pageEmpty": {
+      "title": "This page is empty",
+      "description": "The file holds {count, plural, one {# record} other {# records}}, but none on this page. <link>Back to the first page</link>."
+    },
+    "empty": {
+      "title": "No client records yet",
+      "titleTerm": "No record for “{term}”",
+      "descriptionAll": "The file fills up with the first booking, or from <link>the calendar</link> — booking at the front desk creates the record along the way.",
+      "descriptionTerm": "Search matches the start of a name, phone number or email address. Try the first letters only, or create the record from <link>the calendar</link>."
+    },
+    "pager": {
+      "label": "Client file pages",
+      "previous": "Previous page",
+      "next": "Next page",
+      "position": "Page {page} of {total}"
+    }
+  },
+  "record": {
+    "headingNone": "No record open",
+    "heading": "{name}’s record",
+    "missing": {
+      "title": "Record not found",
+      "body": "No record in this salon carries that identifier. Look the person up by name, phone or email in the left-hand pane."
+    },
+    "empty": {
+      "title": "No record open",
+      "description": "Pick someone from the file to see their contact details, internal note and visit history."
+    },
+    "noPhone": "No phone number",
+    "createdAt": "Record created on {date}",
+    "language": {
+      "known": "Speaks {language}",
+      "unknown": "Language not recorded"
+    },
+    "badges": {
+      "emailSuppressed": "Email suppressed",
+      "inactive": "Record deactivated"
+    },
+    "suppression": {
+      "title": "Email address suppressed — nothing is sent any more",
+      "since": "Since {date} at {time} · {reason}.",
+      "body": "No confirmation, reminder or cancellation notice goes to {email}. Reach the client another way — by phone or at the front desk. The address cannot be corrected from here: the back office does not change it, since it cannot verify a new one.",
+      "reasons": {
+        "hard_bounce": "hard bounce — the mailbox does not exist or refuses our messages",
+        "complaint": "complaint — the message was reported as spam",
+        "unknown": "reason not recorded"
+      }
+    },
+    "noShow": {
+      "title": "{count, plural, one {# no-show} other {# no-shows}}",
+      "body": "Worth weighing before granting a peak-time slot."
+    },
+    "metrics": {
+      "honored": "{count, plural, one {Completed visit} other {Completed visits}}",
+      "upcoming": "Upcoming",
+      "cancelled": "{count, plural, one {Cancelled} other {Cancelled}}",
+      "rescheduled": "{count, plural, one {Rescheduled} other {Rescheduled}}",
+      "noShow": "{count, plural, one {No-show} other {No-shows}}",
+      "totalSpent": "Total completed",
+      "none": "—"
+    },
+    "summary": {
+      "none": "No appointment to date.",
+      "counts": "{count, plural, one {# appointment in total} other {# appointments in total}} · first visit on {first} · latest on {last}.",
+      "caption": "The counters cover every appointment; “Total completed” only adds up completed visits, and shows “—” while there are none or when the record mixes several currencies."
+    },
+    "history": {
+      "title": "Visit history",
+      "emptyTitle": "No visit yet",
+      "emptyDescription": "The history fills up as soon as a first appointment is booked — completed, cancelled or missed.",
+      "staffRemoved": "practitioner no longer at the salon",
+      "withStaff": "with {name}",
+      "clientNote": "Client note, written when booking",
+      "truncated": "The {shown} most recent visits are shown; the counters above cover all {total} appointments."
+    }
+  },
+  "contact": {
+    "edit": "Edit contact details",
+    "savedTitle": "Contact details saved",
+    "savedBody": "Upcoming confirmations will go to these details.",
+    "failureTitle": "Saving failed",
+    "firstName": "First name",
+    "lastName": "Last name",
+    "phone": "Phone",
+    "phoneHint": "Leave empty to remove the number — the day-before reminder will then go by email only.",
+    "email": "Email address",
+    "emailHint": "The record’s identifier in this salon. The MVP cannot verify a new address yet: it is not editable here.",
+    "save": "Save",
+    "saving": "Saving…",
+    "cancel": "Cancel",
+    "errors": {
+      "required": "this field is required",
+      "tooLong": "this field is {max} characters at most"
+    }
+  },
+  "note": {
+    "title": "Internal note",
+    "private": "Salon only",
+    "savedTitle": "Note saved",
+    "savedBody": "Only salon staff can see it.",
+    "failureTitle": "Saving failed",
+    "label": "What the salon should know",
+    "hint": "Preferences, allergies, sensitivities. Never sent to the client — not by email, not by SMS. Saving replaces the previous note; clearing the field deletes it.",
+    "save": "Save the note",
+    "saving": "Saving…"
+  },
+  "actions": {
+    "unknownTenant": "Unknown salon.",
+    "unknownCustomer": "Unknown client record.",
+    "invalidInput": "The information entered is invalid."
+  }
+}

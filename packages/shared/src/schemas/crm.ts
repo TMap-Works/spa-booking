@@ -39,6 +39,7 @@ import {
 import { nonNegativeMoneySchema } from '../common/money';
 import { paginatedSchema, paginationQuerySchema } from '../common/pagination';
 import { utcInstantSchema } from '../common/time';
+import { localeSchema } from '../locale/index';
 
 import { receivedAppointmentStatusSchema, receivedCancellationActorSchema } from './appointment';
 
@@ -211,6 +212,32 @@ export const customerSchema = customerSummarySchema.extend({
   emailSuppressedAt: utcInstantSchema.nullable(),
   /** Ce qui a valu la suppression — nul exactement quand `emailSuppressedAt` l'est. */
   emailSuppressionReason: receivedEmailSuppressionReasonSchema.nullable(),
+  /**
+   * La langue dans laquelle cette personne veut qu'on lui parle, ou `null` —
+   * elle n'a jamais choisi, et c'est celle de l'établissement qui s'applique
+   * (#852, troisième critère).
+   *
+   * ## Pourquoi le champ est sur la fiche et non sur le résumé
+   *
+   * Parce que la question qu'il répond se pose **au moment où l'on décroche** :
+   * « dans quelle langue est-ce que je dis bonjour ». Une liste de deux cents
+   * lignes n'a pas à la porter — c'est le même partage qu'`internalNote` et que
+   * les deux colonnes de suppression d'adresse, et pour la même raison : ce qui
+   * n'est pas affiché n'a pas à transiter.
+   *
+   * ## `null` est une valeur, et le front doit la distinguer
+   *
+   * La colonne `users.locale` est nullable (#844) et `null` s'y lit « aucune
+   * préférence », jamais « français ». La fiche l'écrit donc en toutes lettres
+   * — « langue de l'établissement » — plutôt que d'afficher un drapeau qui
+   * ferait croire à un choix que personne n'a fait. Replier `null` sur une
+   * langue ici aurait effacé cette distinction pour tous les lecteurs à la
+   * fois.
+   *
+   * `localeSchema` et non une énumération recopiée : le vocabulaire des langues
+   * est déclaré une seule fois, dans `../locale` (#844, premier critère).
+   */
+  locale: localeSchema.nullable(),
 });
 
 export type Customer = z.infer<typeof customerSchema>;

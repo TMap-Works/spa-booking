@@ -81,6 +81,7 @@ describe('la rédaction couvrirait les champs du module', () => {
       marketingConsent: true,
       marketingConsentAt: new Date('2026-09-01T08:00:00.000Z'),
       anonymizedAt: null,
+      locale: 'fr',
     });
 
     const serialise = JSON.stringify(redact(fiche));
@@ -102,6 +103,7 @@ describe('la rédaction couvrirait les champs du module', () => {
     // vérifiée, même si rien du module ne l'y envoie.
     const dossier = toCustomerDataExportDto({
       generatedAt: new Date('2026-09-06T10:00:00.000Z'),
+      locale: 'fr',
       identity: {
         id: '11111111-1111-4111-8111-111111111111',
         firstName: 'Alice',

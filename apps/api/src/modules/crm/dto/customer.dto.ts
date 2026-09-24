@@ -5,6 +5,7 @@ import {
   CUSTOMER_SEARCH_MIN_LENGTH,
   DEFAULT_PAGE_SIZE,
   EMAIL_MAX_LENGTH,
+  LOCALES,
   LONG_TEXT_MAX_LENGTH,
   MAX_PAGE_SIZE,
   NAME_MAX_LENGTH,
@@ -311,6 +312,28 @@ export class CustomerDto
       'rebond transitoire ne supprime rien et n’apparaît donc jamais ici.',
   })
   public emailSuppressionReason!: Customer['emailSuppressionReason'];
+
+  /**
+   * La langue préférée de la cliente, ou `null` — #852, troisième critère.
+   *
+   * Même régime et même mot que `SessionUserDto.locale` d'`identity` : c'est la
+   * **même colonne**, `users.locale`, et deux descriptions divergentes de la
+   * même donnée auraient fini par se contredire. `null` se lit « aucune
+   * préférence enregistrée », jamais « français ».
+   *
+   * Toujours émis, comme `phone` et pour la même raison — un front qui
+   * distingue « absent » de « vide » finit par afficher `undefined`.
+   */
+  @ApiProperty({
+    nullable: true,
+    enum: LOCALES,
+    example: 'en',
+    description:
+      'Langue préférée de la cliente. `null` quand elle n’en a jamais exprimé — ' +
+      'la langue de l’établissement (`defaultLocale`) s’applique alors, et c’est ' +
+      'ce que le back-office affiche sur la fiche.',
+  })
+  public locale!: Customer['locale'];
 }
 
 /** Une page de fiches, avec de quoi afficher un sélecteur de page. */
@@ -684,6 +707,10 @@ export function toCustomerDto(customer: Customer): CustomerDto {
     // la ramène en minuscules à la lecture (`receivedEmailSuppressionReasonSchema`),
     // exactement comme il le fait des rôles émis par `identity`.
     emailSuppressionReason: customer.emailSuppressionReason,
+    // Déjà ramenée au vocabulaire du contrat par le dépôt (`toCustomerRecord`) :
+    // la colonne est un `VARCHAR(5)`, et c'est la lecture qui la convertit, pas
+    // cette frontière-ci.
+    locale: customer.locale,
   };
 }
 
