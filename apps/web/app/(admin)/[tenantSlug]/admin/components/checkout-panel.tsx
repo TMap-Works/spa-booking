@@ -31,6 +31,7 @@ import {
   providerUnreachableMessage,
   terminalReferenceField,
   terminalReferenceIssue,
+  terminalReferenceRefusal,
   type SettlementState,
 } from '@/lib/admin/checkout-summary';
 import type { PaymentTransaction, SaleSummary } from '@/lib/admin/payment-contract';
@@ -313,9 +314,23 @@ export function CheckoutPanel({
    * soldé » n'est pas davantage une erreur de saisie qu'on corrige en
    * recliquant : c'est un état du ticket, et l'écran le **devient** plutôt que
    * d'afficher une ligne rouge sous un bouton resté actif (#828, #1005).
+   *
+   * Un refus de **saisie**, lui, retourne à la saisie. Le 400 qui nomme
+   * `terminalReference` — une référence bien formée mais qui porte une clé de
+   * Luhn, donc refusée par l'API et par elle seule — se pose sur le champ,
+   * jamais en bloc sous le bouton : c'est là que l'opérateur corrigera, et le
+   * message générique de la validation ne lui aurait pas dit lequel des champs
+   * reprendre (troisième critère de #1025, `web-frontend` §4).
    */
   function explainFailure(result: AdminActionResult<unknown>): void {
     if (result.ok || renewIfExpired(result)) {
+      return;
+    }
+
+    const refused = terminalReferenceRefusal(result.code, result.details, locale);
+
+    if (refused !== null) {
+      setFieldIssue({ field: 'reference', message: refused });
       return;
     }
 

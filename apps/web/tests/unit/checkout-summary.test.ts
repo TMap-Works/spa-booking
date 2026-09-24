@@ -17,6 +17,7 @@ import {
   settlementOf,
   terminalReferenceField,
   terminalReferenceIssue,
+  terminalReferenceRefusal,
 } from '@/lib/admin/checkout-summary';
 import type { PaymentTransaction } from '@/lib/admin/payment-contract';
 
@@ -208,6 +209,77 @@ describe('le numéro du ticket du terminal', () => {
   it('refuse au-delà de 32 caractères, la borne de la colonne', () => {
     expect(terminalReferenceIssue('A'.repeat(32))).toBeNull();
     expect(terminalReferenceIssue('A'.repeat(33))).not.toBeNull();
+  });
+
+  it('laisse passer ce que seule l’API sait refuser', () => {
+    // Seize chiffres collés : la forme est irréprochable — alphanumérique,
+    // sous la borne — et c'est la clé de Luhn, côté API, qui tranche. Cet
+    // écart est délibéré : le contrôle de conformité ne vit qu'à un endroit
+    // (`payments/terminal-reference.ts`), et c'est ce qui rend le chemin
+    // ci-dessous nécessaire.
+    expect(terminalReferenceIssue('4242424242424242')).toBeNull();
+  });
+});
+
+describe('le refus que l’API oppose à la référence — #1025, critère 3', () => {
+  /** Le 400 tel que le filtre d'exception de l'API le compose. */
+  const violations = {
+    violations: [
+      'terminalReference : ce champ n’est pas celui d’un numéro de carte — saisir le numéro du ticket du terminal',
+    ],
+  };
+
+  it('reconnaît le 400 qui nomme le champ, et rend la phrase du catalogue', () => {
+    const refused = terminalReferenceRefusal(ERROR_CODES.VALIDATION_ERROR, violations);
+
+    expect(refused).not.toBeNull();
+    expect(refused).toMatch(/numéro de ticket TPE a été refusé/i);
+    // Jamais le message de l'API : il n'est traduit nulle part, et « La
+    // requête est invalide. » n'apprend rien au comptoir (web-frontend §2).
+    expect(refused).not.toMatch(/requête est invalide/i);
+  });
+
+  it('parle les deux langues de l’écran', () => {
+    expect(terminalReferenceRefusal(ERROR_CODES.VALIDATION_ERROR, violations, 'en')).toMatch(
+      /terminal receipt number was refused/i,
+    );
+  });
+
+  it('ignore le repli HTTP_400, qui ne porte jamais de violations', () => {
+    // `ApiClientError` ne compose `HTTP_<statut>` que sur la branche sans
+    // `details` : un 400 dont le corps est au contrat garde son vrai code. Lire
+    // ce repli ici serait une garde qui ne peut pas se déclencher.
+    expect(terminalReferenceRefusal('HTTP_400', violations)).toBeNull();
+  });
+
+  it('laisse au bloc tout refus qui ne parle pas de ce champ', () => {
+    // Un 400 sans violation nommée, ou qui en nomme une autre, doit rester
+    // visible : posé sur un champ sans rapport, il disparaîtrait de l'écran.
+    expect(terminalReferenceRefusal(ERROR_CODES.VALIDATION_ERROR, undefined)).toBeNull();
+    expect(terminalReferenceRefusal(ERROR_CODES.VALIDATION_ERROR, {})).toBeNull();
+    expect(
+      terminalReferenceRefusal(ERROR_CODES.VALIDATION_ERROR, { violations: [] }),
+    ).toBeNull();
+    expect(
+      terminalReferenceRefusal(ERROR_CODES.VALIDATION_ERROR, {
+        violations: ['amountMinor : entier attendu'],
+      }),
+    ).toBeNull();
+    // Une forme inattendue ne fait pas tomber l'écran : `violations` est du
+    // corps d'erreur, et rien ne garantit son type côté front.
+    expect(
+      terminalReferenceRefusal(ERROR_CODES.VALIDATION_ERROR, { violations: 'terminalReference' }),
+    ).toBeNull();
+  });
+
+  it('ne détourne aucun autre refus vers le champ', () => {
+    // Le 409 « déjà soldé » fait **changer l'écran d'état** (#828) : l'égarer
+    // sous un champ de saisie laisserait le bouton actif sur un règlement qui
+    // ne peut qu'échouer.
+    expect(
+      terminalReferenceRefusal(PAYMENT_ERROR_CODES.SALE_ALREADY_SETTLED, violations),
+    ).toBeNull();
+    expect(terminalReferenceRefusal(ERROR_CODES.NOT_FOUND, violations)).toBeNull();
   });
 });
 
