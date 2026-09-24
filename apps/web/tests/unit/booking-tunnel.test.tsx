@@ -25,7 +25,7 @@ import { BookingTunnel } from '@/app/(booking)/[tenantSlug]/reservation/booking-
 import type { AccountPresence } from '@/lib/account-presence';
 import { emptyBookingDraft, readBookingDraft, writeBookingDraft } from '@/lib/booking/draft';
 
-import { contact, presence as connectee, service, tenant } from './fixtures';
+import { contact, contactAccount, presence as connectee, service, tenant } from './fixtures';
 
 const loadAvailabilityAction = vi.fn();
 // Ni la réservation (#1207) ni l'annulation (#1201) ne sont plus des actions de
@@ -688,6 +688,10 @@ describe('l’écran terminal rend la main au tunnel (#732)', () => {
           phone: '',
           clientNote: '',
         },
+        // Le brouillon de la cliente qui rouvre le tunnel, et non celui d'une
+        // autre (#1151) : sans propriétaire, le rendez-vous tomberait avec les
+        // coordonnées et il n'y aurait plus d'écran de confirmation à juger.
+        contactAccount,
         appointment: rendezVous(),
       }),
     );
@@ -1058,5 +1062,122 @@ describe('réserver exige un compte (2026-09-22)', () => {
 
     expect(brouillon.startsAt).toBe(MATIN);
     expect(brouillon.contact.clientNote).toBe(MOT);
+  });
+});
+
+/**
+ * Le changement de compte dans le même onglet (#1151).
+ *
+ * `sessionStorage` meurt avec l'onglet, pas avec la session : entre les deux, il
+ * y a la place d'une déconnexion suivie d'une connexion sous un autre compte.
+ * La campagne du 22/09/2026 a relevé ce que le tunnel en faisait — connectée en
+ * Clara, l'étape 3 annonçait « Réservé au nom de Zoé … · qa.cliente1@… », case
+ * de consentement déjà cochée.
+ *
+ * Le rendez-vous, lui, part au bon compte depuis #1136 et #1222 : la route
+ * publique exige le jeton de la cliente, et la demande ne porte plus aucune
+ * coordonnée. Ce qui reste à prouver ici est **ce que l'écran montre**.
+ */
+describe('un brouillon laissé par une autre cliente (#1151)', () => {
+  /** La cliente d'avant, qui a traversé le tunnel dans cet onglet. */
+  const AUTRE = {
+    firstName: 'Zoé',
+    lastName: 'Ranaivo',
+    email: 'zoe@example.test',
+    phone: '+261340000000',
+    clientNote: 'Allergique au monoï',
+    consent: true,
+  };
+
+  /** Son brouillon, tel que `sessionStorage` le garde après sa déconnexion. */
+  function brouillonDeLAutre(step: 'coordonnees' | 'confirmation'): void {
+    writeBookingDraft(tenant.slug, {
+      ...emptyBookingDraft(),
+      step,
+      serviceId: service.id,
+      startsAt: MATIN,
+      contact: AUTRE,
+      contactAccount: AUTRE.email,
+      appointment: step === 'confirmation' ? rendezVous() : null,
+    });
+    window.history.replaceState(
+      null,
+      '',
+      `${ADRESSE}?etape=${step}&prestation=${service.id}&creneau=${MATIN}`,
+    );
+  }
+
+  it('ne présente pas les coordonnées de la précédente à celle qui vient de se connecter', async () => {
+    brouillonDeLAutre('coordonnees');
+
+    renderTunnel();
+
+    // L'encart résume le compte **de la session**, et les champs repliés
+    // portent ce que la soumission emportera.
+    expect(await screen.findByText(`${contact.firstName} ${contact.lastName}`)).toBeDefined();
+    expect(screen.queryByText(new RegExp(AUTRE.firstName))).toBeNull();
+    expect(screen.queryByText(new RegExp(AUTRE.email))).toBeNull();
+    expect(screen.getByLabelText(/Prénom/)).toHaveProperty('value', contact.firstName);
+    expect(screen.getByLabelText(/Adresse e-mail/)).toHaveProperty('value', contact.email);
+  });
+
+  it('ne reprend ni le mot au salon ni le consentement d’une autre personne', async () => {
+    // Le consentement au traitement des données est donné par quelqu'un, pas
+    // par un onglet (CDC §5.1) : le réutiliser enverrait à l'API un accord que
+    // la cliente en place n'a jamais donné.
+    brouillonDeLAutre('coordonnees');
+
+    renderTunnel();
+
+    expect(await screen.findByLabelText(/Un mot pour le salon/)).toHaveProperty('value', '');
+    expect(screen.getByRole('checkbox')).toHaveProperty('checked', false);
+  });
+
+  it('ne montre pas à la suivante le rendez-vous pris par la précédente', async () => {
+    // Référence citable, horaire, prestation : l'écran de confirmation donnerait
+    // à lire un rendez-vous dont celle qui tient l'écran n'est pas la cliente.
+    brouillonDeLAutre('confirmation');
+
+    renderTunnel();
+
+    expect(await screen.findByLabelText(/Prénom/)).toBeDefined();
+    expect(screen.queryByText(/RDV-8F3K-27/)).toBeNull();
+    expect(readBookingDraft(tenant.slug).appointment).toBeNull();
+  });
+
+  it('garde la prestation et le créneau, qui ne décrivent personne', async () => {
+    // Ils sont déjà dans l'adresse, qu'un lien partage : celle qui vient de se
+    // connecter reprend le parcours de l'onglet là où il en était.
+    brouillonDeLAutre('coordonnees');
+
+    renderTunnel();
+
+    await screen.findByLabelText(/Prénom/);
+
+    const brouillon = readBookingDraft(tenant.slug);
+
+    expect(brouillon.serviceId).toBe(service.id);
+    expect(brouillon.startsAt).toBe(MATIN);
+  });
+
+  it('laisse intact le brouillon de la cliente qui l’a écrit', async () => {
+    writeBookingDraft(tenant.slug, {
+      ...emptyBookingDraft(),
+      step: 'coordonnees',
+      serviceId: service.id,
+      startsAt: MATIN,
+      contact: { ...contact, clientNote: MOT },
+      contactAccount,
+    });
+    window.history.replaceState(
+      null,
+      '',
+      `${ADRESSE}?etape=coordonnees&prestation=${service.id}&creneau=${MATIN}`,
+    );
+
+    renderTunnel();
+
+    expect(await screen.findByLabelText(/Un mot pour le salon/)).toHaveProperty('value', MOT);
+    expect(readBookingDraft(tenant.slug).contact.clientNote).toBe(MOT);
   });
 });

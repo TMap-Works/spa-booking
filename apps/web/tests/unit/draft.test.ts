@@ -1,9 +1,13 @@
+import type { BookedAppointment } from '@spa/shared';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import {
   bookingSearch,
+  contactAccountKey,
+  draftForAccount,
   draftFromSearch,
   emptyBookingDraft,
+  emptyContactDraft,
   readBookingDraft,
   reachableStep,
   writeBookingDraft,
@@ -14,6 +18,8 @@ const SLUG = 'maison-lotus';
 const PRESTATION = '22222222-2222-4222-8222-222222222222';
 const PRATICIEN = '44444444-4444-4444-8444-444444444444';
 const CRENEAU = '2026-09-01T06:00:00.000Z';
+/** Le compte sous lequel `COORDONNEES` a été saisi (#1151). */
+const COMPTE = 'camille@example.test';
 
 const COORDONNEES = {
   firstName: 'Camille',
@@ -216,5 +222,165 @@ describe('la progression portée par l’URL (#733)', () => {
     expect(relu.step).toBe('prestation');
     expect(relu.serviceId).toBeNull();
     expect(relu.startsAt).toBeNull();
+  });
+});
+
+/**
+ * Le brouillon a un propriétaire, et change de mains avec le compte (#1151).
+ *
+ * `sessionStorage` meurt avec l'onglet, pas avec la session : entre les deux il
+ * y a la place d'une déconnexion suivie d'une connexion sous un autre compte.
+ * Ce que la campagne du 22/09/2026 a relevé, et ce que ces cas éprouvent, c'est
+ * que les coordonnées de la première ne se présentent pas à la seconde.
+ */
+describe('les coordonnées appartiennent à un compte (#1151)', () => {
+  const RENDEZ_VOUS: BookedAppointment = {
+    id: '55555555-5555-4555-8555-555555555555',
+    reference: 'RDV-8F3K-27',
+    status: 'pending',
+    serviceId: PRESTATION,
+    staffId: PRATICIEN,
+    clientId: '66666666-6666-4666-8666-666666666666',
+    startsAt: CRENEAU,
+    endsAt: CRENEAU,
+    price: { amountMinor: 3500, currency: 'EUR' },
+    clientNote: null,
+    rescheduledFromId: null,
+    cancelledAt: null,
+    cancelledBy: null,
+  };
+
+  /** Le brouillon de Camille, arrivée au bout du tunnel dans cet onglet. */
+  function brouillonDeCamille(): BookingDraft {
+    return draftWith({
+      step: 'confirmation',
+      serviceId: PRESTATION,
+      staffId: PRATICIEN,
+      startsAt: CRENEAU,
+      contact: COORDONNEES,
+      contactAccount: COMPTE,
+      appointment: RENDEZ_VOUS,
+    });
+  }
+
+  it('laisse le brouillon intact au compte qui l’a écrit', () => {
+    const brouillon = brouillonDeCamille();
+
+    expect(draftForAccount(brouillon, COMPTE)).toBe(brouillon);
+  });
+
+  it('rend les coordonnées et le rendez-vous de la cliente précédente', () => {
+    // Le cas du ticket : déconnexion puis connexion sous un autre compte, dans
+    // le même onglet. Rien de ce qui décrit *une personne* ne doit survivre.
+    const repris = draftForAccount(brouillonDeCamille(), 'clara@example.test');
+
+    expect(repris.contact).toEqual(emptyContactDraft());
+    expect(repris.contactAccount).toBeNull();
+    expect(repris.appointment).toBeNull();
+  });
+
+  it('garde la prestation, le praticien et le créneau, qui ne décrivent personne', () => {
+    // Ils sont déjà dans l'URL, que `bookingSearchParams` écrit et qu'un lien
+    // partage : les faire tomber ici ne les effacerait même pas.
+    const repris = draftForAccount(brouillonDeCamille(), 'clara@example.test');
+
+    expect(repris.serviceId).toBe(PRESTATION);
+    expect(repris.staffId).toBe(PRATICIEN);
+    expect(repris.startsAt).toBe(CRENEAU);
+  });
+
+  it('ramène à l’étape « Coordonnées » plutôt qu’au récapitulatif', () => {
+    // La cliente qui vient de se connecter reprend le parcours de l'onglet là
+    // où il en était — sur l'écran qui demande à qui écrire, cette fois le sien.
+    expect(reachableStep(draftForAccount(brouillonDeCamille(), 'clara@example.test'))).toBe(
+      'coordonnees',
+    );
+  });
+
+  it('traite comme celui d’une autre un brouillon sans propriétaire', () => {
+    // Celui d'une cliente qui avait la page ouverte au déploiement : la clé
+    // n'existait pas encore, et rien ne dit à qui ces coordonnées sont. La
+    // lecture prudente d'une donnée personnelle est de ne pas la montrer.
+    const anterieur = draftWith({ step: 'coordonnees', contact: COORDONNEES });
+
+    expect(draftForAccount(anterieur, COMPTE).contact).toEqual(emptyContactDraft());
+  });
+
+  it('les rend aussi à la déconnexion, et pas seulement au changement de compte', () => {
+    expect(draftForAccount(brouillonDeCamille(), null).contact).toEqual(emptyContactDraft());
+  });
+
+  it('ne rend pas un brouillon sans propriétaire à une session sans adresse', () => {
+    // Les deux `null` ne disent pas la même chose, et les confondre rouvrirait
+    // la fuite : `contactAccountKey` rend `null` d'une présence sans adresse —
+    // un cookie posé avant #1086, un champ que `presenceSchema` a replié sur
+    // `''` — et le brouillon écrit sous cette présence porte `null` lui aussi.
+    // Une égalité sèche représenterait ses coordonnées, son consentement et son
+    // rendez-vous à la cliente suivante.
+    const sansProprietaire = draftWith({
+      step: 'confirmation',
+      serviceId: PRESTATION,
+      startsAt: CRENEAU,
+      contact: COORDONNEES,
+      appointment: RENDEZ_VOUS,
+    });
+
+    const repris = draftForAccount(sansProprietaire, null);
+
+    expect(repris.contact).toEqual(emptyContactDraft());
+    expect(repris.appointment).toBeNull();
+  });
+
+  it('ne fait pas d’une casse différente un changement de compte', () => {
+    // `sessionStorage` se bricole à la main, et un brouillon d'une autre
+    // version du tunnel a pu y laisser l'adresse telle que le compte la porte.
+    const brouillon = draftWith({
+      step: 'coordonnees',
+      serviceId: PRESTATION,
+      startsAt: CRENEAU,
+      contact: COORDONNEES,
+      contactAccount: ' Camille@Example.test ',
+    });
+
+    expect(draftForAccount(brouillon, COMPTE).contact).toEqual(COORDONNEES);
+  });
+
+  it('relit sans propriétaire un brouillon écrit avant le ticket, sans rien perdre d’autre', () => {
+    // `.catch(null)` et non un champ requis : faire échouer tout le schéma
+    // renverrait la cliente à la première étape en lui prenant son créneau.
+    window.sessionStorage.setItem(
+      `spa.booking.${SLUG}`,
+      JSON.stringify({
+        step: 'coordonnees',
+        serviceId: PRESTATION,
+        staffId: null,
+        startsAt: CRENEAU,
+        contact: COORDONNEES,
+        appointment: null,
+      }),
+    );
+
+    const relu = readBookingDraft(SLUG);
+
+    expect(relu.contactAccount).toBeNull();
+    expect(relu.serviceId).toBe(PRESTATION);
+    expect(relu.startsAt).toBe(CRENEAU);
+  });
+
+  describe('la clé du compte', () => {
+    it('ne distingue ni la casse ni les espaces de bord', () => {
+      // Deux écritures du même cookie ne sont pas garanties identiques : une
+      // différence de casse ferait tomber les coordonnées d'une cliente qui n'a
+      // pourtant pas changé d'identité.
+      expect(contactAccountKey('  Camille@Example.test ')).toBe(COMPTE);
+    });
+
+    it('ne fait pas un compte d’une adresse absente', () => {
+      // Le cookie de présence accepte une adresse vide — celle d'un cookie posé
+      // avant #1086. Deux comptes sans adresse ne sont pas le même compte.
+      expect(contactAccountKey('')).toBeNull();
+      expect(contactAccountKey(null)).toBeNull();
+      expect(contactAccountKey(undefined)).toBeNull();
+    });
   });
 });
