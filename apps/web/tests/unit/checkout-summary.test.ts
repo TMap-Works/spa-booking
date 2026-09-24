@@ -1,4 +1,10 @@
-import type { AppointmentStatus, PaymentMethod, PaymentStatus } from '@spa/shared';
+import type {
+  Appointment,
+  AppointmentStatus,
+  Money,
+  PaymentMethod,
+  PaymentStatus,
+} from '@spa/shared';
 import { ERROR_CODES, PAYMENT_ERROR_CODES } from '@spa/shared';
 import { describe, expect, it } from 'vitest';
 
@@ -6,12 +12,14 @@ import {
   COUNTER_MEANS,
   checkoutBlocker,
   checkoutFailureMessage,
+  firstSettlementCeiling,
   isAlreadySettledRefusal,
   isSettleable,
   isSettled,
   meanHint,
   methodOfMean,
   methodPhrase,
+  priceDriftOf,
   receiptDisclaimer,
   settlementBadge,
   settlementOf,
@@ -19,7 +27,7 @@ import {
   terminalReferenceIssue,
   terminalReferenceRefusal,
 } from '@/lib/admin/checkout-summary';
-import type { PaymentTransaction } from '@/lib/admin/payment-contract';
+import type { PaymentTransaction, SaleSummary } from '@/lib/admin/payment-contract';
 
 /**
  * Les règles du comptoir, vérifiées sans monter d'écran (#59).
@@ -166,6 +174,269 @@ describe('l’état de règlement, lu avant le clic', () => {
       settlementBadge(settlementOf([payment('partially_refunded', 'card', 2000)], APPOINTMENT))
         .label,
     ).toMatch(/partiellement/i);
+  });
+
+  /**
+   * Le ticket à moitié payé que la liste appelait « réglé » — #1240, premier
+   * critère.
+   *
+   * Le repère est celui de l'issue : un ticket de 78,00 € dont 50,00 € ont été
+   * pris en espèces. Une seule ligne de `payments`, aboutie — c'est bien pour
+   * cela que `settlementOf` s'y trompait —, et 28,00 € encore dus sur la pièce.
+   */
+  describe('le reste dû du ticket, seule autorité sur « réglé » — #1240', () => {
+    const TICKET = 'dddddddd-0000-4000-8000-000000000009';
+
+    /**
+     * Une **part** de règlement : la même ligne, avec son montant à elle et un
+     * identifiant qui en dépend.
+     *
+     * Les deux comptent pour le règlement mixte : deux lignes qui partageraient
+     * le même identifiant ne seraient pas deux règlements, et c'est exactement
+     * ce que la table refuse.
+     */
+    function partOf(
+      status: PaymentStatus,
+      method: PaymentMethod = 'card',
+      refundedMinor = 0,
+      amountMinor = 6500,
+    ): PaymentTransaction {
+      return {
+        ...payment(status, method, refundedMinor),
+        id: `ffffffff-0000-4000-8000-${String(amountMinor).padStart(12, '0')}`,
+        amount: { amountMinor, currency: 'EUR' },
+      };
+    }
+
+    function ticket(remainingMinor: number, settledMinor = 7800 - remainingMinor): SaleSummary {
+      return {
+        id: TICKET,
+        appointmentId: APPOINTMENT,
+        cashierUserId: 'cccccccc-0000-4000-8000-000000000003',
+        subtotal: { amountMinor: 6500, currency: 'EUR' },
+        tax: { amountMinor: 1300, currency: 'EUR' },
+        tip: { amountMinor: 0, currency: 'EUR' },
+        total: { amountMinor: 7800, currency: 'EUR' },
+        settled: { amountMinor: settledMinor, currency: 'EUR' },
+        remaining: { amountMinor: remainingMinor, currency: 'EUR' },
+        settledAt: remainingMinor === 0 ? '2026-09-04T09:10:00.000Z' : null,
+        createdAt: '2026-09-04T08:45:00.000Z',
+      };
+    }
+
+    const tickets = (sale: SaleSummary): ReadonlyMap<string, SaleSummary> =>
+      new Map([[APPOINTMENT, sale]]);
+
+    it('ne dit plus « réglé » d’un ticket dont il reste un centime dû', () => {
+      const settlement = settlementOf(
+        [partOf('succeeded', 'cash', 0, 5000)],
+        APPOINTMENT,
+        tickets(ticket(2800)),
+      );
+
+      expect(settlement.kind).toBe('partiel');
+      expect(isSettled(settlement)).toBe(false);
+      expect(settlementBadge(settlement).label).toBe('partiellement réglé');
+    });
+
+    it('dit « réglé » dès que le ticket est soldé, et lui seul en décide', () => {
+      const settlement = settlementOf(
+        [partOf('succeeded', 'cash', 0, 7800)],
+        APPOINTMENT,
+        tickets(ticket(0)),
+      );
+
+      expect(settlement.kind).toBe('regle');
+      expect(settlementBadge(settlement).label).toBe('réglé');
+    });
+
+    it('laisse prendre le reste — un ticket partiel ne ferme aucun moyen', () => {
+      // C'est la moitié utile de l'état : avant #1240 l'écran retombait sur
+      // « déjà encaissé », et les 28,00 € restants devenaient inatteignables dès
+      // qu'on rechargeait entre les deux gestes.
+      const settlement = settlementOf(
+        [partOf('succeeded', 'cash', 0, 5000)],
+        APPOINTMENT,
+        tickets(ticket(2800)),
+      );
+
+      expect(checkoutBlocker('completed', settlement)).toBeNull();
+    });
+
+    it('tient un règlement mixte pour un seul état, pas pour deux lignes', () => {
+      // 50,00 € d'espèces puis 28,00 € au terminal : deux lignes abouties sur le
+      // même rendez-vous, puisque `payments.appointment_id` s'y résout par la
+      // vente. `find` en retenait une au hasard de l'ordre de l'API.
+      const settlement = settlementOf(
+        [partOf('succeeded', 'card', 0, 2800), partOf('succeeded', 'cash', 0, 5000)],
+        APPOINTMENT,
+        tickets(ticket(0)),
+      );
+
+      expect(settlement.kind).toBe('regle');
+    });
+
+    it('ne laisse pas un « pending » qui suit un encaissement rouvrir la carte', () => {
+      const settlement = settlementOf(
+        [partOf('pending', 'card'), partOf('succeeded', 'cash', 0, 7800)],
+        APPOINTMENT,
+        tickets(ticket(0)),
+      );
+
+      expect(settlement.kind).toBe('regle');
+    });
+
+    it('ne rouvre pas le comptoir sous une intention carte encore en vol', () => {
+      // Le cas atteignable depuis #817 : 50,00 € d'espèces au comptoir, puis la
+      // cliente règle le reste depuis son navigateur. `hasLiveCardIntent` refuse
+      // alors en 409 tout règlement de comptoir sur cette pièce
+      // (`settlement.repository.ts`) : conclure `partiel` aurait rouvert les deux
+      // moyens pour faire retomber le refus **après** le clic.
+      const settlement = settlementOf(
+        [partOf('pending', 'card', 0, 2800), partOf('succeeded', 'cash', 0, 5000)],
+        APPOINTMENT,
+        tickets(ticket(2800)),
+      );
+
+      expect(settlement.kind).toBe('ouvert');
+      expect(checkoutBlocker('completed', settlement)).not.toBeNull();
+    });
+
+    it('laisse prendre le reste malgré une carte en ligne **refusée**', () => {
+      // La garde de l'API ne porte que sur `PENDING` : une carte refusée
+      // n'immobilise pas la pièce, et les 28,00 € restants doivent rester
+      // encaissables au comptoir.
+      const settlement = settlementOf(
+        [partOf('failed', 'card', 0, 2800), partOf('succeeded', 'cash', 0, 5000)],
+        APPOINTMENT,
+        tickets(ticket(2800)),
+      );
+
+      expect(settlement.kind).toBe('partiel');
+      expect(checkoutBlocker('completed', settlement)).toBeNull();
+    });
+
+    it('reste sur « réglé » quand aucun ticket n’a pu être relu', () => {
+      // C'est l'état d'avant, et il est assumé : conclure « partiel » faute de
+      // preuve serait l'erreur inverse, et la plus fréquente. La prudence est un
+      // cran plus haut — la page tait la colonne entière (`page.tsx`).
+      expect(settlementOf([partOf('succeeded')], APPOINTMENT).kind).toBe('regle');
+      expect(settlementOf([partOf('succeeded')], APPOINTMENT, new Map()).kind).toBe('regle');
+    });
+
+    it('n’emprunte la nuance d’un autre état qu’en écrivant son libellé', () => {
+      // WCAG 1.4.1 : `partiel` partage la rampe d'avertissement avec la carte en
+      // cours, comme « partiellement remboursé » partage celle du remboursement
+      // depuis #828. Ce qui distingue les deux est le mot, toujours écrit.
+      const partial = settlementBadge(
+        settlementOf([partOf('succeeded', 'cash', 0, 5000)], APPOINTMENT, tickets(ticket(2800))),
+      );
+      const open = settlementBadge(settlementOf([partOf('pending')], APPOINTMENT));
+
+      expect(partial.modifier).toBe(open.modifier);
+      expect(partial.label).not.toBe(open.label);
+    });
+  });
+});
+
+/**
+ * Le tarif qui a bougé entre la réservation et le comptoir — #1240, deuxième
+ * critère.
+ *
+ * Les deux prix arrivent **du même appel** : `GET /appointments` sert `price`
+ * (figé à la réservation) et `service.price` (tarif courant du catalogue). Rien
+ * de ce qui suit ne demande une lecture de plus, et c'est ce qui permet de tenir
+ * le critère sans ouvrir de route.
+ */
+describe('l’écart de tarif, expliqué avant le clic — #1240', () => {
+  const euros = (amountMinor: number): Money => ({ amountMinor, currency: 'EUR' });
+
+  /**
+   * Un rendez-vous dont les **deux** prix divergent — celui figé à la
+   * réservation, et celui que le catalogue porte aujourd'hui.
+   *
+   * Les deux sont servis par `GET /appointments` : `price` et `service.price`. Le
+   * repère est donc construit sans cast — le contrat dit déjà que le comptoir a
+   * les deux sous la main, et un `as Appointment` aurait laissé la divergence de
+   * forme passer pour un détail de test.
+   */
+  function appointment(bookedMinor: number, catalogMinor: number, currency = 'EUR'): Appointment {
+    return {
+      id: 'aaaaaaaa-0000-4000-8000-000000000001',
+      reference: 'RDV-8F3K-27',
+      status: 'completed',
+      client: {
+        id: 'bbbbbbbb-0000-4000-8000-000000000002',
+        firstName: 'Awa',
+        lastName: 'Ndiaye',
+      },
+      staff: { id: 'cccccccc-0000-4000-8000-000000000003', displayName: 'Lucie' },
+      service: {
+        id: 'eeeeeeee-0000-4000-8000-000000000004',
+        name: 'Soin visage',
+        durationMinutes: 60,
+        price: { amountMinor: catalogMinor, currency },
+      },
+      startsAt: '2026-09-04T08:00:00.000Z',
+      endsAt: '2026-09-04T09:00:00.000Z',
+      price: euros(bookedMinor),
+      createdAt: '2026-09-01T08:00:00.000Z',
+    };
+  }
+
+  function ticketTotalling(totalMinor: number): SaleSummary {
+    return {
+      id: 'dddddddd-0000-4000-8000-000000000009',
+      appointmentId: 'aaaaaaaa-0000-4000-8000-000000000001',
+      cashierUserId: 'cccccccc-0000-4000-8000-000000000003',
+      subtotal: euros(totalMinor),
+      tax: euros(0),
+      tip: euros(0),
+      total: euros(totalMinor),
+      settled: euros(0),
+      remaining: euros(totalMinor),
+      settledAt: null,
+      createdAt: '2026-09-04T08:45:00.000Z',
+    };
+  }
+
+  it('se tait quand le catalogue dit encore ce que la cliente a accepté', () => {
+    expect(priceDriftOf(appointment(6500, 6500), null)).toBeNull();
+  });
+
+  it('nomme le tarif du catalogue tant que le ticket n’existe pas', () => {
+    expect(priceDriftOf(appointment(7800, 6500), null)).toEqual({
+      kind: 'catalogue',
+      charged: euros(6500),
+      booked: euros(7800),
+    });
+  });
+
+  it('laisse le ticket faire foi dès qu’il existe — pourboire et articles compris', () => {
+    expect(priceDriftOf(appointment(6500, 6500), ticketTotalling(7000))).toEqual({
+      kind: 'ticket',
+      charged: euros(7000),
+      booked: euros(6500),
+    });
+  });
+
+  it('tient une devise différente pour un écart, et non pour une coïncidence', () => {
+    // `POST /sales` refuse en 422 `SALE_CURRENCY_MISMATCH` : autant le dire avant.
+    expect(priceDriftOf(appointment(6500, 6500, 'MGA'), null)).not.toBeNull();
+  });
+
+  it('plafonne le premier règlement à ce que le ticket pourra porter', () => {
+    // Le cas qui sortait en 422 `SALE_OVERPAYMENT` : tarif baissé depuis la
+    // réservation, et l'écran envoyait quand même le prix figé.
+    expect(firstSettlementCeiling(appointment(7800, 6500))).toEqual(euros(6500));
+  });
+
+  it('ne facture jamais une hausse que la cliente n’a pas vue', () => {
+    expect(firstSettlementCeiling(appointment(6500, 7800))).toEqual(euros(6500));
+  });
+
+  it('garde le prix figé quand les deux devises divergent', () => {
+    expect(firstSettlementCeiling(appointment(6500, 100, 'MGA'))).toEqual(euros(6500));
   });
 });
 
