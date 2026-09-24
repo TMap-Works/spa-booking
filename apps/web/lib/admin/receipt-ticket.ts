@@ -1,11 +1,14 @@
 import {
   addMoney,
+  type Locale,
   type Money,
   type ReceiptIssuer,
   type ReceiptLine,
   type ReceiptSettlement,
   type ReceiptTaxLine,
 } from '@spa/shared';
+
+import { CHECKOUT_FALLBACK_LOCALE, checkoutWords } from '@/lib/admin/checkout-summary';
 
 /**
  * La mise en forme du ticket de caisse imprimé au comptoir — ce qui se décide
@@ -113,7 +116,91 @@ export function soldLines(lines: readonly ReceiptLine[]): readonly ReceiptLine[]
   return lines.filter((line) => line.kind === 'SERVICE' || line.kind === 'PRODUCT');
 }
 
-/** Le moyen de règlement tel qu'il s'imprime. */
-export function settlementLabel(settlement: ReceiptSettlement): string {
-  return settlement.method === 'CASH' ? 'Espèces' : 'Carte bancaire';
+/**
+ * Le moyen de règlement tel qu'il s'imprime — **sur le canal, jamais sur le
+ * seul moyen** (#1217).
+ *
+ * ## Pourquoi `cardChannel` et non `method`
+ *
+ * Une carte peut être passée par deux tuyaux qui se rapprochent de deux relevés
+ * différents : le TPE autonome du salon (`TERMINAL`, ADR 0015) et l'intention du
+ * tunnel public (`STRIPE`). `method` ne distingue pas les deux — il dit `CARD`
+ * dans les deux cas —, si bien qu'un libellé qui le lit seul envoie le
+ * rapprochement de fin de journée chercher sur le relevé du TPE une ligne
+ * Stripe qui n'y est pas. Le PDF le sait depuis #1027 ; l'écran ne le savait
+ * pas, et c'est exactement le bug de ce ticket : deux rendus de la même pièce
+ * qui ne portaient pas la même mention.
+ *
+ * La `terminalReference` seule n'aurait pas suffi à trancher : elle est
+ * facultative, et un passage au terminal dont le caissier n'a rien relevé
+ * resterait indiscernable d'une carte en ligne.
+ *
+ * ## Le canal nul est une carte **en ligne**
+ *
+ * `null` — ou absent — sur une carte ne peut désigner qu'un règlement antérieur
+ * à #834, que la migration n'a pas repris. Le TPE n'existait pas alors : une
+ * telle carte ne peut être qu'une intention Stripe, et s'imprime donc comme une
+ * carte en ligne. La nommer « TPE » inventerait un passage au terminal qui n'a
+ * jamais eu lieu — c'est le sens de la comparaison `!== 'TERMINAL'`, qui range
+ * le nul du bon côté sans avoir à l'énumérer.
+ *
+ * ## Le même mot que le PDF, et une seule écriture
+ *
+ * La logique est celle de `formatSettlementMethod`
+ * (`apps/api/src/modules/payments/receipt-pdf/receipt-pdf.format.ts`), au cas
+ * près : c'est la même pièce, elle ne peut pas se lire autrement à l'écran et
+ * sur le papier. Les mots, eux, viennent du catalogue `admin-checkout` — lu par
+ * `checkoutWords`, comme le fait déjà tout le comptoir — et non de ce fichier :
+ * le produit sert l'anglais par défaut et le français en option, et un libellé
+ * écrit en dur ici serait la seule ligne du ticket que la traduction ne pourrait
+ * pas atteindre. `method.cash` et `method.card` sont **ceux que le sélecteur de
+ * moyen affiche déjà** ; seul « en ligne » manquait, parce que le comptoir ne le
+ * propose pas.
+ *
+ * Aucune donnée de carte n'entre ici : ni marque, ni porteur, ni chiffre. Le
+ * canal est le nom d'un tuyau, et la référence est le numéro d'opération que le
+ * terminal imprime — du même rang qu'un `pi_…` (payments-stripe §1).
+ *
+ * `locale` a le défaut du comptoir, `fr`, pour la raison qui vaut déjà pour
+ * `lib/appointment-status.ts` : le composant qui appelle cette fonction
+ * (`admin/components/receipt-ticket.tsx`) n'est pas encore branché sur la langue
+ * résolue, et le reste de son rouleau est en français. Basculer cette seule
+ * ligne en anglais ferait un ticket bilingue. Le jour où l'écran passe à
+ * l'épique #843, il passera la langue et le défaut tombera.
+ */
+export function settlementLabel(
+  settlement: Pick<ReceiptSettlement, 'method' | 'cardChannel' | 'terminalReference'>,
+  locale: Locale = CHECKOUT_FALLBACK_LOCALE,
+): string {
+  const words = checkoutWords(locale);
+
+  if (settlement.method === 'CASH') {
+    return words.method.cash;
+  }
+
+  if (settlement.cardChannel !== 'TERMINAL') {
+    return words.method.cardOnline;
+  }
+
+  const label = words.method.card;
+  const reference = settlement.terminalReference;
+
+  // Le contrat partagé **omet** la clé quand la colonne est nulle
+  // (`receiptSettlementSchema`, `z.string().optional()`), là où l'API la porte
+  // en `string | null` : les deux formes se lisent « rien à citer », et une
+  // référence blanche n'a rien à accoler non plus.
+  if (reference === undefined || reference.trim() === '') {
+    return label;
+  }
+
+  // Les deux valeurs sont rendues par une **fonction** et non par une chaîne :
+  // `replaceAll` interprète `$&`, `` $` ``, `$'` et `$1` dans une chaîne de
+  // remplacement, et la référence du terminal est une donnée relue, non bornée
+  // en lecture par le contrat (`receiptSettlementSchema`, `z.string()` — une
+  // reprise de données ou un import peut en porter n'importe quelle ponctuation).
+  // Un `A$&B` s'imprimerait alors dédoublé, là où le PDF, qui compose par
+  // littéral gabarit, le recopie tel quel.
+  return words.receipt.settlementReference
+    .replaceAll('{method}', () => label)
+    .replaceAll('{reference}', () => reference);
 }

@@ -52,6 +52,7 @@
     "legend": "Payment method",
     "cash": "Cash",
     "card": "Bank card (terminal)",
+    "cardOnline": "Bank card (online)",
     "cashPhrase": "in cash",
     "cardPhrase": "by bank card (terminal)",
     "cashHint": "Recorded with the operator and a timestamp; the till is the reference at reconciliation.",
@@ -137,6 +138,7 @@
     "total": "Total",
     "kept": "Amount kept",
     "payment": "Payment",
+    "settlementReference": "{method} — ref. {reference}",
     "thanks": "Thank you for your visit!",
     "cashDisclaimer": "Settlement recorded and timestamped, with its operator. The till and the terminal’s printout are the reference at reconciliation."
   },
