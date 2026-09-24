@@ -474,10 +474,7 @@
     },
     "summaryStep": {
       "label": "Your booking summary",
-      "emailRefusedTitle": "This email address cannot be used here",
-      "emailRefusedBody": "Online booking does not accept this address for this salon. Go back to your details to enter another one: your service and your time are saved. If you would rather keep this address, contact the salon directly.",
       "failureTitle": "The booking did not go through",
-      "fixContact": "Correct my details",
       "termsTitle": "Before you confirm",
       "termsPayment": "<label>Payment on site</label>, on the day of your appointment.",
       "termsCancellation": "<label>Free cancellation</label> for as long as the appointment has not taken place.",

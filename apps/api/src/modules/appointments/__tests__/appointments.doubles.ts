@@ -6,13 +6,11 @@ import { ConflictError, InvalidStateTransitionError, NotFoundError } from '../..
 import type { StructuredLogger } from '../../../common/logging/structured-logger';
 import { getTenantId } from '../../../common/tenant';
 import type { CacheConnection, CacheLockOutcome } from '../../../infrastructure/cache/cache.connection';
-import { ClientEmailNotBookableError } from '../../crm/crm.errors';
 import type { UserRole } from '../../identity/roles';
 import { generateAppointmentReference } from '../appointment-reference';
 import type { AppointmentCancelledBy, AppointmentStatus } from '../appointment-status';
 import { OCCUPYING_STATUSES, occupiesSlot } from '../appointment-status';
 import { SlotNoLongerAvailableError } from '../appointments.errors';
-import { type BookAppointmentBody, BookAppointmentBodyPipe } from '../dto/book-appointment.dto';
 import type { AppointmentsRepository } from '../appointments.repository';
 import { SlotLockService } from '../slot-lock.service';
 import type {
@@ -216,8 +214,6 @@ export class FakeAppointmentsRepository {
   private readonly closedWeekdays = new Map<string, number[]>();
   /** Fuseau par établissement — `UTC` par défaut, voir `seedTimeZone`. */
   private readonly timeZones = new Map<string, string | null>();
-  /** Pays par établissement — **aucun** par défaut, voir `seedCountryCode`. */
-  private readonly countryCodes = new Map<string, string | null>();
   /** Affichage d'agenda par prestation — voir `seedServiceDisplay`. */
   private readonly displays = new Map<string, AgendaDisplay>();
 
@@ -344,51 +340,32 @@ export class FakeAppointmentsRepository {
   }
 
   /**
-   * Le pays d'un établissement — ISO 3166-1 alpha-2 (#1028).
-   *
-   * Sans valeur semée, `currentCountryCode` rend `null`, et le défaut n'est pas
-   * un raccourci non plus : c'est l'état d'un salon qui n'a pas saisi son
-   * adresse, celui qui refuse un numéro national. Une suite qui parle du pays le
-   * sème ; les autres n'ont pas à connaître ce champ, et leurs numéros
-   * internationaux traversent sans lui.
-   */
-  public seedCountryCode(tenantId: string, countryCode: string | null): void {
-    this.countryCodes.set(tenantId, countryCode);
-  }
-
-  /**
-   * La réservation : fiche cliente et rendez-vous, **ou rien** (#313).
+   * La réservation — le rendez-vous, et rien d'autre (#313, #1222).
    *
    * L'ordre reproduit celui du vrai, à l'intérieur de sa transaction : la fiche
-   * est résolue — donc éventuellement écrite — **avant** que le créneau ne soit
-   * jugé, puisque c'est l'insertion du rendez-vous que la contrainte d'exclusion
-   * refuse. Ce qui la fait disparaître d'un refus n'est donc pas un ordre habile,
-   * c'est le `ROLLBACK`, reproduit ci-dessous comme `reschedule` le fait déjà.
+   * est **jugée** avant que le créneau ne le soit, puisque c'est l'insertion du
+   * rendez-vous que la contrainte d'exclusion refuse. L'écrire dans l'autre
+   * sens aurait rendu le même résultat sur le cas nominal et menti sur un
+   * autre : une fiche du personnel désignée sur un créneau déjà pris sortirait
+   * en `SLOT_NO_LONGER_AVAILABLE` ici, et en 404 en vrai.
    *
-   * L'écrire dans l'autre sens — juger le créneau, puis écrire la fiche — aurait
-   * rendu le même résultat sur le cas nominal et menti sur un autre : une adresse
-   * de compte du personnel sur un créneau déjà pris sortirait en
-   * `SLOT_NO_LONGER_AVAILABLE` ici et en `CLIENT_EMAIL_NOT_BOOKABLE` en vrai.
+   * Il n'y a plus de `ROLLBACK` à reproduire : la porte `crm` ne crée plus de
+   * fiche, elle confirme celle qu'on lui désigne. Le critère de #313 — « un 409
+   * ne laisse aucune fiche derrière lui » — est vrai par absence d'écriture.
    */
   public async create(draft: AppointmentDraft): Promise<AppointmentRecord> {
     const tenantId = this.requireTenant();
 
-    const resolved = this.resolveClient(tenantId, draft.client);
+    const clientId = this.resolveClient(tenantId, draft.client);
 
     if (this.overlaps(tenantId, draft)) {
-      // Le `ROLLBACK` : sans ces deux lignes, chaque course perdue laisserait une
-      // fiche publique sans rendez-vous au fichier du salon — le défaut même que
-      // #313 supprime.
-      if (resolved.created) {
-        this.clients.pop();
-      }
       throw new SlotNoLongerAvailableError(draft.staffId, draft.startsAt);
     }
 
     const stored: StoredAppointment = {
       tenantId,
       id: randomUUID(),
-      clientId: resolved.id,
+      clientId,
       staffId: draft.staffId,
       serviceId: draft.serviceId,
       startsAt: draft.startsAt,
@@ -741,20 +718,6 @@ export class FakeAppointmentsRepository {
   }
 
   /**
-   * Le pays de l'établissement courant — `null` faute de valeur semée (#1028).
-   *
-   * `requireTenant` comme partout ailleurs dans ce double : le vrai lève hors
-   * portée, l'extension refusant toute opération sans contexte. C'est ce qui
-   * fait rougir une suite dont la portée serait ouverte sur le mauvais
-   * établissement, au lieu de la laisser verdir sur le pays du voisin.
-   */
-  public async currentCountryCode(): Promise<string | null> {
-    const tenantId = this.requireTenant();
-
-    return this.countryCodes.get(tenantId) ?? null;
-  }
-
-  /**
    * Rattache une fiche praticien à un **compte**, dans un établissement (#811).
    *
    * Le couple `(tenantId, userId)` est celui de l'unique `staff` du schéma : le
@@ -869,78 +832,28 @@ export class FakeAppointmentsRepository {
   }
 
   /**
-   * La porte `crm` reproduite : la fiche de ces coordonnées, trouvée ou créée
-   * (#313).
+   * La porte `crm` reproduite : la fiche **désignée**, confirmée (#465, #1136).
    *
-   * Trois propriétés du vrai, et rien de plus :
+   * Le vrai la fait traverser `crm.assertBookableWithin`, qui juge trois choses
+   * d'un même 404 — la fiche existe, elle est de cet établissement, et son rôle
+   * est `CLIENT`. Le rôle n'est pas un détail de double : `appointments.client_id`
+   * référence `users`, où vivent aussi les comptes du personnel, et un 403 à la
+   * place du 404 confirmerait l'existence de la fiche voisine.
    *
-   * 1. la clé est `(tenant_id, email)` — une cliente qui revient garde une seule
-   *    fiche, et le salon voisin n'en partage aucune ;
-   * 2. une fiche trouvée n'est **pas** mise à jour : un appel public ne réécrit
-   *    ni le nom ni le numéro d'une cliente existante ;
-   * 3. une adresse portée par un compte **non client** est refusée, jamais
-   *    réutilisée — `ClientEmailNotBookableError`, donc 409.
-   *
-   * `created` dit à l'appelant s'il y a une écriture à défaire : c'est ce qui
-   * tient le `ROLLBACK` de `create`.
+   * La seconde branche, qui résolvait des coordonnées et créait la fiche au
+   * besoin (#313), a disparu avec #1222 : réserver exige un compte, et les deux
+   * surfaces désignent une fiche existante.
    */
-  private resolveClient(
-    tenantId: string,
-    client: ClientReference,
-  ): { id: string; created: boolean } {
-    if ('clientId' in client) {
-      // La forme du comptoir (#461) et, depuis #1136, celle du tunnel public :
-      // la fiche est **désignée**, pas résolue. Le vrai la fait traverser
-      // `crm.assertBookableWithin` (#465), qui juge trois choses d'un même 404 —
-      // la fiche existe, elle est de cet établissement, et son rôle est
-      // `CLIENT`. Le rôle n'est pas un détail de double : `appointments.client_id`
-      // référence `users`, où vivent aussi les comptes du personnel, et un 403
-      // à la place du 404 confirmerait l'existence de la fiche voisine.
-      const known = this.clients.find(
-        (candidate) => candidate.tenantId === tenantId && candidate.id === client.clientId,
-      );
-
-      if (known === undefined || known.role !== 'CLIENT') {
-        throw new NotFoundError('Cliente introuvable.');
-      }
-
-      return { id: client.clientId, created: false };
-    }
-
-    const contact = client.contact;
-
-    const existing = this.clients.find(
-      (candidate) => candidate.tenantId === tenantId && candidate.email === contact.email,
+  private resolveClient(tenantId: string, client: ClientReference): string {
+    const known = this.clients.find(
+      (candidate) => candidate.tenantId === tenantId && candidate.id === client.clientId,
     );
 
-    if (existing !== undefined) {
-      if (existing.role !== 'CLIENT') {
-        throw new ClientEmailNotBookableError();
-      }
-      // La seule écriture que la résolution fasse sur une fiche existante, et
-      // elle ne comble qu'un **trou** (#844). Le `WHERE "locale" IS NULL` du
-      // vrai SQL se lit ici comme cette condition : une préférence déjà posée
-      // n'est jamais remplacée par un appel public.
-      if (existing.locale === null && contact.locale !== null) {
-        existing.locale = contact.locale;
-      }
-      return { id: existing.id, created: false };
+    if (known === undefined || known.role !== 'CLIENT') {
+      throw new NotFoundError('Cliente introuvable.');
     }
 
-    const created: StoredClient = {
-      tenantId,
-      id: randomUUID(),
-      email: contact.email,
-      firstName: contact.firstName,
-      lastName: contact.lastName,
-      phone: contact.phone,
-      role: 'CLIENT',
-      // Sur une fiche qui naît, rien à protéger : aucune préférence ne peut
-      // être écrasée.
-      locale: contact.locale,
-    };
-    this.clients.push(created);
-    return { id: created.id, created: true };
+    return client.clientId;
   }
 
   /**
@@ -1075,26 +988,4 @@ function toRecord(stored: StoredAppointment): AppointmentRecord {
     cancelledBy: stored.cancelledBy,
     cancellationReason: stored.cancellationReason,
   };
-}
-
-/**
- * Le pipe du tunnel invité, prêt à transformer, avec le pays qu'on lui donne
- * (#1028).
- *
- * `BookAppointmentBodyPipe` est une **classe** dont Nest injecte le fournisseur
- * du pays en production ; ici on lui en passe un littéral, ce qui suffit — le
- * pipe n'attend qu'une méthode, et monter un conteneur Nest pour exercer une
- * frontière de validation coûterait le prix d'une suite d'intégration sans rien
- * prouver de plus.
- *
- * `null` par défaut, le pays étant précisément ce que les suites qui en parlent
- * doivent nommer : c'est la variante « établissement sans adresse », celle qui
- * refuse un numéro national.
- */
-export function bookAppointmentPipe(countryCode: string | null = null): {
-  transform(value: unknown): Promise<BookAppointmentBody>;
-} {
-  return new BookAppointmentBodyPipe({
-    currentCountryCode: (): Promise<string | null> => Promise.resolve(countryCode),
-  }) as { transform(value: unknown): Promise<BookAppointmentBody> };
 }

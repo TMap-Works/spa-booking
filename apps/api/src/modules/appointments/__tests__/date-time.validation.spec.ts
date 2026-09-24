@@ -23,7 +23,7 @@
  *
  * Elles sont désormais **de même nature**, et c'est le changement de #510 :
  *
- * - **`book`** est validée par `bookGuestAppointmentRequestSchemaFor`, monté par
+ * - **`book`** est validée par `bookGuestAppointmentRequestSchema`, monté par
  *   `BookAppointmentBodyPipe`
  *   ([ADR 0008](../../../../../../docs/adr/0008-validation-zod-classe-dto-documentaire.md)) ;
  * - **`reschedule`** l'est par `rescheduleAppointmentRequestSchema`, monté par
@@ -46,20 +46,12 @@ import type {
   BookAppointmentInput,
   RescheduleAppointmentInput,
 } from '../appointments.types';
-import type { BookAppointmentBody } from '../dto/book-appointment.dto';
-import { bookAppointmentPipe } from './appointments.doubles';
+import { type BookAppointmentBody, BookAppointmentBodyPipe } from '../dto/book-appointment.dto';
 import {
   type RescheduleAppointmentBody,
   rescheduleAppointmentBody,
 } from '../dto/reschedule-appointment.dto';
 import { PublicAppointmentsController } from '../public-appointments.controller';
-
-/** Des coordonnées valides — le sujet du test est ailleurs. */
-const CLIENT = {
-  firstName: 'Camille',
-  lastName: 'Rakoto',
-  email: 'camille@example.test',
-};
 
 const APPOINTMENT_ID = '3f7c1f4e-2a9d-4c53-8f0e-1b2c3d4e5f60';
 const SERVICE_ID = '9a1b2c3d-4e5f-4a7b-8c9d-0e1f2a3b4c5d';
@@ -140,13 +132,13 @@ function view(): AppointmentView {
 /**
  * Le corps d'erreur sérialisé, ou la chaîne vide si la frontière a laissé passer.
  *
- * `await` sur la tentative : le pipe de `book` lit le pays de l'établissement,
- * donc transforme de façon asynchrone depuis #1028. Celui de `reschedule` reste
- * synchrone, et `await` sur une valeur non promise ne change rien à son refus.
+ * Les deux pipes transforment de façon **synchrone** : celui de `book` a cessé
+ * d'être asynchrone avec #1222, qui lui a retiré la lecture du pays de
+ * l'établissement (#1028) en même temps que le champ qui en dépendait.
  */
-async function refusalOf(attempt: () => unknown): Promise<string> {
+function refusalOf(attempt: () => unknown): string {
   try {
-    await attempt();
+    attempt();
 
     return '';
   } catch (error) {
@@ -155,26 +147,22 @@ async function refusalOf(attempt: () => unknown): Promise<string> {
 }
 
 /** Le refus que la frontière de `reschedule` oppose à ce `startsAt`. */
-function rescheduleRefusal(startsAt: string): Promise<string> {
+function rescheduleRefusal(startsAt: string): string {
   return refusalOf(() => rescheduleAppointmentBody.transform({ startsAt }));
 }
 
-/**
- * La frontière de `book`, **sans pays d'établissement** : le sujet de cette
- * suite est l'instant, pas le téléphone, et aucun de ses corps ne porte de
- * numéro.
- */
-const bookBody = bookAppointmentPipe();
+/** La frontière de `book`, telle que le contrôleur la monte. */
+const bookBody = BookAppointmentBodyPipe;
 
 /** Corps de réservation complet, dont seul `startsAt` varie d'un cas à l'autre. */
 function bookingBody(startsAt: string): Record<string, unknown> {
   // `dataConsent` est obligatoire depuis #790 : sans lui, le refus observé ici
   // serait celui du consentement manquant et non celui du `startsAt` visé.
-  return { serviceId: SERVICE_ID, startsAt, client: { ...CLIENT }, dataConsent: true };
+  return { serviceId: SERVICE_ID, startsAt, dataConsent: true };
 }
 
 /** Le refus que la frontière de `book` oppose à ce `startsAt`. */
-function bookingRefusal(startsAt: string): Promise<string> {
+function bookingRefusal(startsAt: string): string {
   return refusalOf(() => bookBody.transform(bookingBody(startsAt)));
 }
 
@@ -183,7 +171,7 @@ async function bookedInstant(startsAt: string): Promise<string> {
   const { controller, captured } = capturingService();
 
   await controller.book(
-    (await bookBody.transform(bookingBody(startsAt))) as BookAppointmentBody,
+    bookBody.transform(bookingBody(startsAt)) as BookAppointmentBody,
     // La cliente du jeton, exigée depuis #1136 — même raison que pour le report
     // ci-dessous : le sujet de cette suite est l'instant, pas la porte.
     CLIENTE_AUTHENTIFIEE,
@@ -245,12 +233,12 @@ describe('début de rendez-vous entrant', () => {
     expect(await bookedInstant('2026-03-28T15:30:00.500-10:00')).toBe('2026-03-29T01:30:00.500Z');
   });
 
-  it('refuse une date-heure nue — le serveur n’a pas à deviner le fuseau', async () => {
-    expect(await bookingRefusal('2026-03-29T03:30:00')).toContain('offset explicite');
-    expect(await rescheduleRefusal('2026-03-29T03:30:00')).toContain('offset explicite');
+  it('refuse une date-heure nue — le serveur n’a pas à deviner le fuseau', () => {
+    expect(bookingRefusal('2026-03-29T03:30:00')).toContain('offset explicite');
+    expect(rescheduleRefusal('2026-03-29T03:30:00')).toContain('offset explicite');
   });
 
-  it('refuse une date civile seule, un epoch, une heure hors journée, un 31 février', async () => {
+  it('refuse une date civile seule, un epoch, une heure hors journée, un 31 février', () => {
     // Cette liste est reprise **mot pour mot** par le pendant côté contrat,
     // `packages/shared/src/__tests__/schemas.spec.ts` : c'est ce qui rend la
     // double écriture de la frontière vérifiable. Une liste plus courte d'un
@@ -272,8 +260,8 @@ describe('début de rendez-vous entrant', () => {
     ];
 
     for (const startsAt of refused) {
-      expect(await bookingRefusal(startsAt)).toContain('offset explicite');
-      expect(await rescheduleRefusal(startsAt)).toContain('offset explicite');
+      expect(bookingRefusal(startsAt)).toContain('offset explicite');
+      expect(rescheduleRefusal(startsAt)).toContain('offset explicite');
     }
   });
 });

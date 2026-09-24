@@ -201,14 +201,16 @@ Trois raisons, et la troisième est décisive.
    de lire des fiches ». Un 409 ici aurait dit exactement cela, et aurait fait de
    `POST /appointments` une sonde de l'annuaire du personnel, interrogeable
    identifiant par identifiant par n'importe quel porteur de jeton `STAFF`.
-2. **La symétrie avec `CLIENT_EMAIL_NOT_BOOKABLE` est trompeuse.** Ce 409-là
-   existe parce que `@@unique([tenantId, email])` ne laisse **aucune** troisième
-   voie : la visiteuse ne pourra jamais réserver sous cette adresse, et un front
-   qui la renverrait au calendrier la ferait se heurter au même refus à chaque
-   essai (#452). Ici la voie existe et elle est triviale — le comptoir a désigné
-   la mauvaise ligne, la bonne est à un choix de tiroir. « Introuvable au fichier
-   client » est à la fois vrai et actionnable ; « définitivement non réservable »
-   ne le serait pas.
+2. **La symétrie avec le 409 `CLIENT_EMAIL_NOT_BOOKABLE` était trompeuse.** Ce
+   refus-là existait parce que `@@unique([tenantId, email])` ne laissait
+   **aucune** troisième voie : la visiteuse ne pourrait jamais réserver sous
+   cette adresse, et un front qui la renverrait au calendrier la ferait se
+   heurter au même refus à chaque essai (#452). Ici la voie existe et elle est
+   triviale — l'appelant a désigné la mauvaise ligne, la bonne est à un choix de
+   tiroir. « Introuvable au fichier client » est à la fois vrai et actionnable ;
+   « définitivement non réservable » ne le serait pas. Le code a disparu du
+   contrat avec #1222, plus aucune route ne résolvant de fiche depuis une
+   adresse ; le 404 reste, et il est le seul.
 3. **Aucun écran n'aurait affiché ce 409.** Le tiroir de #50 choisit la fiche
    dans l'annuaire client, qui ne contient que des `CLIENT` : ce corps ne se
    produit jamais par la surface prévue. Un code distinct qu'aucun front ne rend
@@ -260,7 +262,6 @@ personnelle ou en réservation au nom d'un autre.
 | Ce module | `packages/shared/src/schemas/appointment.ts` |
 |---|---|
 | `BookAppointmentDto` | `bookGuestAppointmentRequestSchema` |
-| `GuestContactDto` | `guestContactSchema` |
 | `AppointmentDto` | `bookedAppointmentSchema` |
 | `RescheduleAppointmentDto` | `rescheduleAppointmentRequestSchema` |
 | `CancelAppointmentDto` | `cancelAppointmentRequestSchema` |
@@ -502,7 +503,7 @@ gardée par un rôle — jamais un champ de plus sur la vue publique.
 | contrôle de disponibilité | Refuse un créneau que le calendrier ne proposait pas — jour de fermeture, congé, préavis. Ne dit rien de l'unicité |
 | cache de disponibilité | **Jamais lu ici.** `AvailabilityModule` n'exporte pas `AvailabilityQueryService` : un cache périmé ne peut pas faire réserver un créneau pris (#35) |
 
-## La fiche cliente ne s'écrit plus ici (#313)
+## La fiche cliente ne s'écrit plus ici (#313, #1222)
 
 Réserver suppose une ligne `users` — `appointments.client_id` est `NOT NULL`.
 `AppointmentsRepository.findOrCreateClient` l'écrivait lui-même depuis #37,
@@ -513,71 +514,53 @@ ne la possède pas (api-module §3).
 **Depuis #1136, aucune route de ce module ne crée de fiche.** La réservation
 publique exige un compte, et il n'y a donc plus de fiche à faire naître au
 passage : les deux surfaces — tunnel et comptoir — **désignent** une fiche, et
-`crm` la confirme. La branche de résolution par coordonnées décrite ci-dessous
-subsiste dans le repository, sans appelant, parce que son retrait emporterait la
-porte `crm.resolveWithin`, la création dans la transaction d'insertion et le
-réessai de `ClientRecordRaceError` — un démontage qui touche `crm` et mérite son
-propre diff.
+`crm` la confirme. #1222 a retiré la branche de résolution par coordonnées, qui
+subsistait sans appelant, et avec elle la porte `crm.resolveWithin`, la création
+dans la transaction d'insertion et le réessai de `ClientRecordRaceError`.
 
-`CrmModule` exporte désormais `ClientDirectoryService`, et c'est le **repository**
-de ce module qui l'appelle — pas le service. La raison est l'atomicité : le seul
-moment où la résolution peut avoir lieu est à l'intérieur de la transaction
-d'insertion, et c'est le repository qui l'ouvre. La faire descendre depuis le
-service aurait exigé qu'il manipule une portée Prisma, ce qu'api-module §2 lui
-interdit.
+`CrmModule` exporte `ClientDirectoryService`, et c'est le **repository** de ce
+module qui l'appelle — pas le service. La raison est l'atomicité : le seul moment
+où la fiche peut être jugée est à l'intérieur de la transaction d'insertion, et
+c'est le repository qui l'ouvre. La faire descendre depuis le service aurait
+exigé qu'il manipule une portée Prisma, ce qu'api-module §2 lui interdit.
 
 ### L'ordre dans la transaction, et pourquoi il est celui-là
 
 ```
 BEGIN
   pg_advisory_xact_lock(agenda du praticien)     ← ordonne les candidates (ADR 0006)
-  crm.resolveWithin(tx, coordonnées)             ← plus aucun appelant depuis #1136
-  crm.assertBookableWithin(tx, clientId)         ← les deux surfaces : la fiche, confirmée sous FOR SHARE (#465)
+  crm.assertBookableWithin(tx, clientId)         ← la fiche, confirmée sous FOR SHARE (#465)
   INSERT INTO appointments …                     ← jugé par appointments_no_overlap
 COMMIT   -- ou ROLLBACK, qui emporte les deux
 ```
 
-Les deux lignes du milieu s'excluent : une réservation emprunte l'une ou l'autre,
-selon la forme de sa `ClientReference` — et depuis #1136 toutes empruntent la
-seconde.
-
-Le verrou d'abord : il supprime le cycle d'attente, et une résolution posée avant
-lui ferait attendre sur l'index unique de `users` une transaction qui ne tient pas
+Le verrou d'abord : il supprime le cycle d'attente, et une lecture de `users`
+posée avant lui ferait attendre sur une ligne une transaction qui ne tient pas
 encore l'agenda — un ordre d'acquisition dicté par les données, c'est-à-dire ce
-que le verrou existe pour supprimer. La fiche ensuite, parce qu'il faut la ligne
-avant de pouvoir la désigner.
+que le verrou existe pour supprimer.
 
-Le `FOR SHARE` du contrôle de comptoir est **partagé**, délibérément : deux
-réservations pour la même cliente chez deux praticiens différents le détiennent
-ensemble et n'attendent pas l'une l'autre. Il ne bloque que les écrivains de la
-ligne `users` — ceux, précisément, qui pourraient la promouvoir au personnel entre
-le contrôle et l'insertion.
+Le `FOR SHARE` du contrôle est **partagé**, délibérément : deux réservations pour
+la même cliente chez deux praticiens différents le détiennent ensemble et
+n'attendent pas l'une l'autre. Il ne bloque que les écrivains de la ligne
+`users` — ceux, précisément, qui pourraient la promouvoir au personnel entre le
+contrôle et l'insertion.
 
-**Ce que cela change pour l'appelant** : un 409 de créneau ne laisse plus de fiche
-derrière lui. Ce n'est pas du code, c'est le `ROLLBACK` — exactement comme
-l'atomicité du report. `test/appointments-exclusion.integration-spec.ts` le prouve
-contre un vrai PostgreSQL ; aucun double en mémoire ne le pourrait.
+**Ce que cela change pour l'appelant** : un 409 de créneau ne laisse rien derrière
+lui — il n'y a plus rien à laisser. `test/appointments-exclusion.integration-spec.ts`
+prouve contre un vrai PostgreSQL que le rôle jugé est bien celui de l'insertion,
+et `test/appointments-exclusion.concurrency-spec.ts` qu'une promotion concurrente
+fait attendre la réservation au lieu de lui laisser lire l'ancien rôle.
 
-### Deux refus nouveaux sur la route publique
+### Le refus que la fiche désignée peut opposer
 
 | Situation | Réponse |
 |---|---|
-| l'adresse porte un compte `STAFF`/`MANAGER`/`ADMIN` | 409 `CLIENT_EMAIL_NOT_BOOKABLE` — décision de `crm`, laissée passer telle quelle |
-| deux réservations concurrentes créent la même fiche | rejouée par `writingAgenda`, trois tentatives au plus ; épuisées, un 500 |
+| la fiche est inconnue, du salon voisin, anonymisée, ou porte un compte `STAFF`/`MANAGER`/`ADMIN` | 404, indistinctement (#465, tenant-isolation §4) |
 
-La route de comptoir a son symétrique depuis #465 — un `clientId` qui désigne un
-compte du personnel —, et il ne rend **pas** le même code : 404, indistinctement
-d'une fiche inconnue. Les deux surfaces ne sont pas dans la même situation, et
-l'arbitrage est détaillé plus haut, « Trois façons de désigner la mauvaise
-fiche ».
-
-La seconde ligne suit l'arbitrage de l'interblocage : une course d'ordonnancement
-se rejoue, elle ne se maquille pas en refus métier. Elle ne peut pas être rattrapée
-dans `crm` — une violation de contrainte abandonne la transaction côté PostgreSQL,
-et seul celui qui l'a ouverte peut la rejouer.
-
-Le détail des deux décisions produit, et ce qu'elles coûtent, est dans le
-[README de `crm`](../crm/README.md).
+Un code distinct par cause aurait fait de `POST /appointments` une sonde de
+l'annuaire du personnel ; l'arbitrage est détaillé plus haut, « Trois façons de
+désigner la mauvaise fiche ». Le détail de la décision côté `crm`, et ce qu'elle
+coûte, est dans le [README de `crm`](../crm/README.md).
 
 ## Le verrou Redis de créneau (#38)
 

@@ -268,23 +268,27 @@ export async function createExclusionHarness(): Promise<ExclusionHarness> {
 export { inTenant };
 
 /**
- * Un brouillon de rendez-vous pour cet établissement, sur ces bornes.
+ * Un brouillon de rendez-vous du **tunnel public** pour cet établissement, sur
+ * ces bornes.
  *
- * Il porte des **coordonnées** et non un `clientId` depuis #313 : la fiche est
- * résolue par `crm` dans la transaction d'insertion. `email` vaut par défaut
- * l'adresse de la fiche déjà semée, si bien qu'un brouillon nominal se rattache à
- * elle sans en créer une seconde — et qu'une suite qui veut exercer la création,
- * la course ou le refus passe l'adresse qui l'intéresse.
+ * Il porte un `clientId` et non des coordonnées depuis #1222 : réserver exige un
+ * compte (#1136), et `crm` ne fait plus que **confirmer** la fiche désignée,
+ * dans la transaction d'insertion. `clientId` vaut par défaut la fiche déjà
+ * semée ; une suite qui exerce un refus passe l'identifiant qui l'intéresse.
+ *
+ * Ce qui le distingue encore de `deskDraft` est le **consentement** : la case a
+ * été cochée à l'écran, et le service a daté l'accord avant d'arriver ici
+ * (#790). Au comptoir, personne n'a coché quoi que ce soit.
  */
 export function draft(
   fixture: Fixture,
   startsAt: Date,
   endsAt: Date,
   staffId = fixture.staffId,
-  email = fixture.clientEmail,
+  clientId = fixture.clientId,
 ): AppointmentDraft {
   return {
-    client: { contact: { firstName: 'Alice', lastName: 'Martin', email, phone: null, locale: null } },
+    client: { clientId },
     staffId,
     serviceId: fixture.serviceId,
     startsAt,
@@ -298,17 +302,19 @@ export function draft(
 }
 
 /**
- * Le même brouillon, mais **du comptoir** : une fiche cliente désignée par son
- * identifiant plutôt que par des coordonnées (#461).
+ * Le même brouillon, mais **du comptoir** : aucun consentement en ligne (#461,
+ * #790).
  *
- * Il ne **crée** aucune fiche — il n'y a rien à résoudre —, mais il traverse la
- * porte `crm` depuis #465 : `assertBookableWithin` confirme, sous `FOR SHARE` et
- * dans la transaction d'insertion, que la ligne désignée est bien du fichier
- * client. Les issues d'une insertion de comptoir sont donc celles de l'agenda —
- * contrainte d'exclusion, interblocage — plus ce refus-là, et les clés
- * étrangères en filet dessous. C'est ce qui en fait le bon véhicule pour prouver
- * que la course du comptoir se joue au même endroit que celle du tunnel public,
- * et par le même arbitre.
+ * La cliente se désigne de la même façon des deux côtés depuis #1136 — par son
+ * identifiant —, et la porte `crm` la juge au même endroit : `assertBookableWithin`
+ * confirme, sous `FOR SHARE` et dans la transaction d'insertion, que la ligne
+ * désignée est bien du fichier client (#465). Les issues d'une insertion sont
+ * donc celles de l'agenda — contrainte d'exclusion, interblocage — plus ce
+ * refus-là, et les clés étrangères en filet dessous.
+ *
+ * Ce qui reste propre au comptoir est `dataConsentAt` : personne n'y a coché de
+ * case, et inscrire une preuve que personne n'a donnée serait le défaut que
+ * #790 referme.
  *
  * `clientId` vaut par défaut la fiche déjà semée ; les suites qui exercent le
  * refus passent l'identifiant qui les intéresse — inconnu, du salon voisin, ou

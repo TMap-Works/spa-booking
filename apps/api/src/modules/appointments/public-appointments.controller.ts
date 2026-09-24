@@ -103,12 +103,10 @@ const AuthenticatedClient = (): MethodDecorator & ClassDecorator =>
  * La conséquence utile : si le slug est inconnu, désactivé, mal formé ou en
  * désaccord avec le sous-domaine, **aucune méthode de ce fichier ne s'exécute**.
  *
- * C'est aussi ce qui rend lisible, depuis `book`, le **pays** de l'établissement
- * (#1028) : le cycle de Nest est middleware → garde → pipe → gestionnaire, si
- * bien que la portée de tenant est ouverte et résolue quand le corps est validé.
- * `BookAppointmentBodyPipe` y lit `tenants.country_code` pour compléter un
- * numéro de téléphone national. Là encore, rien ne vient du chemin : le pays est
- * celui de l'établissement **résolu**, pas d'une chaîne d'URL.
+ * `book` a lu le **pays** de l'établissement jusqu'à #1222, par un pipe à portée
+ * de requête (#1028), pour compléter le numéro de téléphone que le corps
+ * portait. Ce corps n'a plus de coordonnées : le pipe est redevenu un
+ * `ZodValidationPipe` ordinaire, construit une fois à l'amorçage.
  *
  * ## Un seul régime d'accès, depuis #1136
  *
@@ -287,10 +285,10 @@ export class PublicAppointmentsController {
       // `new Date` ne peut plus produire ici de date invalide ni de date-heure
       // interprétée dans le fuseau de la machine.
       startsAt: new Date(body.startsAt),
-      // Du jeton vérifié, jamais du corps ni du chemin (#1136). `body.client`
-      // ne désigne plus personne : le type d'entrée du service n'accepte pas de
-      // coordonnées, et c'est ce qui rend impossible — plutôt qu'interdit — de
-      // réserver au nom d'une cliente dont on connaîtrait l'adresse.
+      // Du jeton vérifié, jamais du corps ni du chemin (#1136). Il n'existe
+      // plus aucun champ du corps par lequel nommer une cliente — `client` a
+      // disparu du contrat avec #1222 —, et c'est ce qui rend impossible,
+      // plutôt qu'interdit, de réserver au nom d'une autre.
       client: { userId: user.userId },
       clientNote: body.clientNote ?? null,
       // L'accord passe tel quel — un booléen, jamais une date (#790). Le

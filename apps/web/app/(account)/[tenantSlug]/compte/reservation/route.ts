@@ -1,5 +1,5 @@
 import {
-  bookGuestAppointmentRequestSchemaFor,
+  bookGuestAppointmentRequestSchema,
   ERROR_CODES,
   errorMessage,
   slugSchema,
@@ -9,7 +9,6 @@ import { getLocale, getTranslations } from 'next-intl/server';
 import { NextResponse } from 'next/server';
 
 import type { BookingOutcome } from '@/app/(booking)/[tenantSlug]/reservation/booking-request';
-import { loadSalonTenant } from '@/app/(booking)/[tenantSlug]/salon-data';
 import { ApiClientError, bookGuestAppointment } from '@/lib/api-client';
 
 import { accountActionAccess } from '../session';
@@ -65,15 +64,15 @@ import { accountActionAccess } from '../session';
  *   d'origine tierce. Sans eux, la route s'arrête sur son propre 401 avant
  *   d'appeler quoi que ce soit.
  *
- * ## `client` continue de partir, et c'est délibéré
+ * ## `client` ne part plus, depuis #1222
  *
- * Le contrat partagé l'exige encore — `bookGuestAppointmentRequestSchemaFor` le
- * déclare requis, et `POST /public/{slug}/appointments` valide avec ce
- * schéma-là. Le retirer du corps aujourd'hui ferait rendre 400 à toute
- * réservation. Il devient facultatif et sans effet avec #1136, qui emporte alors
- * le champ, la fabrique et le pipe côté API : l'ordre est celui-là, et non
- * l'inverse. Ce que l'écran demande à la cliente n'en dépend pas — l'étape
- * « Coordonnées » résume déjà le compte au lieu de le redemander (#1050, #1086).
+ * Il partait jusqu'ici parce que le contrat l'exigeait, puis parce que le
+ * retirer d'un côté sans l'autre aurait fait rendre 400 à toute réservation —
+ * `bookGuestAppointmentRequestSchema` est `.strict()`. L'ordre a été tenu :
+ * `summary-step.tsx` a cessé de l'envoyer, **puis** le contrat a perdu le champ,
+ * la fabrique par pays et le pipe côté API. Ce que l'écran demande à la cliente
+ * n'en a jamais dépendu — l'étape « Coordonnées » résume le compte au lieu de le
+ * redemander (#1050, #1086).
  */
 export const dynamic = 'force-dynamic';
 
@@ -144,21 +143,16 @@ export async function POST(
 
   try {
     /*
-     * Le pays de l'établissement est chargé ici pour la raison qui le faisait
-     * charger dans l'action d'avant (#1028) : c'est **cette frontière** qui
-     * normalise le téléphone — ce qui part vers l'API est la sortie transformée
-     * du schéma, et non le corps reçu du navigateur. Validé sans le pays,
-     * « 06 12 34 56 78 » serait refusé ici alors que l'API l'accepte, et le refus
-     * arriverait après la soumission, en bloc au récapitulatif.
+     * Une constante, et plus une fabrique instanciée avec le pays du salon
+     * (#1222). Le pays ne servait qu'au téléphone de `client`, et la demande ne
+     * porte plus de coordonnées : rien de ce qui reste — prestation, praticien,
+     * instant, mot de la cliente, consentement — ne dépend de l'établissement.
      *
-     * Il est lu du salon et non reçu en argument : un pays fourni par l'appelant
-     * reviendrait à laisser choisir son indicatif par défaut. Le chargement est
-     * mémoïsé par requête (`salon-data.ts`).
+     * La validation, elle, reste faite ici et **normalise** : ce qui part vers
+     * l'API est la sortie transformée du schéma — l'instant ramené en UTC — et
+     * non le corps reçu du navigateur.
      */
-    const tenant = await loadSalonTenant(slug.data);
-    const parsed = bookGuestAppointmentRequestSchemaFor(tenant.address?.country ?? null).safeParse(
-      body,
-    );
+    const parsed = bookGuestAppointmentRequestSchema.safeParse(body);
 
     if (!parsed.success) {
       return refused(ERROR_CODES.VALIDATION_ERROR, t('tunnel.actions.bookingIncomplete'), 400);

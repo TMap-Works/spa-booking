@@ -38,9 +38,11 @@
  * cette frontière sans être réécrit, comme avant. Ce n'est pas un oubli mais la
  * frontière du ticket — la langue des réponses de l'API relève de l'API. Rien
  * de ce que le tunnel **décide** ne s'appuie dessus : le tri se fait sur le
- * `code`, et les trois codes qui deviennent une phrase à l'écran ont chacun la
- * leur (`SLOT_NO_LONGER_AVAILABLE`, `UNAUTHORIZED`,
- * `CLIENT_EMAIL_NOT_BOOKABLE` — voir `booking-tunnel.tsx` et `summary-step.tsx`).
+ * `code`, et les deux codes qui deviennent une phrase à l'écran ont chacun la
+ * leur (`SLOT_NO_LONGER_AVAILABLE`, `UNAUTHORIZED` — voir `booking-tunnel.tsx`
+ * et `summary-step.tsx`). Il y en avait un troisième jusqu'à #1222 :
+ * `CLIENT_EMAIL_NOT_BOOKABLE` est parti avec le champ `client` de la demande,
+ * qu'aucune route n'émet plus.
  *
  * ## Ni l'annulation (#1201) ni la réservation (#1207) ne sont plus des actions
  *

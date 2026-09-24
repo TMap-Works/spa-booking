@@ -10,8 +10,8 @@ ce fait.
 | Ticket | Ce qu'il pose |
 |---|---|
 | #56 | Le CRUD des fiches, la note interne, la recherche indexée et l'historique agrégé |
-| #313 | `ClientDirectoryService`, la porte par laquelle `appointments` obtient la fiche d'une cliente qui réserve sans compte |
-| #465 | `assertBookableWithin`, le second battant de cette porte : confirmer qu'une fiche **désignée** par le comptoir est bien du fichier client |
+| #313 | `ClientDirectoryService`, la porte par laquelle `appointments` obtient la fiche d'une cliente qui réserve |
+| #465 | `assertBookableWithin` : confirmer qu'une fiche **désignée** est bien du fichier client — le seul battant de cette porte depuis #1222 |
 | #81 | Les droits des personnes : export, anonymisation, consentement marketing — et le [registre des traitements](../../../../../docs/registre-des-traitements.md) |
 | #525 | La projection de l'état de suppression d'adresse sur la fiche — le module lit ce que `notifications` écrit |
 
@@ -269,12 +269,11 @@ Trois propriétés à connaître :
   compte fait avant toute prise de verrou manque la réservation en cours de
   validation. C'est l'`UPDATE` qui entre en conflit avec le `FOR SHARE` que
   `AppointmentsRepository.insert` pose sur cette même ligne (#465, #468), et
-  c'est donc lui qui rend le compte fiable. Symétriquement, **les deux battants
-  de la porte de réservation** écartent désormais une fiche anonymisée :
-  `assertBookableWithin` par le prédicat `anonymized_at IS NULL` de son SQL, et
-  `resolveWithin` en jugeant la ligne rendue (409, comme pour un compte du
-  personnel). Une réservation qui démarre pendant l'anonymisation attend le
-  `COMMIT`, relit la ligne sous verrou, et la trouve anonymisée ;
+  c'est donc lui qui rend le compte fiable. Symétriquement, **la porte de
+  réservation** écarte une fiche anonymisée, par le prédicat
+  `anonymized_at IS NULL` de son SQL. Une réservation qui démarre pendant
+  l'anonymisation attend le `COMMIT`, relit la ligne sous verrou, et la trouve
+  anonymisée ;
 - **elle est la seule écriture du module dans `appointments`**, et une entorse
   assumée à ce que ce README annonçait. Elle est bornée à trois colonnes de
   texte libre — ni statut, ni créneau, ni prix, ni auteur d'annulation. Une
@@ -325,166 +324,87 @@ l'anonymisation (#81), bornée à trois colonnes de texte libre.
 `CrmModule` n'importe qu'`IdentityModule`, et seulement pour ses gardes. Il
 n'exporte que `ClientDirectoryService` — voir ci-dessous.
 
-## La porte de la réservation sans compte (#313)
+## La porte de la réservation — la fiche désignée (#313, #465)
 
-`appointments.client_id` est `NOT NULL` : poser un rendez-vous d'invité suppose
-une ligne `users`. Jusqu'à #313, `AppointmentsRepository` l'écrivait lui-même,
-faute de porte — la table d'un autre domaine écrite par un module qui ne la
-possède pas. `CrmModule` exporte désormais `ClientDirectoryService`, et lui seul.
+`appointments.client_id` est `NOT NULL` : poser un rendez-vous suppose une ligne
+`users`. Jusqu'à #313, `AppointmentsRepository` l'écrivait lui-même, faute de
+porte — la table d'un autre domaine écrite par un module qui ne la possède pas.
+`CrmModule` exporte désormais `ClientDirectoryService`, et lui seul.
 
 Ce qu'elle laisse passer est étroit à dessein : **un identifiant de fiche, jamais
 une fiche**. Pas de nom, pas d'adresse, pas de note interne, aucune lecture du
 fichier client. Un module qui voudrait *afficher* une cliente n'a toujours aucun
 chemin pour cela.
 
+### Elle n'a plus qu'un battant (#1136, #1222)
+
+Elle en a eu deux. `resolveWithin(scope, contact)` partait de **coordonnées**,
+retrouvait la fiche par son adresse et la créait au besoin : c'était la
+réservation sans compte de #37. `assertBookableWithin(scope, clientId)` part
+d'une fiche **désignée** et ne crée jamais rien.
+
+Réserver exige un compte depuis la décision PO du 22/09/2026 : #1136 a fait du
+tunnel public un appelant qui désigne, comme le comptoir, et plus aucune route
+n'a atteint le premier battant. #1222 l'a retiré, et avec lui la création de
+fiche dans la transaction d'insertion, le refus `CLIENT_EMAIL_NOT_BOOKABLE` et le
+signal de réessai `ClientRecordRaceError` — aucun des trois n'avait d'autre
+émetteur. **Ce module n'écrit plus rien en réservant : il juge.**
+
 ### Elle prend une transaction, et c'est une entorse assumée
 
-`resolveWithin(scope, contact)` reçoit la portée transactionnelle de l'appelant,
-là où api-module §2 veut qu'un service ignore Prisma. C'est le prix d'un critère
-qui ne se satisfait pas autrement : **un 409 de créneau ne doit laisser aucune
-fiche derrière lui**. Résoudre la cliente dans une transaction et poser le
-rendez-vous dans une autre laisse, à chaque course perdue, une fiche publique
-sans rendez-vous au fichier du salon.
+`assertBookableWithin(scope, clientId)` reçoit la portée transactionnelle de
+l'appelant, là où api-module §2 veut qu'un service ignore Prisma. C'est le prix
+d'un jugement qui ne vaut que là où il est rendu : un rôle lu hors de la
+transaction d'insertion serait périmé avant d'avoir servi — c'est la
+« vérification applicative suivie d'un `INSERT` » que booking-engine §1 interdit.
 
 L'entorse est bornée : la portée est opaque pour le service — il la transmet, ne
 l'ouvre ni ne la referme —, le SQL reste dans `CrmRepository`, et le client reçu
 est le **scopé**, si bien que l'extension de tenant continue de s'appliquer mot
 pour mot.
 
-### Deux décisions produit, et ce qu'elles coûtent
-
-**Une adresse portée par un compte `STAFF`/`MANAGER`/`ADMIN` est refusée**
-(`CLIENT_EMAIL_NOT_BOOKABLE`, 409). La résolution lit sur la seule adresse — sans
-filtre de rôle — puis **juge** ce qu'elle trouve : c'est ce qui transforme la
-collision `@@unique([tenantId, email])` en un refus choisi, là où un filtre
-`role: 'CLIENT'` dans le `where` aurait mené à une création refusée en `P2002`
-nu, donc à un 500.
-
-| | Ce que la route rend |
-|---|---|
-| adresse inconnue | 201, fiche créée |
-| adresse déjà cliente | 201, fiche réutilisée telle quelle |
-| adresse d'un compte du personnel | 409 `CLIENT_EMAIL_NOT_BOOKABLE` |
-| adresse d'une fiche **anonymisée** (#81) | 409 `CLIENT_EMAIL_NOT_BOOKABLE` |
-
-La dernière ligne est le pendant public du prédicat `anonymized_at IS NULL`
-d'`assertBookableWithin`. Elle compte : le pseudonyme est
-`anonymise-{id}@anonymise.invalid`, donc reconstructible par quiconque tient
-l'identifiant de la fiche — qui figure dans l'export remis à la personne. Sans ce
-refus, une réservation publique rattachait un rendez-vous à quelqu'un qui venait
-d'exercer son droit à l'oubli, et le réinscrivait au fichier client par la bande.
-Le refus est un 409 et non un silence : écarter la ligne du prédicat aurait mené à
-une création que `@@unique([tenantId, email])` refuse, c'est-à-dire à la boucle de
-réessais de `writingAgenda`.
-
-Ce que ce refus laisse deviner : qu'une adresse porte un compte **non client**
-dans cet établissement. C'est le coût assumé, et il est borné — les deux premières
-lignes du tableau sont indiscernables, si bien que la route ne dit rien du fichier
-client. Il est par ailleurs le même refus que le comptoir reçoit déjà :
-`POST /customers` sur cette adresse rend `CUSTOMER_EMAIL_TAKEN`, l'unicité ne
-distinguant pas les rôles. Le parcours public ne peut pas réussir en silence là où
-le back-office, authentifié, est refusé.
-
-Sa contrepartie : un membre du personnel client de son propre salon ne réserve pas
-en ligne avec son adresse professionnelle. Il en utilise une autre, ou le comptoir
-réserve pour lui (#50). L'alternative — réutiliser son compte — aurait accroché un
-rendez-vous à une fiche que le fichier client ne montre jamais (`role = CLIENT`),
-donc un rendez-vous dont le comptoir ne peut pas ouvrir la cliente.
-
-**Une fiche désactivée est réutilisée telle quelle.** `is_active` gouverne les
-écrans du back-office — la recherche l'exclut par défaut —, pas l'identité de qui
-réserve. L'écarter n'aurait laissé que deux issues : créer une seconde fiche, ce
-que l'unicité interdit, ou refuser — c'est-à-dire faire de cette route publique un
-oracle sur le fichier client, la donnée même que ce module protège.
-
-### Le rôle est jugé sous verrou de ligne (#468)
-
-La lecture qui porte ce refus est un `SELECT … FOR SHARE`, dans la transaction de
-l'appelant — la même conduite que le second battant, pour la même raison. Elle
-était nue jusqu'à #468, et le refus n'était donc **pas atomique** par rapport à
-l'insertion qu'il garde : sous `READ COMMITTED`, chaque instruction prend son
-propre instantané, si bien qu'une lecture pouvait voir `CLIENT` pendant qu'une
-transaction concurrente promouvait la fiche au personnel et validait. Les deux
-clés étrangères de `appointments.client_id` prouvent l'existence de la ligne et
-son établissement, jamais son rôle : le rendez-vous passait.
-
-Le verrou est **partagé** : deux réservations d'invité pour la même personne chez
-deux praticiens différents avancent de front, et seuls les écrivains de la ligne
-attendent — ceux, précisément, qui pourraient la promouvoir. Comme au comptoir,
-le SQL brut ne repasse pas par l'extension de scoping (ADR 0006), et `tenant_id`
-est donc écrit à la main dans la requête, depuis le contexte de requête.
-
-L'ordre d'acquisition ne change pas : `AppointmentsRepository.insert` prend
-d'abord le verrou consultatif d'agenda, puis appelle la porte. Aucun chemin ne
-détient un verrou de ligne `users` avant l'agenda, donc aucun cycle d'attente
-nouveau.
-
-**Ce que ce verrou ne ferme pas**, et il faut le dire : la fenêtre de l'adresse
-**libre**. `FOR SHARE` verrouille les lignes rendues, et une lecture qui n'en rend
-aucune ne verrouille rien — deux transactions peuvent constater ensemble que
-l'adresse est libre. Cette course-là n'est pas laissée ouverte pour autant :
-c'est celle que l'unicité arbitre, ci-dessous. La fermer par un verrou
-demanderait un verrou de prédicat, c'est-à-dire `SERIALIZABLE` sur la transaction
-d'agenda — des échecs de sérialisation sur des réservations sans rapport entre
-elles, pour remplacer un arbitrage que la contrainte rend déjà gratuitement.
-
-### La course sur l'adresse se rejoue chez l'appelant
-
-Deux réservations d'invité concurrentes sur la même adresse : la perdante reçoit
-`P2002`, que la porte traduit en `ClientRecordRaceError`. Elle n'est **pas**
-rattrapée sur place — une violation de contrainte abandonne la transaction côté
-PostgreSQL, et Prisma n'ouvre aucun point de sauvegarde : relire échouerait en
-`25P02`. C'est `AppointmentsRepository.writingAgenda` qui rejoue la transaction
-entière, au même titre qu'un interblocage, trois fois au plus. La tentative
-suivante relit alors **sous verrou** la fiche que la gagnante vient d'écrire, et
-la juge : les deux fenêtres sont donc couvertes, chacune par le mécanisme qui lui
-convient.
-
-## Le second battant : la fiche désignée par le comptoir (#465)
-
-`resolveWithin` part de coordonnées et crée au besoin ; `assertBookableWithin`
-part d'une fiche que le comptoir a **désignée** et ne crée jamais rien. Même
-porte, même signature — une portée de transaction, un identifiant en retour, rien
-de la fiche —, et la même question : « cette réservation peut-elle se rattacher à
-cette ligne `users` ? ».
-
 ### Ce qu'elle referme
 
 `appointments.client_id` référence `users`, où vivent aussi les comptes du
 personnel. Les deux clés étrangères composites que traverse une insertion prouvent
 que la ligne existe et qu'elle est du bon établissement — jamais qu'elle est du
-**fichier client**. Le tunnel public refusait déjà ce cas depuis #313 ; le
-comptoir désigne au lieu de résoudre, et ne traversait donc pas cette porte. Un
-`STAFF` qui posait l'identifiant d'un collègue obtenait un rendez-vous valide dont
-la cliente était un employé.
+**fichier client**. Un `STAFF` qui posait l'identifiant d'un collègue obtenait un
+rendez-vous valide dont la cliente était un employé.
 
 Une contrainte de schéma aurait été plus forte, et c'est la première voie qui a
 été regardée : `users` ne porte aucune colonne dérivée sur laquelle une clé
 étrangère partielle pourrait s'appuyer. La porte est donc applicative.
 
-### Les deux lectures qui jugent un rôle sont les seules à écrire du SQL brut
+Elle écarte aussi une fiche **anonymisée** (#81), par le prédicat
+`anonymized_at IS NULL` de son SQL. Le pseudonyme est
+`anonymise-{id}@anonymise.invalid`, donc reconstructible par quiconque tient
+l'identifiant de la fiche — qui figure dans l'export remis à la personne. Sans ce
+refus, une réservation rattachait un rendez-vous à quelqu'un qui venait d'exercer
+son droit à l'oubli.
 
-Pour le `FOR SHARE`, que le client Prisma n'exprime pas — et sans lequel ce
-contrôle serait exactement la « vérification applicative suivie d'un `INSERT` »
-que booking-engine §1 interdit. Sous `READ COMMITTED`, une lecture nue verrait
-`CLIENT`, une transaction concurrente promouvrait la fiche et validerait, et
-l'insertion passerait : les clés étrangères, elles, ne regardent pas le rôle. Le
-verrou de ligne ferme la fenêtre jusqu'au `COMMIT` de l'appelant.
+### C'est la seule lecture du module à écrire du SQL brut
 
-Ce battant a porté le verrou seul de #465 à #468, où il a été étendu à
-`resolveWithin`. Le module compte donc désormais **deux** lectures en SQL — celles
-qui jugent un rôle avant une insertion qui en dépend, et elles seules. Tout le
-reste (recherche, projections, historique, et les deux créations) passe par le
-client scopé, qui pose `tenant_id` sans qu'aucune requête ait à le nommer.
+Pour le `FOR SHARE`, que le client Prisma n'exprime pas. Sous `READ COMMITTED`,
+une lecture nue verrait `CLIENT`, une transaction concurrente promouvrait la
+fiche et validerait, et l'insertion passerait : les clés étrangères, elles, ne
+regardent pas le rôle. Le verrou de ligne ferme la fenêtre jusqu'au `COMMIT` de
+l'appelant (#465, #468).
 
 Il est **partagé** et non exclusif : deux réservations pour la même cliente chez
 deux praticiens différents doivent pouvoir avancer de front. Seuls les écrivains
 de la ligne attendent — ceux dont il faut se prémunir.
 
-Le SQL brut ne repasse pas par l'extension de scoping (ADR 0006) : `tenant_id`
-est donc écrit à la main dans la requête, depuis le contexte de requête et de
-nulle part d'autre. C'est ce qui rend une fiche du salon voisin **absente** plutôt
-que refusée pour un autre motif.
+L'ordre d'acquisition ne change pas : `AppointmentsRepository.insert` prend
+d'abord le verrou consultatif d'agenda, puis appelle la porte. Aucun chemin ne
+détient un verrou de ligne `users` avant l'agenda, donc aucun cycle d'attente
+nouveau (ADR 0006).
+
+Le SQL brut ne repasse pas par l'extension de scoping : `tenant_id` est donc
+écrit à la main dans la requête, depuis le contexte de requête et de nulle part
+d'autre. C'est ce qui rend une fiche du salon voisin **absente** plutôt que
+refusée pour un autre motif. Tout le reste du module — recherche, projections,
+historique, création de fiche — passe par le client scopé, qui pose `tenant_id`
+sans qu'aucune requête ait à le nommer.
 
 ### Le refus est un 404, et c'est un arbitrage
 
@@ -496,8 +416,8 @@ que refusée pour un autre motif.
 | un compte `STAFF`, `MANAGER` ou `ADMIN` | `NotFoundError` — 404 |
 | une fiche **anonymisée** (#81) | `NotFoundError` — 404 |
 
-Les trois refus sont **littéralement** le même : même classe, même message. Aucun
-code neuf dans `@spa/shared`, et c'est délibéré.
+Les quatre refus sont **littéralement** le même : même classe, même message.
+Aucun code neuf dans `@spa/shared`, et c'est délibéré.
 
 C'est d'abord la conduite que ce module tient déjà partout : `findById`, `update`
 et `setActive` replient « inconnu ici », « d'un autre établissement » et « c'est
@@ -506,14 +426,14 @@ qui travaille au salon à qui n'a que le droit de lire des fiches »*. Un 409
 `CLIENT_NOT_BOOKABLE` aurait dit exactement cela, et aurait fait de
 `POST /appointments` une sonde de l'annuaire du personnel.
 
-La symétrie avec `CLIENT_EMAIL_NOT_BOOKABLE` est par ailleurs trompeuse. Ce
-409-là existe parce que `@@unique([tenantId, email])` ne laisse **aucune**
-troisième voie : la visiteuse ne réservera jamais sous cette adresse, et le front
-doit le savoir pour ne pas la renvoyer au calendrier (#452). Ici la voie existe et
-elle est triviale — le comptoir a désigné la mauvaise ligne, et le tiroir de #50
-ne montre que des `CLIENT`, si bien que ce corps ne se produit jamais par la
-surface prévue. « Introuvable au fichier client » est vrai et actionnable ;
-« définitivement non réservable » ne le serait pas.
+Le contrat a porté un 409 de cette famille — `CLIENT_EMAIL_NOT_BOOKABLE`, jusqu'à
+#1222 — et la symétrie était trompeuse. Ce refus-là existait parce que
+`@@unique([tenantId, email])` ne laissait **aucune** troisième voie à qui
+réservait sous une adresse : la visiteuse ne réserverait jamais sous celle-là, et
+le front devait le savoir pour ne pas la renvoyer au calendrier (#452). Ici la
+voie existe et elle est triviale — l'appelant a désigné la mauvaise ligne, et le
+tiroir de #50 ne montre que des `CLIENT`, si bien que ce corps ne se produit
+jamais par la surface prévue.
 
 ## Tests
 
@@ -521,13 +441,13 @@ surface prévue. « Introuvable au fichier client » est vrai et actionnable ;
 |---|---|
 | `__tests__/customers.service.spec.ts` | CRUD, recherche, pagination, portée fermée par défaut |
 | `__tests__/customer-privacy.spec.ts` | #81 : l'export complet et non borné, l'anonymisation qui vide aussi les textes libres des rendez-vous sans toucher aux montants, son idempotence, son refus sur un rendez-vous à venir, et la date de consentement qui ne bouge que sur un changement |
-| `__tests__/client-directory.service.spec.ts` | la porte de #313 : lecture sans filtre de rôle, refus d'une adresse du personnel, fiche désactivée réutilisée, course traduite en réessai — son verrou de #468 : `FOR SHARE`, filtre `tenant_id` écrit à la main, refus sans portée de tenant — et celle de #465 : mêmes garanties, quatre rôles, refus muet sur le rôle |
+| `__tests__/client-directory.service.spec.ts` | la porte de #465 : `FOR SHARE`, filtre `tenant_id` écrit à la main, refus sans portée de tenant, les quatre rôles, et un refus muet sur la cause |
 | `__tests__/customer-history.service.spec.ts` | agrégat vs fenêtre, bornes, devises multiples |
 | `__tests__/crm.logging.spec.ts` | le module ne journalise rien ; la rédaction couvrirait ses champs |
 | `apps/api/test/crm.integration-spec.ts` | les huit routes servies, gardes, validation, sérialisation |
 | `apps/api/test/crm-tenant.isolation-spec.ts` | le protocole de fuite sur les huit routes — dont la lecture la plus large du système (l'export) et sa seule écriture irréversible (l'anonymisation) |
-| `apps/api/test/appointments-exclusion.integration-spec.ts` | la porte exercée contre un vrai PostgreSQL : le `ROLLBACK` qui emporte la fiche, le refus d'une adresse du personnel sans 500, la frontière du tenant sur cette écriture, et le rôle jugé à l'instant de l'insertion (#468) |
-| `apps/api/test/appointments-exclusion.concurrency-spec.ts` | les courses : deux réservations d'invité sur la même adresse inconnue (#313), et la **promotion concurrente** qui prouve que le `FOR SHARE` de #468 verrouille vraiment — la suite unitaire ne vérifie que ce que la requête demande |
+| `apps/api/test/appointments-exclusion.integration-spec.ts` | la porte exercée contre un vrai PostgreSQL : la frontière du tenant sur la fiche désignée, et le rôle jugé à l'instant de l'insertion (#465) |
+| `apps/api/test/appointments-exclusion.concurrency-spec.ts` | la **promotion concurrente** de la fiche, qui prouve que le `FOR SHARE` verrouille vraiment — la suite unitaire ne vérifie que ce que la requête demande |
 
 Le scénario délibéré des suites d'isolation est **la même personne dans les deux
 salons** : `@@unique([tenantId, email])` l'autorise expressément, et c'est là

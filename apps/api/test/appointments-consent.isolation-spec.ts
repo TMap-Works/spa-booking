@@ -58,13 +58,6 @@ const AGENDA_PATH = '/api/v1/appointments';
 
 const REFERENCE_PATH = (reference: string): string => `${AGENDA_PATH}/reference/${reference}`;
 
-const GUEST = {
-  firstName: 'Camille',
-  lastName: 'Rakoto',
-  email: 'camille@example.test',
-  phone: '+261 34 12 345 67',
-} as const;
-
 /** Ce que rend la réservation publique, réduit à ce que cette suite relit. */
 interface BookedBody {
   readonly id: string;
@@ -97,7 +90,6 @@ describe('Isolation inter-tenant — preuve de consentement', () => {
         serviceId: harness.a.serviceId,
         staffId: harness.a.staffId,
         startsAt: slot.startsAt.toISOString(),
-        client: GUEST,
         dataConsent: true,
       });
 

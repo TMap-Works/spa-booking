@@ -102,9 +102,9 @@ describe('Charge — tunnel de réservation', () => {
     await harness?.close();
   });
 
-  const book = (staffId: string, startsAt: string, email?: string) => async () => {
+  const book = (staffId: string, startsAt: string) => async () => {
     await inTenant(salon.tenantId, () =>
-      harness!.appointments.create(bookingDraft(salon, staffId, new Date(startsAt), email)),
+      harness!.appointments.create(bookingDraft(salon, staffId, new Date(startsAt))),
     );
   };
 
@@ -143,15 +143,13 @@ describe('Charge — tunnel de réservation', () => {
     expect(disputés).toHaveLength(24);
 
     const candidates = 8;
-    // Une adresse par candidate : sans cela les huit tentatives partageraient la
-    // fiche cliente semée, et la course sur `users` — celle de #313 — ne serait
-    // pas dans la mesure. Or elle y est en production, à chaque réservation
-    // d'invitée.
+    // Toutes sur la fiche semée : réserver n'écrit plus dans `users` depuis
+    // #1222 — la cliente a un compte, et `crm` ne fait que le confirmer —, si
+    // bien qu'une adresse par candidate ne mesurerait plus rien de plus. Ce qui
+    // se dispute ici est l'agenda, et lui seul.
     const tâches = shuffle(
-      disputés.flatMap((slot, index) =>
-        Array.from({ length: candidates }, (_unused, essai) =>
-          book(slot.staffId, slot.startsAt, `charge-${index}-${essai}@example.test`),
-        ),
+      disputés.flatMap((slot) =>
+        Array.from({ length: candidates }, () => book(slot.staffId, slot.startsAt)),
       ),
     );
 
@@ -183,9 +181,7 @@ describe('Charge — tunnel de réservation', () => {
     const candidates = 32;
     const relevé = await measure(
       'Contention maximale (32 candidates × 1 créneau)',
-      Array.from({ length: candidates }, (_unused, essai) =>
-        book(slot!.staffId, slot!.startsAt, `ruee-${essai}@example.test`),
-      ),
+      Array.from({ length: candidates }, () => book(slot!.staffId, slot!.startsAt)),
     );
     relevés.push(relevé);
 

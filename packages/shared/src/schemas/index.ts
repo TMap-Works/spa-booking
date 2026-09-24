@@ -5,7 +5,6 @@ export {
   appointmentScopeSchema,
   appointmentStatusSchema,
   bookGuestAppointmentRequestSchema,
-  bookGuestAppointmentRequestSchemaFor,
   bookedAppointmentSchema,
   cancelAppointmentRequestSchema,
   cancellationActorSchema,

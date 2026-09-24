@@ -143,10 +143,10 @@ import { SlotLockService } from './slot-lock.service';
  * **Et il n'y a plus de coordonnées du tout depuis #1136** : les deux surfaces —
  * tunnel public et comptoir — désignent une fiche par son identifiant, celui du
  * jeton vérifié pour la première, celui que l'opérateur a choisi pour la
- * seconde. La conséquence visible dans le contrat a changé avec elles : le 409
+ * seconde. La conséquence visible dans le contrat a suivi avec #1222 : le 409
  * `CLIENT_EMAIL_NOT_BOOKABLE`, qui refusait l'adresse d'un compte du personnel,
- * n'est plus atteint par aucune route de ce module — c'est `assertBookableWithin`
- * qui juge le rôle, et son refus est un 404 (#465).
+ * n'était plus atteint par aucune route et a été retiré. C'est
+ * `assertBookableWithin` qui juge le rôle, et son refus est un 404 (#465).
  *
  * ## Les trois écritures de comptoir, ajoutées par #461
  *

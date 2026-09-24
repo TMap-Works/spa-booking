@@ -474,10 +474,7 @@
     },
     "summaryStep": {
       "label": "Récapitulatif de votre réservation",
-      "emailRefusedTitle": "Cette adresse e-mail ne peut pas être utilisée ici",
-      "emailRefusedBody": "La réservation en ligne n’accepte pas cette adresse pour cet établissement. Reprenez vos coordonnées pour en saisir une autre : votre prestation et votre créneau sont conservés. Si vous tenez à cette adresse, contactez directement l’établissement.",
       "failureTitle": "La réservation n’a pas abouti",
-      "fixContact": "Corriger mes coordonnées",
       "termsTitle": "Avant de confirmer",
       "termsPayment": "<label>Règlement sur place</label>, le jour du rendez-vous.",
       "termsCancellation": "<label>Annulation sans frais</label> tant que le rendez-vous n’a pas eu lieu.",

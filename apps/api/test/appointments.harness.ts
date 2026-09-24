@@ -97,6 +97,18 @@ export interface BookableTenant {
    * devenue une condition de la même façon qu'eux.
    */
   readonly clientId: string;
+  /**
+   * L'adresse de cette fiche — la seule coordonnée que les suites aient à
+   * nommer depuis #1222.
+   *
+   * Elle est exposée parce que deux propriétés se disent en la citant, et
+   * qu'aucune ne se dit plus en citant une adresse écrite dans le corps de la
+   * demande : que le flux temps réel ne transporte **pas** les coordonnées de
+   * la cliente, et qu'un homonyme au fichier du salon voisin ne pèse sur rien
+   * ici. Une suite qui inventerait son adresse à elle ne prouverait ni l'une ni
+   * l'autre — elle chercherait une chaîne qui n'existe nulle part.
+   */
+  readonly clientEmail: string;
 }
 
 export interface AppointmentsHarness {
@@ -242,6 +254,7 @@ export async function createAppointmentsHarness(): Promise<AppointmentsHarness> 
       serviceId: service.id,
       staffId: equipStaff(tenant.id, service.id),
       clientId: client.id,
+      clientEmail: client.email,
     };
   };
 

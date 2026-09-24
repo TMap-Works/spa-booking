@@ -435,15 +435,22 @@ export function addDays(base: string, days: number): string {
   return instant.toISOString().slice(0, 10);
 }
 
-/** Un brouillon de réservation du **tunnel public** : la fiche est à résoudre. */
+/**
+ * Un brouillon de réservation du **tunnel public** : la fiche est désignée.
+ *
+ * Elle l'est par son identifiant depuis #1222 — réserver exige un compte
+ * (#1136), et `crm` ne fait plus que confirmer la ligne dans la transaction
+ * d'insertion. La charge ne mesure donc plus aucune écriture dans `users` : il
+ * n'y en a plus.
+ */
 export function bookingDraft(
   salon: Salon,
   staffId: string,
   startsAt: Date,
-  email: string = salon.clientEmail,
+  clientId: string = salon.clientId,
 ): AppointmentDraft {
   return {
-    client: { contact: { firstName: 'Alice', lastName: 'Martin', email, phone: null, locale: null } },
+    client: { clientId },
     staffId,
     serviceId: salon.serviceId,
     startsAt,

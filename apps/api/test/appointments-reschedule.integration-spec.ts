@@ -49,13 +49,6 @@ const BOOKING_PATH = (slug: string): string => `/api/v1/public/${slug}/appointme
 const RESCHEDULE_PATH = (slug: string, id: string): string =>
   `${BOOKING_PATH(slug)}/${id}/reschedule`;
 
-const GUEST = {
-  firstName: 'Camille',
-  lastName: 'Rakoto',
-  email: 'camille@example.test',
-  phone: '+261 34 12 345 67',
-} as const;
-
 describe('POST /api/v1/public/:tenantSlug/appointments/:appointmentId/reschedule', () => {
   let harness: AppointmentsHarness;
   /** Le créneau d'origine — 10:00 occupé, donc 10:10 facturé. */
@@ -105,7 +98,6 @@ describe('POST /api/v1/public/:tenantSlug/appointments/:appointmentId/reschedule
         serviceId: harness.a.serviceId,
         staffId: harness.a.staffId,
         startsAt: from.startsAt.toISOString(),
-        client: GUEST,
         dataConsent: true,
       });
 

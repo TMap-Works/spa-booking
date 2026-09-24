@@ -131,11 +131,8 @@ describe('la prise de rendez-vous par la cliente', () => {
     await bookGuestAppointment(SLUG, JETON, {
       serviceId: '11111111-1111-4111-8111-111111111111',
       startsAt: '2026-09-01T06:00:00.000Z',
-      client: {
-        firstName: 'Camille',
-        lastName: 'Rakoto',
-        email: 'camille@example.test',
-      },
+      // Aucune coordonnée : le contrat a perdu le champ avec #1222, et c'est le
+      // jeton ci-dessus qui désigne la cliente.
       dataConsent: true,
     });
 

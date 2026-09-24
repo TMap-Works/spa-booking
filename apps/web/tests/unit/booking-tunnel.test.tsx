@@ -309,9 +309,11 @@ describe('un créneau pris pendant la saisie', () => {
     expect(bookAppointmentAction.mock.calls[1]?.[1]).toMatchObject({
       serviceId: service.id,
       startsAt: APRES_MIDI,
-      client: { firstName: 'Camille', lastName: 'Rakoto', email: 'camille@example.test' },
       clientNote: MOT,
     });
+    // Et aucune coordonnée : le contrat a perdu le champ avec #1222, et il est
+    // `.strict()` — le réémettre ferait rendre 400 à toute réservation.
+    expect(bookAppointmentAction.mock.calls[1]?.[1]).not.toHaveProperty('client');
   });
 
   it('rend le focus à l’explication, que le bouton confirmé vient d’emporter', async () => {

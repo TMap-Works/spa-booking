@@ -191,8 +191,8 @@ export function isUnknownClientReference(error: unknown): boolean {
  * réservation sur un créneau libre, pour une raison que personne ne pourrait
  * corriger.
  *
- * C'est le même régime que `ClientRecordRaceError` : un fait d'écriture
- * concurrente que rejouer résout, parce que le rejeu tire une **autre**
+ * C'est le même régime qu'un interblocage : un fait d'écriture concurrente que
+ * rejouer résout, parce que le rejeu tire une **autre**
  * référence. Le nombre de tentatives est celui des autres courses
  * (`MAX_INSERT_ATTEMPTS`), et il est très largement suffisant : sur un espace de
  * 104 857 600 valeurs, trois collisions consécutives dans un même salon ne sont

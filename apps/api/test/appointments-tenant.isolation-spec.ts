@@ -47,13 +47,6 @@ import { bookableSlot, createAppointmentsHarness, type AppointmentsHarness } fro
 
 const BOOKING_PATH = (slug: string): string => `/api/v1/public/${slug}/appointments`;
 
-const GUEST = {
-  firstName: 'Camille',
-  lastName: 'Rakoto',
-  email: 'camille@example.test',
-  phone: '+261 34 12 345 67',
-} as const;
-
 describe('Isolation inter-tenant — réservation publique', () => {
   let harness: AppointmentsHarness;
   let slot: ReturnType<typeof bookableSlot>;
@@ -75,7 +68,6 @@ describe('Isolation inter-tenant — réservation publique', () => {
         serviceId: harness.a.serviceId,
         staffId: harness.a.staffId,
         startsAt: slot.startsAt.toISOString(),
-        client: GUEST,
         dataConsent: true,
       });
 
@@ -87,86 +79,19 @@ describe('Isolation inter-tenant — réservation publique', () => {
     expect(harness.appointments.appointments).toHaveLength(0);
   });
 
-  /**
-   * Le pays lu est celui du slug de l'URL, jamais celui du voisin (#1028).
+  /*
+   * `le pays qui complète un numéro national est celui du slug` a disparu avec
+   * #1222. Ces trois cas exerçaient l'isolation de `tenants.country_code` à
+   * travers la seule route qui le lisait — le pipe à portée de requête de #1028,
+   * monté pour compléter `client.phone`. La demande de réservation ne porte plus
+   * de coordonnées, la route ne lit plus de pays, et il n'y a donc plus de
+   * trajet à éprouver ici.
    *
-   * Les deux établissements ont des pays **différents et incompatibles** :
-   * « 06 12 34 56 78 » est un numéro français complétable chez A, et rien du
-   * tout chez B, dont le plan de numérotation malgache ne le reconnaît pas. Le
-   * même corps doit donc être accepté sous un slug et refusé sous l'autre — un
-   * pays lu hors de la portée de tenant ferait verdir les deux, ou rougir les
-   * deux, selon celui qu'il aurait attrapé.
-   *
-   * La propriété ne vient d'aucune comparaison écrite quelque part : la lecture
-   * est un `findFirst` sans `where` sur le client scopé, que l'extension borne
-   * sur l'identifiant du contexte. Il n'existe aucune écriture par laquelle
-   * demander le pays d'un autre établissement.
+   * La propriété d'isolation qu'ils tenaient n'est pas perdue pour autant :
+   * `TenantScopeMiddleware` résout le slug, et toute lecture du client scopé est
+   * bornée par l'extension sur l'identifiant du contexte — ce que les cas
+   * ci-dessous exercent sur la prestation, le praticien et la fiche cliente.
    */
-  describe('le pays qui complète un numéro national est celui du slug', () => {
-    beforeEach(() => {
-      harness.appointments.seedCountryCode(harness.a.tenant.id, 'FR');
-      harness.appointments.seedCountryCode(harness.b.tenant.id, 'MG');
-    });
-
-    it('accepte le numéro français sous le slug de A, qui est le salon français', async () => {
-      const response = await request(harness.server())
-        .post(BOOKING_PATH(harness.a.tenant.slug))
-        .set('Authorization', await harness.bearer(harness.a))
-        .send({
-          serviceId: harness.a.serviceId,
-          staffId: harness.a.staffId,
-          startsAt: slot.startsAt.toISOString(),
-          client: { ...GUEST, phone: '06 12 34 56 78' },
-          dataConsent: true,
-        });
-
-      // Le **statut** : depuis #1136 les coordonnées du corps n'atteignent plus
-      // aucune fiche, et c'est le verdict de la frontière qui dit quel pays a
-      // été lu. Le rendez-vous, lui, est bien posé dans l'établissement du slug.
-      expect(response.status).toBe(201);
-      expect(harness.appointments.appointments[0]?.tenantId).toBe(harness.a.tenant.id);
-    });
-
-    it('refuse le même numéro sous le slug de B — son pays n’est pas celui de A', async () => {
-      const response = await request(harness.server())
-        .post(BOOKING_PATH(harness.b.tenant.slug))
-        .set('Authorization', await harness.bearer(harness.b))
-        .send({
-          serviceId: harness.b.serviceId,
-          staffId: harness.b.staffId,
-          startsAt: slot.startsAt.toISOString(),
-          client: { ...GUEST, phone: '06 12 34 56 78' },
-          dataConsent: true,
-        });
-
-      // 400 et non 201 : si le pays de A avait traversé la frontière, ce corps
-      // serait passé, et le salon malgache aurait enregistré un numéro français
-      // qu'aucune cliente ne lui a donné.
-      expect(response.status).toBe(400);
-      expect(response.body).toMatchObject({ code: 'VALIDATION_ERROR' });
-      expect(harness.appointments.appointments).toHaveLength(0);
-    });
-
-    it('n’expose le pays du voisin ni dans le refus ni dans la réponse', async () => {
-      const response = await request(harness.server())
-        .post(BOOKING_PATH(harness.b.tenant.slug))
-        .set('Authorization', await harness.bearer(harness.b))
-        .send({
-          serviceId: harness.b.serviceId,
-          staffId: harness.b.staffId,
-          startsAt: slot.startsAt.toISOString(),
-          client: { ...GUEST, phone: '06 12 34 56 78' },
-          dataConsent: true,
-        });
-
-      // Le corps d'erreur nomme le champ, jamais la valeur reçue ni le pays lu —
-      // un refus de validation finit dans les journaux du front (CDC §5.1).
-      const serialized = JSON.stringify(response.body);
-      expect(serialized).not.toContain('06 12 34 56 78');
-      expect(serialized).not.toContain(harness.a.tenant.id);
-      expect(serialized).not.toContain('FR');
-    });
-  });
 
   it('refuse en 404 la prestation de B demandée sous le slug de A', async () => {
     const response = await request(harness.server())
@@ -176,7 +101,6 @@ describe('Isolation inter-tenant — réservation publique', () => {
         serviceId: harness.b.serviceId,
         staffId: harness.b.staffId,
         startsAt: slot.startsAt.toISOString(),
-        client: GUEST,
         dataConsent: true,
       });
 
@@ -192,7 +116,6 @@ describe('Isolation inter-tenant — réservation publique', () => {
         serviceId: harness.a.serviceId,
         staffId: harness.b.staffId,
         startsAt: slot.startsAt.toISOString(),
-        client: GUEST,
         dataConsent: true,
       });
 
@@ -212,7 +135,6 @@ describe('Isolation inter-tenant — réservation publique', () => {
         serviceId: harness.a.serviceId,
         staffId: harness.a.staffId,
         startsAt: slot.startsAt.toISOString(),
-        client: GUEST,
         dataConsent: true,
       });
     const inB = await request(harness.server())
@@ -222,7 +144,6 @@ describe('Isolation inter-tenant — réservation publique', () => {
         serviceId: harness.b.serviceId,
         staffId: harness.b.staffId,
         startsAt: slot.startsAt.toISOString(),
-        client: GUEST,
         dataConsent: true,
       });
 
@@ -267,9 +188,14 @@ describe('Isolation inter-tenant — réservation publique', () => {
     // réservation ne résout plus d'adresse du tout, ce qui ne rend pas le cas
     // caduc : c'est `assertBookableWithin` qui juge la fiche, et elle est scopée
     // de la même façon.
+    //
+    // L'adresse semée chez B est **celle de la cliente de A**, et il n'y a que
+    // sous cette forme que le cas prouve quelque chose : une adresse inventée
+    // ici ne collisionne avec rien, et la réservation réussirait même si la
+    // lecture traversait la frontière.
     harness.appointments.seedClient({
       tenantId: harness.b.tenant.id,
-      email: GUEST.email,
+      email: harness.a.clientEmail,
       role: 'MANAGER',
     });
 
@@ -280,7 +206,6 @@ describe('Isolation inter-tenant — réservation publique', () => {
         serviceId: harness.a.serviceId,
         staffId: harness.a.staffId,
         startsAt: slot.startsAt.toISOString(),
-        client: GUEST,
         dataConsent: true,
       });
 
@@ -288,7 +213,7 @@ describe('Isolation inter-tenant — réservation publique', () => {
     // La cliente de A, et le compte du voisin intact.
     expect(response.body.clientId).toBe(harness.a.clientId);
     const voisine = harness.appointments.clients.filter(
-      (client) => client.tenantId === harness.b.tenant.id && client.email === GUEST.email,
+      (client) => client.tenantId === harness.b.tenant.id && client.email === harness.a.clientEmail,
     );
     expect(voisine).toHaveLength(1);
     expect(voisine[0]?.role).toBe('MANAGER');
@@ -302,7 +227,6 @@ describe('Isolation inter-tenant — réservation publique', () => {
         serviceId: harness.a.serviceId,
         staffId: harness.a.staffId,
         startsAt: slot.startsAt.toISOString(),
-        client: GUEST,
         dataConsent: true,
       });
 
@@ -313,7 +237,6 @@ describe('Isolation inter-tenant — réservation publique', () => {
         serviceId: harness.b.serviceId,
         staffId: harness.b.staffId,
         startsAt: slot.startsAt.toISOString(),
-        client: GUEST,
         dataConsent: true,
       });
 
@@ -334,7 +257,6 @@ describe('Isolation inter-tenant — réservation publique', () => {
         serviceId: harness.a.serviceId,
         staffId: harness.a.staffId,
         startsAt: slot.startsAt.toISOString(),
-        client: GUEST,
         dataConsent: true,
       });
 
@@ -370,7 +292,6 @@ describe('Isolation inter-tenant — réservation publique', () => {
         .send({
           serviceId: harness.a.serviceId,
           startsAt: slot.startsAt.toISOString(),
-          client: GUEST,
           dataConsent: true,
         });
 
@@ -391,7 +312,6 @@ describe('Isolation inter-tenant — réservation publique', () => {
         .send({
           serviceId: harness.b.serviceId,
           startsAt: slot.startsAt.toISOString(),
-          client: GUEST,
           dataConsent: true,
         });
 
@@ -443,7 +363,6 @@ describe('Isolation inter-tenant — report de rendez-vous', () => {
         serviceId: harness.a.serviceId,
         staffId: harness.a.staffId,
         startsAt: from.startsAt.toISOString(),
-        client: GUEST,
         dataConsent: true,
       });
 
