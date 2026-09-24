@@ -28,13 +28,13 @@ import {
   formatTimeInTimeZone,
   type DisplayLocale,
 } from '@/lib/format';
-import type { PaymentTransaction } from '@/lib/admin/payment-contract';
+import type { PaymentTransaction, SaleSummary } from '@/lib/admin/payment-contract';
 
 import { CheckoutPanel } from '../components/checkout-panel';
 import { PeriodNav } from '../components/period-nav';
 import { adminCheckoutPath } from '../paths';
 import { adminLoadFailure, redirectWithoutPermission, requireAdminAccessToken } from '../guard';
-import { readAppointmentTicket, readDaySettlements } from './settlements';
+import { readAppointmentTicket, readDaySettlements, readDayTickets } from './settlements';
 
 /**
  * L'encaissement au comptoir — CDC §1.4, « encaissement en fin de prestation »
@@ -84,6 +84,17 @@ import { readAppointmentTicket, readDaySettlements } from './settlements';
  * est au seuil `MANAGER` quand cet écran est ouvert à `STAFF`, et son refus
  * rend `null`, c'est-à-dire « inconnu ». L'écran tait alors le règlement au
  * lieu de l'affirmer, et l'encaissement reste possible.
+ *
+ * ## Ce que la journée **doit encore**, et non ce qu'elle a pris (#1240)
+ *
+ * `GET /payments` dit qu'une somme a été prise ; il ne dit pas s'il en reste.
+ * Depuis le règlement mixte (#817), une part de 50,00 € sur un ticket de 78,00 €
+ * y inscrit une ligne aboutie, et la pastille en concluait « réglé ». Seul le
+ * **ticket** tranche — `remaining`, recalculé par le serveur —, d'où une seconde
+ * lecture, `readDayTickets`, bornée aux rendez-vous dont la journée porte déjà un
+ * encaissement abouti et servie à la **liste seule** : le rendez-vous ouvert à
+ * l'écran a déjà son ticket, juste en dessous. Le coût est donc nul tant que rien
+ * n'est encaissé, et borné ensuite.
  *
  * ## La langue (#850)
  *
@@ -173,8 +184,44 @@ export default async function CheckoutPage({ params, searchParams }: CheckoutPag
   // rafraîchissement au lieu d'ouvrir une seconde pièce (#835). Lecture seule —
   // la composition est au premier règlement, jamais à l'affichage.
   const ticket = selected === undefined ? null : await readAppointmentTicket(accessToken, selected.id);
+  // Le reste dû des rendez-vous **déjà encaissés** de la journée — sans lui, la
+  // pastille disait « réglé » d'un ticket à moitié payé (#1240). Lu pour la
+  // **liste seule** : un rendez-vous ouvert à l'écran a son ticket juste
+  // au-dessus, et relire toute la journée en pure perte serait le contraire du
+  // coût que le premier critère demande de tenir.
+  //
+  // `null` d'une lecture comme de l'autre veut dire « inconnu », et un état
+  // inconnu se **tait** : la colonne disparaît plutôt que d'affirmer un
+  // règlement que rien n'a vérifié. C'est la conduite que l'écran tenait déjà
+  // quand l'historique ne répondait pas, étendue à la seconde lecture.
+  //
+  // Bornée aux rendez-vous **affichés** : la journée de caisse en couvre trois
+  // (la veille et le lendemain avec celle-ci, voir `readDaySettlements`), et
+  // relire les tickets de deux journées qu'aucune ligne ne montre aurait coûté
+  // autant de requêtes inutiles — et fait franchir le plafond de
+  // `readDayTickets` à une journée qui, à elle, ne l'atteint pas.
+  const tickets =
+    selected !== undefined
+      ? null
+      : await readDayTickets(
+          accessToken,
+          settlements,
+          new Set(appointments.map((one) => one.id)),
+        );
+  /**
+   * L'état du rendez-vous **ouvert à l'écran**, et lui seul.
+   *
+   * Il n'a pas besoin de la journée de tickets — celle-ci n'est pas lue dans
+   * cette branche — parce qu'il a mieux : `ticket`, la pièce exacte de ce
+   * rendez-vous, déjà relue juste au-dessus. La lui donner n'ajoute **aucune**
+   * requête, et c'est ce qui empêche le récapitulatif d'annoncer « Réglé » sur
+   * une prestation dont 28,00 € restent dus — le même mensonge que celui de la
+   * liste, un écran plus loin (#1240).
+   */
+  const ownTicket =
+    selected === undefined || ticket === null ? undefined : new Map([[selected.id, ticket]]);
   const settlementFor = (appointmentId: string): SettlementState | null =>
-    settlements === null ? null : settlementOf(settlements, appointmentId);
+    settlements === null ? null : settlementOf(settlements, appointmentId, ownTicket);
 
   return (
     <section aria-labelledby="encaissement-titre">
@@ -221,6 +268,7 @@ export default async function CheckoutPage({ params, searchParams }: CheckoutPag
           settlements={settlements}
           t={t}
           tenantSlug={tenantSlug}
+          tickets={tickets}
           timeZone={tenant.timezone}
         />
       ) : (
@@ -253,12 +301,18 @@ export default async function CheckoutPage({ params, searchParams }: CheckoutPag
 }
 
 /**
- * La pastille de règlement d'une ligne — « réglé », « à encaisser », ou l'état
- * intermédiaire d'une carte ouverte (#828).
+ * La pastille de règlement d'une ligne — « réglé », « partiellement réglé »,
+ * « à encaisser », ou l'état intermédiaire d'une carte ouverte (#828, #1240).
  *
  * Le libellé est écrit en toutes lettres, la couleur ne fait qu'accélérer le
  * balayage : une journée se lit d'un coup d'œil, et l'information ne doit jamais
  * tenir à la seule teinte (WCAG 1.4.1).
+ *
+ * « Partiellement réglé » est le libellé que #1240 a ajouté, et il a une raison
+ * d'être précise : la pastille disait « réglé » dès qu'une ligne aboutie se
+ * rattachait au rendez-vous, alors qu'une part de 50,00 € sur un ticket de
+ * 78,00 € en inscrit une. Un gérant qui relisait sa journée voyait « réglé » sur
+ * une prestation à moitié payée.
  */
 function SettlementBadge({
   locale,
@@ -287,6 +341,13 @@ function SettlementBadge({
  * change** : « Réglé » et non « À encaisser » (#828). C'est la ligne que
  * l'opérateur lit en premier, et lui faire annoncer une somme due sur une
  * prestation déjà payée est ce qui l'amenait à cliquer.
+ *
+ * Sur un rendez-vous **partiellement** réglé, c'est le chiffre lui-même qui
+ * change, et pour la même raison (#1240) : le prix figé à la réservation n'est
+ * plus ce que la cliente doit dès qu'une part a été prise. Annoncer 78,00 €
+ * quand 28,00 € restent dus serait le même écart que d'annoncer « Réglé » sur la
+ * même pièce, à un mot près. Le reste dû vient du **ticket** que porte l'état —
+ * `remaining`, recalculé par le serveur —, jamais d'une soustraction faite ici.
  */
 function AppointmentRecap({
   appointment,
@@ -304,6 +365,9 @@ function AppointmentRecap({
 }) {
   const due = amountDue(appointment);
   const settled = settlement !== null && isSettled(settlement);
+  // Le ticket à moitié réglé, s'il y en a un : c'est lui qui porte le montant à
+  // annoncer, et non le prix figé à la réservation.
+  const outstanding = settlement?.kind === 'partiel' ? settlement.ticket.remaining : null;
 
   return (
     <div className="spa-admin-checkout__ticket">
@@ -359,9 +423,15 @@ function AppointmentRecap({
         </div>
         <div className="spa-admin-checkout__total-row spa-admin-checkout__total-row--grand">
           <span className="spa-admin-checkout__total-label">
-            {settled ? t('recap.settled') : t('recap.due')}
+            {settled
+              ? t('recap.settled')
+              : outstanding === null
+                ? t('recap.due')
+                : t('ticket.remainingLabel')}
           </span>
-          <span className="spa-admin-checkout__total-value">{formatMoney(due, display)}</span>
+          <span className="spa-admin-checkout__total-value">
+            {formatMoney(outstanding ?? due, display)}
+          </span>
         </div>
       </div>
 
@@ -383,6 +453,15 @@ function AppointmentRecap({
  *
  * Une ligne réglée **reste cliquable** : c'est par là qu'on retrouve son reçu
  * pour le réimprimer.
+ *
+ * ## Elle exige désormais **deux** lectures, et se tait s'il en manque une (#1240)
+ *
+ * Les encaissements du jour disent qu'une somme a été prise ; seul le **ticket**
+ * dit s'il en reste. Faute de l'un ou de l'autre, la pastille ne pourrait
+ * affirmer « réglé » que sur la foi d'une ligne d'encaissement — et c'est
+ * exactement ce qu'elle faisait d'un ticket à moitié payé. La colonne disparaît
+ * alors, au même titre et pour la même raison qu'elle disparaissait déjà quand
+ * l'historique refusait de répondre.
  */
 function AppointmentsToSettle({
   anchor,
@@ -391,6 +470,7 @@ function AppointmentsToSettle({
   settlements,
   t,
   tenantSlug,
+  tickets,
   timeZone,
 }: {
   readonly anchor: CalendarDate;
@@ -400,6 +480,8 @@ function AppointmentsToSettle({
   readonly settlements: readonly PaymentTransaction[] | null;
   readonly t: CheckoutTranslator;
   readonly tenantSlug: string;
+  /** `null` quand le reste dû des tickets n'a pas pu être relu — même conduite. */
+  readonly tickets: ReadonlyMap<string, SaleSummary> | null;
   readonly timeZone: TimeZone;
 }) {
   // Les annulés restent affichés — ils expliquent le trou dans la journée — mais
@@ -414,6 +496,11 @@ function AppointmentsToSettle({
       </div>
     );
   }
+
+  // Les deux lectures, ramenées à une seule question : la colonne peut-elle dire
+  // la vérité ? Les deux `null` se rejoignent ici plutôt que sur cinq tests
+  // dispersés dans le tableau.
+  const stated = settlements === null || tickets === null ? null : { settlements, tickets };
 
   return (
     <table className="spa-admin-table">
@@ -442,7 +529,7 @@ function AppointmentsToSettle({
           <th className="spa-admin-table__head" scope="col">
             {t('list.status')}
           </th>
-          {settlements === null ? null : (
+          {stated === null ? null : (
             <th className="spa-admin-table__head" scope="col">
               {t('list.settlement')}
             </th>
@@ -452,7 +539,9 @@ function AppointmentsToSettle({
       <tbody>
         {appointments.map((appointment) => {
           const settlement =
-            settlements === null ? null : settlementOf(settlements, appointment.id);
+            stated === null
+              ? null
+              : settlementOf(stated.settlements, appointment.id, stated.tickets);
 
           return (
             <tr className="spa-admin-table__row" key={appointment.id}>

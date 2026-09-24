@@ -17,10 +17,10 @@ import { Button } from '@/components/ui/button';
 import { Notification } from '@/components/ui/notification';
 import {
   COUNTER_MEANS,
-  amountDue,
   checkoutBlocker,
   checkoutFailureMessage,
   completionUnavailableMessage,
+  firstSettlementCeiling,
   isAlreadySettledRefusal,
   isSettleable,
   meanHint,
@@ -28,6 +28,7 @@ import {
   methodLabel,
   methodOfMean,
   methodPhrase,
+  priceDriftOf,
   providerUnreachableMessage,
   terminalReferenceField,
   terminalReferenceIssue,
@@ -170,7 +171,6 @@ export function CheckoutPanel({
   const t = useTranslations('admin-checkout');
   const locale = useLocale() as Locale;
   const display: DisplayLocale = { locale, countryCode };
-  const due = amountDue(appointment);
 
   const [sale, setSale] = useState<SaleSummary | null>(ticket);
   const [phase, setPhase] = useState<Phase>({ kind: 'choix' });
@@ -194,8 +194,19 @@ export function CheckoutPanel({
   const router = useRouter();
   const { renewIfExpired } = useAdminSessionRenewal(tenantSlug);
 
-  /** Ce qu'il reste à prendre : le ticket fait foi dès qu'il existe. */
-  const outstanding: Money = sale?.remaining ?? due;
+  /**
+   * Ce qu'il reste à prendre : le ticket fait foi dès qu'il existe.
+   *
+   * Tant qu'il n'existe pas, ce n'est **pas** le prix figé à la réservation mais
+   * le plafond de ce que le ticket pourra porter (#1240, deuxième critère).
+   * `POST /v1/sales` relit le tarif **au catalogue** : sur une prestation dont le
+   * prix a baissé depuis la réservation, envoyer le prix figé ne pouvait
+   * qu'échouer en `422 SALE_OVERPAYMENT` — un refus rouge devant la cliente pour
+   * une raison qui n'était pas du fait de l'opérateur. Voir
+   * `firstSettlementCeiling`, qui dit aussi pourquoi le plafond ne joue que dans
+   * ce sens-là.
+   */
+  const outstanding: Money = sale?.remaining ?? firstSettlementCeiling(appointment);
   const currency = outstanding.currency;
   /**
    * L'état de règlement lu avec la journée, **corrigé par le ticket**.
@@ -214,12 +225,18 @@ export function CheckoutPanel({
    * dû, il n'y a rien de soldé. Les deux autres états — intention en ligne en
    * vol ou en échec — ne sont pas touchés : ils ferment le comptoir quel que
    * soit le reste dû.
+   *
+   * La correction rend désormais l'état que #1240 a nommé — `partiel` — au lieu
+   * de retomber sur « rien n'est réglé ». Les deux ouvrent le comptoir de la
+   * même façon, mais le second effaçait de l'écran un fait que l'opérateur a
+   * besoin de lire : une part **a** été prise. La pile de totaux juste en
+   * dessous la montre, et le panneau ne la contredit plus.
    */
   const known: SettlementState =
     settlement === null
       ? { kind: 'du' }
       : settlement.kind === 'regle' && sale !== null && sale.remaining.amountMinor > 0
-        ? { kind: 'du' }
+        ? { kind: 'partiel', payment: settlement.payment, ticket: sale }
         : settlement;
   const blocker = checkoutBlocker(appointment.status, known, locale);
 
@@ -554,7 +571,16 @@ export function CheckoutPanel({
 
   const planned = plannedAmount();
   const shown = planned ?? outstanding;
-  const drifting = sale !== null && sale.total.amountMinor !== due.amountMinor;
+  /**
+   * L'écart de tarif, s'il y en a un — **avant** le clic autant qu'après
+   * (#1240).
+   *
+   * Il ne se voyait que sur un ticket déjà composé. Or c'est au **premier**
+   * règlement qu'il compte : c'est là que la caisse relit le catalogue, et là que
+   * l'opérateur s'apprête à annoncer un montant à voix haute. `priceDriftOf`
+   * répond dans les deux cas, en nommant celui qui s'applique.
+   */
+  const drift = priceDriftOf(appointment, sale);
 
   return (
     <div className="spa-admin-checkout__payment">
@@ -581,14 +607,23 @@ export function CheckoutPanel({
         </div>
       )}
 
-      {drifting && sale !== null ? (
-        <p className="spa-admin-checkout__pci">
-          {t('ticket.priceDrift', {
-            ticket: formatMoney(sale.total, display),
-            booked: formatMoney(due, display),
-          })}
+      {drift === null ? null : (
+        <p className="spa-admin-checkout__pci" role="status">
+          {drift.kind === 'ticket'
+            ? t('ticket.priceDrift', {
+                ticket: formatMoney(drift.charged, display),
+                booked: formatMoney(drift.booked, display),
+              })
+            : t('ticket.priceDriftAhead', {
+                catalogue: formatMoney(drift.charged, display),
+                booked: formatMoney(drift.booked, display),
+                // Ce qui sera **pris**, et non ce que le catalogue dit : les deux
+                // diffèrent dès que le catalogue a monté, cas où la cliente ne
+                // doit que ce qu'elle a accepté (`firstSettlementCeiling`).
+                charged: formatMoney(outstanding, display),
+              })}
         </p>
-      ) : null}
+      )}
 
       {taken.length === 0 ? null : (
         <div className="spa-admin-checkout__totals">
