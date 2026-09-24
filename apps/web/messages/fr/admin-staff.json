@@ -61,8 +61,13 @@
     "roleSaved": "Rôle enregistré : {role}.",
     "reactivated": "Compte réactivé : la connexion est de nouveau possible.",
     "deactivated": "Compte désactivé. Ses affectations et ses rendez-vous passés sont intacts.",
-    "newToken": "Nouveau jeton d’invitation à transmettre à {email}.",
-    "tokenLabel": "Jeton d’invitation"
+    "newToken": "Nouveau lien d’activation à transmettre à {email}."
+  },
+  "invitationLink": {
+    "label": "Lien d’activation",
+    "hint": "Copiez-le en entier : il porte le code d’activation, et le raccourcir le rendrait inutilisable.",
+    "copy": "Copier le lien",
+    "copied": "Lien copié"
   },
   "invite": {
     "screenTitle": "Inviter un membre du personnel",
@@ -70,8 +75,7 @@
     "deniedBody": "L’invitation d’un membre du personnel est réservée au rang administrateur. La liste du personnel reste consultable, et un administrateur du salon peut émettre l’invitation pour vous. <link>Revenir au personnel</link>.",
     "failureTitle": "Invitation impossible",
     "issuedTitle": "Invitation émise",
-    "issuedBody": "Transmettez ce jeton à {email} : il lui sert à poser son mot de passe, une seule fois. Il n’est affiché qu’ici, et une nouvelle invitation peut être réémise à tout moment depuis la liste.",
-    "tokenLabel": "Jeton d’invitation",
+    "issuedBody": "Transmettez ce lien à {email} : il lui sert à poser son mot de passe, une seule fois. Il n’est affiché qu’ici, et une nouvelle invitation peut être réémise à tout moment depuis la liste.",
     "firstName": "Prénom",
     "lastName": "Nom",
     "email": "Adresse électronique",

@@ -311,6 +311,61 @@
               Inviter un membre du personnel
             </h2>
 
+            <!--
+              L'INVITATION ÉMISE. Le module `notifications` n'expédie pas encore
+              de courriel : rien ne peut porter le lien d'activation jusqu'à la
+              personne invitée, et l'écran est donc le seul canal. Ce qu'il rend
+              est l'ADRESSE COMPLÈTE et non le jeton nu — celui-ci n'était
+              utilisable nulle part, la page d'activation n'acceptant qu'un lien
+              qu'aucune interface ne fournissait (#1143).
+
+              Le bouton est sur la même ligne que le champ qu'il copie : c'est
+              ce qui dit lequel des champs de l'écran il vise, et c'est la seule
+              raison d'être de `spa-admin-invite-link__row`. Le champ est en
+              lecture seule plutôt qu'un <code> : trois cents caractères d'un
+              seul tenant, sans coupure possible, pousseraient la page entière
+              en défilement horizontal.
+
+              Le même bloc sert à la réémission depuis la liste des comptes, où
+              il se pose sous le message de la notification.
+
+              Le jeton figuré ici est un MOT REPÈRE et non un JWT d'exemple :
+              une chaîne base64url de forte entropie, fût-elle inventée, est
+              relevée comme fuite de secret par gitleaks et rougit la CI de
+              toutes les branches, l'analyse portant sur l'historique entier.
+              La maquette ne perd rien à le dire en toutes lettres — ce qu'elle
+              doit montrer est la LONGUEUR du lien et le bouton à sa droite.
+            -->
+            <div class="spa-notification spa-notification--success" role="status">
+              <div class="spa-notification__content">
+                <p class="spa-notification__title">Invitation émise</p>
+                <p>
+                  Transmettez ce lien à njara.be@maisonlotus.mg : il lui sert à poser son mot de
+                  passe, une seule fois.
+                </p>
+                <div class="spa-admin-invite-link">
+                  <label class="spa-field__label" for="invitation-lien">Lien d’activation</label>
+                  <p class="spa-field__hint" id="invitation-lien-hint">
+                    Copiez-le en entier : il porte le code d’activation, et le raccourcir le
+                    rendrait inutilisable.
+                  </p>
+                  <div class="spa-admin-invite-link__row">
+                    <input
+                      id="invitation-lien"
+                      class="spa-field__control spa-admin-invite-link__value"
+                      type="text"
+                      readonly
+                      aria-describedby="invitation-lien-hint"
+                      value="https://reservation.exemple.fr/maison-lotus/admin/invitation?token=jeton-d-exemple-de-trois-cents-caracteres-environ-que-la-maquette-ne-reproduit-pas"
+                    />
+                    <button class="spa-button spa-button--neutral" type="button">
+                      <span class="spa-button__label">Copier le lien</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
             <div class="spa-field">
               <label class="spa-field__label" for="invitation-prenom">
                 Prénom<span class="spa-field__required" aria-hidden="true">*</span>
