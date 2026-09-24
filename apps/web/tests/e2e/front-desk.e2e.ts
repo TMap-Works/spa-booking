@@ -1,9 +1,19 @@
 /**
  * Le comptoir — création manuelle, report, annulation, no-show.
  *
- * Deuxième critère de #80. Quatre gestes du quotidien d'un salon, chacun sur son
+ * Deuxième critère de #80. Cinq gestes du quotidien d'un salon, chacun sur son
  * propre jour : ils ne se disputent aucun créneau et ne dépendent d'aucun ordre
  * d'exécution.
+ *
+ * ## Le no-show a quitté l'avenir (#1210)
+ *
+ * Il travaillait sur un rendez-vous à J+2 — c'est-à-dire sur un rendez-vous qui
+ * n'a pas commencé, ce que #1137 déclare faux et ce que le cycle de vie du
+ * serveur refusera de constater. Le scénario opère désormais sur une journée
+ * **passée**, décor posé par le jeu d'essai, et un cinquième scénario éprouve ce
+ * que le tiroir fait d'un rendez-vous à venir : deux constats inertes, et leur
+ * motif. Les deux tiennent avec ou sans le garde-fou serveur : ils n'éprouvent
+ * que l'écran.
  *
  * ## Ce que ces scénarios ont découvert, et qu'ils consignent
  *
@@ -28,9 +38,10 @@ import {
   connecter,
   lireAgenda,
   poserRendezVous,
+  poserRendezVousCommence,
   trouverRendezVous,
 } from './support/api';
-import { COMPTES, chemins, heureDuSalon } from './support/environnement';
+import { COMPTES, chemins, dansNJours, heureDuSalon } from './support/environnement';
 import { compteClient } from './support/jeu-dessai';
 import {
   blocRendezVous,
@@ -205,22 +216,29 @@ test.describe('Comptoir', () => {
     });
   });
 
-  test('no-show depuis le tiroir', async ({ page, request, jeu }) => {
-    const jour = jourDuScenario(2);
+  /**
+   * Le constat se pose sur un rendez-vous **commencé**, et sur lui seul — #1210.
+   *
+   * ## Pourquoi ce scénario a changé de jour
+   *
+   * Il posait un rendez-vous à J+2 et cliquait « Marquer non honoré ». C'était
+   * le comportement que #1137 a déclaré faux : on ne constate pas ce qui n'a pas
+   * eu lieu, et le cycle de vie refuse les deux constats avant l'heure du soin —
+   * 422 `INVALID_STATE_TRANSITION`, `details.notStarted`. Le scénario encodait
+   * donc un bug, et le tiroir ne l'offre plus : le clic n'aboutirait pas, que le
+   * garde-fou serveur soit déjà en place ou non.
+   *
+   * Il travaille maintenant sur un rendez-vous d'une journée **passée**, posé
+   * par le jeu d'essai : la porte de comptoir ne sait pas en poser un dans le
+   * passé, et c'est la bonne règle (voir `support/api.ts`). Le refus, lui, est
+   * éprouvé sur un rendez-vous à venir, à l'étape suivante.
+   */
+  test('no-show depuis le tiroir', async ({ page, request }) => {
     const jeton = await connecter(request, COMPTES.manager);
-
-    const rendezVous = await poserRendezVous(request, jeton, {
-      serviceId: jeu.prestation.id,
-      clientId: compteClient(jeu),
-      leJour: jour,
-    });
-    // `no_show` n'est atteignable que depuis `confirmed`
-    // (`APPOINTMENT_STATUS_TRANSITIONS`) : un rendez-vous en attente n'offre
-    // que la confirmation, et c'est le produit qui en décide ainsi. Le passage
-    // est ici une **mise en situation** (motif 2 de `support/api.ts`) : le
-    // bouton « Confirmer le rendez-vous » est exercé à l'écran par le parcours
-    // critique, ce scénario-ci commence après lui.
-    await changerStatut(request, jeton, rendezVous.id, 'confirmed');
+    // Une journée passée par tentative : la précédente a soldé le sien, et un
+    // rendez-vous `no_show` n'offre plus aucun constat.
+    const jour = dansNJours(-1 - test.info().retry);
+    const rendezVous = poserRendezVousCommence(jour);
 
     await test.step('Marquer la cliente non présentée', async () => {
       await page.goto(chemins.calendrier(jour));
@@ -230,7 +248,11 @@ test.describe('Comptoir', () => {
 
       const panneau = tiroir(page);
       await expect(panneau).toBeVisible();
-      await panneau.getByRole('button', { name: 'Marquer non honoré' }).click();
+
+      const constat = panneau.getByRole('button', { name: 'Marquer non honoré' });
+      // Le soin est commencé : le tiroir ouvre le geste, il ne le grise pas.
+      await expect(constat).toBeEnabled({ timeout: 20_000 });
+      await constat.click();
       await expect(panneau).toBeHidden({ timeout: 20_000 });
     });
 
@@ -246,8 +268,64 @@ test.describe('Comptoir', () => {
     });
 
     await test.step("L'API a bien inscrit le no-show", async () => {
+      const journee = await lireAgenda(request, jeton, { from: jour, to: jour });
+      const apres = journee.find((candidat) => candidat.id === rendezVous.id);
+      expect(
+        apres,
+        `Le rendez-vous ${rendezVous.reference} est introuvable dans l'agenda du ${jour}.`,
+      ).toBeDefined();
+      expect(apres?.status.toLowerCase()).toBe('no_show');
+    });
+  });
+
+  /**
+   * L'autre moitié de #1210 : ce que le tiroir fait d'un rendez-vous **à venir**.
+   *
+   * Les deux constats y sont offerts **inertes**, avec leur motif — plutôt que
+   * masqués, un bouton qui disparaît ne disant pas pourquoi. Ce qui reste
+   * ouvert, ce sont les décisions : annuler et déplacer se prennent précisément
+   * avant l'heure.
+   */
+  test('les constats restent fermés sur un rendez-vous à venir', async ({ page, request, jeu }) => {
+    // Le rang que le no-show occupait avant de partir dans le passé : les rangs
+    // 4 et 5 sont ceux de l'encaissement par carte.
+    const jour = jourDuScenario(2);
+    const jeton = await connecter(request, COMPTES.manager);
+
+    const rendezVous = await poserRendezVous(request, jeton, {
+      serviceId: jeu.prestation.id,
+      clientId: compteClient(jeu),
+      leJour: jour,
+    });
+    // `no_show` et `completed` ne sont atteignables que depuis `confirmed`
+    // (`APPOINTMENT_STATUS_TRANSITIONS`) : sans ce passage, le tiroir n'offrirait
+    // pas les deux boutons du tout, et le scénario ne prouverait rien de l'heure.
+    // Mise en situation, motif 2 de `support/api.ts` — le bouton « Confirmer le
+    // rendez-vous » est exercé à l'écran par le parcours critique.
+    await changerStatut(request, jeton, rendezVous.id, 'confirmed');
+
+    await test.step('Le tiroir grise les deux constats et dit pourquoi', async () => {
+      await page.goto(chemins.calendrier(jour));
+      const bloc = blocRendezVous(page, CLIENTE_FICHIER).first();
+      await expect(bloc).toBeVisible({ timeout: 20_000 });
+      await bloc.click();
+
+      const panneau = tiroir(page);
+      await expect(panneau).toBeVisible();
+
+      await expect(panneau.getByRole('button', { name: 'Marquer honoré' })).toBeDisabled({
+        timeout: 20_000,
+      });
+      await expect(panneau.getByRole('button', { name: 'Marquer non honoré' })).toBeDisabled();
+      await expect(panneau.getByText('Le rendez-vous n’a pas commencé')).toBeVisible();
+
+      // Les décisions, elles, restent ouvertes.
+      await expect(panneau.getByRole('button', { name: 'Annuler le rendez-vous' })).toBeEnabled();
+    });
+
+    await test.step("L'API n'a rien inscrit", async () => {
       const apres = await trouverRendezVous(request, jeton, rendezVous.id);
-      expect(apres.status.toLowerCase()).toBe('no_show');
+      expect(apres.status.toLowerCase()).toBe('confirmed');
     });
   });
 

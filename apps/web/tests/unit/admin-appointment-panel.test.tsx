@@ -168,6 +168,10 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
+  // Les espions posés sur `Date.now` par les cas de #1210 : `clearAllMocks` ne
+  // rend pas son implémentation d'origine, et l'horloge resterait figée pour
+  // les cas suivants.
+  vi.restoreAllMocks();
 });
 
 describe('premier critère — le tiroir s’ouvre sur le créneau cliqué', () => {
@@ -926,5 +930,158 @@ describe('#756 — le tiroir dit ce qu’est devenu le rendez-vous', () => {
 
     expect(screen.queryByRole('heading', { name: 'Annulation' })).toBeNull();
     expect(screen.queryByRole('heading', { name: 'Report' })).toBeNull();
+  });
+});
+
+/**
+ * #1210 — on ne constate pas ce qui n'a pas eu lieu.
+ *
+ * ## Ce que le bug faisait
+ *
+ * Le tiroir offrait « Marquer honoré » et « Marquer non honoré » quelle que soit
+ * la date du rendez-vous. Cliqués sur un rendez-vous à venir, ils rendaient
+ * **422 `INVALID_STATE_TRANSITION`** — le cycle de vie refuse un constat avant
+ * l'heure du soin (#1137) — et le tiroir restait ouvert sur une erreur
+ * générique, sans dire ce qu'il fallait faire : attendre.
+ *
+ * « Mon planning » connaissait déjà la règle, mais la recalculait chez lui. Les
+ * deux écrans lisent maintenant la même écriture du contrat partagé,
+ * `canRecordAppointmentOutcome`.
+ *
+ * ## L'horloge est figée, et il le faut
+ *
+ * Le tiroir lit `Date.now()` après son montage — sa source de `now` ne peut pas
+ * venir du serveur, il n'existe qu'à la suite d'un clic et n'est donc jamais
+ * rendu par lui. Sans horloge figée, ces cas diraient l'inverse selon le jour
+ * où la suite tourne.
+ */
+describe('#1210 — le tiroir n’offre pas un constat avant l’heure du soin', () => {
+  /** Le soin de `CONFIRME` commence à 06:00 UTC ; deux instants l'encadrent. */
+  const AVANT_LE_SOIN = '2026-08-26T05:30:00.000Z';
+  const SOIN_COMMENCE = '2026-08-26T06:30:00.000Z';
+
+  function figerLHorloge(instant: string): void {
+    vi.spyOn(Date, 'now').mockReturnValue(Date.parse(instant));
+  }
+
+  it('les rend inertes, et dit pourquoi, sur un rendez-vous à venir', async () => {
+    figerLHorloge(AVANT_LE_SOIN);
+
+    renderPanel({ kind: 'edit', appointment: CONFIRME });
+
+    // Inertes plutôt qu'absents : un bouton qui disparaît ne dit pas pourquoi,
+    // et c'est le motif qui manquait au comptoir.
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Marquer honoré' }).hasAttribute('disabled')).toBe(
+        true,
+      );
+    });
+    expect(
+      screen.getByRole('button', { name: 'Marquer non honoré' }).hasAttribute('disabled'),
+    ).toBe(true);
+    expect(screen.getByText('Le rendez-vous n’a pas commencé')).toBeDefined();
+    expect(screen.getByText(/ils s’ouvriront à l’heure du rendez-vous/)).toBeDefined();
+  });
+
+  /**
+   * Annuler et déplacer sont des **décisions**, et elles se prennent
+   * précisément avant l'heure : les fermer aurait interdit les seuls gestes
+   * utiles sur un rendez-vous à venir.
+   */
+  it('laisse annuler et déplacer ce même rendez-vous', async () => {
+    figerLHorloge(AVANT_LE_SOIN);
+
+    renderPanel({ kind: 'edit', appointment: CONFIRME });
+
+    expect(
+      screen.getByRole('button', { name: 'Annuler le rendez-vous' }).hasAttribute('disabled'),
+    ).toBe(false);
+    await enregistrerArme('Enregistrer');
+  });
+
+  it('les ouvre une fois le soin commencé', async () => {
+    figerLHorloge(SOIN_COMMENCE);
+    const user = userEvent.setup();
+    markDeskAppointmentStatusAction.mockResolvedValue({
+      ok: true,
+      data: { ...CONFIRME, status: 'no_show' },
+    });
+
+    const { onReload, onClose } = renderPanel({ kind: 'edit', appointment: CONFIRME });
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole('button', { name: 'Marquer non honoré' }).hasAttribute('disabled'),
+      ).toBe(false);
+    });
+    expect(screen.queryByText('Le rendez-vous n’a pas commencé')).toBeNull();
+
+    await user.click(screen.getByRole('button', { name: 'Marquer non honoré' }));
+
+    await waitFor(() => {
+      expect(markDeskAppointmentStatusAction).toHaveBeenCalledWith(SLUG, CONFIRME.id, {
+        status: 'no_show',
+      });
+    });
+    expect(onReload).toHaveBeenCalledTimes(1);
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * Le cas de course : l'écran a ouvert le geste et l'API le refuse quand même.
+   * C'est l'horloge du serveur qui tranche, et ce refus-là se distingue du
+   * rendez-vous déjà soldé par `details.notStarted` — le `code` est le même.
+   */
+  it('traduit le 422 « pas commencé » en « attendez l’heure », et n’efface rien', async () => {
+    figerLHorloge(SOIN_COMMENCE);
+    const user = userEvent.setup();
+    markDeskAppointmentStatusAction.mockResolvedValue({
+      ok: false,
+      code: 'INVALID_STATE_TRANSITION',
+      message: 'Un rendez-vous qui n’a pas commencé ne peut pas être marqué « non présenté ».',
+      details: { notStarted: true, startsAt: CONFIRME.startsAt, now: AVANT_LE_SOIN },
+    });
+
+    const { onReload, onClose } = renderPanel({ kind: 'edit', appointment: CONFIRME });
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole('button', { name: 'Marquer non honoré' }).hasAttribute('disabled'),
+      ).toBe(false);
+    });
+    await user.click(screen.getByRole('button', { name: 'Marquer non honoré' }));
+
+    expect(await screen.findByText(/ils s’ouvriront à l’heure du rendez-vous/)).toBeDefined();
+    // Le tiroir reste ouvert et le planning n'est pas relu : il n'y a rien de
+    // neuf à lire, il y a à attendre.
+    expect(onClose).not.toHaveBeenCalled();
+    expect(onReload).not.toHaveBeenCalled();
+  });
+
+  /**
+   * Tout autre refus garde le message de l'API, qui nomme déjà la cause : un
+   * rendez-vous déjà soldé porte le même code, sans `notStarted`.
+   */
+  it('laisse passer les autres refus de transition avec leur message', async () => {
+    figerLHorloge(SOIN_COMMENCE);
+    const user = userEvent.setup();
+    markDeskAppointmentStatusAction.mockResolvedValue({
+      ok: false,
+      code: 'INVALID_STATE_TRANSITION',
+      message: 'Transition « COMPLETED » → « NO_SHOW » interdite.',
+    });
+
+    renderPanel({ kind: 'edit', appointment: CONFIRME });
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole('button', { name: 'Marquer non honoré' }).hasAttribute('disabled'),
+      ).toBe(false);
+    });
+    await user.click(screen.getByRole('button', { name: 'Marquer non honoré' }));
+
+    expect(
+      await screen.findByText('Transition « COMPLETED » → « NO_SHOW » interdite.'),
+    ).toBeDefined();
   });
 });

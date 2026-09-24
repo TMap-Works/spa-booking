@@ -41,6 +41,9 @@ afterEach(() => {
   cleanup();
   markStatus.mockReset();
   refresh.mockReset();
+  // L'horloge que certains cas figent (#1210) : sans cela, le cas suivant
+  // hériterait d'un `Date.now()` bloqué au jour du précédent.
+  vi.restoreAllMocks();
 });
 
 const TZ = 'Europe/Paris';
@@ -254,26 +257,104 @@ describe('la journée de travail', () => {
   });
 });
 
+/**
+ * L'heure du soin, et deux instants de part et d'autre — #1210.
+ *
+ * `renderedAt` est la graine de l'horloge du composant — celle que la page
+ * serveur lui passe —, mais elle ne vaut que pour le **premier** rendu :
+ * l'horloge prend ensuite la main avec `Date.now()`, et c'est bien ce qu'on veut
+ * d'elle, un tiroir ou un planning restant ouverts pendant que l'heure tourne.
+ * Ces cas fixent donc les deux, la graine *et* `Date.now`.
+ */
+const DEBUT = '2026-09-18T14:00:00.000Z';
+const AVANT = '2026-09-18T13:45:00.000Z';
+const APRES = '2026-09-18T14:05:00.000Z';
+
+/** Fige l'horloge du navigateur pour la durée du cas. */
+function figerLHorloge(instant: string): void {
+  vi.spyOn(Date, 'now').mockReturnValue(Date.parse(instant));
+}
+
 describe('les gestes de la praticienne sur son rendez-vous', () => {
-  it('ne propose « honoré » qu’une fois le rendez-vous commencé', () => {
+  it('offre « honoré » inerte, avec son motif, tant que le rendez-vous n’a pas commencé', () => {
+    figerLHorloge(AVANT);
     render(
       <MyAppointmentActions
         appointmentId="aaaaaaaa-0000-4000-8000-000000000001"
-        started={false}
+        renderedAt={AVANT}
+        startsAt={DEBUT}
         status="confirmed"
         tenantSlug="maison-lotus"
       />,
     );
 
-    expect(screen.queryByRole('button', { name: /honoré/ })).toBeNull();
+    // Inerte plutôt qu'absent : un bouton qui disparaît ne dit pas pourquoi.
+    const honore = screen.getByRole('button', { name: 'Marquer honoré' });
+    expect(honore).toHaveProperty('disabled', true);
+    expect(screen.getByRole('button', { name: 'Marquer non honoré' })).toHaveProperty(
+      'disabled',
+      true,
+    );
+    expect(screen.getByText(/attendez l’heure du rendez-vous/i)).toBeDefined();
+  });
+
+  /**
+   * Confirmer est une **décision**, pas un constat : elle se prend précisément
+   * avant l'heure, et l'horloge ne la borne pas.
+   */
+  it('laisse confirmer un rendez-vous à venir', () => {
+    figerLHorloge(AVANT);
+    render(
+      <MyAppointmentActions
+        appointmentId="aaaaaaaa-0000-4000-8000-000000000001"
+        renderedAt={AVANT}
+        startsAt={DEBUT}
+        status="pending"
+        tenantSlug="maison-lotus"
+      />,
+    );
+
+    expect(screen.getByRole('button', { name: 'Confirmer le rendez-vous' })).toHaveProperty(
+      'disabled',
+      false,
+    );
+  });
+
+  /**
+   * L'horloge suit le **serveur**, pas la pendule du poste.
+   *
+   * Un poste de comptoir dont l'horloge avance d'un jour ouvrirait sinon
+   * « Marquer non honoré » sur le rendez-vous de demain — un geste terminal et
+   * sans retour, sur la foi d'un réglage local. L'écran n'avance que de l'écart
+   * écoulé depuis son montage, ajouté à l'instant que le serveur a rendu.
+   */
+  it('ne s’ouvre pas sur une pendule de poste en avance', () => {
+    figerLHorloge('2026-09-19T14:05:00.000Z');
+    render(
+      <MyAppointmentActions
+        appointmentId="aaaaaaaa-0000-4000-8000-000000000001"
+        renderedAt={AVANT}
+        startsAt={DEBUT}
+        status="confirmed"
+        tenantSlug="maison-lotus"
+      />,
+    );
+
+    expect(screen.getByRole('button', { name: 'Marquer honoré' })).toHaveProperty(
+      'disabled',
+      true,
+    );
+    expect(screen.getByText(/attendez l’heure du rendez-vous/i)).toBeDefined();
   });
 
   it('marque le rendez-vous honoré, puis relit l’écran', async () => {
+    figerLHorloge(APRES);
     markStatus.mockResolvedValue({ ok: true, data: {} });
     render(
       <MyAppointmentActions
         appointmentId="aaaaaaaa-0000-4000-8000-000000000001"
-        started
+        renderedAt={APRES}
+        startsAt={DEBUT}
         status="confirmed"
         tenantSlug="maison-lotus"
       />,
@@ -290,11 +371,13 @@ describe('les gestes de la praticienne sur son rendez-vous', () => {
   });
 
   it('dit le refus de l’API sans rien relire', async () => {
+    figerLHorloge(APRES);
     markStatus.mockResolvedValue({ ok: false, code: 'FORBIDDEN', message: 'Ce rendez-vous n’est pas le vôtre.' });
     render(
       <MyAppointmentActions
         appointmentId="aaaaaaaa-0000-4000-8000-000000000001"
-        started
+        renderedAt={APRES}
+        startsAt={DEBUT}
         status="confirmed"
         tenantSlug="maison-lotus"
       />,
@@ -303,6 +386,38 @@ describe('les gestes de la praticienne sur son rendez-vous', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Marquer honoré' }));
 
     expect(await screen.findByRole('alert')).toHaveProperty('textContent', 'Ce rendez-vous n’est pas le vôtre.');
+    expect(refresh).not.toHaveBeenCalled();
+  });
+
+  /**
+   * Le cas de course : l'écran a ouvert le geste, et l'API le refuse quand même
+   * — l'heure passe entre le rendu et le clic, et c'est l'horloge du serveur qui
+   * tranche. Le refus dit alors d'attendre, et non de recommencer (#1210).
+   */
+  it('traduit le 422 « pas commencé » en « attendez l’heure du rendez-vous »', async () => {
+    figerLHorloge(APRES);
+    markStatus.mockResolvedValue({
+      ok: false,
+      code: 'INVALID_STATE_TRANSITION',
+      message: 'Un rendez-vous qui n’a pas commencé ne peut pas être marqué « honoré ».',
+      details: { notStarted: true, startsAt: DEBUT, now: AVANT },
+    });
+    render(
+      <MyAppointmentActions
+        appointmentId="aaaaaaaa-0000-4000-8000-000000000001"
+        renderedAt={APRES}
+        startsAt={DEBUT}
+        status="confirmed"
+        tenantSlug="maison-lotus"
+      />,
+    );
+
+    await userEvent.click(screen.getByRole('button', { name: 'Marquer honoré' }));
+
+    expect(await screen.findByRole('alert')).toHaveProperty(
+      'textContent',
+      'Ce rendez-vous n’a pas commencé : attendez l’heure du rendez-vous pour dire s’il a été honoré.',
+    );
     expect(refresh).not.toHaveBeenCalled();
   });
 });

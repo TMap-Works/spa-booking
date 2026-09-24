@@ -96,6 +96,17 @@ const PRESTATION = {
   priceCurrency: DEVISE,
 };
 
+/**
+ * L'heure UTC à laquelle `poserRendezVousCommence` place son décor.
+ *
+ * 10 h UTC vaut 11 h ou 12 h à Paris selon la saison : les deux tombent au
+ * milieu des heures d'ouverture du jeu d'essai (08 h – 20 h), donc au milieu du
+ * cadrage par défaut du planning, et la **date civile du salon** est alors celle
+ * de la journée UTC demandée — ce qui n'est pas vrai d'une heure de fin de
+ * soirée. Aucun calcul de fuseau n'est nécessaire à ce prix-là.
+ */
+const HEURE_DU_DECOR = '10:00:00.000Z';
+
 function argument(nom, defaut) {
   const index = process.argv.indexOf(nom);
   return index === -1 || index === process.argv.length - 1 ? defaut : process.argv[index + 1];
@@ -271,6 +282,134 @@ export async function amorcer({ slug, prisma, bcrypt }) {
   };
 }
 
+/**
+ * Pose un rendez-vous **déjà commencé** — la mise en situation que la porte de
+ * comptoir ne sait pas faire (#1210).
+ *
+ * ## Pourquoi elle est ici, et pas dans `support/api.ts`
+ *
+ * Parce qu'aucune route ne peut la produire, et que ce n'est pas un oubli : le
+ * moteur de disponibilité ne propose que des créneaux postérieurs à
+ * `now + minBookingNoticeMinutes`, et `POST /appointments` n'accepte que des
+ * créneaux que le moteur a rendus (`offeredStaffAt`). Le comptoir ne réserve
+ * donc jamais dans le passé, ce qui est la bonne règle — et ce qui laisse un
+ * scénario sans moyen d'éprouver « Marquer non honoré », qui n'existe **que**
+ * sur un rendez-vous commencé depuis #1137.
+ *
+ * C'est exactement le motif pour lequel ce fichier écrit en base : le produit
+ * n'expose pas le geste, et l'inventer par l'IHM reviendrait à éprouver un
+ * moteur de disponibilité truqué plutôt que le tiroir du comptoir.
+ *
+ * ## Ce qu'elle écrit, et ce qu'elle n'écrit pas
+ *
+ * L'intervalle posé est l'intervalle **occupé** — celui de la colonne, tampons
+ * compris —, dérivé de l'heure du soin exactement comme le fait
+ * `AppointmentsService.occupiedRange`. L'API rendra l'intervalle *facturé* à
+ * partir de là, c'est-à-dire l'heure demandée ici : les deux bouts se
+ * retrouvent.
+ *
+ * Le rendez-vous naît `CONFIRMED` : `no_show` et `completed` ne sont
+ * atteignables que depuis là (`APPOINTMENT_STATUS_TRANSITIONS`), et le passage
+ * `pending → confirmed` est exercé à l'écran par le parcours critique.
+ *
+ * Aucun paiement, aucune notification, aucun événement : ce n'est pas une
+ * réservation, c'est un décor.
+ *
+ * ## `jour` est une journée **passée**, et l'heure est fixe
+ *
+ * Un rendez-vous posé « il y a trente minutes » serait commencé, mais à une
+ * heure qui dépend de celle du runner : une suite lancée à 3 h du matin le
+ * placerait hors des heures d'ouverture, donc en tête d'une grille virtualisée
+ * dont le scénario devrait défiler pour le voir. Une journée passée le rend
+ * commencé quelle que soit l'heure d'exécution, et `HEURE_DU_DECOR` le place au
+ * milieu du cadrage par défaut du planning (08 h – 20 h), où la grille le monte
+ * sans défilement.
+ */
+export async function poserRendezVousCommence({ prisma, slug, jour }) {
+  const tenant = await prisma.tenant.findUnique({ where: { slug } });
+  if (tenant === null) {
+    throw new Error(`Établissement « ${slug} » introuvable : le jeu d'essai n'a pas été amorcé.`);
+  }
+
+  const service = await prisma.service.findFirst({
+    where: { tenantId: tenant.id, slug: PRESTATION.slug },
+  });
+  const staff = await prisma.staff.findFirst({
+    where: { tenantId: tenant.id, isActive: true },
+    orderBy: { createdAt: 'asc' },
+  });
+  const cliente = await prisma.user.findFirst({
+    where: { tenantId: tenant.id, role: 'CLIENT' },
+  });
+
+  if (service === null || staff === null || cliente === null) {
+    throw new Error(
+      "Le jeu d'essai est incomplet : prestation, praticien ou compte cliente manquant.",
+    );
+  }
+
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(jour))) {
+    throw new Error(`« ${jour} » n'est pas une date civile AAAA-MM-JJ.`);
+  }
+
+  // L'heure du **soin**, celle que l'API rend et que la règle du constat
+  // compare — jamais l'intervalle occupé, qui est ce qu'on écrit plus bas.
+  const debutDuSoin = new Date(`${jour}T${HEURE_DU_DECOR}`);
+
+  if (debutDuSoin.getTime() >= Date.now()) {
+    throw new Error(
+      `Le décor doit être commencé : ${debutDuSoin.toISOString()} n'est pas dans le passé.`,
+    );
+  }
+
+  const occupeDebut = new Date(debutDuSoin.getTime() - service.bufferBeforeMinutes * 60_000);
+  const occupeFin = new Date(
+    debutDuSoin.getTime() + (service.durationMinutes + service.bufferAfterMinutes) * 60_000,
+  );
+
+  const rendezVous = await prisma.appointment.create({
+    data: {
+      tenantId: tenant.id,
+      clientId: cliente.id,
+      staffId: staff.id,
+      serviceId: service.id,
+      reference: referenceTiree(),
+      startsAt: occupeDebut,
+      endsAt: occupeFin,
+      status: 'CONFIRMED',
+      priceAmountMinor: service.priceAmountMinor,
+      priceCurrency: service.priceCurrency,
+    },
+  });
+
+  return {
+    id: rendezVous.id,
+    reference: rendezVous.reference,
+    startsAt: debutDuSoin.toISOString(),
+    staffId: staff.id,
+    clientId: cliente.id,
+  };
+}
+
+/**
+ * Une référence `RDV-XXXX-NN` tirée au hasard, dans l'alphabet de Crockford.
+ *
+ * Le décor n'a pas à passer par le tirage du serveur — il n'a pas d'API — mais
+ * la colonne est unique par établissement et contrainte de format
+ * (`APPOINTMENT_REFERENCE_PATTERN`) : une référence inventée hors de l'alphabet
+ * passerait la base et échouerait à la lecture, au schéma du contrat.
+ */
+function referenceTiree() {
+  const alphabet = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
+  const groupe = Array.from(
+    { length: 4 },
+    () => alphabet[Math.floor(Math.random() * alphabet.length)],
+  ).join('');
+  const suffixe = String(Math.floor(Math.random() * 100)).padStart(2, '0');
+
+  return `RDV-${groupe}-${suffixe}`;
+}
+
 async function main() {
   const slug =
     String(argument('--slug', process.env.E2E_TENANT_SLUG || 'e2e-parcours'))
@@ -292,6 +431,18 @@ async function main() {
 
   const prisma = new PrismaClient();
   try {
+    // Deux modes, et le second ne fait **pas** table rase : il ajoute un décor à
+    // un jeu d'essai déjà posé, pendant que la suite tourne (#1210).
+    if (process.argv.includes('--rendez-vous-commence')) {
+      const rendezVous = await poserRendezVousCommence({
+        prisma,
+        slug,
+        jour: argument('--jour', ''),
+      });
+      process.stdout.write(`${JSON.stringify(rendezVous)}\n`);
+      return;
+    }
+
     const jeu = await amorcer({ slug, prisma, bcrypt });
     process.stdout.write(`${JSON.stringify(jeu)}\n`);
   } finally {
