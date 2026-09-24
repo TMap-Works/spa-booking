@@ -5,6 +5,8 @@ import type {
   OpeningHoursEntry,
   Service,
   StaffMemberSummary,
+  StaffSchedule,
+  StaffTimeOff,
 } from '@spa/shared';
 import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -194,16 +196,20 @@ function renderBoard(
     readonly staff?: readonly StaffMemberSummary[];
     readonly setupKnown?: boolean;
     readonly openingHours?: readonly OpeningHoursEntry[];
+    readonly staffSchedules?: readonly StaffSchedule[];
+    readonly timeOff?: Readonly<Record<string, readonly StaffTimeOff[]>>;
   } = {},
 ): void {
   render(
     <CalendarBoard
       date={overrides.date ?? '2026-08-26'}
       initialPeriods={overrides.periods ?? amorce}
+      initialTimeOff={overrides.timeOff ?? {}}
       loadError={overrides.loadError ?? null}
       openingHours={overrides.openingHours ?? []}
       services={overrides.services ?? CATALOGUE}
       setupKnown={overrides.setupKnown ?? true}
+      staffSchedules={overrides.staffSchedules ?? []}
       // Répertoire vide par défaut : les colonnes se déduisent alors des seuls
       // rendez-vous, ce qui laisse l'état vide observable là où ces cas
       // l'éprouvent. Le répertoire garni a son propre bloc, plus bas (#507).
@@ -1205,5 +1211,101 @@ describe('la vue semaine nomme le praticien et la prestation (#762)', () => {
 
     expect(bloc.getAttribute('title')).toBeNull();
     expect(bloc.textContent).not.toContain('Praticien :');
+  });
+});
+
+/**
+ * Les horaires et les congés du praticien, à l'écran — #1158.
+ *
+ * La grille a ses propres tests ; ceux-ci prouvent que l'écran lui passe bien
+ * ce que la page lui donne. Un calcul juste dont le composant ne reçoit pas les
+ * données rendrait exactement le planning d'avant le ticket.
+ */
+describe('la colonne montre ce que le praticien travaille (#1158)', () => {
+  /** Du lundi au vendredi, 09:00–19:00 — les heures du salon, pas les siennes. */
+  const SEMAINE: readonly OpeningHoursEntry[] = ([1, 2, 3, 4, 5] as const).map((weekday) => ({
+    weekday,
+    opensAt: '09:00',
+    closesAt: '19:00',
+  }));
+
+  const HASINA: readonly StaffMemberSummary[] = [{ id: 'staff-hasina', displayName: 'Hasina' }];
+
+  /** Hasina ne travaille que de 10 h à 16 h, tous les jours ouvrés. */
+  const HORAIRES: readonly StaffSchedule[] = [
+    {
+      staffId: 'staff-hasina',
+      timezone: TIMEZONE,
+      entries: ([1, 2, 3, 4, 5] as const).map((weekday) => ({
+        weekday,
+        startsAt: '10:00',
+        endsAt: '16:00',
+      })),
+    },
+  ];
+
+  /** Son congé du mercredi 26 août, de minuit à minuit, heure du salon (UTC+3). */
+  const CONGE: readonly StaffTimeOff[] = [
+    {
+      id: 'bbbbbbbb-0000-4000-8000-000000000001',
+      staffId: 'staff-hasina',
+      startsAt: '2026-08-25T21:00:00.000Z',
+      endsAt: '2026-08-26T21:00:00.000Z',
+      reason: null,
+    },
+  ];
+
+  it('retire les rangées que son horaire ne couvre pas', () => {
+    renderBoard({
+      openingHours: SEMAINE,
+      periods: { 'jour:2026-08-26': [] },
+      staff: HASINA,
+      staffSchedules: HORAIRES,
+    });
+
+    const colonne = screen.getByRole('list', { name: /^Hasina/ });
+
+    // Le salon ouvre à 09 h, Hasina arrive à 10 h : la rangée de 09 h cesse
+    // d'être un bouton et se nomme.
+    expect(within(colonne).queryByRole('button', { name: /^09 h 00, libre/ })).toBeNull();
+    expect(within(colonne).getAllByText('Repos').length).toBeGreaterThan(0);
+    expect(within(colonne).getByRole('button', { name: /^10 h 00, libre/ })).toBeDefined();
+  });
+
+  it('grise sa journée de congé et le dit sur la colonne', () => {
+    renderBoard({
+      openingHours: SEMAINE,
+      periods: { 'jour:2026-08-26': [] },
+      staff: HASINA,
+      staffSchedules: HORAIRES,
+      timeOff: { 'jour:2026-08-26': CONGE },
+    });
+
+    const colonne = screen.getByRole('list', { name: /^Hasina/ });
+
+    expect(within(colonne).getByText('Congé')).toBeDefined();
+    expect(within(colonne).queryAllByRole('button')).toHaveLength(0);
+    // L'en-tête le dit aussi : « Aucun rendez-vous » se lirait comme une journée
+    // creuse qu'on propose de remplir.
+    expect(screen.getAllByText('Congé')).toHaveLength(2);
+  });
+
+  it('demande la fenêtre d’absences avec le fuseau du salon', async () => {
+    // L'action borne la fenêtre à partir de ce fuseau. Sans lui, elle retombe
+    // sur UTC et la fenêtre glisse de trois heures.
+    //
+    // Une seule période en cache : ce sont les deux voisines, préchargées au
+    // montage, qui passent par l'action. L'amorce complète ne l'appellerait pas.
+    renderBoard({
+      periods: { 'jour:2026-08-26': [] },
+      staff: HASINA,
+      staffSchedules: HORAIRES,
+    });
+
+    await waitFor(() => {
+      expect(loadCalendarRangeAction).toHaveBeenCalled();
+    });
+
+    expect(loadCalendarRangeAction.mock.calls[0]?.[4]).toBe(TIMEZONE);
   });
 });

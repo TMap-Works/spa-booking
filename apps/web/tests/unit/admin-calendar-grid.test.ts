@@ -1,4 +1,10 @@
-import type { Appointment, AppointmentStatus, OpeningHoursEntry } from '@spa/shared';
+import type {
+  Appointment,
+  AppointmentStatus,
+  OpeningHoursEntry,
+  StaffSchedule,
+  StaffTimeOff,
+} from '@spa/shared';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -1189,5 +1195,244 @@ describe('les statuts terminaux ne prennent plus la place (#753)', () => {
 
     expect(repere).toBeGreaterThanOrEqual(0);
     expect(vivant).toBeGreaterThan(repere);
+  });
+});
+
+describe('les horaires et les congés des praticiens peignent la colonne (#1158)', () => {
+  /**
+   * Spa Lumière, mercredi 30 septembre 2026 — la journée de la campagne de QA.
+   *
+   * Le salon ouvre de 09:00 à 19:00 du lundi au samedi. Ce sont ses heures à lui,
+   * et elles ne disent pas qui tient la cabine : c'est exactement ce que la
+   * grille prenait pour la disponibilité de chacun.
+   */
+  const MERCREDI = '2026-09-30';
+  const OUVERTURE: readonly OpeningHoursEntry[] = ([1, 2, 3, 4, 5, 6] as const).map((weekday) => ({
+    weekday,
+    opensAt: '09:00',
+    closesAt: '19:00',
+  }));
+
+  const SAM = { id: 'staff-sam', displayName: 'Sam' };
+  const MARC = { id: 'staff-marc', displayName: 'Marc' };
+  const LEA = { id: 'staff-lea', displayName: 'Léa O’Brien' };
+
+  /** Sam travaille la semaine entière, aux heures du salon. */
+  const SEMAINE_DE_SAM: StaffSchedule = {
+    staffId: SAM.id,
+    timezone: TIMEZONE,
+    entries: ([1, 2, 3, 4, 5] as const).map((weekday) => ({
+      weekday,
+      startsAt: '09:00',
+      endsAt: '19:00',
+    })),
+  };
+
+  /** Marc, du mardi au samedi, de 10 h à 18 h — deux heures de moins que le salon. */
+  const SEMAINE_DE_MARC: StaffSchedule = {
+    staffId: MARC.id,
+    timezone: TIMEZONE,
+    entries: ([2, 3, 4, 5, 6] as const).map((weekday) => ({
+      weekday,
+      startsAt: '10:00',
+      endsAt: '18:00',
+    })),
+  };
+
+  /** Léa n'a aucun horaire : sa semaine est connue, et elle est vide. */
+  const SEMAINE_DE_LEA: StaffSchedule = { staffId: LEA.id, timezone: TIMEZONE, entries: [] };
+
+  /**
+   * Une absence, posée en heures murales du salon — UTC+3, sans heure d'été.
+   *
+   * Les bornes partent en UTC comme l'API les rend : c'est ce décalage de trois
+   * heures qui distingue une lecture au fuseau de l'établissement d'une lecture
+   * au fuseau de la machine qui exécute le test.
+   */
+  function absence(staffId: string, from: string, to: string): StaffTimeOff {
+    return {
+      id: `bbbbbbbb-0000-4000-8000-${staffId.slice(-12).padStart(12, '0')}`,
+      staffId,
+      startsAt: from,
+      endsAt: to,
+      reason: null,
+    };
+  }
+
+  /** Le congé de Sam le 30/09 : de minuit à minuit, heure du salon. */
+  const CONGE_DE_SAM = absence(SAM.id, '2026-09-29T21:00:00.000Z', '2026-09-30T21:00:00.000Z');
+
+  function closedOf(cells: readonly CalendarCell[]): CalendarClosedCell[] {
+    return cells.filter((cell): cell is CalendarClosedCell => cell.kind === 'closed');
+  }
+
+  function journee(options: {
+    readonly staff: readonly { readonly id: string; readonly displayName: string }[];
+    readonly staffSchedules?: readonly StaffSchedule[];
+    readonly timeOff?: readonly StaffTimeOff[];
+  }) {
+    return buildCalendarBoard({
+      view: 'jour',
+      range: rangeOf('jour', MERCREDI),
+      appointments: [],
+      openingHours: OUVERTURE,
+      staff: options.staff,
+      timeZone: TIMEZONE,
+      ...(options.staffSchedules === undefined ? {} : { staffSchedules: options.staffSchedules }),
+      ...(options.timeOff === undefined ? {} : { timeOff: options.timeOff }),
+    });
+  }
+
+  it('grise la journée entière d’une praticienne en congé, et la nomme', () => {
+    // Le constat du ticket : « Sam est en congé le mer. 30/09, mais sa colonne
+    // est libre de 9 h à 19 h. » Le moteur, lui, refusait en 409.
+    const colonne = journee({
+      staff: [SAM],
+      staffSchedules: [SEMAINE_DE_SAM],
+      timeOff: [CONGE_DE_SAM],
+    }).columns[0];
+
+    expect(freeOf(colonne?.cells ?? [])).toHaveLength(0);
+    expect(
+      closedOf(colonne?.cells ?? []).map((cell) => [cell.label, cell.slot, cell.span]),
+    ).toEqual([
+      // Avant l'ouverture du salon, c'est le salon qui parle.
+      ['Hors horaires', 0, 2],
+      // Pendant ses heures d'ouverture, c'est le congé.
+      ['Congé', 2, 20],
+      ['Hors horaires', 22, 2],
+    ]);
+    expect(colonne?.meta).toBe('Congé');
+  });
+
+  it('grise la journée d’une praticienne qui n’a aucun horaire', () => {
+    // « Léa O'Brien, qui n'a aucun horaire, est libre toute la journée. » Une
+    // semaine de travail vide est licite et veut dire quelque chose : elle ne
+    // prend pas de rendez-vous, sans être désactivée.
+    const colonne = journee({ staff: [LEA], staffSchedules: [SEMAINE_DE_LEA] }).columns[0];
+
+    expect(freeOf(colonne?.cells ?? [])).toHaveLength(0);
+    expect(closedOf(colonne?.cells ?? []).map((cell) => cell.label)).toEqual([
+      'Hors horaires',
+      'Repos',
+      'Hors horaires',
+    ]);
+    expect(colonne?.meta).toBe('Repos');
+  });
+
+  it('n’ouvre que les heures que le praticien travaille vraiment', () => {
+    // « Marc (mar–sam 10–18) est libre à 9 h et à 18 h. » Le salon ouvre bien à
+    // 09 h ; Marc n'y est pas.
+    const colonne = journee({ staff: [MARC], staffSchedules: [SEMAINE_DE_MARC] }).columns[0];
+    const libres = freeOf(colonne?.cells ?? []);
+
+    expect(libres[0]).toMatchObject({ time: '10:00' });
+    expect(libres.at(-1)).toMatchObject({ time: '17:30' });
+    expect(libres.map((cell) => cell.time)).not.toContain('09:00');
+    expect(libres.map((cell) => cell.time)).not.toContain('18:00');
+  });
+
+  it('sépare la fermeture du salon du repos du praticien', () => {
+    // Deux fermetures contiguës qui ne se nomment pas pareil sont deux blocs :
+    // les fondre ferait porter à l'une le nom de l'autre, et l'opérateur qui
+    // cherche pourquoi il ne peut pas poser à 09 h lirait « Hors horaires » sur
+    // une heure que le salon ouvre.
+    const colonne = journee({ staff: [MARC], staffSchedules: [SEMAINE_DE_MARC] }).columns[0];
+
+    expect(
+      closedOf(colonne?.cells ?? []).map((cell) => [cell.label, cell.slot, cell.span]),
+    ).toEqual([
+      ['Hors horaires', 0, 2],
+      ['Repos', 2, 2],
+      ['Repos', 20, 2],
+      ['Hors horaires', 22, 2],
+    ]);
+  });
+
+  it('scinde la journée autour d’une absence d’après-midi', () => {
+    // Une plage bloquée n'est pas un congé de journée pleine, et rien ne les
+    // distingue côté contrat : le même intervalle, écrêté à la journée peinte.
+    const colonne = journee({
+      staff: [SAM],
+      staffSchedules: [SEMAINE_DE_SAM],
+      // 14:00 → 18:00 à l'horloge du salon.
+      timeOff: [absence(SAM.id, '2026-09-30T11:00:00.000Z', '2026-09-30T15:00:00.000Z')],
+    }).columns[0];
+    const libres = freeOf(colonne?.cells ?? []).map((cell) => cell.time);
+
+    expect(libres).toContain('13:30');
+    expect(libres).not.toContain('14:00');
+    expect(libres).not.toContain('17:30');
+    expect(libres).toContain('18:00');
+    expect(closedOf(colonne?.cells ?? []).map((cell) => cell.label)).toContain('Congé');
+  });
+
+  it('couvre les journées pleines d’un congé qui court sur la semaine', () => {
+    // Du 29/09 au 02/10 : le 30 est au milieu, et n'a ni début ni fin d'absence
+    // à lire. L'écrêtage à la journée doit le couvrir de minuit à minuit.
+    const colonne = journee({
+      staff: [SAM],
+      staffSchedules: [SEMAINE_DE_SAM],
+      timeOff: [absence(SAM.id, '2026-09-28T21:00:00.000Z', '2026-10-01T21:00:00.000Z')],
+    }).columns[0];
+
+    expect(freeOf(colonne?.cells ?? [])).toHaveLength(0);
+    expect(colonne?.meta).toBe('Congé');
+  });
+
+  it('ne restreint rien quand la semaine de travail n’a pas pu être lue', () => {
+    // Ne rien savoir n'autorise pas à peindre une fermeture : c'est la règle des
+    // heures d'ouverture, et elle vaut ici. Une colonne sans horaire connu garde
+    // le comportement d'avant ce ticket.
+    const colonne = journee({ staff: [SAM], staffSchedules: [], timeOff: [CONGE_DE_SAM] })
+      .columns[0];
+
+    // 09:00 → 18:30, soit les vingt rangées de départ que le salon ouvre.
+    expect(freeOf(colonne?.cells ?? [])).toHaveLength(20);
+    expect(colonne?.meta).toBe('Aucun rendez-vous');
+  });
+
+  it('laisse la vue semaine ouverte dès qu’un praticien tient la rangée', () => {
+    // Une colonne de la vue semaine est une journée de toute l'équipe : le congé
+    // d'une seule personne n'y ferme rien, parce que le salon, lui, reçoit.
+    const semaine = buildCalendarBoard({
+      view: 'semaine',
+      range: rangeOf('semaine', MERCREDI),
+      appointments: [],
+      openingHours: OUVERTURE,
+      staff: [SAM, MARC],
+      staffSchedules: [SEMAINE_DE_SAM, SEMAINE_DE_MARC],
+      timeOff: [CONGE_DE_SAM],
+      timeZone: TIMEZONE,
+    });
+    // Lundi 28 septembre ouvre la semaine ; le mercredi est la troisième colonne.
+    const mercredi = semaine.columns[2];
+    const libres = freeOf(mercredi?.cells ?? []).map((cell) => cell.time);
+
+    // Sam est en congé, Marc travaille de 10 h à 18 h : la rangée de 09 h ne
+    // trouve plus personne, celle de 10 h si.
+    expect(libres).not.toContain('09:00');
+    expect(libres[0]).toBe('10:00');
+    expect(libres.at(-1)).toBe('17:30');
+    // Et la colonne d'une journée n'est jamais « Congé » : elle n'est à personne.
+    expect(mercredi?.meta).toBe('Aucun rendez-vous');
+  });
+
+  it('ferme la journée de la vue semaine quand personne ne la travaille', () => {
+    // Deux semaines de travail vides : le salon ouvre, mais il n'y a personne.
+    const semaine = buildCalendarBoard({
+      view: 'semaine',
+      range: rangeOf('semaine', MERCREDI),
+      appointments: [],
+      openingHours: OUVERTURE,
+      staff: [SAM, MARC],
+      staffSchedules: [
+        { ...SEMAINE_DE_SAM, entries: [] },
+        { ...SEMAINE_DE_MARC, entries: [] },
+      ],
+      timeZone: TIMEZONE,
+    });
+
+    expect(freeOf(semaine.columns[0]?.cells ?? [])).toHaveLength(0);
   });
 });
