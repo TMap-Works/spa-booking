@@ -56,6 +56,7 @@
     "cardOnline": "Carte bancaire (en ligne)",
     "cashPhrase": "en espèces",
     "cardPhrase": "par carte bancaire (TPE)",
+    "cardOnlinePhrase": "par carte bancaire (en ligne)",
     "cashHint": "Enregistré avec l’opérateur et l’horodatage ; la caisse fait foi au rapprochement.",
     "cardHint": "Le montant se saisit sur le terminal de la banque du salon, qui n’est pas relié à l’application. Aucun numéro de carte n’est saisi, ni vu, ni conservé.",
     "unavailableTitle": "{method} indisponible"

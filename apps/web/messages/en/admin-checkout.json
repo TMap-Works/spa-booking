@@ -56,6 +56,7 @@
     "cardOnline": "Bank card (online)",
     "cashPhrase": "in cash",
     "cardPhrase": "by bank card (terminal)",
+    "cardOnlinePhrase": "by bank card (online)",
     "cashHint": "Recorded with the operator and a timestamp; the till is the reference at reconciliation.",
     "cardHint": "The amount is keyed on the salon’s own bank terminal, which is not wired to the application. No card number is entered, seen or kept.",
     "unavailableTitle": "{method} unavailable"
