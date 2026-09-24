@@ -15,11 +15,19 @@ import { formatTicketDateTime } from '@/lib/format';
  * La mise en forme du ticket de caisse — ce qui se décide sans DOM.
  */
 describe('le ticket de caisse', () => {
+  // L'espace du « % » français est **insécable** (U+00A0) : c'est `Intl` qui la
+  // pose, et un taux ne se coupe pas en fin de ligne sur un rouleau de 80 mm.
   it('écrit un taux en points de base comme un pourcentage français', () => {
-    expect(formatTaxRate(2000)).toBe('20 %');
-    expect(formatTaxRate(550)).toBe('5,5 %');
-    expect(formatTaxRate(210)).toBe('2,1 %');
-    expect(formatTaxRate(0)).toBe('0 %');
+    expect(formatTaxRate(2000)).toBe('20 %');
+    expect(formatTaxRate(550)).toBe('5,5 %');
+    expect(formatTaxRate(210)).toBe('2,1 %');
+    expect(formatTaxRate(0)).toBe('0 %');
+  });
+
+  // …et l'anglais n'en met pas du tout : « 20% », collé.
+  it('écrit le même taux à l’anglaise quand la session est en anglais', () => {
+    expect(formatTaxRate(2000, { locale: 'en', countryCode: 'US' })).toBe('20%');
+    expect(formatTaxRate(550, { locale: 'en', countryCode: 'US' })).toBe('5.5%');
   });
 
   it('présente la TVA comme une grande surface : taux, HT, TVA, TTC', () => {
@@ -31,7 +39,7 @@ describe('le ticket de caisse', () => {
       },
     ]);
 
-    expect(row?.rate).toBe('20 %');
+    expect(row?.rate).toBe('20 %');
     expect(row?.total).toEqual({ amountMinor: 6500, currency: 'EUR' });
   });
 
