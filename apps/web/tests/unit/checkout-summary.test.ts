@@ -3,19 +3,20 @@ import { ERROR_CODES, PAYMENT_ERROR_CODES } from '@spa/shared';
 import { describe, expect, it } from 'vitest';
 
 import {
-  CHECKOUT_METHODS,
+  COUNTER_MEANS,
   checkoutBlocker,
   checkoutFailureMessage,
   isAlreadySettledRefusal,
   isSettleable,
   isSettled,
-  methodHint,
+  meanHint,
+  methodOfMean,
   methodPhrase,
   receiptDisclaimer,
-  receiptIsProvisional,
-  settledReceiptDisclaimer,
   settlementBadge,
   settlementOf,
+  terminalReferenceField,
+  terminalReferenceIssue,
 } from '@/lib/admin/checkout-summary';
 import type { PaymentTransaction } from '@/lib/admin/payment-contract';
 
@@ -28,46 +29,37 @@ import type { PaymentTransaction } from '@/lib/admin/payment-contract';
  */
 
 describe('quel moyen de paiement est ouvert', () => {
-  it('n’offre que deux moyens, et aucun qui suppose un lecteur absent', () => {
-    // La maquette de #30 en dessine trois — le troisième est un lien de
-    // paiement que l'API ne sert pas. Un bouton qui ne mène à rien coûte plus
-    // cher au comptoir que son absence.
-    expect([...CHECKOUT_METHODS]).toEqual(['cash', 'card']);
+  it('n’offre que les deux moyens que le comptoir sait produire', () => {
+    // Ce sont les combinaisons du fil, celles que
+    // `POST /v1/sales/{saleId}/payments` accepte. `CARD_ONLINE` n'y est pas et
+    // ne peut pas y être : « Stripe n'est plus utilisé au comptoir » est la
+    // forme du contrat, pas un contrôle à écrire (ADR 0015).
+    expect([...COUNTER_MEANS]).toEqual(['CASH', 'CARD_TERMINAL']);
+  });
+
+  it('ramène chaque moyen du fil au moyen du domaine, sans troisième valeur', () => {
+    expect(methodOfMean('CASH')).toBe('cash');
+    expect(methodOfMean('CARD_TERMINAL')).toBe('card');
   });
 
   it('refuse tout encaissement sur un rendez-vous annulé', () => {
-    for (const method of CHECKOUT_METHODS) {
-      expect(checkoutBlocker('cancelled', method)).toMatch(/annulé/i);
-    }
-
+    expect(checkoutBlocker('cancelled')).toMatch(/annulé/i);
     expect(isSettleable('cancelled')).toBe(false);
   });
 
-  it('laisse encaisser en espèces un rendez-vous honoré ou non présenté', () => {
+  it('laisse encaisser un rendez-vous honoré ou non présenté, par l’un ou l’autre moyen', () => {
     // C'est le cas nominal du comptoir : la prestation est passée, la cliente
-    // paie en partant. Le tunnel en ligne les refuse, la caisse non.
+    // paie en partant. Le tunnel en ligne les refusait ; le comptoir n'ouvre
+    // plus d'intention, et les deux moyens acceptent donc les mêmes statuts.
     for (const status of ['completed', 'no_show'] satisfies AppointmentStatus[]) {
-      expect(checkoutBlocker(status, 'cash')).toBeNull();
+      expect(checkoutBlocker(status)).toBeNull();
       expect(isSettleable(status)).toBe(true);
-    }
-  });
-
-  it('ferme la carte sur un rendez-vous honoré ou non présenté, et dit quoi faire', () => {
-    // L'API refuse l'ouverture d'intention en 422 sur ces statuts. L'écran doit
-    // le dire **avant** l'appel, et proposer l'issue qui reste.
-    for (const status of ['completed', 'no_show'] satisfies AppointmentStatus[]) {
-      const blocker = checkoutBlocker(status, 'card');
-
-      expect(blocker).not.toBeNull();
-      expect(blocker).toMatch(/espèces/i);
     }
   });
 
   it('ouvre les deux moyens sur un rendez-vous à venir', () => {
     for (const status of ['pending', 'confirmed'] satisfies AppointmentStatus[]) {
-      for (const method of CHECKOUT_METHODS) {
-        expect(checkoutBlocker(status, method)).toBeNull();
-      }
+      expect(checkoutBlocker(status)).toBeNull();
     }
   });
 });
@@ -122,27 +114,28 @@ describe('l’état de règlement, lu avant le clic', () => {
     expect(settlementOf([payment('failed')], APPOINTMENT).kind).toBe('echoue');
   });
 
-  it('ferme les deux moyens sur un rendez-vous déjà réglé', () => {
+  it('ferme le comptoir sur un rendez-vous déjà réglé', () => {
     const settlement = settlementOf([payment('succeeded')], APPOINTMENT);
 
-    for (const method of CHECKOUT_METHODS) {
-      expect(checkoutBlocker('completed', method, settlement)).toMatch(/déjà été encaissé/i);
-    }
+    expect(checkoutBlocker('completed', settlement)).toMatch(/déjà été encaissé/i);
   });
 
-  it('ferme les espèces mais laisse reprendre la carte quand une intention court', () => {
+  it('ferme les **deux** moyens tant qu’une intention en ligne n’est pas conclue', () => {
+    // `SettlementRepository` refuse tout règlement de comptoir sur un ticket
+    // qui porte une intention vivante, quel qu'en soit le moyen. Tant que le
+    // comptoir ouvrait lui-même l'intention, « reprendre la carte » était une
+    // issue ; depuis #835 il n'a plus rien à reprendre.
     for (const status of ['pending', 'failed'] satisfies PaymentStatus[]) {
       const settlement = settlementOf([payment(status)], APPOINTMENT);
 
-      expect(checkoutBlocker('confirmed', 'cash', settlement)).toMatch(/carte/i);
-      expect(checkoutBlocker('confirmed', 'card', settlement)).toBeNull();
+      expect(checkoutBlocker('confirmed', settlement)).toMatch(/en ligne/i);
     }
   });
 
   it('laisse l’annulation expliquer le reste — elle passe avant le règlement', () => {
     const settlement = settlementOf([payment('succeeded')], APPOINTMENT);
 
-    expect(checkoutBlocker('cancelled', 'cash', settlement)).toMatch(/annulé/i);
+    expect(checkoutBlocker('cancelled', settlement)).toMatch(/annulé/i);
   });
 
   it('écrit toujours le libellé de la pastille — la couleur ne porte rien seule', () => {
@@ -161,8 +154,8 @@ describe('l’état de règlement, lu avant le clic', () => {
       'à encaisser',
       'réglé',
       'remboursé',
-      'carte en cours',
-      'carte en échec',
+      'paiement en ligne en cours',
+      'paiement en ligne en échec',
     ]);
     expect(new Set(labels.map((badge) => badge.modifier)).size).toBe(5);
   });
@@ -176,38 +169,58 @@ describe('l’état de règlement, lu avant le clic', () => {
 });
 
 describe('ce que l’écran dit du moyen choisi', () => {
-  it('écrit la frontière PCI sous le moyen carte', () => {
+  it('dit que la carte passe par le terminal du salon, et qu’aucun numéro n’est saisi', () => {
     // La mention n'est pas décorative : le prochain contributeur doit trouver la
     // raison avant d'ajouter le champ qui semblerait manquer.
-    expect(methodHint('card')).toMatch(/aucun numéro/i);
+    expect(meanHint('CARD_TERMINAL')).toMatch(/terminal/i);
+    expect(meanHint('CARD_TERMINAL')).toMatch(/aucun numéro/i);
+  });
+
+  it('ne promet plus que la carte se saisit dans des champs servis par Stripe', () => {
+    // Le formulaire a quitté le comptoir avec l'ADR 0015 : une aide qui le
+    // nommerait encore décrirait un écran qui n'existe plus.
+    expect(meanHint('CARD_TERMINAL')).not.toMatch(/stripe/i);
   });
 
   it('dit que les espèces n’appellent aucun prestataire', () => {
-    expect(methodHint('cash')).toMatch(/aucun appel au prestataire/i);
+    expect(meanHint('CASH')).toMatch(/caisse fait foi/i);
+  });
+});
+
+describe('le numéro du ticket du terminal', () => {
+  it('accepte l’absence — le caissier n’a pas toujours le ticket sous la main', () => {
+    expect(terminalReferenceIssue('')).toBeNull();
+    expect(terminalReferenceIssue('   ')).toBeNull();
+    expect(terminalReferenceField('')).toEqual({});
+    expect(terminalReferenceField('  ')).toEqual({});
+  });
+
+  it('accepte une référence alphanumérique et la transmet sans espaces', () => {
+    expect(terminalReferenceIssue('A1B2C3')).toBeNull();
+    expect(terminalReferenceField(' A1B2C3 ')).toEqual({ terminalReference: 'A1B2C3' });
+  });
+
+  it('refuse les séparateurs — ce sont eux qui déguisent un numéro de carte', () => {
+    expect(terminalReferenceIssue('4242 4242 4242 4242')).not.toBeNull();
+    expect(terminalReferenceIssue('4242-4242-4242-4242')).not.toBeNull();
+  });
+
+  it('refuse au-delà de 32 caractères, la borne de la colonne', () => {
+    expect(terminalReferenceIssue('A'.repeat(32))).toBeNull();
+    expect(terminalReferenceIssue('A'.repeat(33))).not.toBeNull();
   });
 });
 
 describe('ce qu’un reçu peut affirmer', () => {
-  it('rend le reçu carte provisoire — le navigateur ne conclut pas un paiement', () => {
-    expect(receiptIsProvisional('card')).toBe(true);
-    expect(receiptDisclaimer('card')).toMatch(/webhook/i);
-  });
-
-  it('rend le reçu espèces définitif — la caisse fait foi', () => {
-    expect(receiptIsProvisional('cash')).toBe(false);
-    expect(receiptDisclaimer('cash')).toMatch(/caisse qui fait foi/i);
-  });
-
-  it('rend définitif le reçu **réimprimé** d’une carte déjà inscrite', () => {
-    // C'est le webhook signé qui a écrit la ligne qu'on vient de relire : la
-    // mention provisoire ferait dire à l'écran qu'il ne sait pas ce qu'il lit.
-    expect(settledReceiptDisclaimer('card')).toMatch(/définitif/i);
-    expect(settledReceiptDisclaimer('card')).not.toMatch(/pas de capture/i);
-    expect(settledReceiptDisclaimer('cash')).toBe(receiptDisclaimer('cash'));
+  it('rend le reçu du comptoir définitif — plus aucun tiers à attendre', () => {
+    // Espèces comme TPE, l'API inscrit le règlement `SUCCEEDED` quand elle
+    // répond : il n'y a plus de webhook dont le reçu dépendrait (ADR 0015).
+    expect(receiptDisclaimer()).toMatch(/caisse/i);
+    expect(receiptDisclaimer()).not.toMatch(/webhook/i);
   });
 
   it('accorde le moyen de paiement à la phrase qui le porte', () => {
-    expect(methodPhrase('card')).toBe('par carte');
+    expect(methodPhrase('card')).toBe('par carte bancaire (TPE)');
     expect(methodPhrase('cash')).toBe('en espèces');
   });
 });
@@ -222,9 +235,9 @@ describe('la lecture d’un refus de l’API', () => {
     expect(shown).toMatch(/déjà été encaissé/i);
   });
 
-  it('distingue le refus du prestataire d’un refus métier, et rassure sur le débit', () => {
+  it('distingue la caisse injoignable d’un refus métier, et rassure sur le débit', () => {
     for (const code of ['PAYMENT_PROVIDER_UNAVAILABLE', ERROR_CODES.SERVICE_UNAVAILABLE]) {
-      expect(checkoutFailureMessage(code, 'x')).toMatch(/rien n’a été débité/i);
+      expect(checkoutFailureMessage(code, 'x')).toMatch(/rien n’a été encaissé/i);
     }
   });
 

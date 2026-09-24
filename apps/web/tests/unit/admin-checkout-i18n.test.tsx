@@ -1,5 +1,5 @@
 import type { Appointment, AppointmentStatus, Locale } from '@spa/shared';
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -65,16 +65,14 @@ vi.mock('next-intl', async () => {
   };
 });
 
-const settleInCashAction = vi.fn();
-const openCardPaymentAction = vi.fn();
+const openCheckoutTicketAction = vi.fn();
+const settleTicketAction = vi.fn();
 const loadReceiptAction = vi.fn();
 const refresh = vi.fn();
-const confirmPayment = vi.fn();
-const loadStripeSdk = vi.fn();
 
 vi.mock('@/app/(admin)/[tenantSlug]/admin/encaissement/actions', () => ({
-  settleInCashAction: (...args: unknown[]) => settleInCashAction(...args),
-  openCardPaymentAction: (...args: unknown[]) => openCardPaymentAction(...args),
+  openCheckoutTicketAction: (...args: unknown[]) => openCheckoutTicketAction(...args),
+  settleTicketAction: (...args: unknown[]) => settleTicketAction(...args),
   loadReceiptAction: (...args: unknown[]) => loadReceiptAction(...args),
 }));
 
@@ -82,25 +80,8 @@ vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: vi.fn(), refresh, replace: vi.fn() }),
 }));
 
-// Le module réel est doublé — il irait chercher un script chez `js.stripe.com`,
-// ce qui n'a pas de sens dans jsdom et prouve à soi seul que la frontière PCI
-// tient : il n'y a **rien** à monter chez nous. `StripeLoadError` est repris du
-// vrai module, le composant s'en servant pour classer un échec de chargement.
-vi.mock('@/lib/admin/payment-stripe', async () => {
-  const actual =
-    await vi.importActual<typeof import('@/lib/admin/payment-stripe')>(
-      '@/lib/admin/payment-stripe',
-    );
-
-  return {
-    ...actual,
-    loadStripeSdk: (...args: unknown[]) => loadStripeSdk(...args),
-  };
-});
-
 import { createTranslator } from 'next-intl';
 
-import { CheckoutCardForm } from '@/app/(admin)/[tenantSlug]/admin/components/checkout-card-form';
 import { CheckoutPanel } from '@/app/(admin)/[tenantSlug]/admin/components/checkout-panel';
 import { CheckoutReceipt } from '@/app/(admin)/[tenantSlug]/admin/components/checkout-receipt';
 import { loadMessages } from '@/i18n/messages';
@@ -108,13 +89,12 @@ import {
   checkoutBlocker,
   checkoutFailureMessage,
   completionUnavailableMessage,
-  methodHint,
+  meanHint,
   methodLabel,
   methodPhrase,
   providerUnreachableMessage,
   receiptDisclaimer,
   saleTotalRows,
-  settledReceiptDisclaimer,
   settlementBadge,
   type SettlementState,
 } from '@/lib/admin/checkout-summary';
@@ -139,16 +119,15 @@ const APPOINTMENT_ID = 'aaaaaaaa-0000-4000-8000-000000000001';
 /** Trente-cinq euros, en entiers — jamais autre chose, dans aucune langue. */
 const DUE = { amountMinor: 3500, currency: 'EUR' } as const;
 
-/**
- * Le laissez-passer d'intention remis au formulaire de carte.
+/*
+ * ## Le laissez-passer d'intention a disparu d'ici — #835, ADR 0015
  *
- * Une constante, et non un littéral dans le JSX : `clientSecret="…"` écrit en
- * clair fait lever un `generic-api-key` à gitleaks, qui n'a aucune façon de
- * distinguer une valeur de test d'une vraie. Sa forme est délibérément sans
- * entropie — rien ici ne ressemble à un laissez-passer Stripe, et il n'y a
- * d'ailleurs jamais eu de secret dans ce dépôt (payments-stripe §7).
+ * `INTENT_PASS` tenait le `clientSecret` remis au formulaire de carte, sorti en
+ * constante pour ne pas faire lever un `generic-api-key` à gitleaks. Le comptoir
+ * ne monte plus aucun formulaire de carte : la carte se règle sur le TPE
+ * autonome de la banque du salon, et il n'y a plus d'intention à ouvrir — donc
+ * plus rien à faire passer pour un secret.
  */
-const INTENT_PASS = 'intention-de-recette-850';
 
 function appointment(status: AppointmentStatus = 'confirmed'): Appointment {
   return {
@@ -177,6 +156,10 @@ function appointment(status: AppointmentStatus = 'confirmed'): Appointment {
 const CASH_TRANSACTION: PaymentTransaction = {
   id: 'ffffffff-0000-4000-8000-000000000005',
   appointmentId: APPOINTMENT_ID,
+  // L'API ne l'omet jamais (`PaymentTransactionDto`), et c'est lui qui donne au
+  // panneau la pièce à réimprimer : sans lui, le bouton de réimpression n'a
+  // rien à ouvrir et le panneau ne le propose plus.
+  saleId: '99999999-0000-4000-8000-000000000009',
   amount: { ...DUE },
   refunded: { amountMinor: 0, currency: 'EUR' },
   method: 'cash',
@@ -187,11 +170,9 @@ const CASH_TRANSACTION: PaymentTransaction = {
 
 afterEach(() => {
   cleanup();
-  settleInCashAction.mockReset();
-  openCardPaymentAction.mockReset();
+  openCheckoutTicketAction.mockReset();
+  settleTicketAction.mockReset();
   loadReceiptAction.mockReset();
-  confirmPayment.mockReset();
-  loadStripeSdk.mockReset();
   refresh.mockReset();
 });
 
@@ -200,24 +181,33 @@ describe('les moyens de paiement et leurs états', () => {
     // Deux formes et non une : le libellé coiffe une case à cocher, la phrase
     // complète un bandeau — « Réglé en espèces », « Settled in cash ».
     expect(methodLabel('cash', 'fr')).toBe('Espèces');
-    expect(methodLabel('card', 'fr')).toBe('Carte');
+    expect(methodLabel('card', 'fr')).toBe('Carte bancaire (TPE)');
     expect(methodLabel('cash', 'en')).toBe('Cash');
-    expect(methodLabel('card', 'en')).toBe('Card');
+    expect(methodLabel('card', 'en')).toBe('Bank card (terminal)');
     expect(methodPhrase('cash', 'fr')).toBe('en espèces');
-    expect(methodPhrase('card', 'en')).toBe('by card');
+    expect(methodPhrase('card', 'en')).toBe('by bank card (terminal)');
   });
 
   it('garde le français par défaut, pour les appelants pas encore branchés', () => {
     expect(methodLabel('cash')).toBe('Espèces');
-    expect(methodHint('card')).toContain('Stripe');
+    expect(meanHint('CARD_TERMINAL')).toContain('terminal');
   });
 
   it('dit dans les deux langues qu’aucun numéro de carte n’est saisi au salon', () => {
     // La mention PCI n'est pas décorative : l'opérateur doit savoir qu'il n'a
     // nulle part où saisir un numéro, dans l'une comme dans l'autre langue
     // (payments-stripe §1).
-    expect(methodHint('card', 'fr')).toMatch(/aucun numéro n’est saisi/i);
-    expect(methodHint('card', 'en')).toMatch(/no number is entered/i);
+    expect(meanHint('CARD_TERMINAL', 'fr')).toMatch(/aucun numéro de carte n’est saisi/i);
+    expect(meanHint('CARD_TERMINAL', 'en')).toMatch(/no card number is entered/i);
+  });
+
+  it('ne nomme plus Stripe au comptoir, dans aucune des deux langues', () => {
+    // ADR 0015 : le formulaire a quitté l'écran, et une aide qui le nommerait
+    // encore décrirait un geste qui n'existe plus.
+    for (const locale of ['fr', 'en'] as const) {
+      expect(meanHint('CARD_TERMINAL', locale)).not.toMatch(/stripe/i);
+      expect(meanHint('CASH', locale)).not.toMatch(/stripe/i);
+    }
   });
 
   it('traduit la pastille de règlement, et son cas remboursé', () => {
@@ -236,12 +226,11 @@ describe('les moyens de paiement et leurs états', () => {
   });
 
   it('explique dans les deux langues pourquoi un moyen est fermé', () => {
-    expect(checkoutBlocker('cancelled', 'cash', { kind: 'du' }, 'fr')).toMatch(/annulé/i);
-    expect(checkoutBlocker('cancelled', 'cash', { kind: 'du' }, 'en')).toMatch(/cancelled/i);
-    expect(checkoutBlocker('completed', 'card', { kind: 'du' }, 'en')).toMatch(/no-show/i);
+    expect(checkoutBlocker('cancelled', { kind: 'du' }, 'fr')).toMatch(/annulé/i);
+    expect(checkoutBlocker('cancelled', { kind: 'du' }, 'en')).toMatch(/cancelled/i);
     expect(
-      checkoutBlocker('confirmed', 'cash', { kind: 'ouvert', payment: CASH_TRANSACTION }, 'en'),
-    ).toMatch(/card payment is already open/i);
+      checkoutBlocker('confirmed', { kind: 'ouvert', payment: CASH_TRANSACTION }, 'en'),
+    ).toMatch(/online payment is still in flight/i);
   });
 });
 
@@ -346,10 +335,28 @@ describe('le panneau d’encaissement, rendu en anglais', () => {
       />,
     );
 
-    // Ni champ de saisie, ni libellé qui en promettrait un : ce que Stripe monte
-    // est une iframe servie depuis son domaine (payments-stripe §1).
-    expect(screen.queryByRole('textbox')).toBeNull();
-    expect(screen.queryByLabelText(/card number|numéro de carte/iu)).toBeNull();
+    // Le seul champ de saisie libre du panneau des espèces est le montant remis
+    // par la cliente : aucun ne porte, ni ne promet, une donnée de carte. Le
+    // terminal du salon est autonome (ADR 0015, payments-stripe §1).
+    //
+    // L'identité des champs est examinée, et non les textes de l'écran : l'aide
+    // du moyen carte **dit** « No card number is entered », et c'est
+    // précisément ce qu'on veut y lire.
+    const freeText = /^(?:text|tel|number|password|email|search)$/u;
+
+    for (const field of document.querySelectorAll('input')) {
+      expect(field.getAttribute('autocomplete') ?? '').not.toMatch(/^cc-/u);
+
+      if (!freeText.test(field.getAttribute('type') ?? 'text')) {
+        continue;
+      }
+
+      expect([field.id, field.name, field.getAttribute('placeholder') ?? ''].join(' ')).not.toMatch(
+        /carte|card|cvc|cvv|expirat/iu,
+      );
+    }
+
+    expect(document.body.textContent).not.toMatch(/Stripe/iu);
   });
 
   it('annonce un règlement déjà inscrit dans la langue, avec sa phrase de moyen', () => {
@@ -368,7 +375,23 @@ describe('le panneau d’encaissement, rendu en anglais', () => {
   });
 
   it('bascule en anglais sur le refus 409, plutôt que de laisser le bouton actif', async () => {
-    settleInCashAction.mockResolvedValue({
+    openCheckoutTicketAction.mockResolvedValue({
+      ok: true,
+      data: {
+        id: '99999999-0000-4000-8000-000000000009',
+        appointmentId: APPOINTMENT_ID,
+        cashierUserId: 'bbbbbbbb-0000-4000-8000-000000000008',
+        subtotal: { ...DUE },
+        tax: { amountMinor: 0, currency: 'EUR' },
+        tip: { amountMinor: 0, currency: 'EUR' },
+        total: { ...DUE },
+        settled: { amountMinor: 0, currency: 'EUR' },
+        remaining: { ...DUE },
+        settledAt: null,
+        createdAt: '2026-09-05T07:00:00.000Z',
+      },
+    });
+    settleTicketAction.mockResolvedValue({
       ok: false,
       code: 'SALE_ALREADY_SETTLED',
       message: 'Ce ticket a déjà été réglé.',
@@ -403,120 +426,34 @@ describe('le panneau d’encaissement, rendu en anglais', () => {
   });
 });
 
-describe('Stripe Elements reçoit la langue courante', () => {
-  it('passe `locale` à la fabrique — c’est ce qui traduit ses refus de carte', async () => {
-    loadStripeSdk.mockResolvedValue({
-      elements: () => ({ create: () => ({ mount: vi.fn(), unmount: vi.fn(), destroy: vi.fn() }) }),
-      confirmPayment: (...args: unknown[]) => confirmPayment(...args),
-    });
-
-    render(
-      <CheckoutCardForm
-        amount={DUE}
-        clientSecret={INTENT_PASS}
-        countryCode="US"
-        onAccepted={vi.fn()}
-        publishableKey="pk_test_51ABC"
-      />,
-    );
-
-    await waitFor(() => {
-      expect(loadStripeSdk).toHaveBeenCalledWith('pk_test_51ABC', 'en');
-    });
-    expect(screen.getByRole('button', { name: 'Take €35.00 by card' })).toBeDefined();
-  });
-
-  it('affiche tel quel le message que Stripe rend — il arrive déjà traduit', async () => {
-    // C'est tout l'intérêt de lui passer `locale` : recopier « carte refusée »
-    // dans notre catalogue l'aurait fait diverger de ce que la cliente lit dans
-    // le champ, qui appartient à Stripe.
-    loadStripeSdk.mockResolvedValue({
-      elements: () => ({ create: () => ({ mount: vi.fn(), unmount: vi.fn(), destroy: vi.fn() }) }),
-      confirmPayment: (...args: unknown[]) => confirmPayment(...args),
-    });
-    confirmPayment.mockResolvedValue({ error: { message: 'Your card was declined.' } });
-
-    render(
-      <CheckoutCardForm
-        amount={DUE}
-        clientSecret={INTENT_PASS}
-        countryCode="US"
-        onAccepted={vi.fn()}
-        publishableKey="pk_test_51ABC"
-      />,
-    );
-
-    await waitFor(() => {
-      expect(screen.getByRole('button', { name: 'Take €35.00 by card' })).toHaveProperty(
-        'disabled',
-        false,
-      );
-    });
-    await userEvent.click(screen.getByRole('button', { name: 'Take €35.00 by card' }));
-
-    expect(await screen.findByRole('alert')).toHaveProperty(
-      'textContent',
-      'Your card was declined.',
-    );
-  });
-
-  it('traduit l’indisponibilité du module, que le module lui-même ne nomme pas', async () => {
-    const { StripeLoadError } =
-      await vi.importActual<typeof import('@/lib/admin/payment-stripe')>(
-        '@/lib/admin/payment-stripe',
-      );
-    loadStripeSdk.mockRejectedValue(new StripeLoadError('script'));
-
-    render(
-      <CheckoutCardForm
-        amount={DUE}
-        clientSecret={INTENT_PASS}
-        countryCode="US"
-        onAccepted={vi.fn()}
-        publishableKey="pk_test_51ABC"
-      />,
-    );
-
-    expect(await screen.findByText('Card payment unavailable')).toBeDefined();
-    expect(screen.getByText(/Stripe’s payment module could not be loaded/u)).toBeDefined();
-    expect(screen.getByText('Settling in cash is still possible.')).toBeDefined();
-  });
-});
-
 describe('le reçu remis à la cliente', () => {
-  it('traduit le ticket réduit, ses colonnes et son total', () => {
+  it('traduit le bandeau du reçu et son titre', () => {
+    loadReceiptAction.mockResolvedValue({ ok: false, code: 'X', message: 'x' });
     render(
       <CheckoutReceipt
         appointment={appointment()}
         countryCode="US"
-        method="cash"
+        saleId="99999999-0000-4000-8000-000000000009"
         tenantSlug={SLUG}
-        timeZone={TIMEZONE}
-        transaction={{ ...CASH_TRANSACTION, saleId: null } as PaymentTransaction}
+        transaction={CASH_TRANSACTION}
       />,
     );
 
     expect(screen.getByText('Settlement recorded — €35.00')).toBeDefined();
     expect(screen.getByRole('heading', { name: 'Till receipt' })).toBeDefined();
-    expect(screen.getByRole('columnheader', { name: 'Item' })).toBeDefined();
-    expect(screen.getByRole('columnheader', { name: 'Qty' })).toBeDefined();
-    expect(screen.getByText('Thank you for your visit!')).toBeDefined();
-    expect(screen.getByRole('article', { name: 'Receipt' })).toBeDefined();
   });
 
-  it('dit en anglais qu’un reçu carte est provisoire, et le contraire une fois inscrit', () => {
-    // La distinction vient de payments-stripe §2 et ne se perd pas à la
-    // traduction : le navigateur n'a jamais autorité pour déclarer un paiement
-    // abouti, c'est le webhook signé qui l'inscrit.
-    expect(receiptDisclaimer('card', 'en')).toMatch(/not the capture/i);
-    expect(receiptDisclaimer('cash', 'en')).toMatch(/recorded and timestamped/i);
-    expect(settledReceiptDisclaimer('card', 'en')).toMatch(/final/i);
-    expect(receiptDisclaimer('card', 'fr')).toMatch(/pas de capture/i);
+  it('ne promet plus de confirmation par webhook — le comptoir n’attend personne', () => {
+    // ADR 0015 : espèces comme TPE, le règlement est inscrit quand l'API répond.
+    // Un reçu « provisoire » décrirait un geste que le comptoir ne fait plus.
+    expect(receiptDisclaimer('en')).toMatch(/recorded and timestamped/i);
+    expect(receiptDisclaimer('en')).not.toMatch(/webhook/i);
+    expect(receiptDisclaimer('fr')).not.toMatch(/webhook/i);
   });
 
-  it('traduit la mention du passage en « honoré » que l’API ne sert pas encore', () => {
-    expect(completionUnavailableMessage('cash', 'en')).toMatch(/not served by the API yet/i);
-    expect(completionUnavailableMessage('card', 'fr')).toMatch(/webhook/i);
+  it('traduit la mention du passage en « honoré », qui reste un geste du salon', () => {
+    expect(completionUnavailableMessage('en')).toMatch(/salon gesture/i);
+    expect(completionUnavailableMessage('fr')).toMatch(/honoré/i);
   });
 });
 

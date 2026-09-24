@@ -46,6 +46,9 @@ const SALE = {
   tax: { amountMinor: 740, currency: 'EUR' },
   tip: { amountMinor: 0, currency: 'EUR' },
   total: { amountMinor: 4440, currency: 'EUR' },
+  settled: { amountMinor: 0, currency: 'EUR' },
+  remaining: { amountMinor: 4440, currency: 'EUR' },
+  settledAt: null,
   items: [SALE_ITEM],
   createdAt: '2026-09-06T09:30:00.000Z',
 };
@@ -143,6 +146,11 @@ describe('le ticket', () => {
       'createdAt',
       'id',
       'items',
+      // Les trois faits du règlement, lus par le comptoir depuis #835 : ce qui
+      // est déjà pris, ce qu'il reste à prendre, et l'instant du solde.
+      'remaining',
+      'settled',
+      'settledAt',
       'subtotal',
       'tax',
       'tip',

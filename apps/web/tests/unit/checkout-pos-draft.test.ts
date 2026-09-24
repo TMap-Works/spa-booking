@@ -285,6 +285,9 @@ describe('les totaux affichés', () => {
     tax: { amountMinor: 1070, currency: 'EUR' },
     tip: { amountMinor: 300, currency: 'EUR' },
     total: { amountMinor: 6720, currency: 'EUR' },
+    settled: { amountMinor: 0, currency: 'EUR' },
+    remaining: { amountMinor: 6720, currency: 'EUR' },
+    settledAt: null,
     createdAt: '2026-09-06T09:30:00.000Z',
   };
 
