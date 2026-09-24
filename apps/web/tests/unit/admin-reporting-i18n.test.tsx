@@ -220,8 +220,15 @@ describe('le graphique en anglais', () => {
       (tick) => tick.textContent ?? '',
     );
 
-    // « 1.5K » en anglais là où le français écrit « 1,5 k ».
-    expect(scale.join(' ')).toMatch(/1\.5K/);
+    // « 1.5k » en anglais là où le français écrit « 1,5 k » : ce que le test
+    // fixe est le **séparateur décimal**, seule chose que la langue décide ici.
+    //
+    // La casse du suffixe, elle, n'est pas fixée : CLDR l'écrit `K` en `en-US`
+    // et `k` en `en-GB`, et la version d'ICU embarquée par Node décide laquelle
+    // `en-GB` hérite — d'où un `1.5K` local et un `1.5k` en CI sur la même
+    // assertion. Aucun des deux n'est un défaut du produit, et figer la casse
+    // ferait échouer la suite au prochain relèvement de Node.
+    expect(scale.join(' ')).toMatch(/1\.5\s?[kK]/);
     expect(screen.getByRole('columnheader', { name: 'Period' })).toBeTruthy();
   });
 });
