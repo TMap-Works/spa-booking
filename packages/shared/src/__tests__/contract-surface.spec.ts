@@ -57,6 +57,10 @@ const EXPECTED_EXPORTS = [
   // constants
   'APPOINTMENT_STATUSES',
   'APPOINTMENT_STATUS_TRANSITIONS',
+  // La règle du constat, lue par les deux écrans du planning (#1210). Elle ne
+  // vaut que si elle traverse le baril : deux écrans qui ne la trouveraient pas
+  // la réécriraient chacun de son côté, ce qui est exactement le bug corrigé.
+  'canRecordAppointmentOutcome',
   'USER_ROLES',
   'hasAtLeastRole',
   'NOTIFICATION_CHANNELS',

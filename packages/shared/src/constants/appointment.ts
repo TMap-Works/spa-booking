@@ -16,6 +16,8 @@
  * rendez-vous annulé libère son créneau.
  */
 
+import { ERROR_CODES } from '../errors/error-codes';
+
 export const APPOINTMENT_STATUSES = [
   'pending',
   'confirmed',
@@ -44,6 +46,24 @@ export const TERMINAL_APPOINTMENT_STATUSES = [
   'cancelled',
   'no_show',
 ] as const satisfies readonly AppointmentStatus[];
+
+/**
+ * Les deux **constats** : ce qu'on dit d'un rendez-vous une fois l'heure venue.
+ *
+ * Ce ne sont pas des statuts comme les autres. `pending`, `confirmed` et
+ * `cancelled` décrivent un rendez-vous **à venir** — pris, confirmé, renoncé —,
+ * ces deux-ci constatent le passé : `completed` « honoré, encaissé »,
+ * `no_show` « client absent » (booking-engine §5).
+ *
+ * `cancelled` n'en fait pas partie, quoiqu'il soit terminal lui aussi : annuler
+ * est une **décision**, et elle se prend précisément *avant* l'heure du soin.
+ */
+export const OUTCOME_APPOINTMENT_STATUSES = [
+  'completed',
+  'no_show',
+] as const satisfies readonly AppointmentStatus[];
+
+export type OutcomeAppointmentStatus = (typeof OUTCOME_APPOINTMENT_STATUSES)[number];
 
 /**
  * Transitions autorisées. Tout ce qui n'y figure pas est refusé par un
@@ -201,4 +221,139 @@ export function canTransitionAppointment(
   to: AppointmentStatus,
 ): boolean {
   return APPOINTMENT_STATUS_TRANSITIONS[from].includes(to);
+}
+
+/** `true` si `status` constate ce qui a eu lieu, plutôt que d'annoncer ce qui vient. */
+export function isOutcomeAppointmentStatus(
+  status: AppointmentStatus,
+): status is OutcomeAppointmentStatus {
+  return (OUTCOME_APPOINTMENT_STATUSES as readonly AppointmentStatus[]).includes(status);
+}
+
+// ---------------------------------------------------------------------------
+// On ne constate pas ce qui n'a pas eu lieu — #1137, #1210
+// ---------------------------------------------------------------------------
+
+/**
+ * `true` si le soin a commencé à l'instant `now`.
+ *
+ * ## L'heure comparée est celle du **soin**
+ *
+ * C'est `startsAt` tel que l'API le **rend** — l'intervalle facturé, celui que
+ * la cliente lit sur sa confirmation — et non l'intervalle occupé qui est en
+ * base, lequel commence un tampon de préparation plus tôt. Toutes les vues du
+ * contrat (`appointmentSchema`, `bookedAppointmentSchema`) portent déjà
+ * l'intervalle facturé : un écran qui lit cette fonction avec le `startsAt`
+ * qu'il a reçu compare donc la bonne heure, sans rien avoir à dériver.
+ *
+ * ## L'égalité penche du côté qui autorise
+ *
+ * À l'heure pile, le rendez-vous **a commencé**. C'est la même borne que le
+ * cycle de vie côté serveur : deux inégalités qui divergeraient d'un côté
+ * strict feraient qu'un écran ouvre un geste que l'API refuse, ou l'inverse,
+ * pendant la milliseconde où les deux ne sont pas d'accord.
+ *
+ * ## Une heure illisible n'a pas commencé
+ *
+ * `Date.parse` rend `NaN` sur une chaîne qui n'est pas une date, et toute
+ * comparaison avec `NaN` est fausse — ce qui, ici, tombe du bon côté : faute de
+ * savoir, on n'ouvre pas un geste **terminal** et sans retour. La garde est
+ * explicite plutôt que laissée à la sémantique de `NaN`, pour que l'intention
+ * se lise.
+ */
+export function hasAppointmentStarted(
+  startsAt: string | Date | null | undefined,
+  now: Date | number,
+): boolean {
+  if (startsAt === null || startsAt === undefined) {
+    return false;
+  }
+
+  const start = startsAt instanceof Date ? startsAt.getTime() : Date.parse(startsAt);
+
+  if (Number.isNaN(start)) {
+    return false;
+  }
+
+  return start <= (now instanceof Date ? now.getTime() : now);
+}
+
+/**
+ * `true` si le passage à `to` peut être **posé maintenant** sur un rendez-vous
+ * qui commence à `startsAt`.
+ *
+ * ## Pourquoi cette règle est ici, et pas dans chaque écran
+ *
+ * Parce qu'elle est un **contrat** : l'API refuse `completed` et `no_show` tant
+ * que le soin n'a pas commencé — 422 `INVALID_STATE_TRANSITION`,
+ * `details.notStarted` (#1137). Un écran qui offre ces gestes avant l'heure
+ * offre un refus, et un bouton qui mène à un 422 est un bouton qui ment. Deux
+ * écrans les offraient, chacun avec sa propre lecture de l'heure — le tiroir du
+ * comptoir sans aucune, « Mon planning » avec une comparaison recopiée sur
+ * place (#1210). Une seule écriture, et les deux la lisent.
+ *
+ * ## Elle ne remplace pas la table des transitions
+ *
+ * `canTransitionAppointment` dit ce qui **suit** quoi, celle-ci dit **quand**.
+ * Les deux se vérifient, dans cet ordre : un `pending` n'offre pas « honoré »
+ * parce que la table l'interdit, un `confirmed` de demain ne l'offre pas parce
+ * que l'heure n'y est pas.
+ */
+export function canRecordAppointmentOutcome(
+  to: AppointmentStatus,
+  startsAt: string | Date | null | undefined,
+  now: Date | number,
+): boolean {
+  if (!isOutcomeAppointmentStatus(to)) {
+    // Confirmer ou annuler sont des **décisions**, et elles se prennent avant
+    // l'heure : l'horloge ne les borne pas.
+    return true;
+  }
+
+  return hasAppointmentStarted(startsAt, now);
+}
+
+/**
+ * La clé que le refus du cycle de vie pose dans `details` quand le soin n'a pas
+ * commencé — `AppointmentNotStartedError`, #1137.
+ *
+ * Elle est ici et non recopiée dans les écrans pour la raison qui vaut pour la
+ * règle elle-même : une chaîne écrite deux fois est une chaîne qui finit par
+ * n'être écrite qu'une seule fois du bon côté.
+ */
+export const APPOINTMENT_NOT_STARTED_DETAIL = 'notStarted';
+
+/**
+ * `true` si ce refus est « le rendez-vous n'a pas commencé ».
+ *
+ * ## Pourquoi un écran en a besoin alors qu'il lit déjà la règle
+ *
+ * Parce que le temps passe entre le rendu et le clic, et parce que l'horloge du
+ * poste n'est pas celle du serveur. Un tiroir resté ouvert peut donc offrir un
+ * constat que l'API refuse à la milliseconde près — et c'est bien l'API qui
+ * tranche. Ce refus-là se dit « attendez l'heure du rendez-vous », et non
+ * « rechargez » : la conduite à tenir n'est pas la même, et le `code` seul ne
+ * les distingue pas, `INVALID_STATE_TRANSITION` couvrant aussi le rendez-vous
+ * déjà soldé.
+ *
+ * Le code **et** le détail sont exigés : un `details.notStarted` sous un autre
+ * code ne viendrait pas de ce refus.
+ *
+ * ## Elle attend son émetteur
+ *
+ * `AppointmentNotStartedError` est posée par #1137, qui n'est pas encore
+ * intégrée : tant qu'elle ne l'est pas, aucun refus ne porte ce détail et cette
+ * fonction rend toujours `false`. Les écrans n'en dépendent pas — ils tiennent
+ * la règle d'eux-mêmes —, et la porter dès maintenant est ce qui évite que le
+ * branchement du repli soit un second ticket. Le jour où #1137 est intégrée, le
+ * message juste s'affiche sans qu'une ligne d'écran change.
+ */
+export function isAppointmentNotStartedRefusal(
+  code: string,
+  details: Readonly<Record<string, unknown>> | null | undefined,
+): boolean {
+  return (
+    code === ERROR_CODES.INVALID_STATE_TRANSITION &&
+    details?.[APPOINTMENT_NOT_STARTED_DETAIL] === true
+  );
 }

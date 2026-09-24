@@ -27,15 +27,27 @@
  *    scène. Le parcours critique, lui, ne s'autorise **aucun** raccourci : il
  *    réserve par l'IHM, du premier écran au dernier.
  *
- * Ce que ce module ne fait jamais : écrire en base. Tout passe par des routes
- * servies, avec un jeton et un rôle — donc à travers les gardes d'isolation.
- * L'amorçage en base est le seul fait de `fixtures/seed.mjs`, et il ne pose que
- * du référentiel.
+ * Ce que ce module ne fait jamais : écrire en base **lui-même**. Tout passe par
+ * des routes servies, avec un jeton et un rôle — donc à travers les gardes
+ * d'isolation. L'écriture en base reste le seul fait de `fixtures/seed.mjs`,
+ * dans un sous-processus qui naît, écrit et meurt : `poserRendezVousCommence`
+ * ci-dessous la lui délègue, et c'est le seul cas.
+ *
+ * Ce cas-là relève du motif 1 sous sa forme la plus nette : **aucune route ne
+ * peut poser un rendez-vous commencé**, et ce n'est pas un manque à combler. Le
+ * moteur de disponibilité n'offre que des créneaux postérieurs au préavis, et
+ * `POST /appointments` n'accepte que des créneaux offerts — le comptoir ne
+ * réserve donc jamais dans le passé, ce qui est la bonne règle. Sans décor posé
+ * en base, « Marquer non honoré » cesserait d'être éprouvé à l'écran, le tiroir
+ * ne l'offrant plus que sur un rendez-vous commencé (#1210, #1137).
  */
+
+import { spawnSync } from 'node:child_process';
+import path from 'node:path';
 
 import type { APIRequestContext } from '@playwright/test';
 
-import { BASE_API, COMPTES, MOT_DE_PASSE, SLUG, dansNJours } from './environnement';
+import { BASE_API, COMPTES, MOT_DE_PASSE, RACINE_WEB, SLUG, dansNJours } from './environnement';
 
 /** Le corps rendu par une route en erreur — `{ code, message, details }`. */
 interface ErreurApi {
@@ -208,6 +220,56 @@ export async function poserRendezVous(
   });
   await exiger(reponse, 'création du rendez-vous au comptoir');
   return (await reponse.json()) as RendezVous;
+}
+
+/** Le décor posé par le jeu d'essai — ce que la suite en lit. */
+export interface RendezVousCommence {
+  readonly id: string;
+  readonly reference: string;
+  /** L'heure **du soin**, celle que l'API rend et que les écrans comparent. */
+  readonly startsAt: string;
+  readonly staffId: string;
+  readonly clientId: string;
+}
+
+/**
+ * Pose un rendez-vous **déjà commencé**, confirmé, sur une journée passée.
+ *
+ * Voir l'en-tête : c'est le seul raccourci de ce module qui écrive en base, et
+ * il le délègue au jeu d'essai dans un sous-processus — le même montage que
+ * `global-setup.ts`, et pour la même raison : charger le client Prisma dans le
+ * processus de Playwright y attacherait un pool PostgreSQL pour toute la durée
+ * de la suite.
+ *
+ * `jour` est une **date civile du salon**, et doit être passée : c'est ce qui
+ * isole les tentatives de `retries` les unes des autres, la tentative
+ * précédente ayant soldé le rendez-vous de la sienne.
+ */
+export function poserRendezVousCommence(jour: string): RendezVousCommence {
+  const graine = path.join(RACINE_WEB, 'tests', 'e2e', 'fixtures', 'seed.mjs');
+  const execution = spawnSync(
+    process.execPath,
+    [graine, '--slug', SLUG, '--rendez-vous-commence', '--jour', jour],
+    { encoding: 'utf8', env: process.env },
+  );
+
+  if (execution.status !== 0) {
+    throw new Error(
+      `Le décor « rendez-vous commencé » du ${jour} a échoué (code ${execution.status ?? 'inconnu'}).\n` +
+        `${execution.stderr || execution.stdout || 'aucune sortie'}`,
+    );
+  }
+
+  // Prisma peut ajouter des avertissements sur stdout : c'est la dernière ligne
+  // non vide qui fait foi, comme dans `global-setup.ts`.
+  const lignes = execution.stdout.trim().split('\n');
+  const derniere = lignes[lignes.length - 1] ?? '';
+
+  try {
+    return JSON.parse(derniere) as RendezVousCommence;
+  } catch {
+    throw new Error(`Le décor n'a pas rendu de JSON exploitable. Dernière ligne : « ${derniere} ».`);
+  }
 }
 
 /**

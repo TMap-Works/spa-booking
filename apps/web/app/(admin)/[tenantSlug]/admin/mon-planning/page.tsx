@@ -519,9 +519,15 @@ function MyAppointment({
             </div>
           )}
         </dl>
+        {/* L'heure du soin part telle quelle, et l'instant du rendu avec elle :
+            la règle « on ne constate pas ce qui n'a pas eu lieu » est lue par le
+            composant, dans le contrat partagé, et non recalculée ici (#1210).
+            `renderedAt` est la graine de son horloge — c'est ce qui rend le
+            premier rendu du navigateur identique à celui-ci. */}
         <MyAppointmentActions
           appointmentId={appointment.id}
-          started={Date.parse(appointment.startsAt) <= now.getTime()}
+          renderedAt={now.toISOString()}
+          startsAt={appointment.startsAt}
           status={appointment.status}
           tenantSlug={tenantSlug}
         />

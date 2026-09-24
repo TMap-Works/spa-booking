@@ -139,6 +139,8 @@ afterEach(() => {
   cleanup();
   markStatus.mockReset();
   refresh.mockReset();
+  // L'horloge que certains cas figent (#1210).
+  vi.restoreAllMocks();
 });
 
 describe('les onglets de vue', () => {
@@ -289,12 +291,30 @@ describe('le détail d’un rendez-vous et ses états vides', () => {
   });
 });
 
+/**
+ * L'heure du soin et l'instant du rendu — la graine de l'horloge du composant,
+ * qui vient du serveur dans le navigateur (#1210). Fixée ici pour que ces cas
+ * ne dépendent pas de l'heure à laquelle la suite tourne.
+ */
+const DEBUT_DU_SOIN = '2026-09-18T14:00:00.000Z';
+const SOIN_COMMENCE = '2026-09-18T14:05:00.000Z';
+const AVANT_LE_SOIN = '2026-09-18T13:45:00.000Z';
+
+/**
+ * Fige l'horloge du navigateur : la graine ne vaut que pour le premier rendu,
+ * l'horloge du composant prend la main juste après (`useAppointmentClock`).
+ */
+function figerLHorloge(instant: string): void {
+  vi.spyOn(Date, 'now').mockReturnValue(Date.parse(instant));
+}
+
 describe('les gestes de la praticienne, rendus en anglais', () => {
   it('nomme la confirmation comme un acte, et le reste comme un constat', () => {
     render(
       <MyAppointmentActions
         appointmentId="aaaaaaaa-0000-4000-8000-000000000001"
-        started
+        renderedAt={SOIN_COMMENCE}
+        startsAt={DEBUT_DU_SOIN}
         status="pending"
         tenantSlug="maison-lotus"
       />,
@@ -310,7 +330,8 @@ describe('les gestes de la praticienne, rendus en anglais', () => {
     render(
       <MyAppointmentActions
         appointmentId="aaaaaaaa-0000-4000-8000-000000000001"
-        started
+        renderedAt={SOIN_COMMENCE}
+        startsAt={DEBUT_DU_SOIN}
         status="confirmed"
         tenantSlug="maison-lotus"
       />,
@@ -320,12 +341,35 @@ describe('les gestes de la praticienne, rendus en anglais', () => {
     expect(screen.getByRole('button', { name: 'Mark no show' })).toBeDefined();
   });
 
+  /** Le motif du refus se dit dans la langue courante, lui aussi — #1210. */
+  it('dit en anglais pourquoi les deux constats sont éteints', () => {
+    figerLHorloge(AVANT_LE_SOIN);
+    render(
+      <MyAppointmentActions
+        appointmentId="aaaaaaaa-0000-4000-8000-000000000001"
+        renderedAt={AVANT_LE_SOIN}
+        startsAt={DEBUT_DU_SOIN}
+        status="confirmed"
+        tenantSlug="maison-lotus"
+      />,
+    );
+
+    expect(screen.getByRole('button', { name: 'Mark completed' })).toHaveProperty(
+      'disabled',
+      true,
+    );
+    expect(
+      screen.getByText('This appointment hasn’t started: wait for its time before recording how it went.'),
+    ).toBeDefined();
+  });
+
   it('confirme le rendez-vous, puis relit l’écran', async () => {
     markStatus.mockResolvedValue({ ok: true, data: {} });
     render(
       <MyAppointmentActions
         appointmentId="aaaaaaaa-0000-4000-8000-000000000001"
-        started={false}
+        renderedAt={AVANT_LE_SOIN}
+        startsAt={DEBUT_DU_SOIN}
         status="pending"
         tenantSlug="maison-lotus"
       />,
@@ -351,7 +395,8 @@ describe('les gestes de la praticienne, rendus en anglais', () => {
     render(
       <MyAppointmentActions
         appointmentId="aaaaaaaa-0000-4000-8000-000000000001"
-        started
+        renderedAt={SOIN_COMMENCE}
+        startsAt={DEBUT_DU_SOIN}
         status="confirmed"
         tenantSlug="maison-lotus"
       />,
