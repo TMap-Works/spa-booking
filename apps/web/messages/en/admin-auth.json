@@ -63,7 +63,13 @@
     "submitting": "Activating…",
     "missingToken": {
       "title": "Incomplete link",
-      "body": "This link carries no activation code. Open the full link you received, without shortening it."
+      "body": "This address carries no activation code. Open the full link you received, or paste it below.",
+      "field": "Activation link or code",
+      "hint": "Paste the link you received in full, or just the code it contains. Line breaks added by your messaging app do not matter.",
+      "submit": "Continue",
+      "invalid": "This link or code cannot be read. Copy it again from the message you received, in full.",
+      "acceptedTitle": "Activation code recognised",
+      "acceptedBody": "Now choose your password."
     },
     "failureTitle": "Activation failed",
     "expiredLink": "This activation link is no longer valid: it has expired, or it has already been used. Ask for a new link from the person who sent it to you — or, if your account is already active, sign in.",

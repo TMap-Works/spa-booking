@@ -20,6 +20,7 @@ import { Field } from '@/components/ui/field';
 import { Notification } from '@/components/ui/notification';
 
 import { adminAcceptInvitationAction } from '../actions';
+import { invitationTokenFromInput } from '../invitation/paths';
 import { adminLoginPath } from '../paths';
 import { adminLandingPath } from './navigation';
 
@@ -41,6 +42,20 @@ import { adminLandingPath } from './navigation';
  *
  * Tout autre refus vient de `errorMessage(code, locale)` du contrat partagé et
  * non du `message` de l'API, qui n'est pas traduit (voir `admin-login-form.tsx`).
+ *
+ * ## L'écran sans jeton n'est plus une impasse (#1143)
+ *
+ * Il affichait « Lien incomplet — ouvrez le lien complet reçu par message » et
+ * s'arrêtait là, sans rien offrir à qui n'a justement pas de lien cliquable :
+ * une messagerie qui replie une adresse de trois cents caractères sur deux
+ * lignes en fabrique un, systématiquement. La personne invitée peut désormais
+ * **coller ce qu'elle a** — l'adresse entière ou le seul code qu'elle porte —,
+ * et `invitationTokenFromInput` en tire le jeton.
+ *
+ * Il est tenu en état local et **non poussé dans l'URL** : l'y écrire
+ * déposerait un secret à usage unique dans l'historique du navigateur et dans
+ * le `Referer` de la requête suivante, alors qu'il n'y a rien à partager — la
+ * page vient d'être ouverte à la main.
  */
 
 function invitationFormSchema(mismatch: string) {
@@ -66,6 +81,7 @@ const SPENT_LINK_CODES: ReadonlySet<string> = new Set<string>([
 
 interface AdminInvitationFormProps {
   readonly tenantSlug: string;
+  /** Le jeton porté par l'adresse, `null` quand elle n'en porte pas. */
   readonly token: string | null;
 }
 
@@ -74,6 +90,12 @@ export function AdminInvitationForm({ tenantSlug, token }: AdminInvitationFormPr
   const locale = useLocale() as Locale;
   const router = useRouter();
   const [failure, setFailure] = useState<string | null>(null);
+  /** Ce que la personne a collé, et ce qu'on a su en tirer. */
+  const [pasted, setPasted] = useState('');
+  const [pasteError, setPasteError] = useState<string | undefined>(undefined);
+  const [pastedToken, setPastedToken] = useState<string | null>(null);
+  /** Le jeton retenu : celui de l'adresse d'abord, celui du champ ensuite. */
+  const activationToken = token ?? pastedToken;
   // Les bornes de `passwordSchema` sont dites par `zodErrorMap` — « au moins 12
   // caractères » dans la langue de l'écran, et non en anglais brut de zod (#845).
   // `path` et `async` ne sont là que pour le typage de `@hookform/resolvers` :
@@ -98,13 +120,31 @@ export function AdminInvitationForm({ tenantSlug, token }: AdminInvitationFormPr
     mode: 'onTouched',
   });
 
+  /**
+   * Retient le jeton de ce qui vient d'être collé, ou dit pourquoi il n'y en a
+   * pas. Le refus est posé **sur le champ** et non en bandeau — c'est cette
+   * saisie-là qu'il faut reprendre (web-frontend §4).
+   */
+  function acceptPastedLink(): void {
+    const extracted = invitationTokenFromInput(pasted);
+
+    if (extracted === null) {
+      setPastedToken(null);
+      setPasteError(t('missingToken.invalid'));
+      return;
+    }
+
+    setPasteError(undefined);
+    setPastedToken(extracted);
+  }
+
   const submit = handleSubmit(async (values) => {
-    if (token === null) {
+    if (activationToken === null) {
       return;
     }
     setFailure(null);
     const result = await adminAcceptInvitationAction(tenantSlug, {
-      token,
+      token: activationToken,
       password: values.password,
     });
 
@@ -114,6 +154,14 @@ export function AdminInvitationForm({ tenantSlug, token }: AdminInvitationFormPr
           ? t('expiredLink')
           : errorMessage(result.code, locale),
       );
+      // Le jeton venait du champ de collage et l'API vient de le refuser : on
+      // rend le champ, sans quoi l'écran redeviendrait l'impasse que #1143
+      // ferme — un code bien formé mais périmé, recopié de travers ou pris dans
+      // le mauvais message n'aurait plus d'autre issue qu'un rechargement de la
+      // page. Ce qui a été collé reste en place, à corriger.
+      if (token === null) {
+        setPastedToken(null);
+      }
       return;
     }
 
@@ -132,11 +180,49 @@ export function AdminInvitationForm({ tenantSlug, token }: AdminInvitationFormPr
         {t('title')}
       </h1>
 
-      {token === null ? (
-        <Notification tone="warning" title={t('missingToken.title')}>
-          <p>{t('missingToken.body')}</p>
-        </Notification>
-      ) : null}
+      {token !== null ? null : (
+        <>
+          <Notification
+            title={pastedToken === null ? t('missingToken.title') : t('missingToken.acceptedTitle')}
+            tone={pastedToken === null ? 'warning' : 'success'}
+          >
+            <p>{pastedToken === null ? t('missingToken.body') : t('missingToken.acceptedBody')}</p>
+          </Notification>
+
+          {pastedToken !== null ? null : (
+            <>
+              {/* Ni `type="password"` ni `autoComplete` : ce qu'on colle ici
+                  n'est pas un secret à mémoriser mais une adresse qu'on doit
+                  pouvoir relire pour vérifier qu'elle est entière. */}
+              <Field
+                autoComplete="off"
+                error={pasteError}
+                hint={t('missingToken.hint')}
+                id="invitation-lien-colle"
+                label={t('missingToken.field')}
+                onChange={(event) => {
+                  setPasted(event.target.value);
+                  setPasteError(undefined);
+                }}
+                onKeyDown={(event) => {
+                  // Entrée dans ce champ vaut « Continuer » et non « Activer » :
+                  // la soumission du formulaire ne ferait rien tant qu'aucun
+                  // jeton n'est retenu, et l'écran paraîtrait muet au geste le
+                  // plus naturel après un collage.
+                  if (event.key === 'Enter') {
+                    event.preventDefault();
+                    acceptPastedLink();
+                  }
+                }}
+                value={pasted}
+              />
+              <Button onClick={acceptPastedLink} variant="neutral">
+                {t('missingToken.submit')}
+              </Button>
+            </>
+          )}
+        </>
+      )}
 
       {failure === null ? null : (
         <Notification tone="danger" title={t('failureTitle')}>
@@ -154,7 +240,7 @@ export function AdminInvitationForm({ tenantSlug, token }: AdminInvitationFormPr
         type="password"
         autoComplete="new-password"
         required
-        disabled={token === null}
+        disabled={activationToken === null}
         error={errors.password?.message}
         {...register('password')}
       />
@@ -164,7 +250,7 @@ export function AdminInvitationForm({ tenantSlug, token }: AdminInvitationFormPr
         type="password"
         autoComplete="new-password"
         required
-        disabled={token === null}
+        disabled={activationToken === null}
         error={errors.confirmation?.message}
         {...register('confirmation')}
       />
@@ -172,7 +258,7 @@ export function AdminInvitationForm({ tenantSlug, token }: AdminInvitationFormPr
         type="submit"
         variant="accent"
         block
-        disabled={token === null}
+        disabled={activationToken === null}
         loading={isSubmitting}
         loadingLabel={t('submitting')}
       >
