@@ -11,7 +11,7 @@ import { OwnScopeOnlyError } from '../identity/identity.errors';
 import { roleHasPermission } from '../identity/permissions';
 import { agendaWindowOf, resolveAgendaRange } from './agenda-window';
 import { AppointmentLifecycleService } from './appointment-lifecycle.service';
-import { occupiesSlot } from './appointment-status';
+import { type AppointmentStatus, occupiesSlot, recordsOutcome } from './appointment-status';
 import { SlotNoLongerAvailableError } from './appointments.errors';
 import { AppointmentsRepository } from './appointments.repository';
 import type {
@@ -666,9 +666,25 @@ export class AppointmentsService {
    * message ne part pour elles, mais les écrans ouverts ailleurs — planning du
    * comptoir, espace de la cliente — doivent se relire.
    *
+   * ## « Honoré » et « non présenté » ne s'écrivent pas d'avance (#1137)
+   *
+   * Les deux sont des **constats**, et ils étaient acceptés quelle que soit la
+   * date : un clic sur la ligne d'un rendez-vous du mois prochain le marquait
+   * « client absent », irréversiblement — les deux statuts sont terminaux —, et
+   * libérait son créneau. Le taux de no-show du CDC §1.4 comptait alors des
+   * absences à des soins qui n'avaient pas eu lieu, et le CRM affichait une
+   * dernière visite dans le futur.
+   *
+   * Le refus est celui du cycle de vie, 422 `INVALID_STATE_TRANSITION` avec
+   * `details.notStarted`, et c'est `AppointmentLifecycleService` qui le porte —
+   * pas ce service, et encore moins le contrôleur. Ni le reporting ni le CRM
+   * n'ont eu à changer : ils comptent des lignes, et il n'y a plus de ligne à
+   * compter de travers.
+   *
    * @throws {NotFoundError} rendez-vous inconnu ou d'un autre établissement.
    * @throws {InvalidStateTransitionError} le cycle de vie n'autorise pas ce
-   * passage — 422.
+   * passage — 422. `AppointmentNotStartedError` en est le cas « pas encore
+   * commencé », même code et même statut.
    * @throws {ConflictError} deux transitions concurrentes, dont une seule
    * aboutit.
    */
@@ -692,8 +708,14 @@ export class AppointmentsService {
 
     // Avant toute écriture, et par le service dédié : ce n'est pas la garde —
     // celle-là est l'écriture conditionnelle du repository —, c'est ce qui rend
-    // la **réponse** juste.
-    this.lifecycle.requireTransition(previous.status, input.status);
+    // la **réponse** juste. L'heure du rendez-vous et celle de la décision
+    // l'accompagnent : « honoré » et « non présenté » constatent un fait, et le
+    // cycle de vie les refuse avant qu'il ait eu lieu (#1137). L'heure passée est
+    // celle du **soin**, pas la colonne — voir `treatmentStartOf`.
+    this.lifecycle.requireTransition(previous.status, input.status, {
+      startsAt: await this.treatmentStartOf(previous, input.status),
+      now,
+    });
 
     if (input.status === 'CANCELLED') {
       // La trace d'annulation ne se contourne pas. `cancel` invalide le cache et
@@ -736,7 +758,7 @@ export class AppointmentsService {
         clientId: previous.clientId,
         staffId: previous.staffId,
       });
-    } else if (input.status === 'COMPLETED' || input.status === 'NO_SHOW') {
+    } else if (recordsOutcome(input.status)) {
       // Aucun message ne part pour ces deux issues ; l'événement sert aux écrans
       // tenus ouverts ailleurs — le planning du comptoir, l'espace de la
       // cliente —, qui le relisent dès qu'il passe.
@@ -750,6 +772,37 @@ export class AppointmentsService {
     }
 
     return this.agendaById(previous.id);
+  }
+
+  /**
+   * Le début du **soin** de cette ligne — l'heure que la cliente a réservée
+   * (#1137).
+   *
+   * `starts_at` en base n'est pas cette heure-là : c'est le début de l'intervalle
+   * **occupé**, donc l'instant où la cabine commence à être préparée
+   * (`billed-interval.ts`, et l'en-tête de ce service). Comparer l'horloge à la
+   * colonne aurait laissé marquer « non présenté » cinq à dix minutes avant
+   * l'heure du rendez-vous — le tampon avant de la prestation —, sur un geste
+   * terminal qui libère le créneau et ne se défait pas. C'est l'erreur exacte que
+   * #750 a corrigée sur la fiche cliente, et c'est aussi l'heure que « Mon
+   * planning » lit déjà pour n'offrir les deux boutons qu'à partir du début du
+   * soin.
+   *
+   * La prestation n'est lue que pour un **constat** : `PENDING → CONFIRMED` n'a
+   * que faire de l'horloge, et lui coûter une lecture du catalogue à chaque
+   * confirmation ne rachèterait rien.
+   */
+  private async treatmentStartOf(
+    record: AppointmentRecord,
+    target: AppointmentStatus,
+  ): Promise<Date> {
+    if (!recordsOutcome(target)) {
+      return record.startsAt;
+    }
+
+    const service = await this.services.byId(record.serviceId);
+
+    return new Date(billedStartOf(record, service));
   }
 
   /**
@@ -828,7 +881,18 @@ export class AppointmentsService {
 
     // Le service dédié, avant toute écriture. Il ne protège pas la base — c'est
     // l'`UPDATE` conditionnel qui le fait — il rend la **réponse** juste.
-    this.lifecycle.requireTransition(previous.status, 'CANCELLED');
+    //
+    // L'occurrence est passée comme partout, et n'a ici aucun effet : annuler est
+    // une **décision**, pas un constat, et elle se prend précisément avant l'heure
+    // du soin (#1137). Le paramètre est obligatoire pour que ce soit la règle qui
+    // en juge, et non l'appelant qui décide de la consulter ou non. La colonne
+    // suffit donc ici — `CANCELLED` n'est jamais un constat, et dériver le début
+    // du soin coûterait une lecture du catalogue pour une valeur que la règle
+    // n'ouvrira pas.
+    this.lifecycle.requireTransition(previous.status, 'CANCELLED', {
+      startsAt: previous.startsAt,
+      now,
+    });
 
     // Le même refus, dit dans les termes de la contrainte d'exclusion. Il ne
     // peut pas se déclencher : le témoin d'`appointment-lifecycle.spec.ts`

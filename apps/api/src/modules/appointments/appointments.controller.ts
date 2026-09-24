@@ -553,6 +553,14 @@ export class AppointmentsController {
    * se confondent pas : le premier dit « ce mot n'existe pas », le second « ce
    * passage n'existe pas », et le tiroir n'affiche pas la même chose.
    *
+   * ## `completed` et `no_show` ne s'écrivent pas avant l'heure (#1137)
+   *
+   * Même 422, même code, `details.notStarted` en plus : ce sont des constats, et
+   * ils étaient acceptés sur un rendez-vous du mois prochain — irréversiblement,
+   * puisque les deux statuts sont terminaux. Le tiroir de #50 peut brancher sur
+   * `notStarted` pour dire « attendre l'heure du rendez-vous » plutôt que
+   * « recharger la page ».
+   *
    * **404** couvre le rendez-vous inconnu **et** celui d'un autre établissement.
    * **409 `CONFLICT`** quand deux transitions se croisent et que la seconde
    * arrive après que la première a écrit.
@@ -593,7 +601,8 @@ export class AppointmentsController {
   @ApiUnprocessableEntityResponse({
     description:
       'Le cycle de vie n’autorise pas ce passage — `INVALID_STATE_TRANSITION`, ' +
-      '`details` portant `from` et `to`.',
+      '`details` portant `from` et `to`. Même code, `details.notStarted` en plus, ' +
+      'pour `completed` ou `no_show` demandé avant l’heure du rendez-vous.',
   })
   public async changeStatus(
     @CurrentUser() actor: AuthenticatedUser,
