@@ -232,6 +232,14 @@ export interface TenantDetailRecord {
   } | null;
   readonly legalName: string | null;
   readonly hasLegalId: boolean;
+  /**
+   * La langue du salon (#844), lue sur `tenants.default_locale`.
+   *
+   * Elle est ici et non sur `TenantSummary` : seule la fiche l'affiche, et la
+   * lire pour chaque ligne d'une page de cent salons ne servirait personne
+   * (#1189).
+   */
+  readonly defaultLocale: Locale;
   readonly currentPeriodEndsAt: Date | null;
   readonly stripeCustomerId: string | null;
 }

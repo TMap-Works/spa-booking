@@ -158,6 +158,21 @@ describe('Fiche d’un salon', () => {
     expect(detail.setup.address).toBe(true);
     expect(detail.setup.legalIdentity).toBe(false);
   });
+
+  it('rend la langue du salon, y compris suspendu (#1189)', async () => {
+    const { service, tenants, console } = fixture();
+    const tenant = tenants.addTenant({ slug: 'maison-lotus' });
+    console.tenantLocale = 'fr';
+
+    expect((await service.tenantDetail(tenant.id, NOW)).record.defaultLocale).toBe('fr');
+
+    // Un salon suspendu ne publie plus sa vitrine : c'est précisément le cas où
+    // la lire sur `GET /public/{slug}` ne rendait rien.
+    tenants.setActive(tenant.id, false);
+    console.tenantLocale = 'en';
+
+    expect((await service.tenantDetail(tenant.id, NOW)).record.defaultLocale).toBe('en');
+  });
 });
 
 describe('Notes internes', () => {

@@ -24,7 +24,7 @@ import {
 import { currencyCodeSchema, nonNegativeMoneySchema } from '../common/money';
 import { calendarDateSchema, timeZoneSchema, utcInstantSchema } from '../common/time';
 import { ADDRESS_LINE_MAX_LENGTH, CITY_MAX_LENGTH, POSTAL_CODE_MAX_LENGTH } from '../constants/limits';
-import { submittedLocaleSchema } from '../locale/index';
+import { localeSchema, submittedLocaleSchema } from '../locale/index';
 import { tenantBillingStatusSchema } from './billing';
 
 /** Bornes du mot de passe d'un opérateur — `PLATFORM_PASSWORD_*` côté API. */
@@ -396,6 +396,19 @@ export const platformTenantDetailSchema = z.object({
     })
     .nullable(),
   legalName: z.string().nullable(),
+  /**
+   * La langue du salon (#844) — celle qu'on lui a donnée en l'ouvrant, et dans
+   * laquelle sa vitrine et ses e-mails s'écrivent.
+   *
+   * Portée par la **fiche** et non par `platformTenantSchema` : la liste et la
+   * vue d'ensemble n'en affichent aucune, et l'y mettre aurait chargé chaque
+   * ligne d'une page de cent salons d'une colonne que personne ne lit.
+   *
+   * Toujours rendue, y compris pour un salon **suspendu** : c'est une donnée que
+   * la console lit par son propre contrat, et non sur la vitrine du salon — qui,
+   * elle, ne répond plus dès qu'il est suspendu (#1189).
+   */
+  defaultLocale: localeSchema,
   billing: z.object({
     status: tenantBillingStatusSchema,
     trialEndsAt: utcInstantSchema.nullable(),

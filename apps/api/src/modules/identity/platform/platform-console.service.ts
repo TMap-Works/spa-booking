@@ -81,6 +81,11 @@ export class PlatformConsoleService {
    * Les liens rendus sont ceux de la vitrine et du back-office — **pas** celui
    * d'activation, qui porte un jeton : il ne s'obtient que par la réémission,
    * geste explicite et tracé.
+   *
+   * La **langue** du salon fait partie de ce que la fiche rend (#1189) : la
+   * console la lisait sur `GET /public/{slug}`, qui ne répond pas pour un salon
+   * suspendu — un détour qui coûtait un appel et taisait la langue de ceux-là
+   * mêmes qu'un opérateur consulte le plus.
    */
   public async tenantDetail(id: string, now: Date = new Date()): Promise<TenantDetailView> {
     const record = await this.repository.findTenantDetail(id);
