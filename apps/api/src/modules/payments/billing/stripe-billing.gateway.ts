@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import type { Locale } from '@spa/shared';
 
 import { StructuredLogger } from '../../../common/logging/structured-logger';
 import { PaymentProviderRefusedError, PaymentProviderUnavailableError } from '../payments.errors';
@@ -50,6 +51,32 @@ export interface CreateSubscriptionCheckoutCommand {
   readonly trialDays: number;
   readonly successUrl: string;
   readonly cancelUrl: string;
+  /**
+   * La langue des pages **hébergées par Stripe** — #1231.
+   *
+   * Portée par la commande plutôt que décidée ici : la passerelle ne sait rien
+   * du gérant qui clique, et une langue écrite en dur dans le formulaire était
+   * exactement le défaut à corriger. `fr` et `en` sont des étiquettes que Stripe
+   * accepte telles quelles pour Checkout comme pour le portail, ce qui évite une
+   * table de correspondance dont le seul rôle serait de recopier `Locale`.
+   */
+  readonly locale: Locale;
+}
+
+/**
+ * L'ouverture du portail client — nommée, comme la commande de Checkout, plutôt
+ * que réécrite au point d'appel.
+ *
+ * Elle l'était trois fois : dans le port, dans son implémentation HTTP, et dans
+ * le double de `billing.locale.spec.ts`. Trois copies d'une même forme, dont
+ * l'ajout de `locale` (#1231) venait de montrer qu'elles ne bougent pas
+ * ensemble par elles-mêmes.
+ */
+export interface CreatePortalSessionCommand {
+  readonly customerId: string;
+  readonly returnUrl: string;
+  /** La langue du portail hébergé — même règle que le Checkout (#1231). */
+  readonly locale: Locale;
 }
 
 export interface StripeBillingGateway {
@@ -63,10 +90,7 @@ export interface StripeBillingGateway {
   ): Promise<{ readonly id: string; readonly url: string }>;
   retrieveCheckoutSession(id: string): Promise<StripeCheckoutSnapshot>;
   retrieveSubscription(id: string): Promise<StripeSubscriptionSnapshot>;
-  createPortalSession(command: {
-    readonly customerId: string;
-    readonly returnUrl: string;
-  }): Promise<{ readonly url: string }>;
+  createPortalSession(command: CreatePortalSessionCommand): Promise<{ readonly url: string }>;
 }
 
 const STRIPE_API_BASE = 'https://api.stripe.com/v1';
@@ -192,7 +216,7 @@ export class StripeBillingHttpGateway implements StripeBillingGateway {
     // Porté par l'abonnement lui-même : c'est lui que décrivent les
     // événements `customer.subscription.*`.
     form.set('subscription_data[metadata][tenantId]', command.tenantId);
-    form.set('locale', 'fr');
+    form.set('locale', command.locale);
     form.set('success_url', command.successUrl);
     form.set('cancel_url', command.cancelUrl);
 
@@ -225,14 +249,11 @@ export class StripeBillingHttpGateway implements StripeBillingGateway {
     return snapshot ?? this.unreadable('subscription');
   }
 
-  public async createPortalSession(command: {
-    customerId: string;
-    returnUrl: string;
-  }): Promise<{ url: string }> {
+  public async createPortalSession(command: CreatePortalSessionCommand): Promise<{ url: string }> {
     const form = new URLSearchParams();
     form.set('customer', command.customerId);
     form.set('return_url', command.returnUrl);
-    form.set('locale', 'fr');
+    form.set('locale', command.locale);
 
     const url = readString(
       asRecord(await this.call('/billing_portal/sessions', { method: 'POST', body: form })),

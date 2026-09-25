@@ -1,5 +1,10 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { SUBSCRIPTION_PLAN, tenantPublicUrl, type TenantBilling } from '@spa/shared';
+import {
+  SUBSCRIPTION_PLAN,
+  tenantPublicUrl,
+  type Locale,
+  type TenantBilling,
+} from '@spa/shared';
 
 import { NotFoundError } from '../../../common/errors';
 import { StructuredLogger } from '../../../common/logging/structured-logger';
@@ -69,7 +74,7 @@ export class BillingService {
    * Ouvre une session Stripe Checkout : l'offre unique, avec son essai gratuit,
    * la carte enregistrée d'emblée. Rend l'adresse de la page hébergée.
    */
-  public async startCheckout(tenantId: string): Promise<{ url: string }> {
+  public async startCheckout(tenantId: string, userId: string): Promise<{ url: string }> {
     const record = await this.requireRecord();
 
     if (record.status === 'managed') {
@@ -109,6 +114,7 @@ export class BillingService {
       trialDays: record.status === 'pending' ? SUBSCRIPTION_PLAN.trialDays : 0,
       successUrl: returnUrl('paiement'),
       cancelUrl: returnUrl('annule'),
+      locale: await this.localeFor(userId, record),
     });
 
     await this.repository.updateCurrent({
@@ -121,7 +127,7 @@ export class BillingService {
   }
 
   /** Le portail client de Stripe : carte, factures, résiliation. */
-  public async openPortal(): Promise<{ url: string }> {
+  public async openPortal(userId: string): Promise<{ url: string }> {
     const record = await this.requireRecord();
 
     if (record.stripeCustomerId === null) {
@@ -133,6 +139,7 @@ export class BillingService {
       returnUrl: tenantPublicUrl(record.slug, '/admin/abonnement', {
         baseUrl: this.config.appUrl,
       }),
+      locale: await this.localeFor(userId, record),
     });
   }
 
@@ -156,6 +163,32 @@ export class BillingService {
     this.gate.invalidate(tenantId);
 
     return this.requireRecord();
+  }
+
+  /**
+   * La langue des pages hébergées par Stripe — #1231.
+   *
+   * ## La règle, dans l'ordre
+   *
+   * La préférence du gérant qui clique (`users.locale`), la langue de
+   * l'établissement (`tenants.default_locale`) sinon, et `en` en dernier ressort
+   * — ce dernier repli étant tenu par `toTenantLocale`, dans le dépôt. C'est
+   * exactement la règle de `resolveRecipientLocale` pour les notifications
+   * (#854) : une personne qui a choisi sa langue la retrouve partout, y compris
+   * sur une page qui n'est pas la nôtre.
+   *
+   * ## Pourquoi à l'ouverture, et non à l'inscription
+   *
+   * La session Checkout et la session de portail sont créées à chaque clic : la
+   * langue se résout donc à l'instant où la page s'ouvre. Un gérant qui bascule
+   * son compte en anglais et rouvre son abonnement voit l'anglais, sans qu'il y
+   * ait rien à réémettre chez Stripe.
+   *
+   * `record` est celui que l'appelant a déjà lu — le repli d'établissement ne
+   * coûte aucune requête de plus, seule la préférence du compte en demande une.
+   */
+  private async localeFor(userId: string, record: BillingRecord): Promise<Locale> {
+    return (await this.repository.findAccountLocale(userId)) ?? record.defaultLocale;
   }
 
   private async syncFromStripe(tenantId: string, record: BillingRecord): Promise<BillingRecord> {

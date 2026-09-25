@@ -37,7 +37,7 @@ export class BillingController {
   @ApiCreatedResponse({ description: 'L’adresse de la page de paiement hébergée par Stripe.' })
   @ApiConflictResponse({ description: 'Salon géré par la plateforme, ou abonnement déjà en cours.' })
   public async checkout(@CurrentUser() user: AuthenticatedUser): Promise<BillingRedirect> {
-    return this.billing.startCheckout(user.tenantId);
+    return this.billing.startCheckout(user.tenantId, user.userId);
   }
 
   /** Le portail client de Stripe : carte, factures, résiliation. */
@@ -46,7 +46,7 @@ export class BillingController {
   @ApiOperation({ summary: 'Ouvrir le portail de gestion de l’abonnement' })
   @ApiCreatedResponse({ description: 'L’adresse du portail hébergé par Stripe.' })
   @ApiConflictResponse({ description: 'Aucun moyen de paiement enregistré.' })
-  public async portal(): Promise<BillingRedirect> {
-    return this.billing.openPortal();
+  public async portal(@CurrentUser() user: AuthenticatedUser): Promise<BillingRedirect> {
+    return this.billing.openPortal(user.userId);
   }
 }
