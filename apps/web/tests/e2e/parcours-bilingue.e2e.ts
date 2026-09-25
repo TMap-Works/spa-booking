@@ -58,6 +58,7 @@ import { connecter, trouverRendezVous } from './support/api';
 import { COMPTES, chemins } from './support/environnement';
 import { debuteParLibelle, libelle } from './support/libelles';
 import { expect, reserverParLeTunnel, test } from './support/scene';
+import { SESSION_CLIENTE } from './support/sessions';
 
 test.describe('Le parcours public servi en anglais', () => {
   // `en-US` et non `en` : c'est la forme qu'envoie un navigateur réel, et elle
@@ -84,8 +85,26 @@ test.describe('Le parcours public servi en anglais', () => {
 
     expect(rendezVous.status.toLowerCase()).toBe('pending');
   });
+});
 
-  test('la console du parcours anglais ne porte aucune erreur', async ({ page }) => {
+test.describe('La console du parcours anglais', () => {
+  /**
+   * Même arbitrage que pour la console du parcours français (#1129) : la
+   * traversée surveille la console, pas la porte du compte, et elle repart donc
+   * de la session cliente enregistrée par le projet `sessions`.
+   *
+   * La session a été ouverte en français, et cela ne change rien à la langue
+   * servie ici. Le compte du jeu d'essai n'a **aucune** préférence enregistrée
+   * (`fixtures/seed.mjs` n'écrit pas de `locale`) : l'ouverture de session efface
+   * alors son miroir plutôt que de le poser (`account-locale.ts`,
+   * `setAccountLocaleMirror(target, null)`), et le sélecteur n'a jamais été
+   * touché — aucun cookie de langue ne voyage donc avec la session. L'ordre de
+   * résolution de #845 retombe sur `Accept-Language`, c'est-à-dire sur le
+   * `locale` posé ici.
+   */
+  test.use({ locale: 'en-US', storageState: SESSION_CLIENTE });
+
+  test('ne porte aucune erreur', async ({ page }) => {
     const erreurs: string[] = [];
     page.on('console', (message) => {
       if (message.type() === 'error') {
@@ -94,7 +113,7 @@ test.describe('Le parcours public servi en anglais', () => {
     });
     page.on('pageerror', (erreur) => erreurs.push(erreur.message));
 
-    await reserverParLeTunnel(page, 'en');
+    await reserverParLeTunnel(page, 'en', { sessionOuverte: true });
 
     const fautives = erreurs.filter((message) => !message.includes('favicon.ico'));
     expect(

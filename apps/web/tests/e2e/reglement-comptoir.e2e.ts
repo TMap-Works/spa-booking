@@ -30,7 +30,8 @@
 import { changerStatut, connecter, poserRendezVous } from './support/api';
 import { COMPTES, chemins } from './support/environnement';
 import { compteClient } from './support/jeu-dessai';
-import { connexionComptoir, expect, jourDuScenario, test } from './support/scene';
+import { expect, jourDuScenario, test } from './support/scene';
+import { SESSION_COMPTOIR } from './support/sessions';
 import {
   assertAucunAppelStripe,
   inspecterStripe,
@@ -49,6 +50,11 @@ test.describe('Frontière Stripe', () => {
 });
 
 test.describe('Encaissement au comptoir', () => {
+  // La session du comptoir est reprise du projet `sessions` (#1129) : les deux
+  // scénarios ci-dessous encaissent, ils n'éprouvent pas la connexion. Voir le
+  // registre des connexions dans `support/sessions.ts`.
+  test.use({ storageState: SESSION_COMPTOIR });
+
   test('règle un ticket de 78,00 € en deux fois : espèces puis TPE', async ({
     page,
     request,
@@ -63,8 +69,6 @@ test.describe('Encaissement au comptoir', () => {
       leJour: jour,
     });
     await changerStatut(request, jeton, rendezVous.id, 'confirmed');
-
-    await connexionComptoir(page, COMPTES.manager);
 
     await test.step('Le comptoir offre deux moyens, et aucun champ de carte', async () => {
       await page.goto(chemins.encaissement(jour, rendezVous.id));
@@ -148,7 +152,6 @@ test.describe('Encaissement au comptoir', () => {
     });
     await changerStatut(request, jeton, rendezVous.id, 'confirmed');
 
-    await connexionComptoir(page, COMPTES.manager);
     await page.goto(chemins.encaissement(jour, rendezVous.id));
     // Le repère qui dit que l'écran est là avant qu'on ne le manipule : sans
     // lui, le premier clic part sur une page encore en compilation côté dev.

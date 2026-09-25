@@ -77,6 +77,33 @@ const environnementServeurs: Record<string, string> = {
   // connexion de comptoir, pour une base jetable et des mots de passe publics.
   BCRYPT_COST: '4',
   LOG_LEVEL: 'warn',
+
+  /**
+   * Le jeton d'accès doit survivre à la **passe entière** — #1129.
+   *
+   * Depuis que les deux sessions de la suite sont ouvertes une fois et rejouées
+   * par `test.use({ storageState })` (`tests/e2e/support/sessions.ts`), le fichier
+   * de session est la seule copie du jeton de rafraîchissement, et il ne bouge
+   * plus. Or `JWT_EXPIRES_IN` vaut `15m` par défaut : passé ce délai, le cookie
+   * d'accès enregistré est périmé, le premier scénario qui navigue part vers la
+   * route de renouvellement de sa surface, et la **rotation** du jeton de
+   * rafraîchissement a lieu. Le scénario suivant repart du fichier, c'est-à-dire
+   * du jeton déjà consommé : au-delà des dix secondes de grâce de
+   * `REFRESH_ROTATION_GRACE_MS`, l'API y voit un réemploi et **révoque la
+   * session** (`auth.service.ts`, RFC 9700 §4.14.2). Tous les scénarios qui
+   * partagent ce fichier échouent alors en cascade sur l'écran de connexion, pour
+   * une raison qui n'accuse rien du produit.
+   *
+   * Deux heures placent l'échéance hors de portée d'une passe, reprise de
+   * `retries` comprise. Allonger n'ôte rien à ce que la suite prouve :
+   * `session-expiree.e2e.ts` ne dépend pas de la durée réelle — il **retire** le
+   * cookie d'accès pour reproduire l'état, et son en-tête explique pourquoi c'est
+   * le raccourcissement, et lui seul, qui coûterait cher ici.
+   *
+   * Sans effet sur un serveur déjà démarré que `reuseExistingServer` reprend hors
+   * CI : c'est en CI, où la passe est la plus longue, que cela compte.
+   */
+  JWT_EXPIRES_IN: '2h',
 };
 
 export default defineConfig({
@@ -149,9 +176,28 @@ export default defineConfig({
   },
 
   projects: [
+    /**
+     * Les sessions de la suite, ouvertes une fois — #1129.
+     *
+     * Son `testMatch` prime sur celui du fichier : `sessions.setup.ts` n'est pas
+     * un `*.e2e.ts`, et c'est ce qui garantit que le projet `chromium` ne le
+     * ramasse pas une seconde fois.
+     *
+     * Déclaré en **dépendance** et non en `globalSetup` bis : Playwright joue ce
+     * projet d'abord, et saute les scénarios du second si la session ne s'ouvre
+     * pas — au lieu de les laisser échouer un par un sur l'écran de connexion.
+     * Voir l'en-tête du fichier, et le registre des connexions dans
+     * `tests/e2e/support/sessions.ts`.
+     */
+    {
+      name: 'sessions',
+      testMatch: /sessions\.setup\.ts$/u,
+      use: { ...devices['Desktop Chrome'] },
+    },
     {
       name: 'chromium',
       use: { ...devices['Desktop Chrome'] },
+      dependencies: ['sessions'],
     },
   ],
 

@@ -106,6 +106,10 @@ export const chemins = {
   salon: () => `/${SLUG}`,
   reservation: () => `/${SLUG}/reservation`,
   connexionAdmin: () => `/${SLUG}/admin/connexion`,
+  /** L'écran de connexion de l'espace client — celui où la cliente ouvre sa session. */
+  connexionClient: () => `/${SLUG}/compte/connexion`,
+  /** L'accueil de l'espace client, où la connexion dépose la cliente (#1087). */
+  espaceClient: () => `/${SLUG}/compte`,
   calendrier: (date?: string) =>
     date === undefined ? `/${SLUG}/admin/calendrier` : `/${SLUG}/admin/calendrier?date=${date}`,
   encaissement: (date: string, rendezVous?: string) =>
