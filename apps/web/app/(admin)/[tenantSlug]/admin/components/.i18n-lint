@@ -44,3 +44,9 @@ receipt-ticket.tsx
 report-chart.tsx
 report-export-button.tsx
 report-filters.tsx
+#
+# Le bouton de déconnexion du pied du rail — #1124. Il était déjà visé depuis le
+# marqueur du répertoire parent, au bloc de #853 ; la ligne est reprise ici, où
+# vit le fichier, pour que retirer ce bouton du catalogue de la coquille se voie
+# à l'endroit où on le lit. Les motifs sont dédoublonnés à la lecture.
+admin-logout-button.tsx

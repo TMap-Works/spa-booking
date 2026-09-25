@@ -20,7 +20,9 @@
   "account": {
     "metadataTitle": "My account",
     "title": "My account",
-    "greeting": "Hello {firstName}"
+    "greeting": "Hello {firstName}",
+    "signOut": "Sign out",
+    "signingOut": "Signing out…"
   },
   "admin": {
     "metadataTitle": "Back office",
@@ -62,7 +64,9 @@
       "upcoming": "screen coming soon",
       "timeZone": "Salon time zone: {timeZone}",
       "accountUnverified": "Account not verified — the salon server cannot be reached.",
-      "signedInAs": "Signed in as:"
+      "signedInAs": "Signed in as:",
+      "signOut": "Sign out",
+      "signingOut": "Signing out…"
     }
   }
 }

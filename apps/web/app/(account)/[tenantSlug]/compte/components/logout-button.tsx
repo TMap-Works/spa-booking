@@ -19,13 +19,20 @@ import { loginPath } from '../paths';
  * donc par une image insérée dans une page tierce : pas une fuite, mais un
  * moyen de couper la session de quelqu'un sans son accord. Le geste passe donc
  * par une action serveur, comme toute écriture de cette surface.
+ *
+ * ## Pourquoi les mots viennent de `shell.account` — #1124
+ *
+ * Le bouton n'appartient à aucun écran de l'espace client : le gabarit le pose
+ * dans le menu du compte, qui coiffe les sept écrans. Ses libellés rejoignent
+ * donc ceux de la coquille — le titre de l'espace et la salutation —, là où le
+ * gabarit lit déjà les siens, plutôt que de rester au catalogue des écrans.
  */
 interface LogoutButtonProps {
   readonly tenantSlug: string;
 }
 
 export function LogoutButton({ tenantSlug }: LogoutButtonProps) {
-  const t = useTranslations('account.nav');
+  const t = useTranslations('shell.account');
   const router = useRouter();
   const [leaving, setLeaving] = useState(false);
 
