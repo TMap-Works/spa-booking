@@ -1,7 +1,12 @@
 'use client';
 
-import { updateStaffMemberRequestSchema, type StaffMember } from '@spa/shared';
-import { useTranslations } from 'next-intl';
+import {
+  updateStaffMemberRequestSchema,
+  zodErrorMap,
+  type Locale,
+  type StaffMember,
+} from '@spa/shared';
+import { useLocale, useTranslations } from 'next-intl';
 import { useRouter } from 'next/navigation';
 import { useState, useTransition } from 'react';
 
@@ -104,6 +109,7 @@ export function StaffProfilePanel({
   readonly canManage?: boolean;
 }) {
   const t = useTranslations('admin-staff');
+  const locale = useLocale() as Locale;
   const router = useRouter();
   const { renewIfExpired } = useAdminSessionRenewal(tenantSlug);
   // La présentation publiée, telle que la fiche la rend. Absente vaut « aucune
@@ -196,10 +202,16 @@ export function StaffProfilePanel({
     // Le corps ne porte que ce qui change — c'est tout l'objet d'un `PATCH`, et
     // c'est ce qui empêche deux gérants d'écraser mutuellement leurs
     // corrections.
-    const parsed = updateStaffMemberRequestSchema.safeParse({
-      ...(nameChanged ? { displayName: trimmedName } : {}),
-      ...(bioChanged ? { bio: trimmedBio === '' ? null : trimmedBio } : {}),
-    });
+    // La carte d'erreurs est **passée** : les bornes du contrat ne se disent que
+    // par elle depuis #1232, et sans elle cette fiche afficherait la langue du
+    // repli de `@spa/shared`, pas celle de la page.
+    const parsed = updateStaffMemberRequestSchema.safeParse(
+      {
+        ...(nameChanged ? { displayName: trimmedName } : {}),
+        ...(bioChanged ? { bio: trimmedBio === '' ? null : trimmedBio } : {}),
+      },
+      { errorMap: zodErrorMap(locale) },
+    );
 
     if (!parsed.success) {
       const errors: ProfileFieldErrors = {};

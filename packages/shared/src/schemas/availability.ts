@@ -27,6 +27,7 @@ import {
   type CalendarDate,
 } from '../common/time';
 import { MAX_AVAILABILITY_RANGE_DAYS, MAX_TIME_OFF_RANGE_DAYS } from '../constants/limits';
+import { messageKey } from '../errors/zod-messages';
 
 /**
  * Interrogation des créneaux libres.
@@ -74,11 +75,11 @@ export const availabilityQuerySchema = z
   })
   .strict()
   .refine((query) => query.to >= query.from, {
-    message: 'la fin de la plage ne peut pas précéder son début',
+    ...messageKey('availability.rangeOrder'),
     path: ['to'],
   })
   .refine((query) => calendarDaysBetween(query.from, query.to) <= MAX_AVAILABILITY_RANGE_DAYS, {
-    message: `la plage demandée dépasse ${String(MAX_AVAILABILITY_RANGE_DAYS)} jours`,
+    ...messageKey('availability.rangeTooWide', { max: MAX_AVAILABILITY_RANGE_DAYS }),
     path: ['to'],
   });
 
@@ -192,9 +193,9 @@ export type IsoWeekday = (typeof ISO_WEEKDAYS)[number];
  */
 export const isoWeekdaySchema = z
   .number()
-  .int({ message: 'un jour de semaine s’exprime en entier' })
-  .min(1, { message: 'jour de semaine ISO attendu : 1 (lundi) à 7 (dimanche)' })
-  .max(7, { message: 'jour de semaine ISO attendu : 1 (lundi) à 7 (dimanche)' })
+  .int()
+  .min(1)
+  .max(7)
   .transform((value) => value as IsoWeekday);
 
 /**
@@ -302,7 +303,7 @@ export const staffScheduleEntrySchema = z
       return start !== null && end !== null && end > start;
     },
     {
-      message: 'la fin d’une plage doit être strictement postérieure à son début',
+      ...messageKey('availability.scheduleRangeOrder'),
       path: ['endsAt'],
     },
   );
@@ -363,13 +364,11 @@ export function staffScheduleEntriesOverlap(entries: readonly StaffScheduleEntry
  */
 export const setStaffScheduleRequestSchema = z
   .object({
-    entries: z.array(staffScheduleEntrySchema).max(MAX_STAFF_SCHEDULE_ENTRIES, {
-      message: `au plus ${String(MAX_STAFF_SCHEDULE_ENTRIES)} plages par semaine`,
-    }),
+    entries: z.array(staffScheduleEntrySchema).max(MAX_STAFF_SCHEDULE_ENTRIES),
   })
   .strict()
   .refine((request) => !staffScheduleEntriesOverlap(request.entries), {
-    message: 'deux plages du même jour se recouvrent',
+    ...messageKey('availability.scheduleOverlap'),
     path: ['entries'],
   });
 
@@ -418,10 +417,11 @@ export const setClosingDaysRequestSchema = z
   .object({
     weekdays: z
       .array(isoWeekdaySchema)
-      .max(7, { message: 'un jour de semaine ne se déclare qu’une fois' })
-      .refine((weekdays) => new Set(weekdays).size === weekdays.length, {
-        message: 'un jour de semaine ne se déclare qu’une fois',
-      }),
+      .max(7)
+      .refine(
+        (weekdays) => new Set(weekdays).size === weekdays.length,
+        messageKey('availability.weekdayDuplicate'),
+      ),
   })
   .strict();
 
@@ -514,7 +514,7 @@ export const createStaffTimeOffRequestSchema = z
   })
   .strict()
   .refine((body) => isPlausibleTimeOffRange(body.startsAt, body.endsAt), {
-    message: `la fin doit suivre le début, et l’absence ne peut excéder ${String(MAX_TIME_OFF_RANGE_DAYS)} jours`,
+    ...messageKey('availability.timeOffRange', { max: MAX_TIME_OFF_RANGE_DAYS }),
     path: ['endsAt'],
   });
 
@@ -545,7 +545,7 @@ export const updateStaffTimeOffRequestSchema = z
       patch.endsAt === undefined ||
       isPlausibleTimeOffRange(patch.startsAt, patch.endsAt),
     {
-      message: `la fin doit suivre le début, et l’absence ne peut excéder ${String(MAX_TIME_OFF_RANGE_DAYS)} jours`,
+      ...messageKey('availability.timeOffRange', { max: MAX_TIME_OFF_RANGE_DAYS }),
       path: ['endsAt'],
     },
   );
@@ -572,7 +572,7 @@ export const staffTimeOffQuerySchema = z
   })
   .strict()
   .refine((query) => isPlausibleTimeOffRange(query.from, query.to), {
-    message: `la fin de la fenêtre doit suivre son début, sans excéder ${String(MAX_TIME_OFF_RANGE_DAYS)} jours`,
+    ...messageKey('availability.timeOffWindow', { max: MAX_TIME_OFF_RANGE_DAYS }),
     path: ['to'],
   });
 

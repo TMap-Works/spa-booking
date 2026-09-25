@@ -24,6 +24,7 @@ import {
 import { currencyCodeSchema, nonNegativeMoneySchema } from '../common/money';
 import { calendarDateSchema, timeZoneSchema, utcInstantSchema } from '../common/time';
 import { ADDRESS_LINE_MAX_LENGTH, CITY_MAX_LENGTH, POSTAL_CODE_MAX_LENGTH } from '../constants/limits';
+import { messageKey } from '../errors/zod-messages';
 import { localeSchema, submittedLocaleSchema } from '../locale/index';
 import { tenantBillingStatusSchema } from './billing';
 
@@ -37,14 +38,12 @@ export const platformLoginRequestSchema = z
     email: emailSchema,
     password: z
       .string()
-      .min(PLATFORM_PASSWORD_MIN_LENGTH, {
-        message: `le mot de passe fait au moins ${String(PLATFORM_PASSWORD_MIN_LENGTH)} caractères`,
-      })
+      .min(PLATFORM_PASSWORD_MIN_LENGTH)
       .max(PLATFORM_PASSWORD_MAX_LENGTH),
     totpCode: z
       .string()
       .trim()
-      .regex(/^\d{6}$/, { message: 'six chiffres, tels que les affiche votre application' }),
+      .refine((value) => /^\d{6}$/.test(value), messageKey('platform.totpCode')),
   })
   .strict();
 
@@ -103,10 +102,10 @@ export const createTenantRequestSchema = z
      */
     defaultLocale: submittedLocaleSchema.optional(),
     countryCode: countryCodeSchema,
-    addressLine1: z.string().trim().min(1, { message: 'adresse requise' }).max(ADDRESS_LINE_MAX_LENGTH),
+    addressLine1: z.string().trim().min(1).max(ADDRESS_LINE_MAX_LENGTH),
     addressLine2: optionalText(ADDRESS_LINE_MAX_LENGTH),
     postalCode: optionalText(POSTAL_CODE_MAX_LENGTH),
-    city: z.string().trim().min(1, { message: 'ville requise' }).max(CITY_MAX_LENGTH),
+    city: z.string().trim().min(1).max(CITY_MAX_LENGTH),
     adminEmail: emailSchema,
     adminFirstName: nameSchema,
     adminLastName: nameSchema,
@@ -437,10 +436,8 @@ export const createPlatformNoteRequestSchema = z
     body: z
       .string()
       .trim()
-      .min(1, { message: 'la note est vide' })
-      .max(PLATFORM_NOTE_MAX_LENGTH, {
-        message: `${String(PLATFORM_NOTE_MAX_LENGTH)} caractères au plus`,
-      }),
+      .min(1)
+      .max(PLATFORM_NOTE_MAX_LENGTH),
   })
   .strict();
 
@@ -461,7 +458,7 @@ export const updateTenantStatusRequestSchema = z
     reason: z
       .string()
       .trim()
-      .min(PLATFORM_STATUS_REASON_MIN_LENGTH, { message: 'indiquez le motif' })
+      .min(PLATFORM_STATUS_REASON_MIN_LENGTH)
       .max(PLATFORM_STATUS_REASON_MAX_LENGTH),
   })
   .strict();

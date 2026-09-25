@@ -59,13 +59,28 @@ export const LOCALES = ['fr', 'en'] as const;
  * code `VALIDATION_ERROR` du contrat (`TRANSPORT_ERROR_CODES`) et le champ nommé
  * dans `details.violations` : c'est le neuvième critère d'acceptation de #844.
  *
- * Le message est écrit pour être lu par la personne qui a saisi, pas par la
- * console : « Invalid enum value. Expected 'fr' | 'en' » est le défaut de Zod, et
- * il remonterait tel quel jusqu'au formulaire de réglages.
+ * ## Plus d'`errorMap` écrite ici — #1232
+ *
+ * Ce schéma a porté « langue attendue parmi fr, en », pour que « Invalid enum
+ * value. Expected 'fr' | 'en' » — le défaut de Zod — ne remonte pas jusqu'au
+ * formulaire de réglages. La phrase tenait ce rôle, mais elle n'existait qu'en
+ * français : elle s'affichait telle quelle sous le sélecteur de langue d'un
+ * écran anglais, ce qui est à peu près le pire endroit du produit pour laisser
+ * une phrase non traduite.
+ *
+ * C'est `zodErrorMap(locale)` qui répond désormais — « Choisissez une des
+ * options proposées. » / « Choose one of the available options. » —, et c'est la
+ * bonne phrase sous une liste déroulante, où les options sont sous les yeux :
+ * les énumérer à nouveau dans le message n'apprendrait rien. Le défaut de Zod ne
+ * remonte pas pour autant, la carte de repli de `zod-messages.ts` couvrant aussi
+ * les appelants qui ne passent pas de langue.
+ *
+ * Le repli n'est pas importé ici, et c'est délibéré : `zod-messages.ts` dépend du
+ * type `Locale`, et lui faire dépendre ce fichier en retour fermerait un cycle
+ * que `tsc` résout en élargissant `Locale` à `string` — les deux tables de
+ * messages perdraient alors la garantie qui fait toute leur valeur.
  */
-export const localeSchema = z.enum(LOCALES, {
-  errorMap: () => ({ message: `langue attendue parmi ${LOCALES.join(', ')}` }),
-});
+export const localeSchema = z.enum(LOCALES);
 
 export type Locale = z.infer<typeof localeSchema>;
 

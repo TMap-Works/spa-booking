@@ -1,6 +1,6 @@
 'use client';
 
-import { createStaffMemberRequestSchema } from '@spa/shared';
+import { createStaffMemberRequestSchema, zodErrorMap, type Locale } from '@spa/shared';
 import { useLocale, useTranslations } from 'next-intl';
 import { useRouter } from 'next/navigation';
 import { useState, useTransition } from 'react';
@@ -117,7 +117,7 @@ interface StaffMemberFormProps {
 
 export function StaffMemberForm({ tenantSlug, accounts }: StaffMemberFormProps) {
   const t = useTranslations('admin-staff');
-  const locale = useLocale();
+  const locale = useLocale() as Locale;
   const router = useRouter();
   const { renewIfExpired } = useAdminSessionRenewal(tenantSlug);
   const [userId, setUserId] = useState('');
@@ -160,16 +160,23 @@ export function StaffMemberForm({ tenantSlug, accounts }: StaffMemberFormProps) 
   }
 
   async function create(): Promise<void> {
-    const parsed = createStaffMemberRequestSchema.safeParse({
-      userId,
-      displayName: displayName.trim(),
-      // « Absente » et « vide » disent la même chose : pas de présentation. Le
-      // contrat accepterait la chaîne vide — `longTextSchema` n'a pas de
-      // minimum —, et elle descendrait jusqu'à la colonne, où elle se
-      // distinguerait de `NULL` sans rien vouloir dire de plus. L'omettre laisse
-      // l'API poser le `null` qu'elle sait poser.
-      ...(bio.trim() === '' ? {} : { bio: bio.trim() }),
-    });
+    // La carte d'erreurs est **passée** : `createStaffMemberRequestSchema`
+    // reprend `displayNameSchema` et `longTextSchema`, dont les bornes ne se
+    // disent que par elle depuis #1232. Sans elle, ce formulaire afficherait la
+    // langue du repli de `@spa/shared`, pas celle de la page.
+    const parsed = createStaffMemberRequestSchema.safeParse(
+      {
+        userId,
+        displayName: displayName.trim(),
+        // « Absente » et « vide » disent la même chose : pas de présentation. Le
+        // contrat accepterait la chaîne vide — `longTextSchema` n'a pas de
+        // minimum —, et elle descendrait jusqu'à la colonne, où elle se
+        // distinguerait de `NULL` sans rien vouloir dire de plus. L'omettre
+        // laisse l'API poser le `null` qu'elle sait poser.
+        ...(bio.trim() === '' ? {} : { bio: bio.trim() }),
+      },
+      { errorMap: zodErrorMap(locale) },
+    );
 
     if (!parsed.success) {
       const { fields } = collectMemberErrors(parsed.error.issues);
@@ -188,8 +195,9 @@ export function StaffMemberForm({ tenantSlug, accounts }: StaffMemberFormProps) 
         // déroulante ne s'adresse à personne.
         ...(userId === '' ? { userId: t('member.accountRequired') } : {}),
       });
-      // Le message du contrat partagé est un littéral français : depuis #848 il
-      // ne remonte plus à l'écran, seul le champ fautif en vient.
+      // Le refus du contrat se lit maintenant dans la langue de la page (#1232),
+      // mais il reste rattaché à son champ : ce qui monte en bandeau, c'est la
+      // phrase du catalogue, et seulement quand aucun champ n'a été nommé.
       setFormError(Object.keys(fields).length === 0 ? t('member.invalid') : null);
       return;
     }

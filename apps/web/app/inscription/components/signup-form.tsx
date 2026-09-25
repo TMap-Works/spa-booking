@@ -4,6 +4,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import {
   ERROR_CODES,
   SUBSCRIPTION_PLAN,
+  resourceSlugSchema,
   salonSignupRequestSchema,
   type Locale,
   type SalonSignupRequest,
@@ -144,15 +145,33 @@ const FIELD_ERROR_KEYS = {
 type SignupFieldName = keyof typeof FIELD_ERROR_KEYS;
 
 /**
- * Le type dont Zod marque un `refine` — l'unique règle du slug qui ne parle pas
- * de sa **forme** mais de sa **disponibilité** (`slugSchema`).
+ * Le type dont Zod marque un `refine`.
  *
  * Un message par champ suffit partout ailleurs, parce que les autres champs
- * n'ont qu'une manière d'être refusés. Le slug en a deux, et les confondre
- * donnerait à une gérante qui saisit `support` un message qui lui demande des
- * minuscules et des tirets — qu'elle a déjà écrits.
+ * n'ont qu'une manière d'être refusés. Le slug en a deux — sa **forme** et sa
+ * **disponibilité** —, et les confondre donnerait à une gérante qui saisit
+ * `support` un message qui lui demande des minuscules et des tirets — qu'elle a
+ * déjà écrits.
+ *
+ * Ce type ne suffit plus à les séparer depuis #1232 : les deux règles de
+ * `slugSchema` sont maintenant des `refine` — c'est ce qui leur permet de porter
+ * une clé de message traduisible —, et rendent donc toutes deux un `custom`.
+ * C'est {@link slugReserved} qui tranche, en rejouant la seule règle qui les
+ * sépare.
  */
 const CUSTOM_FIELD_ERROR = 'custom';
+
+/**
+ * `true` si la valeur saisie est refusée **parce qu'elle est réservée**, et non
+ * parce qu'elle est mal formée.
+ *
+ * `slugSchema` est `resourceSlugSchema` plus la liste des noms que la plateforme
+ * garde : une adresse que le second accepte et que le premier refuse est donc
+ * réservée, et pas autre chose.
+ */
+function slugReserved(value: unknown): boolean {
+  return resourceSlugSchema.safeParse(value).success;
+}
 
 /** Les clés d'erreur du catalogue, telles que `t()` les accepte. */
 type ErrorKey =
@@ -247,8 +266,9 @@ export function SignupForm() {
       return error.message;
     }
 
-    // Le nom réservé — voir {@link CUSTOM_FIELD_ERROR}.
-    if (name === 'slug' && error.type === CUSTOM_FIELD_ERROR) {
+    // Le nom réservé — voir {@link CUSTOM_FIELD_ERROR}. Une faute de forme rend
+    // le même code depuis #1232 : c'est la valeur saisie qui les départage.
+    if (name === 'slug' && error.type === CUSTOM_FIELD_ERROR && slugReserved(watch('slug'))) {
       return t('fieldErrors.slugReserved');
     }
 

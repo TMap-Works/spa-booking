@@ -8,6 +8,7 @@
  * une colonne que la contrainte `CHECK` refuse, donc un 500 sur une saisie.
  */
 
+import { validationPhrases, zodErrorMap } from '../errors/index';
 import {
   DEFAULT_LOCALE,
   LOCALES,
@@ -37,15 +38,31 @@ describe('localeSchema', () => {
     }
   });
 
-  it('rend un message lisible par qui a saisi, pas par une console', () => {
+  it.each([...LOCALES])(
+    'rend un message lisible par qui a saisi, en « %s »',
+    (locale) => {
+      // Le défaut de Zod — « Invalid enum value. Expected 'fr' | 'en' » —
+      // remonterait tel quel jusqu'au sélecteur de langue des réglages. Depuis
+      // #1232 la phrase ne vient plus d'un `errorMap` écrit sur ce schéma, qui
+      // n'existait qu'en français : c'est `zodErrorMap(locale)` qui la donne, et
+      // « choisissez une des options proposées » est la bonne formule sous une
+      // liste déroulante dont les options sont visibles.
+      const refus = localeSchema.safeParse('de', { errorMap: zodErrorMap(locale) });
+
+      expect(refus.success).toBe(false);
+      if (!refus.success) {
+        expect(refus.error.issues[0]?.message).toBe(validationPhrases(locale).choice);
+      }
+    },
+  );
+
+  it('ne laisse pas remonter le libellé brut de Zod sans langue demandée', () => {
+    // Le repli global de `zod-messages.ts` couvre l'appelant qui ne passe rien —
+    // un service, un journal.
     const refus = localeSchema.safeParse('de');
 
     expect(refus.success).toBe(false);
-    if (!refus.success) {
-      // Le défaut de Zod — « Invalid enum value. Expected 'fr' | 'en' » —
-      // remonterait tel quel jusqu'au formulaire de réglages.
-      expect(refus.error.issues[0]?.message).toBe('langue attendue parmi fr, en');
-    }
+    expect(refus.error?.issues[0]?.message).not.toMatch(/Invalid enum value/);
   });
 });
 

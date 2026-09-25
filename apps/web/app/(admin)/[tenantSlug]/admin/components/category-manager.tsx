@@ -6,6 +6,7 @@ import {
   ERROR_CODES,
   SLUG_MAX_LENGTH,
   longTextSchema,
+  resourceSlugSchema,
   slugSchema,
   zodErrorMap,
   type Locale,
@@ -109,13 +110,23 @@ function slugRefusal(
     return null;
   }
 
-  const codes = new Set(parsed.error.issues.map((issue) => issue.code));
-
-  if (codes.has('too_big')) {
+  if (parsed.error.issues.some((issue) => issue.code === 'too_big')) {
     return messages.slugTooLong;
   }
 
-  return codes.has('custom') ? messages.slugReserved : messages.slug;
+  /*
+   * Le nom réservé se distingue de la faute de forme en rejouant **la seule
+   * règle qui les sépare** : `slugSchema` est `resourceSlugSchema` plus la liste
+   * des noms que la plateforme garde. Une adresse que le second accepte et que
+   * le premier refuse est donc réservée, et pas autre chose.
+   *
+   * Lu ainsi plutôt que sur le code de l'`issue` depuis #1232 : les deux règles
+   * du contrat sont maintenant des `refine` — c'est ce qui leur permet de porter
+   * une clé de message traduisible —, et elles rendent donc toutes les deux un
+   * `custom`. Le code ne les distinguait plus, et `www` se serait vu reprocher
+   * une minuscule qu'il a déjà.
+   */
+  return resourceSlugSchema.safeParse(value).success ? messages.slugReserved : messages.slug;
 }
 
 function categoryFormSchema(messages: CategoryFormMessages) {

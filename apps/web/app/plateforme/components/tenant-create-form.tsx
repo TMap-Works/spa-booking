@@ -4,6 +4,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import {
   ERROR_CODES,
   createTenantRequestSchema,
+  resourceSlugSchema,
   type CreateTenantRequest,
   type Locale,
   type ProvisionedTenant,
@@ -113,8 +114,27 @@ const EMPTY_VALUES: CreateTenantRequest = {
  */
 const SERVER_FIELD_ERROR = 'server';
 
-/** Le type dont Zod marque un `refine` — ici, le slug réservé par la plateforme. */
+/**
+ * Le type dont Zod marque un `refine`.
+ *
+ * Il ne suffit pas à désigner le slug réservé : depuis #1232 la **forme** du
+ * slug est elle aussi un `refine` — c'est ce qui lui permet de porter une clé de
+ * message traduisible —, et rend donc le même code. C'est {@link slugReserved}
+ * qui tranche.
+ */
 const CUSTOM_FIELD_ERROR = 'custom';
+
+/**
+ * `true` si la valeur saisie est refusée **parce qu'elle est réservée**, et non
+ * parce qu'elle est mal formée.
+ *
+ * `slugSchema` est `resourceSlugSchema` plus la liste des noms que la plateforme
+ * garde : une adresse que le second accepte et que le premier refuse est donc
+ * réservée, et pas autre chose.
+ */
+function slugReserved(value: unknown): boolean {
+  return resourceSlugSchema.safeParse(value).success;
+}
 
 /** Ce qu'un champ refusé annonce — un message par champ, jamais par code de Zod. */
 const FIELD_ERROR_KEYS = {
@@ -205,7 +225,7 @@ export function TenantCreateForm() {
     }
     // Le slug a deux façons d'être refusé — sa forme, et sa disponibilité. Les
     // confondre demanderait des minuscules et des tirets à qui en a déjà mis.
-    if (name === 'slug' && error.type === CUSTOM_FIELD_ERROR) {
+    if (name === 'slug' && error.type === CUSTOM_FIELD_ERROR && slugReserved(watch('slug'))) {
       return t('create.fieldErrors.slugReserved');
     }
 

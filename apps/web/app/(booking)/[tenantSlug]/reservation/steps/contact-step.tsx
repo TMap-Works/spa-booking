@@ -423,10 +423,18 @@ export function ContactStep({
    *
    * `FieldError.type` porte le `code` de l'`issue` Zod que `zodResolver` a
    * relayée : `too_small` pour un champ requis laissé vide, `too_big` pour une
-   * borne de longueur dépassée, `invalid_string` pour une adresse e-mail qui
-   * n'en est pas une. Ce sont les seules issues que les trois schémas de ce
-   * formulaire produisent ; le repli couvre ce qu'un durcissement du contrat y
-   * ajouterait, plutôt que de laisser un champ refusé sans un mot.
+   * borne de longueur dépassée. Ce sont les seules issues **de forme** que les
+   * trois schémas de ce formulaire produisent ; le repli couvre ce qu'un
+   * durcissement du contrat y ajouterait, plutôt que de laisser un champ refusé
+   * sans un mot.
+   *
+   * Le repli dépend du champ, et c'est ce que `invalid` nomme : depuis #1232 les
+   * règles que le contrat écrit lui-même — une adresse e-mail, un numéro
+   * normalisable — sont des `refine`, seule forme d'`issue` que zod laisse
+   * porter une clé de message traduisible. Elles rendent donc toutes un `custom`,
+   * que le code ne distingue plus : c'est l'appelant qui sait de quel champ il
+   * parle, et « cette valeur n'est pas valide » sous un champ d'adresse e-mail
+   * n'apprenait rien à personne.
    *
    * `max` est la borne du champ, lue dans `@spa/shared` — la même constante que
    * le schéma : « faites plus court » sans dire combien oblige à tâtonner
@@ -434,7 +442,11 @@ export function ContactStep({
    * groupe pas ses milliers : la borne d'un mot au salon s'écrit « 2000 » et
    * non « 2 000 », comme la borne d'une colonne.
    */
-  const fieldError = (error: FieldError | undefined, max: number): string | undefined => {
+  const fieldError = (
+    error: FieldError | undefined,
+    max: number,
+    invalid: 'email' | 'invalid' = 'invalid',
+  ): string | undefined => {
     if (error === undefined) {
       return undefined;
     }
@@ -444,10 +456,8 @@ export function ContactStep({
         return t('tunnel.contactStep.errors.required');
       case 'too_big':
         return t('tunnel.contactStep.errors.tooLong', { max: String(max) });
-      case 'invalid_string':
-        return t('tunnel.contactStep.errors.email');
       default:
-        return t('tunnel.contactStep.errors.invalid');
+        return t(`tunnel.contactStep.errors.${invalid}`);
     }
   };
 
@@ -620,7 +630,7 @@ export function ContactStep({
           autoComplete="email"
           required
           hint={t('tunnel.contactStep.emailHint')}
-          error={fieldError(errors.email, EMAIL_ADDRESS_MAX_LENGTH)}
+          error={fieldError(errors.email, EMAIL_ADDRESS_MAX_LENGTH, 'email')}
           {...register('email')}
         />
       </div>

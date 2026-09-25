@@ -25,6 +25,8 @@
 
 import { z } from 'zod';
 
+import { messageKey } from '../errors/zod-messages';
+
 /**
  * Instant ISO 8601 **en UTC**, suffixé `Z`.
  *
@@ -34,10 +36,12 @@ import { z } from 'zod';
  * pouvoir comparer deux horodatages sans les normaliser d'abord. Le fuseau
  * d'affichage est une propriété du tenant, pas de la charge utile.
  */
-export const utcInstantSchema = z.string().datetime({
-  offset: false,
-  message: 'un instant doit être en ISO 8601 UTC, suffixé « Z »',
-});
+// Pas de message posé ici : `zodErrorMap(locale)` nomme déjà le refus d'un
+// `datetime` dans la langue de l'écran, là où la phrase écrite en dur qui se
+// trouvait à cette place s'affichait en français sous un formulaire anglais
+// (#1232). Cette borne-ci ne se saisit de toute façon jamais à la main — elle
+// décrit un horodatage émis par une machine.
+export const utcInstantSchema = z.string().datetime({ offset: false });
 
 export type UtcInstant = z.infer<typeof utcInstantSchema>;
 
@@ -110,10 +114,7 @@ export function isOffsetDateTime(value: string): boolean {
  */
 export const offsetDateTimeSchema = z
   .string()
-  .refine(isOffsetDateTime, {
-    message:
-      'une date-heure doit être en ISO 8601 avec offset explicite (« Z » ou « ±HH:MM »)',
-  })
+  .refine(isOffsetDateTime, messageKey('time.offsetDateTime'))
   .transform((value): UtcInstant => toUtcInstant(new Date(value)));
 
 /**
@@ -131,9 +132,9 @@ export const offsetDateTimeSchema = z
  */
 export const LOCAL_TIME_PATTERN = /^([01]\d|2[0-3]):([0-5]\d)$/;
 
-export const localTimeSchema = z.string().regex(LOCAL_TIME_PATTERN, {
-  message: 'heure locale attendue au format HH:MM (00:00 à 23:59)',
-});
+export const localTimeSchema = z
+  .string()
+  .refine((value) => LOCAL_TIME_PATTERN.test(value), messageKey('time.localTime'));
 
 export type LocalTime = z.infer<typeof localTimeSchema>;
 
@@ -178,8 +179,8 @@ export function minutesToLocalTime(minutes: number): LocalTime {
  */
 export const calendarDateSchema = z
   .string()
-  .regex(/^\d{4}-\d{2}-\d{2}$/, { message: 'date attendue au format YYYY-MM-DD' })
-  .refine(isRealCalendarDate, { message: 'cette date n’existe pas au calendrier' });
+  .refine((value) => /^\d{4}-\d{2}-\d{2}$/.test(value), messageKey('time.calendarDate'))
+  .refine(isRealCalendarDate, messageKey('time.calendarDateUnreal'));
 
 export type CalendarDate = z.infer<typeof calendarDateSchema>;
 
@@ -194,7 +195,7 @@ export type CalendarDate = z.infer<typeof calendarDateSchema>;
 export const timeZoneSchema = z
   .string()
   .min(1)
-  .refine(isValidTimeZone, { message: 'fuseau horaire IANA inconnu' });
+  .refine(isValidTimeZone, messageKey('time.timeZone'));
 
 export type TimeZone = z.infer<typeof timeZoneSchema>;
 
@@ -215,13 +216,7 @@ export type TimeZone = z.infer<typeof timeZoneSchema>;
 export const DURATION_MINUTES_MAX = 1440;
 
 /** Durée en minutes — entière, strictement positive (un soin de 0 min n'existe pas) et bornée à la journée. */
-export const durationMinutesSchema = z
-  .number()
-  .int({ message: 'une durée s’exprime en minutes entières' })
-  .min(1, { message: 'une durée doit être strictement positive' })
-  .max(DURATION_MINUTES_MAX, {
-    message: `une durée n’excède pas ${String(DURATION_MINUTES_MAX)} minutes`,
-  });
+export const durationMinutesSchema = z.number().int().min(1).max(DURATION_MINUTES_MAX);
 
 /**
  * Intervalle `[startsAt, endsAt[` en UTC.
@@ -240,7 +235,7 @@ export const utcIntervalSchema = z
   })
   .strict()
   .refine((interval) => Date.parse(interval.endsAt) > Date.parse(interval.startsAt), {
-    message: 'la fin doit être strictement postérieure au début',
+    ...messageKey('time.intervalOrder'),
     path: ['endsAt'],
   });
 

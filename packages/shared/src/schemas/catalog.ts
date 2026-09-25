@@ -39,13 +39,7 @@ import { DURATION_MINUTES_MAX, durationMinutesSchema } from '../common/time';
  * (`DURATION_MINUTES_MAX`) : il était posé par un `.extend()` de `catalog`, #554
  * l'a remonté au contrat.
  */
-export const bufferMinutesSchema = z
-  .number()
-  .int({ message: 'un tampon s’exprime en minutes entières' })
-  .min(0, { message: 'un tampon n’est jamais négatif' })
-  .max(DURATION_MINUTES_MAX, {
-    message: `un tampon n’excède pas ${String(DURATION_MINUTES_MAX)} minutes`,
-  });
+export const bufferMinutesSchema = z.number().int().min(0).max(DURATION_MINUTES_MAX);
 
 /**
  * Durée **occupée** — la somme des trois termes, et non une durée de plus.
@@ -60,13 +54,7 @@ export const bufferMinutesSchema = z
  */
 const OCCUPIED_MINUTES_MAX = 3 * DURATION_MINUTES_MAX;
 
-const occupiedMinutesSchema = z
-  .number()
-  .int({ message: 'une durée s’exprime en minutes entières' })
-  .min(1, { message: 'une durée doit être strictement positive' })
-  .max(OCCUPIED_MINUTES_MAX, {
-    message: `une durée occupée n’excède pas ${String(OCCUPIED_MINUTES_MAX)} minutes`,
-  });
+const occupiedMinutesSchema = z.number().int().min(1).max(OCCUPIED_MINUTES_MAX);
 
 /**
  * Rubrique du catalogue — « Soins du visage », « Coiffure ».
@@ -181,10 +169,7 @@ export const serviceSchema = z.object({
    * Un entier plutôt que la liste : l'écran de catalogue n'affiche pas de noms, et
    * embarquer les fiches ferait transiter l'annuaire complet à chaque ligne.
    */
-  assignedStaffCount: z
-    .number()
-    .int({ message: 'un nombre de praticiens s’exprime en entier' })
-    .min(0, { message: 'un nombre de praticiens n’est jamais négatif' }),
+  assignedStaffCount: z.number().int().min(0),
   /**
    * Combien de ces praticiens sont **actifs** — donc combien peuvent réellement
    * honorer la prestation.
@@ -209,10 +194,7 @@ export const serviceSchema = z.object({
    * `serviceSummarySchema` comme `publicServiceSchema` dérivent de ce schéma par
    * `.pick()`, que seul un `ZodObject` offre.
    */
-  activeAssignedStaffCount: z
-    .number()
-    .int({ message: 'un nombre de praticiens s’exprime en entier' })
-    .min(0, { message: 'un nombre de praticiens n’est jamais négatif' }),
+  activeAssignedStaffCount: z.number().int().min(0),
 });
 
 export type Service = z.infer<typeof serviceSchema>;

@@ -1,11 +1,17 @@
 'use client';
 
 import { zodResolver } from '@hookform/resolvers/zod';
-import { ERROR_CODES, loginRequestSchema, type LoginRequest } from '@spa/shared';
-import { useTranslations } from 'next-intl';
+import {
+  ERROR_CODES,
+  loginRequestSchema,
+  zodErrorMap,
+  type Locale,
+  type LoginRequest,
+} from '@spa/shared';
+import { useLocale, useTranslations } from 'next-intl';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useForm } from 'react-hook-form';
 
 import { Button } from '@/components/ui/button';
@@ -64,6 +70,7 @@ const NOTICE_TONES: Readonly<Record<SessionNotice, NotificationTone>> = {
 
 export function LoginForm({ tenantSlug, notice }: LoginFormProps) {
   const t = useTranslations('account.login');
+  const locale = useLocale() as Locale;
   const router = useRouter();
   /*
    * La destination de retour, lue dans l'adresse et **rejugée ici** (#1087).
@@ -80,13 +87,30 @@ export function LoginForm({ tenantSlug, notice }: LoginFormProps) {
    */
   const returnTo = safeReturnPath(useSearchParams().get(RETURN_QUERY_KEY), tenantSlug);
   const [failure, setFailure] = useState<string | null>(null);
+  /*
+   * Les refus des champs viennent de zod, donc de `zodErrorMap` — « Saisissez
+   * une adresse e-mail valable. » et non « Enter a valid email address. » sous un
+   * formulaire français, ni l'inverse sous un formulaire anglais (#1232). Sans
+   * cette carte, le contrat rendait ses phrases dans la langue du **repli** de
+   * `@spa/shared`, quelle que soit celle de l'écran.
+   *
+   * Mémoïsé sur la langue, comme les trois formulaires du back-office : un
+   * résolveur neuf à chaque frappe serait reconstruit par `react-hook-form` sans
+   * rien changer. `path` et `async` sont là pour le **typage** de
+   * `@hookform/resolvers`, qui déclare `ParseParams` entier là où zod n'en lit
+   * qu'une partie.
+   */
+  const resolver = useMemo(
+    () => zodResolver(loginRequestSchema, { errorMap: zodErrorMap(locale), path: [], async: true }),
+    [locale],
+  );
 
   const {
     register,
     handleSubmit,
     formState: { errors, isSubmitting },
   } = useForm<LoginRequest>({
-    resolver: zodResolver(loginRequestSchema),
+    resolver,
     defaultValues: { email: '', password: '' },
     // Le message apparaît quand on quitte le champ, pas à la première frappe.
     mode: 'onTouched',
