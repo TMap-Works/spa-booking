@@ -50,3 +50,8 @@ report-filters.tsx
 # vit le fichier, pour que retirer ce bouton du catalogue de la coquille se voie
 # à l'endroit où on le lit. Les motifs sont dédoublonnés à la lecture.
 admin-logout-button.tsx
+#
+# Le squelette des quinze écrans de chargement du back-office — #1234. Sa seule
+# phrase est celle que le lecteur d'écran entend, et elle vient désormais de
+# `shell.admin.loading`.
+admin-screen-skeleton.tsx

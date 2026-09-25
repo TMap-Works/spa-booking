@@ -5,6 +5,9 @@
   "sheet": {
     "close": "Close"
   },
+  "tabs": {
+    "marked": "contains your choice"
+  },
   "password": {
     "show": "Show",
     "hide": "Hide",

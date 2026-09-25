@@ -411,9 +411,23 @@ describe('les refus de l’inscription s’affichent dans la langue de l’écra
     expect(screen.queryByText('Une erreur inattendue est survenue. Merci de réessayer.')).toBeNull();
   });
 
-  it('retombe sur le message du refus pour un code qu’il ne connaît pas', async () => {
-    // Un code inconnu de la table vaut mieux affiché qu'avalé : la visiteuse
-    // saurait au moins que quelque chose a été refusé.
+  /*
+   * Le repli d'un code inconnu — #1234, second critère d'acceptation : *« aucun
+   * écran ne retombe sur un message brut de l'API ; un code inconnu donne un
+   * message générique traduit »*.
+   *
+   * Il retombait sur `result.message`, c'est-à-dire sur la phrase du serveur —
+   * écrite en français, l'API n'ayant pas de langue de requête. C'était l'écran
+   * bilingue au premier refus que la table de l'inscription ne nomme pas, et
+   * c'est précisément ce que le ticket ferme : le repli est
+   * `errorMessage(code, locale)` du contrat partagé, dont le repli à lui est la
+   * phrase générique d'`INTERNAL_ERROR`.
+   */
+  it.each([
+    ['fr', 'Une erreur inattendue est survenue. Réessayez dans un instant.'],
+    ['en', 'Something went wrong. Please try again in a moment.'],
+  ] as const)('donne un message générique traduit pour un code inconnu — %s', async (locale, attendu) => {
+    state.locale = locale;
     signupSalonAction.mockResolvedValue({
       ok: false,
       code: 'CODE_QUI_NEXISTE_PAS',
@@ -421,8 +435,10 @@ describe('les refus de l’inscription s’affichent dans la langue de l’écra
     });
     render(<SignupForm />);
 
-    await remplirEtSoumettre('fr');
+    await remplirEtSoumettre(locale);
 
-    expect(await screen.findByText('Un refus que le front ne sait pas nommer.')).toBeDefined();
+    expect(await screen.findByText(attendu)).toBeDefined();
+    // Et surtout : la phrase du serveur ne s'affiche plus, dans aucune langue.
+    expect(screen.queryByText('Un refus que le front ne sait pas nommer.')).toBeNull();
   });
 });

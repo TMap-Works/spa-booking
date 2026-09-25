@@ -4,6 +4,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import {
   ERROR_CODES,
   SUBSCRIPTION_PLAN,
+  errorMessage,
   resourceSlugSchema,
   salonSignupRequestSchema,
   type Locale,
@@ -186,10 +187,15 @@ type ErrorKey =
 /**
  * Ce que chaque refus de l'API devient à l'écran, dans la langue lue.
  *
- * Le front réagit sur le **code**, jamais sur le message (web-frontend §2) : le
- * message que porte le refus est écrit côté serveur, donc en français, et
- * l'afficher tel quel rendrait un écran anglais bilingue à la première erreur.
- * Il ne sert plus que de repli, pour un code que cette table ne connaît pas.
+ * Le front réagit sur le **code**, jamais sur le message (web-frontend §2) :
+ * cette table porte les phrases que l'inscription écrit pour elle-même, là où le
+ * refus mérite d'être nommé dans les mots du formulaire.
+ *
+ * Un code qu'elle ne connaît pas ne retombe plus sur `result.message` (#1234) :
+ * c'était le message du serveur, donc écrit en français, et il rendait l'écran
+ * bilingue au premier refus inattendu. Le repli est `errorMessage(code, locale)`
+ * du contrat partagé, dont le repli à lui est la phrase générique
+ * d'`INTERNAL_ERROR`.
  */
 const ERROR_KEYS: Readonly<Record<string, ErrorKey>> = {
   [ERROR_CODES.TENANT_SLUG_TAKEN]: 'errors.slugTaken',
@@ -294,7 +300,7 @@ export function SignupForm() {
         return;
       }
 
-      setFailure(key === undefined ? result.message : t(key));
+      setFailure(key === undefined ? errorMessage(result.code, locale) : t(key));
       return;
     }
 

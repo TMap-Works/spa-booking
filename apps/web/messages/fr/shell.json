@@ -26,6 +26,7 @@
   },
   "admin": {
     "metadataTitle": "Back-office",
+    "loading": "Chargement de l’écran…",
     "topbar": {
       "storefront": "Voir ma vitrine",
       "newTab": " (nouvel onglet)",

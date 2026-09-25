@@ -1,3 +1,5 @@
+import { useTranslations } from 'next-intl';
+
 import { ProgressBar } from '@/components/ui/progress-bar';
 
 /** Lignes de la carte : de quoi remplir la hauteur d'un écran de bureau. */
@@ -43,12 +45,33 @@ const SKELETON_ROWS = [1, 2, 3, 4, 5, 6] as const;
  * Aucun titre de niveau 1 : chaque écran rend le sien, et un titre provisoire
  * annoncerait un nom d'écran que le squelette ignore — il les sert tous. Sa
  * forme et ses mesures sont décrites dans `styles/admin/loading.css`.
+ *
+ * ## La langue (#1234)
+ *
+ * Son seul texte est la phrase que le lecteur d'écran entend pendant que l'écran
+ * arrive — et elle restait française sur un back-office anglais, sur la
+ * quinzaine de `loading.tsx` qui montent ce dessin. Elle vient donc du namespace
+ * de la coquille, `shell.admin.loading`, où le rail et la barre haute lisent
+ * déjà les leurs : c'est la **même** coquille qui parle, et une clé rangée
+ * ailleurs aurait fait dépendre le squelette du catalogue d'un écran qu'il ne
+ * sert pas plus que les autres.
+ *
+ * Une phrase unique, et non une par écran — à la différence du tunnel
+ * (`components/booking/step-skeleton.tsx`, `tunnel.skeleton.loading.<étape>`) :
+ * ce dessin est le même partout, il ne connaît pas l'écran qui arrive, et
+ * annoncer « Chargement des clients… » sous la forme d'un écran de reporting
+ * serait dire faux.
+ *
+ * Server Component **synchrone** — `useTranslations` et non `getTranslations`,
+ * comme `(booking)/[tenantSlug]/(vitrine)/loading.tsx`.
  */
 export function AdminScreenSkeleton() {
+  const t = useTranslations('shell');
+
   return (
     <div aria-busy="true" className="spa-admin-loading">
       <ProgressBar />
-      <p className="spa-visually-hidden">Chargement de l’écran…</p>
+      <p className="spa-visually-hidden">{t('admin.loading')}</p>
       <span className="spa-skeleton spa-admin-loading__title" />
       <div className="spa-admin-loading__toolbar">
         <span className="spa-skeleton spa-admin-loading__control" />

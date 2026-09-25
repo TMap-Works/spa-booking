@@ -1,11 +1,9 @@
 'use client';
 
+import { useTranslations } from 'next-intl';
 import { useRef, type KeyboardEvent } from 'react';
 
 import { Icon } from '@/components/ui/icon';
-
-/** Ce que la marque d'un onglet dit, à défaut d'une précision de l'appelant. */
-const DEFAULT_MARKED_LABEL = 'contient votre choix';
 
 export interface TabItem {
   readonly id: string;
@@ -41,6 +39,12 @@ interface TabsProps {
    * glisser de texte alternatif. La phrase se range donc en lecture d'écran
    * seule, à la suite du libellé et de l'effectif — « Massages · 2 · contient
    * votre choix ». À préciser quand « choix » ne nomme pas ce qui est retenu.
+   *
+   * **Facultatif**, et son absence n'est plus un littéral français (#1234) : le
+   * défaut vient de `ui.tabs.marked`, comme les autres mots de cette brique
+   * partagée. Un appelant qui le précise reste responsable de le traduire dans
+   * son propre namespace — c'est justement parce que le mot juste dépend de
+   * l'écran que cette propriété existe.
    */
   readonly markedLabel?: string;
 }
@@ -85,9 +89,14 @@ export function Tabs({
   onChange,
   idPrefix,
   variant = 'underline',
-  markedLabel = DEFAULT_MARKED_LABEL,
+  markedLabel,
 }: TabsProps) {
+  const t = useTranslations('ui');
   const list = useRef<HTMLDivElement>(null);
+  // Le défaut est lu ici et non en valeur par défaut de paramètre : un crochet
+  // ne s'appelle pas dans une liste de paramètres, et `ui.tabs.marked` doit
+  // suivre la langue de la session comme le reste de la brique.
+  const marked = markedLabel ?? t('tabs.marked');
 
   const focusTab = (index: number): void => {
     const target = items[index];
@@ -148,7 +157,7 @@ export function Tabs({
             {item.marked !== true ? null : (
               <span className="spa-tabs__mark">
                 <Icon name="check" className="spa-tabs__mark-icon" />
-                <span className="spa-visually-hidden"> · {markedLabel}</span>
+                <span className="spa-visually-hidden"> · {marked}</span>
               </span>
             )}
           </button>
