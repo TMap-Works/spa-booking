@@ -44,13 +44,22 @@
  * même traitement — réserver, confirmer, rappeler — quelle que soit la porte par
  * laquelle on entre.
  *
- * ## La langue (#846)
+ * ## La langue (#846, achevée par #1264)
  *
  * Les phrases vivent dans le catalogue, sous `tunnel.consent`, et elles n'y sont
  * écrites **qu'une fois** pour les deux écrans — c'est la raison d'être de ce
  * fichier, transposée au catalogue. La variante n'en choisit que deux clés,
  * l'introduction et le libellé de la case ; le reste — les finalités, le
  * dépliant, les droits — est commun.
+ *
+ * #846 n'avait converti que l'étape « Coordonnées » du tunnel : l'inscription
+ * cliente, hors de son empreinte, recevait encore une copie toute faite, lue
+ * **dans le catalogue français importé en dur**. L'écran rendu en anglais gardait
+ * donc trois phrases françaises, et la promesse d'une écriture unique ne tenait
+ * que sur le papier — il y en avait bien deux, l'une traduite et l'autre non.
+ * #1264 a fait passer l'inscription à `variant`, ce qui a emporté du même geste
+ * la copie figée, le traducteur français local et l'import de catalogue : ce
+ * module ne lit plus aucun fichier de messages, il n'en demande que les clés.
  *
  * Le lien vers la politique de données est un `t.rich` : c'est un élément JSX au
  * milieu d'une phrase, et le découper en trois chaînes rendrait la phrase
@@ -65,8 +74,6 @@
 import { useTranslations } from 'next-intl';
 import type { InputHTMLAttributes, Ref } from 'react';
 import { z } from 'zod';
-
-import fr from '@/messages/fr/booking.json';
 
 /**
  * La clé du refus de la case — c'est **elle** que le schéma porte en guise de
@@ -258,44 +265,6 @@ export function consentCopy(t: ConsentTranslator, variant: ConsentVariant): Cons
 }
 
 /**
- * La copie française, figée — **le temps que l'espace client soit traduit**.
- *
- * `app/(account)/…/compte/components/register-form.tsx` rend cette copie, et il
- * est hors de l'empreinte de #846 : c'est le ticket de l'espace client, qui
- * ouvre son propre namespace, qui le reprendra. D'ici là, retirer ces deux
- * constantes aurait cassé sa compilation, et lui passer la copie du catalogue
- * sans qu'il sache la demander l'aurait laissé afficher l'anglais à qui lit le
- * reste de son écran en français — un demi-écran traduit est pire qu'un écran
- * qui ne l'est pas.
- *
- * Elles ne **dupliquent aucun texte** : elles lisent le catalogue français,
- * exactement les clés que `consentCopy` lit. Le jour où l'espace client passe à
- * `variant`, ces trois déclarations disparaissent d'un bloc et rien d'autre ne
- * bouge.
- *
- * Le même motif qu'ailleurs dans ce dépôt pour un module lu hors de React :
- * `lib/format.ts` (`WORDS = { fr, en }`) et `components/salon/public-exits.tsx`.
- *
- * @deprecated Employer `consentCopy(t, variant)`, ou `variant` sur
- * {@link ConsentField}.
- */
-const FRENCH_CONSENT: ConsentTranslator = (key) =>
-  // Le catalogue est un arbre de JSON dont TypeScript connaît la forme exacte ;
-  // la descendre par une clé composée à l'exécution demande de relâcher la
-  // contrainte le temps du parcours, une fois, ici. L'inventaire de
-  // `ConsentMessageKey` garantit que chacune de ces clés existe.
-  key.split('.').reduce<unknown>(
-    (node, segment) => (node as Record<string, unknown>)[segment],
-    fr as unknown,
-  ) as string;
-
-/** @deprecated Voir {@link FRENCH_CONSENT}. */
-export const BOOKING_CONSENT: ConsentCopy = consentCopy(FRENCH_CONSENT, 'booking');
-
-/** @deprecated Voir {@link FRENCH_CONSENT}. */
-export const ACCOUNT_CONSENT: ConsentCopy = consentCopy(FRENCH_CONSENT, 'account');
-
-/**
  * `checked` et `defaultChecked` sont retirés au même titre que `type` et `id` :
  * ce ne sont pas des détails de rendu que le composant se réserve, c'est la
  * règle du ticket tenue par le type. Un consentement pré-coché n'est pas un
@@ -318,20 +287,14 @@ interface ConsentFieldProps
    * chose. `consentCopy` reste exportée pour la page publique de la politique
    * de données, qui rend ces finalités hors de tout formulaire.
    *
-   * Facultatif tant que {@link ACCOUNT_CONSENT} existe : l'écran d'inscription
-   * de l'espace client passe encore `copy`, et il est hors de l'empreinte de
-   * #846. L'un des deux est exigé — sans quoi la case naîtrait sans texte, ce
-   * qui n'est pas un consentement éclairé —, et c'est {@link ConsentField} qui
-   * s'en assure.
+   * **Obligatoire** depuis #1264. Elle a été facultative le temps que l'écran
+   * d'inscription passe de `copy` à `variant` ; l'y laisser maintenant que les
+   * deux appelants la donnent rouvrirait le chemin par lequel une copie figée
+   * — donc une seconde écriture, non traduite — est revenue à l'écran. Le type
+   * est ce qui tient le deuxième critère de #1264 : une troisième surface de
+   * consentement ne peut plus naître sans dire laquelle elle est.
    */
-  readonly variant?: ConsentVariant;
-  /**
-   * La copie toute faite, pour l'écran qui n'est pas encore traduit.
-   *
-   * @deprecated Passer `variant` : le composant lit alors le catalogue dans la
-   * langue de la requête. Voir {@link FRENCH_CONSENT}.
-   */
-  readonly copy?: ConsentCopy;
+  readonly variant: ConsentVariant;
   /**
    * L'établissement dont on lit la politique de données (#790).
    *
@@ -383,21 +346,12 @@ interface ConsentFieldProps
  * rattacher l'une à l'autre : rien ne change pour un lecteur d'écran, qui
  * annonce toujours les finalités avec la case.
  */
-export function ConsentField({
-  id,
-  variant,
-  copy: given,
-  tenantSlug,
-  error,
-  ref,
-  ...input
-}: ConsentFieldProps) {
+export function ConsentField({ id, variant, tenantSlug, error, ref, ...input }: ConsentFieldProps) {
   const t = useTranslations('booking');
-  // `variant` d'abord : la copie passée en propriété est le régime transitoire
-  // de l'écran d'inscription, pas celui qu'on veut. Le repli sur « booking »
-  // n'est jamais atteint par les deux appelants du dépôt — il évite seulement
-  // qu'un troisième écran naisse avec une case sans texte.
-  const copy = variant === undefined ? (given ?? consentCopy(t, 'booking')) : consentCopy(t, variant);
+  // Le texte vient du catalogue, et de lui seul : les deux écrans de
+  // consentement lisent la **même** écriture, dans la langue de la requête
+  // (#1264).
+  const copy = consentCopy(t, variant);
   const introId = `${id}-finalites`;
   const errorId = `${id}-error`;
   /*
@@ -406,9 +360,8 @@ export function ConsentField({
    * `consentSchema` est bâti hors de React et ne peut pas traduire son propre
    * message : il porte `CONSENT_ERROR_KEY`, et c'est un point de rendu qui le
    * convertit. Le faire **ici** plutôt que chez chaque appelant est ce qui
-   * permet à l'écran d'inscription — hors de l'empreinte de #846 — de continuer
-   * à passer `errors.dataConsent?.message` tel quel sans afficher une clé brute
-   * à qui s'inscrit.
+   * permet aux deux écrans de passer `errors.dataConsent?.message` tel quel
+   * sans afficher une clé brute à qui réserve ou s'inscrit.
    *
    * Une phrase déjà traduite passe au travers : elle n'est pas la clé.
    */
