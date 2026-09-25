@@ -1,19 +1,26 @@
 import type { Locale } from '@spa/shared';
-import { cookies, headers } from 'next/headers';
 
 import { fetchPublicTenant } from '@/lib/api-client';
 
-import { ACCOUNT_LOCALE_COOKIE, LOCALE_COOKIE, TENANT_SLUG_HEADER } from './cookies';
 import { asLocale, negotiateLocale, resolveLocale } from './resolve';
+import { requestLocaleSignals, visitedTenantSlug } from './signals';
 
 /**
- * La lecture des signaux de langue sur la requête en cours — #845.
+ * L'**ordre complet** de résolution de la langue sur la requête en cours —
+ * #845, l'établissement compris.
  *
- * La **règle** est dans `resolve.ts`, pure et testable sans serveur ; ce module
- * n'est que la plomberie qui l'alimente. La séparation n'est pas décorative :
- * les priorités de l'ordre de résolution sont ce qui doit être éprouvé, et un
- * test qui doit monter une requête HTTP pour éprouver une priorité n'éprouve pas
- * la priorité.
+ * Trois modules s'y partagent le travail, et aucune des deux coupures n'est
+ * décorative :
+ *
+ * - `resolve.ts` porte la **règle**, pure et testable sans serveur — les
+ *   priorités de l'ordre sont ce qui doit être éprouvé, et un test qui doit
+ *   monter une requête HTTP pour éprouver une priorité n'éprouve pas la
+ *   priorité ;
+ * - `signals.ts` porte la **lecture** des signaux de la requête, sans jamais
+ *   appeler l'API — c'est la feuille, celle que le client d'API peut employer
+ *   sans reboucler sur la résolution qui l'appelle (#1286) ;
+ * - ce module ajoute la seule étape que ni l'une ni l'autre ne peut porter :
+ *   `Tenant.defaultLocale`, qui coûte un appel réseau.
  */
 
 /**
@@ -34,25 +41,24 @@ import { asLocale, negotiateLocale, resolveLocale } from './resolve';
  * une panne de plus, pas une garantie.
  */
 export async function requestLocale(): Promise<Locale> {
-  const [cookieStore, headerList] = await Promise.all([cookies(), headers()]);
-
-  const explicit = cookieStore.get(LOCALE_COOKIE)?.value ?? null;
-  const account = cookieStore.get(ACCOUNT_LOCALE_COOKIE)?.value ?? null;
-  const acceptLanguage = headerList.get('accept-language');
+  // Les mêmes signaux que lit `refusalLocale()` du client d'API, lus par le même
+  // module : c'est ce qui garantit qu'un refus se dit dans la langue de la page
+  // qui le reçoit (#1286).
+  const signals = await requestLocaleSignals();
 
   // Le raccourci n'est pas une optimisation prématurée : c'est ce qui garde
   // l'appel réseau hors du chemin des requêtes qui n'en ont pas besoin.
   if (
-    asLocale(explicit) !== null ||
-    asLocale(account) !== null ||
-    negotiateLocale(acceptLanguage) !== null
+    asLocale(signals.explicit) !== null ||
+    asLocale(signals.account) !== null ||
+    negotiateLocale(signals.acceptLanguage) !== null
   ) {
-    return resolveLocale({ explicit, account, acceptLanguage });
+    return resolveLocale(signals);
   }
 
-  const tenant = await tenantDefaultLocale(headerList.get(TENANT_SLUG_HEADER));
+  const tenant = await tenantDefaultLocale(await visitedTenantSlug());
 
-  return resolveLocale({ explicit, account, acceptLanguage, tenant });
+  return resolveLocale({ ...signals, tenant });
 }
 
 /**
@@ -64,7 +70,7 @@ export async function requestLocale(): Promise<Locale> {
  * erreur de la page en cours.
  */
 async function tenantDefaultLocale(tenantSlug: string | null): Promise<string | null> {
-  if (tenantSlug === null || tenantSlug === '') {
+  if (tenantSlug === null) {
     return null;
   }
 
