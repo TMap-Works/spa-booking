@@ -77,8 +77,24 @@ export class CustomerExportService {
    * qui décide, et c'est délibéré : le document est produit **par le comptoir**,
    * qui le relit, le contrôle et le remet — un dossier dont les en-têtes ne
    * seraient pas dans la langue de qui l'imprime ne serait pas vérifiable avant
-   * d'être remis. La préférence de la cliente reste lisible sur sa fiche, où
-   * elle sert à savoir dans quelle langue lui parler.
+   * d'être remis.
+   *
+   * ## Mais la préférence de la personne est dans le dossier — #1255
+   *
+   * Les deux langues cohabitent sans se confondre, parce qu'elles ne sont pas la
+   * même chose : `locale`, à la racine, est **la langue du document** ;
+   * `identity.preferredLocale` est **une donnée détenue sur la personne**, au
+   * même titre que son numéro de téléphone.
+   *
+   * L'omettre était une lacune de l'art. 15, pas un choix : le dossier a pour
+   * objet de restituer ce que le salon détient, et la colonne est détenue, lue
+   * et utilisée — c'est elle qui décide de la langue des notifications. Un
+   * `locale` racine seul se lisait de surcroît spontanément comme la préférence
+   * de la personne, ce qu'il n'est pas.
+   *
+   * Elle a pu être **constatée** à l'inscription (#844) autant que choisie
+   * depuis l'espace client : raison de plus de la restituer, une langue posée
+   * par la page ne se rectifiant (art. 16) que si la personne la voit.
    *
    * @throws {NotFoundError} aucune fiche de cet établissement ne porte cet
    * identifiant — inconnu, du salon voisin, ou compte du personnel,
@@ -106,6 +122,10 @@ export class CustomerExportService {
         lastName: customer.lastName,
         email: customer.email,
         phone: customer.phone,
+        // Telle que le dépôt l'a ramenée — `null` quand aucune préférence n'a
+        // été exprimée, et surtout pas repliée sur `locale` ci-dessus, qui est
+        // la langue du document et non celle de la personne (#1255).
+        preferredLocale: customer.locale,
         isActive: customer.isActive,
         createdAt: customer.createdAt,
         anonymizedAt: customer.anonymizedAt,

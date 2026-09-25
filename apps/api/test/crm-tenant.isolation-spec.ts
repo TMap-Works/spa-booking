@@ -20,7 +20,7 @@ import { UNKNOWN_ID } from './utils/tenant-harness';
  * | `GET /customers` | la liste ne contient rien du voisin, même à nom et adresse identiques |
  * | `GET /customers/:id` | 404 sur la fiche du voisin, et la langue préférée lue est celle de ce salon |
  * | `GET /customers/:id/history` | 404, et aucune visite du voisin ne fuit |
- * | `GET /customers/:id/export` | 404 **dans les deux langues**, et aucun fragment du dossier du voisin ne sort |
+ * | `GET /customers/:id/export` | 404 **dans les deux langues**, aucun fragment du dossier du voisin ne sort, et la langue préférée restituée est celle enregistrée ici |
  * | `POST /customers` | l'adresse du voisin reste libre — l'unicité est par tenant |
  * | `POST /customers/:id/anonymize` | 404, et la fiche du voisin **non anonymisée** |
  * | `PATCH /customers/:id` | 404, et la fiche du voisin intacte |
@@ -83,13 +83,25 @@ describe('Isolation inter-tenant — module crm', () => {
   const server = (): ReturnType<INestApplication['getHttpServer']> => harness.app.getHttpServer();
 
   /** La même personne, fiche chez A et fiche chez B — le scénario du même nom. */
-  function semerDesDeuxCotes(): { chezA: string; chezB: string } {
+  /**
+   * La même personne, cliente des deux salons sous la même adresse.
+   *
+   * `langues` reste facultatif : la plupart des cas n'ont que faire de la
+   * colonne, et ceux de #852 et #1255 ont besoin qu'elle **diffère** d'un salon
+   * à l'autre — `users.locale` est une colonne par ligne, donc par
+   * établissement, et c'est ce qui rend une projection sans filtre de tenant
+   * visible ici.
+   */
+  function semerDesDeuxCotes(
+    langues: { chezA?: 'fr' | 'en' | null; chezB?: 'fr' | 'en' | null } = {},
+  ): { chezA: string; chezB: string } {
     const chezA = harness.repository.addCustomer({
       tenantId: a,
       email: ADRESSE,
       firstName: 'Alice',
       lastName: NOM,
       internalNote: 'note du salon A',
+      locale: langues.chezA ?? null,
     });
     const chezB = harness.repository.addCustomer({
       tenantId: b,
@@ -97,6 +109,7 @@ describe('Isolation inter-tenant — module crm', () => {
       firstName: 'Alice',
       lastName: NOM,
       internalNote: 'note du salon B',
+      locale: langues.chezB ?? null,
     });
     return { chezA: chezA.id, chezB: chezB.id };
   }
@@ -476,6 +489,74 @@ describe('Isolation inter-tenant — module crm', () => {
       langue: 'en',
       entete: 'Identity and contact details',
     });
+    expectExcludesForeignIds(dossier.body, [chezB, b, 'note du salon B']);
+  });
+
+  /**
+   * Le champ que #1255 ajoute au dossier — la langue préférée de la personne.
+   *
+   * Il mérite son propre cas de fuite, et pas seulement parce que la Definition
+   * of Done l'exige de tout endpoint modifié : c'est une donnée personnelle de
+   * plus dans la **lecture la plus large du système**, celle qui rend en un
+   * objet tout ce qu'un salon détient sur quelqu'un. Une projection qui aurait
+   * perdu son filtre de tenant se verrait ici avant de se voir ailleurs.
+   *
+   * Le scénario est choisi pour que trois erreurs distinctes donnent trois
+   * résultats distincts — `users.locale` étant une colonne **par ligne**, donc
+   * par établissement :
+   *
+   * | Si le dossier rend | C'est que |
+   * |---|---|
+   * | `en` | tout va bien : la préférence enregistrée **chez A** |
+   * | `fr` | soit la ligne du voisin a été lue, soit la langue du document a été recopiée — deux fautes qu'un seul assert attrape |
+   * | `null` | la colonne n'est pas projetée du tout |
+   */
+  it('la langue préférée du dossier est celle enregistrée ici, jamais celle du voisin ni celle du document (#1255)', async () => {
+    const { chezA, chezB } = semerDesDeuxCotes({ chezA: 'en', chezB: 'fr' });
+    const bearer = await harness.bearer('MANAGER');
+
+    // Le champ ajouté n'ouvre aucune porte de plus : le dossier du voisin reste
+    // indiscernable de celui d'un inconnu (tenant-isolation §4).
+    await expectCrossTenantNotFound({
+      attempts: [
+        {
+          label: 'export de la fiche du voisin',
+          send: () =>
+            request(server())
+              .get(`${BASE}/${chezB}/export`)
+              .query({ locale: 'fr' })
+              .set('Authorization', bearer),
+        },
+      ],
+      hidden: [chezB, b, 'note du salon B'],
+      intact: () => ficheDuVoisin(chezB),
+    });
+
+    // Chez soi, le dossier est demandé en **français** alors que la personne a
+    // demandé qu'on lui parle en **anglais** : les deux champs de langue sont
+    // donc différents dans le même document, et aucun ne peut se faire passer
+    // pour l'autre.
+    const dossier = await request(server())
+      .get(`${BASE}/${chezA}/export`)
+      .query({ locale: 'fr' })
+      .set('Authorization', bearer)
+      .expect(200);
+
+    const corps = dossier.body as {
+      locale: string;
+      identity: { preferredLocale: string | null };
+      labels: { identity: { preferredLocale: string } };
+    };
+    expect({
+      document: corps.locale,
+      personne: corps.identity.preferredLocale,
+      entete: corps.labels.identity.preferredLocale,
+    }).toEqual({
+      document: 'fr',
+      personne: 'en',
+      entete: 'Langue de contact préférée',
+    });
+
     expectExcludesForeignIds(dossier.body, [chezB, b, 'note du salon B']);
   });
 

@@ -15,6 +15,7 @@ ce fait.
 | #81 | Les droits des personnes : export, anonymisation, consentement marketing — et le [registre des traitements](../../../../../docs/registre-des-traitements.md) |
 | #525 | La projection de l'état de suppression d'adresse sur la fiche — le module lit ce que `notifications` écrit |
 | #852 | La projection de la langue préférée sur la fiche (même régime), et les en-têtes de l'export dans la langue de l'interface |
+| #1255 | La langue préférée **dans le dossier du droit d'accès**, distincte de la langue du document |
 
 Hors périmètre MVP, et donc non livré : fusion de doublons, segmentation,
 campagnes. Le CDC §1.4 borne le module à un « CRM client de base » ; chacun de
@@ -134,6 +135,10 @@ Même partage que les deux champs ci-dessus : sur `CUSTOMER_SELECT` et sur
 moment où l'on ouvre une fiche pour décrocher — « dans quelle langue est-ce que
 je dis bonjour » —, pas en parcourant deux cents lignes.
 
+Elle sort aussi par le dossier du droit d'accès, sous `identity.preferredLocale`
+(#1255) : c'est une donnée détenue sur la personne, et le dossier restitue ce
+qui est détenu.
+
 `null` s'y lit « aucune préférence enregistrée », jamais « français » : c'est
 alors `tenants.default_locale` qui tranche, pour les notifications comme pour
 les pages. Le back-office l'écrit donc en toutes lettres plutôt que d'afficher la
@@ -227,8 +232,9 @@ de leurs durées de conservation vit dans le
 ### L'export — `GET /customers/:id/export`, rang `MANAGER`
 
 Un document JSON unique et **daté**, qui porte tout ce que le salon détient sur
-une personne : identité, coordonnées, consentements avec leur date, note interne
-du salon, et la totalité de ses rendez-vous — textes libres compris.
+une personne : identité, coordonnées, **langue de contact préférée**,
+consentements avec leur date, note interne du salon, et la totalité de ses
+rendez-vous — textes libres compris.
 
 Trois propriétés le distinguent de l'historique, et aucune n'est cosmétique :
 
@@ -272,12 +278,41 @@ exports de la même fiche demandés dans deux langues sont deux documents
 différents, et rien d'autre ne les distinguerait.
 
 La langue est celle de **l'interface**, pas celle de la cliente : le dossier est
-produit par le comptoir, qui le relit et le contrôle avant de le remettre. La
-préférence de la cliente, elle, se lit sur sa fiche (voir ci-dessous).
+produit par le comptoir, qui le relit et le contrôle avant de le remettre.
 
 Les instants restent en UTC et les montants restent des entiers accompagnés de
 leur code devise : `locale` ne décide que de mots, et le 404 d'une fiche du salon
 voisin tombe avant qu'elle ait servi à quoi que ce soit.
+
+#### Deux langues dans le dossier, et une seule est une donnée (#1255)
+
+Le document porte **deux** champs de langue, et rien ne les rend
+interchangeables :
+
+| Champ | Ce que c'est | En-tête | Change avec `?locale=` |
+|---|---|---|---|
+| `locale`, à la racine | la langue dans laquelle ce document a été produit | « Langue du document » / *Document language* | **oui** |
+| `identity.preferredLocale` | la langue de contact enregistrée sur le compte de la personne | « Langue de contact préférée » / *Preferred contact language* | **non**, jamais |
+
+Le second manquait jusqu'à #1255, et c'était une lacune du droit d'accès, pas un
+choix : la colonne est **détenue** par le salon, elle est lue, et elle décide de
+la langue dans laquelle il écrit à cette personne — l'art. 15 ne connaît pas
+d'exception pour les préférences. S'y ajoute un effet de lecture : un `locale`
+racine **seul** se lisait spontanément comme la préférence de la personne, ce
+qu'il n'a jamais été.
+
+Il vaut `null` quand rien n'est enregistré, et il n'est **pas** replié sur la
+langue du document : recopier `fr` ferait dire au dossier que la personne a
+choisi une langue qu'elle n'a jamais choisie — l'inexactitude exacte que
+l'art. 16 donne le droit de faire corriger.
+
+Une valeur non nulle, elle, ne prouve pas non plus un choix : `users.locale` est
+**constatée** à l'inscription — la langue de la page d'où le compte part (#844) —
+autant que choisie depuis l'espace client. Le dossier la rend telle quelle, ce
+qui est précisément ce qui permet de la rectifier.
+
+Comme partout ailleurs dans ce module, c'est une donnée **lue**, jamais écrite
+d'ici (voir ci-dessous).
 
 ### L'anonymisation — `POST /customers/:id/anonymize`, rang `ADMIN`
 
@@ -494,12 +529,12 @@ jamais par la surface prévue.
 | Suite | Ce qu'elle couvre |
 |---|---|
 | `__tests__/customers.service.spec.ts` | CRUD, recherche, pagination, portée fermée par défaut |
-| `__tests__/customer-privacy.spec.ts` | #81 : l'export complet et non borné, l'anonymisation qui vide aussi les textes libres des rendez-vous sans toucher aux montants, son idempotence, son refus sur un rendez-vous à venir, et la date de consentement qui ne bouge que sur un changement |
+| `__tests__/customer-privacy.spec.ts` | #81 : l'export complet et non borné, l'anonymisation qui vide aussi les textes libres des rendez-vous sans toucher aux montants, son idempotence, son refus sur un rendez-vous à venir, et la date de consentement qui ne bouge que sur un changement ; depuis #1255, la langue préférée restituée par le dossier — et son `null` non replié sur la langue du document |
 | `__tests__/client-directory.service.spec.ts` | la porte de #465 : `FOR SHARE`, filtre `tenant_id` écrit à la main, refus sans portée de tenant, les quatre rôles, et un refus muet sur la cause |
 | `__tests__/customer-history.service.spec.ts` | agrégat vs fenêtre, bornes, devises multiples |
 | `__tests__/crm.logging.spec.ts` | le module ne journalise rien ; la rédaction couvrirait ses champs |
 | `apps/api/test/crm.integration-spec.ts` | les huit routes servies, gardes, validation, sérialisation |
-| `apps/api/test/crm-tenant.isolation-spec.ts` | le protocole de fuite sur les huit routes — dont la lecture la plus large du système (l'export) et sa seule écriture irréversible (l'anonymisation) ; depuis #852, la langue préférée lue est bien celle de ce salon, et le paramètre de langue de l'export n'ouvre rien — 404 dans les deux langues, 400 sur une troisième |
+| `apps/api/test/crm-tenant.isolation-spec.ts` | le protocole de fuite sur les huit routes — dont la lecture la plus large du système (l'export) et sa seule écriture irréversible (l'anonymisation) ; depuis #852, la langue préférée lue est bien celle de ce salon, et le paramètre de langue de l'export n'ouvre rien — 404 dans les deux langues, 400 sur une troisième ; depuis #1255, la langue préférée que le **dossier** restitue n'est ni celle du voisin ni celle du document |
 | `apps/api/test/appointments-exclusion.integration-spec.ts` | la porte exercée contre un vrai PostgreSQL : la frontière du tenant sur la fiche désignée, et le rôle jugé à l'instant de l'insertion (#465) |
 | `apps/api/test/appointments-exclusion.concurrency-spec.ts` | la **promotion concurrente** de la fiche, qui prouve que le `FOR SHARE` verrouille vraiment — la suite unitaire ne vérifie que ce que la requête demande |
 

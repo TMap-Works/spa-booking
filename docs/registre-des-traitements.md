@@ -58,8 +58,9 @@ séparation effective plutôt que déclarative.
 |---|---|
 | **Finalité** | ouvrir une session au personnel et aux clientes qui se créent un compte |
 | **Base légale** | exécution d'un contrat (art. 6.1.b) et intérêt légitime pour la sécurité |
-| **Catégories de données** | adresse e-mail, empreinte de mot de passe (**jamais le mot de passe**), rôle, date de dernière connexion, sessions actives |
+| **Catégories de données** | adresse e-mail, empreinte de mot de passe (**jamais le mot de passe**), rôle, **langue de contact préférée**, date de dernière connexion, sessions actives |
 | **Où** | `users`, `refresh_tokens` — module `identity` |
+| **Sur la langue** | `users.locale` n'est jamais écrite par le salon : elle est **constatée** à l'inscription — la langue de la page d'où le compte part (`POST /auth/register`, #844) — puis **choisie** par la personne depuis son espace (`PATCH /users/me`). Elle est restituée par l'export du droit d'accès (§3) et vaut `null` quand aucun des deux n'a rien posé — la langue de l'établissement s'applique alors, sans être enregistrée |
 | **Note** | `refresh_tokens` ne stocke pas le jeton mais l'empreinte SHA-256 de son identifiant : une fuite de cette table ne donne aucune session |
 
 ### 2.4 Notifications transactionnelles
@@ -111,14 +112,32 @@ reçoit la demande et l'exécute pour la personne.
 
 ### Ce que l'export contient
 
-Identité, coordonnées, consentements avec leur date, la note interne du salon,
-et **la totalité** des rendez-vous — textes libres compris : ce que la cliente a
-écrit en réservant, ce que le salon a noté sur elle, le motif d'une annulation.
-Le document est daté et non paginé : un export tronqué a l'apparence d'une
-réponse au titre de l'art. 15 sans en être une.
+Identité, coordonnées, **langue de contact préférée**, consentements avec leur
+date, la note interne du salon, et **la totalité** des rendez-vous — textes
+libres compris : ce que la cliente a écrit en réservant, ce que le salon a noté
+sur elle, le motif d'une annulation. Le document est daté et non paginé : un
+export tronqué a l'apparence d'une réponse au titre de l'art. 15 sans en être
+une.
 
 Il ne porte **aucun identifiant d'établissement** : le destinataire est la
 personne, pas le salon.
+
+#### Les deux langues du document
+
+Le dossier porte deux champs de langue, et un seul est une donnée personnelle :
+
+| Champ | Ce que c'est |
+|---|---|
+| `locale`, à la racine | la langue dans laquelle ce document a été **produit** — celle de l'interface du comptoir qui l'a demandé. Deux exports de la même fiche dans deux langues sont deux documents différents |
+| `identity.preferredLocale` | la langue de contact enregistrée sur le compte de **la personne** (`users.locale`) — constatée à l'inscription ou choisie depuis son espace (§2.3) —, ou `null` si aucune ne l'est. C'est elle qui décide de la langue des notifications qui lui sont envoyées |
+
+Le second relève pleinement de l'art. 15 : l'établissement le détient, le
+conserve et s'en sert. Il vaut `null` — et non la langue du document — quand rien
+n'est enregistré : restituer une langue par défaut ferait dire au dossier un choix
+que la personne n'a pas fait, ce que l'art. 16 donne précisément le droit de faire
+corriger. Et parce que sa valeur peut avoir été **constatée** plutôt que choisie,
+c'est aussi un champ que la personne a intérêt à relire : le rectifier est
+précisément l'objet de l'art. 16.
 
 ### Pourquoi l'effacement est une anonymisation
 

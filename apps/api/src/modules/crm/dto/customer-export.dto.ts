@@ -64,6 +64,21 @@ import type { CustomerDataExport, ExportedAppointment } from '../crm.types';
  * Même geste que le CSV du reporting, qui écrit ses en-têtes et garde ses
  * valeurs telles quelles, et que `notification-content.ts`, où les tables
  * `Readonly<Record<Locale, …>>` vivent dans le module qui les sert.
+ *
+ * ## Deux langues dans le document, et une seule est une donnée — #1255
+ *
+ * Le dossier porte désormais **deux** champs de langue, et les confondre serait
+ * la troisième façon de se tromper :
+ *
+ * | Champ | Ce que c'est | Change avec `?locale=` |
+ * |---|---|---|
+ * | `locale`, à la racine | la langue dans laquelle ce document a été produit | **oui** |
+ * | `identity.preferredLocale` | la langue de contact enregistrée sur le compte de la personne — une donnée détenue, au même titre que son téléphone | **non**, jamais |
+ *
+ * La seconde manquait, et c'était une lacune de l'art. 15 : le salon la détient,
+ * il la lit, et il s'en sert pour choisir la langue des notifications. Les noms
+ * comme les en-têtes les séparent, parce qu'un `locale` racine seul se lisait
+ * spontanément comme la préférence de la personne.
  */
 
 /**
@@ -116,6 +131,16 @@ interface ExportIdentityLabels {
   readonly lastName: string;
   readonly email: string;
   readonly phone: string;
+  /**
+   * L'en-tête de la préférence de langue de la personne — #1255.
+   *
+   * Il nomme **qui** la préférence concerne, là où l'en-tête du `locale` racine
+   * nomme le document (« Langue du document » / « Document language »). Deux
+   * mots trop proches, dans un dossier qu'on imprime et qu'on remet, auraient
+   * fait se lire l'un pour l'autre — et c'est exactement l'ambiguïté que ce
+   * ticket vient lever.
+   */
+  readonly preferredLocale: string;
   readonly isActive: string;
   readonly createdAt: string;
   readonly anonymizedAt: string;
@@ -188,6 +213,7 @@ const EXPORT_LABELS: Readonly<Record<Locale, ExportLabels>> = {
       lastName: 'Nom',
       email: 'Adresse e-mail',
       phone: 'Téléphone',
+      preferredLocale: 'Langue de contact préférée',
       isActive: 'Fiche active',
       createdAt: 'Fiche créée le',
       anonymizedAt: 'Fiche anonymisée le',
@@ -234,6 +260,7 @@ const EXPORT_LABELS: Readonly<Record<Locale, ExportLabels>> = {
       lastName: 'Last name',
       email: 'Email address',
       phone: 'Phone',
+      preferredLocale: 'Preferred contact language',
       isActive: 'Active record',
       createdAt: 'Record created on',
       anonymizedAt: 'Record anonymised on',
@@ -359,6 +386,33 @@ export class ExportedIdentityDto {
   @ApiProperty({ nullable: true, type: String, example: '+261 34 12 345 67' })
   public phone!: string | null;
 
+  /**
+   * La langue de contact enregistrée sur le compte de la personne — #1255.
+   *
+   * Le nom la distingue du `locale` racine : celui-ci est la langue du
+   * **document**, celui-là une **donnée détenue** sur la personne, qui décide de
+   * la langue de ses notifications. Deux exports de la même fiche demandés dans
+   * deux langues portent le même `preferredLocale` et deux `locale` différents —
+   * c'est ce qui rend les deux champs irréductibles l'un à l'autre.
+   *
+   * Elle a pu être **constatée** — la langue de la page d'où l'inscription est
+   * partie (#844) — autant que **choisie** depuis l'espace client. Le dossier la
+   * restitue dans les deux cas, sans prétendre distinguer : c'est justement ce
+   * qui permet à la personne de la rectifier (art. 16).
+   */
+  @ApiProperty({
+    nullable: true,
+    enum: LOCALES,
+    example: 'en',
+    description:
+      'Langue de contact enregistrée sur le compte, telle que le salon la ' +
+      'détient — constatée à l’inscription ou choisie depuis l’espace client. ' +
+      '`null` quand aucune ne l’est : la langue de l’établissement s’applique ' +
+      'alors. À distinguer de `locale`, qui est la langue dans laquelle ce ' +
+      'document a été produit.',
+  })
+  public preferredLocale!: Locale | null;
+
   @ApiProperty()
   public isActive!: boolean;
 
@@ -419,6 +473,9 @@ export class ExportIdentityLabelsDto implements ExportIdentityLabels {
 
   @ApiProperty({ example: 'Téléphone' })
   public phone!: string;
+
+  @ApiProperty({ example: 'Langue de contact préférée' })
+  public preferredLocale!: string;
 
   @ApiProperty({ example: 'Fiche active' })
   public isActive!: string;
@@ -580,6 +637,7 @@ export function toCustomerDataExportDto(dossier: CustomerDataExport): CustomerDa
       lastName: dossier.identity.lastName,
       email: dossier.identity.email,
       phone: dossier.identity.phone,
+      preferredLocale: dossier.identity.preferredLocale,
       isActive: dossier.identity.isActive,
       createdAt: dossier.identity.createdAt.toISOString(),
       anonymizedAt: dossier.identity.anonymizedAt?.toISOString() ?? null,
