@@ -66,7 +66,25 @@
       "actions": "Actions"
     },
     "unclassified": "Non classée",
-    "buffers": "{before} / {after} min"
+    "buffers": "{before} / {after} min",
+    "inactiveStaff": "Aucun praticien actif — pas de créneau en ligne"
+  },
+  "announcement": {
+    "service-created": {
+      "title": "Prestation « {subject} » créée",
+      "body": "Elle ne sera proposée à la réservation qu’une fois un praticien affecté.",
+      "next": "Affecter un praticien"
+    },
+    "appointment-booked": {
+      "title": "Nouveau rendez-vous : {subject}",
+      "body": "Il vient d’arriver au planning.",
+      "next": "Voir le planning du jour"
+    },
+    "appointment-cancelled": {
+      "title": "Rendez-vous du {subject} annulé par la cliente",
+      "body": "Le créneau est de nouveau proposé à la réservation.",
+      "next": "Voir le planning du jour"
+    }
   },
   "newService": {
     "title": "Nouvelle prestation",

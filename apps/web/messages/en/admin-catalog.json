@@ -66,7 +66,25 @@
       "actions": "Actions"
     },
     "unclassified": "Unclassified",
-    "buffers": "{before} / {after} min"
+    "buffers": "{before} / {after} min",
+    "inactiveStaff": "No active practitioner — no slot bookable online"
+  },
+  "announcement": {
+    "service-created": {
+      "title": "Service “{subject}” created",
+      "body": "It will only be offered for booking once a practitioner is assigned.",
+      "next": "Assign a practitioner"
+    },
+    "appointment-booked": {
+      "title": "New appointment: {subject}",
+      "body": "It has just landed on the planning.",
+      "next": "Open the day’s planning"
+    },
+    "appointment-cancelled": {
+      "title": "Appointment on {subject} cancelled by the client",
+      "body": "The slot is offered for booking again.",
+      "next": "Open the day’s planning"
+    }
   },
   "newService": {
     "title": "New service",

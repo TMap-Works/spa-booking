@@ -22,6 +22,13 @@ service-activation-button.tsx
 service-form.tsx
 service-staff-panel.tsx
 #
+# Les deux briques que #849 avait laissées en français, faute de les nommer : le
+# badge de réservabilité de la liste — dont les libellés arrivaient par des
+# constantes, hors de portée de la règle — et les trois motifs du fournisseur
+# d'annonces du back-office — #1192.
+service-bookability-badge.tsx
+admin-announcement.tsx
+#
 # Les deux morceaux interactifs de « Mon planning » — #1104.
 my-planning-client.tsx
 #
