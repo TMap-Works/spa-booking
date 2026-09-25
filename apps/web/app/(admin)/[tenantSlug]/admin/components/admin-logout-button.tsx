@@ -27,13 +27,22 @@ import { adminLoginPath } from '../paths';
  * session fermée : sur un poste de comptoir partagé, un « précédent » suffirait
  * à réafficher le planning depuis le cache du routeur. Le `refresh()` qui suit
  * vide ce cache.
+ *
+ * ## Pourquoi les mots viennent de `shell.admin.rail` — #1124
+ *
+ * Ce bouton n'est pas un écran d'authentification : il est le pied du rail, à
+ * côté du nom du compte, du fuseau du salon et du sélecteur de langue, qu'il
+ * suit depuis #845. Ses deux libellés étaient rangés au catalogue `admin-auth`,
+ * avec la connexion et l'invitation — deux écrans qu'on ne voit qu'une fois la
+ * session fermée. Les lire là où `AdminRail` lit les siens met les mots de la
+ * coquille au même endroit, et c'est ce que demande le premier critère de #1124.
  */
 interface AdminLogoutButtonProps {
   readonly tenantSlug: string;
 }
 
 export function AdminLogoutButton({ tenantSlug }: AdminLogoutButtonProps) {
-  const t = useTranslations('admin-auth.logout');
+  const t = useTranslations('shell.admin.rail');
   const router = useRouter();
   const [leaving, setLeaving] = useState(false);
 
@@ -66,11 +75,11 @@ export function AdminLogoutButton({ tenantSlug }: AdminLogoutButtonProps) {
     <Button
       variant="quiet"
       loading={leaving}
-      loadingLabel={t('pending')}
+      loadingLabel={t('signingOut')}
       onClick={() => void logout()}
     >
       <Icon className="spa-admin__logout-icon" name="logout" />
-      {t('label')}
+      {t('signOut')}
     </Button>
   );
 }

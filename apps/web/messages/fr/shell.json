@@ -20,7 +20,9 @@
   "account": {
     "metadataTitle": "Mon compte",
     "title": "Mon compte",
-    "greeting": "Bonjour {firstName}"
+    "greeting": "Bonjour {firstName}",
+    "signOut": "Se déconnecter",
+    "signingOut": "Déconnexion en cours…"
   },
   "admin": {
     "metadataTitle": "Back-office",
@@ -62,7 +64,9 @@
       "upcoming": "écran à venir",
       "timeZone": "Fuseau du salon : {timeZone}",
       "accountUnverified": "Compte non vérifié — le serveur du salon est injoignable.",
-      "signedInAs": "Connecté·e :"
+      "signedInAs": "Connecté·e :",
+      "signOut": "Se déconnecter",
+      "signingOut": "Déconnexion en cours…"
     }
   }
 }
