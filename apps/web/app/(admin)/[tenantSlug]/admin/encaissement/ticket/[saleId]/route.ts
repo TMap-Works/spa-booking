@@ -1,5 +1,5 @@
 import { ERROR_CODES, slugSchema, uuidSchema } from '@spa/shared';
-import { getTranslations } from 'next-intl/server';
+import { getLocale, getTranslations } from 'next-intl/server';
 import { NextResponse, type NextRequest } from 'next/server';
 
 import { ApiClientError, fetchSaleReceiptPdf, type ReceiptPdfFormat } from '@/lib/api-client';
@@ -26,11 +26,26 @@ import { adminActionAccess } from '../../../session';
  * Elles s'affichent nues dans un onglet, sans écran autour : c'est précisément
  * pour cela qu'elles doivent être lisibles. Un gestionnaire de route s'exécute
  * dans le contexte de la requête, `getTranslations` y rend donc la langue
- * résolue comme ailleurs. Il n'est appelé que **sur le chemin de refus**, comme
- * dans `actions.ts` : le téléchargement qui aboutit n'a aucun mot à écrire, et
- * résoudre la langue d'avance lui ferait payer la lecture des catalogues pour
- * rien. Les refus de l'API, eux, gardent le message que l'API a rendu — c'est
- * elle qui nomme son refus.
+ * résolue comme ailleurs. Il n'est appelé que **sur les chemins de refus**,
+ * comme dans `actions.ts` : ces deux phrases-là n'ont pas à être composées quand
+ * le téléchargement aboutit. Les refus de l'API, eux, gardent le message que
+ * l'API a rendu — c'est elle qui nomme son refus.
+ *
+ * ## Et le document lui-même la parle aussi (#1259)
+ *
+ * Le PDF est composé **par l'API** : aucun catalogue du front ne l'atteint.
+ * #1230 lui a donc ouvert un `?locale=fr|en`, avec repli sur
+ * `Tenant.defaultLocale`. Ce relais ne le transmettait pas, et le repli
+ * décidait seul : un gérant travaillant en anglais dans un salon réglé sur `fr`
+ * tendait un ticket français à sa cliente. La langue part donc avec la demande,
+ * lue par `getLocale()` — **la même résolution** que celle des messages de refus
+ * ci-dessus, pour qu'une seule requête ne puisse pas rendre un onglet anglais
+ * autour d'une pièce française.
+ *
+ * Elle est résolue sur le chemin qui aboutit, et non plus seulement sur celui
+ * du refus. Ce n'est pas un coût ajouté au téléchargement : `next-intl` mémoïse
+ * la configuration de la requête, et `getLocale()` lit ce que `getTranslations`
+ * aurait lu de toute façon dès que la route refuse.
  */
 export const dynamic = 'force-dynamic';
 
@@ -59,7 +74,7 @@ export async function GET(
   }
 
   try {
-    const pdf = await fetchSaleReceiptPdf(access.accessToken, sale.data, format);
+    const pdf = await fetchSaleReceiptPdf(access.accessToken, sale.data, format, await getLocale());
 
     return new NextResponse(pdf.bytes, {
       status: 200,
