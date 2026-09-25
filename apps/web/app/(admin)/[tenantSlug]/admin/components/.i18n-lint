@@ -40,6 +40,11 @@ checkout-receipt.tsx
 # Le rouleau de caisse imprime — #1248.
 receipt-ticket.tsx
 #
+# Le bouton qui l'imprime — #1199. Son libellé était la dernière prop à défaut
+# français de l'aperçu du ticket de caisse ; il vient désormais de
+# `admin-checkout`, et la règle veille sur le fichier comme sur le rouleau.
+ticket-printer.tsx
+#
 # Les trois briques de l'écran des indicateurs d'activité — #851.
 report-chart.tsx
 report-export-button.tsx

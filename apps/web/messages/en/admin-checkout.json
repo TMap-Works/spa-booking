@@ -125,6 +125,7 @@
     "unavailableTitle": "Receipt unavailable",
     "retry": "Try again",
     "loadFailed": "The receipt could not be loaded. Check the connection and try again.",
+    "print": "Print receipt",
     "pdfTicket": "Receipt PDF",
     "pdfInvoice": "A4 invoice",
     "finalTitle": "Receipt no. {number}",

@@ -1,0 +1,17 @@
+# Marqueur de lint i18n — voir eslint-rules/i18n-markers.mjs.
+#
+# Marqueur **énumérant**, et posé ici plutôt qu'une ligne de plus dans
+# `lib/.i18n-lint` : `lib/admin/` porte encore des modules dont les libellés
+# attendent leur ticket de l'épique #843, un marqueur vide les allumerait tous,
+# et un marqueur déposé sur place n'entre en conflit de fusion avec aucun autre
+# ticket de l'épique — c'est la convention de #845.
+#
+# Les règles pures du ticket de caisse — #1199. Le premier critère du ticket
+# demande que la règle soit active sur ce module comme sur le composant qui
+# l'affiche. Elle n'y attrapera rien tant qu'il n'écrira pas de JSX — elle ne
+# lit que le JSX —, mais c'est précisément ce qu'on veut acter : le jour où une
+# phrase remonterait ici, elle serait vue. Les mots du module viennent du
+# catalogue `admin-checkout` par `checkoutWords(locale)` ; les seuls littéraux
+# qui restent sont les sigles des registres d'entreprise (SIRET, SIREN, NIF,
+# STAT), des noms propres qui ne se traduisent pas.
+receipt-ticket.ts
