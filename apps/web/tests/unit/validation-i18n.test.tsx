@@ -3,6 +3,8 @@ import { cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { nextIntlFixe, nextIntlServerFixe } from '../support/langue-figee';
+
 /**
  * Les refus de saisie du **contrat partagé**, rendus en anglais — #1232.
  *
@@ -24,70 +26,19 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
  * sous le champ. Un formulaire de l'espace client, un formulaire du back-office
  * — c'est le quatrième critère d'acceptation, mot pour mot.
  *
- * ## Pourquoi une amorce de langue propre à ce fichier
+ * ## Pourquoi une langue figée propre à ce fichier
  *
  * `tests/support/next-intl.ts` fixe toutes les suites en français. Rendre un
  * écran en anglais demande de la remplacer, et les deux doublures ci-dessous
- * lisent le **vrai** catalogue anglais — même conduite que
- * `admin-catalog-i18n.test.tsx`, dont elles reprennent la forme.
+ * lisent le **vrai** catalogue anglais. Elles viennent de
+ * `tests/support/langue-figee.ts` (#1283), écrites une fois pour les trois
+ * suites anglaises — `admin-catalog-i18n`, `admin-clients-i18n` et celle-ci —,
+ * sur le formateur ICU que l'amorce elle-même emploie.
  */
 
-/** Le traducteur anglais, fabriqué une fois par namespace — comme l'amorce. */
-async function englishTranslator(namespace?: string): Promise<unknown> {
-  const actual = await vi.importActual<typeof import('next-intl')>('next-intl');
-  const { loadMessages } = await import('../../i18n/messages');
-  const messages = loadMessages('en');
-  const translator = actual.createTranslator as unknown as (options: {
-    locale: string;
-    messages: unknown;
-    namespace?: string;
-  }) => unknown;
+vi.mock('next-intl', () => nextIntlFixe('en'));
 
-  return translator(
-    namespace === undefined ? { locale: 'en', messages } : { locale: 'en', messages, namespace },
-  );
-}
-
-vi.mock('next-intl', async () => {
-  const actual = await vi.importActual<typeof import('next-intl')>('next-intl');
-  const { loadMessages } = await import('../../i18n/messages');
-  const messages = loadMessages('en');
-  const translator = actual.createTranslator as unknown as (options: {
-    locale: string;
-    messages: unknown;
-    namespace?: string;
-  }) => unknown;
-  const cache = new Map<string, unknown>();
-
-  return {
-    ...actual,
-    useLocale: () => 'en',
-    useTranslations: (namespace?: string) => {
-      const key = namespace ?? '';
-      const cached = cache.get(key);
-
-      if (cached !== undefined) {
-        return cached;
-      }
-
-      const made = translator(
-        namespace === undefined
-          ? { locale: 'en', messages }
-          : { locale: 'en', messages, namespace },
-      );
-
-      cache.set(key, made);
-
-      return made;
-    },
-  };
-});
-
-vi.mock('next-intl/server', () => ({
-  getLocale: () => Promise.resolve('en'),
-  getTranslations: (options?: string | { readonly namespace?: string }) =>
-    englishTranslator(typeof options === 'string' ? options : options?.namespace),
-}));
+vi.mock('next-intl/server', () => nextIntlServerFixe('en'));
 
 const registerAction = vi.fn();
 const createStaffMemberAction = vi.fn();
