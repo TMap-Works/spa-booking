@@ -16,14 +16,13 @@ import { statusModifier } from '@/lib/admin/calendar-grid';
 import { rangeOf, todayInTimeZone } from '@/lib/admin/calendar-range';
 import type { AppointmentVolumeReport } from '@/lib/admin/reporting-contract';
 import { formatCount, formatRate, revenueByCurrency } from '@/lib/admin/reporting-view';
-import { rangeOfPeriod, windowOfRange } from '@/lib/admin/reporting-window';
+import { rangeOfPeriod, shortDayLabel, windowOfRange } from '@/lib/admin/reporting-window';
 import { appointmentOutcomeLabel } from '@/lib/appointment-status';
 import { addCalendarDays } from '@/lib/booking/calendar';
 import {
   formatCalendarDate,
   formatMoney,
   formatTimeInTimeZone,
-  formattingLocale,
   type DisplayLocale,
 } from '@/lib/format';
 import { initialsOf } from '@/lib/initials';
@@ -429,28 +428,14 @@ function UpcomingRow({
 }
 
 /**
- * L'abscisse d'une barre — « 3 sept. », « Sep 3 », selon la langue et la région.
+ * Sept barres, une par jour, hautes du nombre de rendez-vous.
  *
- * Écrite ici et non lue de `lib/admin/reporting-window.ts`, dont `shortDayLabel`
- * fixe encore `fr-FR` : ce module est **hors de l'empreinte de ce ticket**, que
- * la vague de l'épique #843 a découpée écran par écran pour mener les tickets de
- * front. La revue de #1104 a proposé d'y ajouter le paramètre de langue et de
- * n'avoir qu'une écriture de cette abscisse ; c'est le bon geste, mais il
- * appartient au ticket du reporting (#851) — une issue de suivi le porte.
- *
- * `timeZone: 'UTC'` pour la même raison que `formatCalendarDate` : une date
- * civile **est déjà** celle de l'établissement, et la reprojeter dans son fuseau
- * la décalerait d'un jour sous certains décalages.
+ * L'abscisse — « 3 sept. », « 3 Sept » — vient de `shortDayLabel` (#1193), la
+ * même fonction que le graphique quotidien du reporting. Le tableau de bord en
+ * avait sa propre écriture, le temps que l'épique #843 branche le reporting sur
+ * la langue de la session : les deux écrans graduaient alors le même jour de
+ * deux façons possibles. Il n'en reste qu'une.
  */
-function barDayLabel(day: CalendarDate, display: DisplayLocale): string {
-  return new Intl.DateTimeFormat(formattingLocale(display.locale, display.countryCode), {
-    timeZone: 'UTC',
-    day: 'numeric',
-    month: 'short',
-  }).format(new Date(`${day}T00:00:00Z`));
-}
-
-/** Sept barres, une par jour, hautes du nombre de rendez-vous. */
 function WeekBars({
   display,
   from,
@@ -478,7 +463,7 @@ function WeekBars({
                 style={{ blockSize: `${Math.max(4, Math.round((count / peak) * 100))}%` }}
               />
             </span>
-            <span className="spa-admin-dashboard__bar-label">{barDayLabel(day, display)}</span>
+            <span className="spa-admin-dashboard__bar-label">{shortDayLabel(day, display)}</span>
             <span className="spa-visually-hidden">
               {t('week.barDescription', { count, date: formatCalendarDate(day, display) })}
             </span>

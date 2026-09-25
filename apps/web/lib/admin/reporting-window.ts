@@ -50,9 +50,11 @@ import { formattingLocale, type DisplayLocale } from '../format';
  * `lib/appointment-status.ts`.
  *
  * Le paramètre est **facultatif et le défaut est le français**, comme partout
- * dans l'épique #843 : `rangeOfPeriod` et `windowOfRange` sont aussi lus par le
- * tableau de bord (#1104), qui ne demande aucun mot à ce module — le défaut lui
- * évite une signature à changer pour rien.
+ * dans l'épique #843 : le tableau de bord (#1104) lit `rangeOfPeriod` et
+ * `windowOfRange` sans leur demander un mot, et le défaut lui évite une
+ * signature à changer pour rien. Il passe en revanche sa langue à
+ * `shortDayLabel` depuis #1193 — c'est la même abscisse quotidienne que le
+ * graphique du reporting, et elle ne s'écrit plus qu'ici.
  *
  * Ce que la langue ne touche **pas** : les valeurs de `REPORT_PERIODS`, qui sont
  * des segments d'URL (`?periode=sept-jours`) et non des mots, et le fuseau du
@@ -420,9 +422,11 @@ export function rangeLabel(range: ReportRange, display: DisplayLocale = FALLBACK
  * Le paramètre d'affichage est en **second** et facultatif, comme les
  * formateurs de `lib/format.ts` : la fonction est passée **par référence** à
  * `volumePoints(scope, axis, range, dayLabel)`, qui n'appelle son argument
- * qu'avec la date. L'écran l'enveloppe donc dans une lambda qui referme sur la
- * langue — plutôt que de faire voyager un contexte d'affichage à travers une
- * signature qui n'a rien à en connaître.
+ * qu'avec la date. L'écran de reporting l'enveloppe donc dans une lambda qui
+ * referme sur la langue — plutôt que de faire voyager un contexte d'affichage à
+ * travers une signature qui n'a rien à en connaître. Le tableau de bord, lui,
+ * l'appelle directement pour les sept barres de sa semaine (#1193) : c'est la
+ * même abscisse, et elle n'a pas à s'écrire deux fois.
  */
 export function shortDayLabel(
   date: CalendarDate,
