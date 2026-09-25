@@ -2,13 +2,6 @@ import type { Appointment, AppointmentStatus, Service } from '@spa/shared';
 import { describe, expect, it } from 'vitest';
 
 import {
-  DESK_CANCEL_CONFLICT_MESSAGE,
-  DESK_ROUTE_MISSING_MESSAGE,
-  MOVE_CONFLICT_MESSAGE,
-  MOVE_GONE_MESSAGE,
-  SLOT_CONFLICT_MESSAGE,
-  deskCancelFailureMessage,
-  deskFailureMessage,
   deskMoment,
   deskSlotOptions,
   deskStatusActions,
@@ -16,7 +9,6 @@ import {
   isReschedulable,
   isSlotConflict,
   minutesOfClock,
-  moveRefusal,
   nearestDeskSlot,
   offsetDateTimeInTenant,
   offsetInTenant,
@@ -24,6 +16,7 @@ import {
   summarize,
   tenantFields,
 } from '@/lib/admin/appointment-desk';
+import { planningWords } from '@/lib/admin/calendar-messages';
 
 /**
  * La logique du comptoir (#50), sans DOM ni réseau.
@@ -33,6 +26,16 @@ import {
  * Les cas d'un fuseau sans changement d'heure (Antananarivo) et d'un fuseau qui
  * en a un (Paris) sont donc exercés tous les deux, de part et d'autre de la
  * bascule.
+ *
+ * ## Ce fichier n'importe plus une seule phrase du module (#1187)
+ *
+ * Il en importait douze, et c'est ce qui les maintenait en vie : le module en
+ * gardait une copie française que plus aucun écran ne rendait depuis #848, et
+ * ces assertions lui servaient d'oracle. Corriger une faute de frappe dans
+ * `messages/{fr,en}/admin-planning.json` aurait laissé la copie morte intacte,
+ * et cette suite verte. Ce qui reste ici est ce que le module **calcule** ; ce
+ * que le produit **dit** se lit dans le catalogue, par `planningWords`, comme
+ * tous les autres modules de planning le font.
  */
 
 const ANTANANARIVO = 'Indian/Antananarivo';
@@ -147,9 +150,10 @@ describe('ce que le pied du tiroir propose', () => {
     // Le constat de l'audit `d20260917-2` : un rendez-vous « À confirmer »
     // n'avait, dans tout le back-office, aucun bouton pour le confirmer, et ne
     // pouvait donc jamais atteindre `completed` ni `no_show`.
-    expect(deskStatusActions('pending')).toEqual([
-      { status: 'confirmed', label: 'Confirmer le rendez-vous', variant: 'neutral' },
-    ]);
+    // Sans `label` : le libellé se compose dans l'écran qui le rend, depuis le
+    // catalogue et dans la langue de la session (#1187). Ce que la table porte
+    // est la transition offerte et l'allure de son bouton.
+    expect(deskStatusActions('pending')).toEqual([{ status: 'confirmed', variant: 'neutral' }]);
   });
 
   it('ne double jamais l’annulation, qui a sa propre route', () => {
@@ -180,44 +184,25 @@ describe('ce que le pied du tiroir propose', () => {
   });
 });
 
-describe('les refus, et ce qu’ils veulent dire à l’opérateur', () => {
-  it('reconnaît le créneau perdu sous concurrence', () => {
+describe('les refus, et ce que le module en dit encore', () => {
+  /**
+   * Le module ne rend plus aucune phrase de refus — il rend un **verdict**, et
+   * les deux écrans qui l'appellent en tirent la leur dans le catalogue
+   * (#1187). Ce qui se vérifie ici est donc ce verdict, et lui seul ; les
+   * phrases elles-mêmes sont exercées à l'écran par
+   * `admin-appointment-panel.test.tsx`, qui rend le tiroir et le planning.
+   */
+  it('reconnaît le créneau perdu sous concurrence, et rien d’autre', () => {
     expect(isSlotConflict('SLOT_NO_LONGER_AVAILABLE')).toBe(true);
+    // Le 409 d'une annulation, ce sont deux postes qui annulent à la fois : le
+    // tiroir le lit comme passager lui aussi (#754).
     expect(isSlotConflict('CONFLICT')).toBe(true);
+    // Un 404 ne l'est pas : le rendez-vous a disparu, et réessayer ne le rendra
+    // pas. Ni un refus que l'API a su formuler.
     expect(isSlotConflict('NOT_FOUND')).toBe(false);
-
-    expect(deskFailureMessage('SLOT_NO_LONGER_AVAILABLE', 'peu importe')).toBe(
-      SLOT_CONFLICT_MESSAGE,
-    );
-  });
-
-  it('nomme la route absente plutôt que de recracher le cadre HTTP', () => {
-    expect(deskFailureMessage('HTTP_404', 'Cannot POST /api/v1/appointments')).toBe(
-      DESK_ROUTE_MISSING_MESSAGE,
-    );
-    expect(deskFailureMessage('NOT_FOUND', 'introuvable')).toBe(DESK_ROUTE_MISSING_MESSAGE);
-  });
-
-  it('laisse passer tel quel un refus que l’API a su formuler', () => {
-    expect(deskFailureMessage('SLOT_OUTSIDE_WORKING_HOURS', 'Le salon est fermé.')).toBe(
-      'Le salon est fermé.',
-    );
-  });
-
-  it('ne lit pas un refus d’annulation comme un refus d’écriture (#754)', () => {
-    // Le 409 d'une annulation, ce sont deux postes qui annulent à la fois — pas
-    // un créneau perdu : il n'y a aucune heure à reprendre dans la liste.
-    expect(deskCancelFailureMessage('CONFLICT', 'peu importe')).toBe(
-      DESK_CANCEL_CONFLICT_MESSAGE,
-    );
-    // Et le 404 désigne un rendez-vous introuvable, jamais une route absente :
-    // `POST /appointments/:id/cancel` est servie depuis #40.
-    expect(deskCancelFailureMessage('NOT_FOUND', 'Rendez-vous introuvable.')).toBe(
-      'Rendez-vous introuvable.',
-    );
-    expect(
-      deskCancelFailureMessage('INVALID_STATE_TRANSITION', 'Rendez-vous déjà annulé.'),
-    ).toBe('Rendez-vous déjà annulé.');
+    expect(isSlotConflict('HTTP_404')).toBe(false);
+    expect(isSlotConflict('SLOT_OUTSIDE_WORKING_HOURS')).toBe(false);
+    expect(isSlotConflict('INVALID_STATE_TRANSITION')).toBe(false);
   });
 });
 
@@ -334,7 +319,15 @@ describe('le report par glisser-déposer', () => {
   });
 });
 
-describe('le retour arrière, et ce qu’il annonce', () => {
+/**
+ * L'heure d'origine, telle que la bannière de retour arrière la cite.
+ *
+ * La bannière elle-même est assemblée dans `calendar-board.tsx` et vérifiée à
+ * l'écran (#1187) ; ce qui se joue ici est le seul morceau que le composant ne
+ * sait pas produire — une date dite à l'heure du salon et dans la langue de la
+ * session.
+ */
+describe('l’instant d’un rendez-vous, dit à l’opérateur', () => {
   const previous: Appointment = {
     id: 'aaaaaaaa-0000-4000-8000-000000000001',
     reference: 'RDV-8F3K-27',
@@ -357,47 +350,14 @@ describe('le retour arrière, et ce qu’il annonce', () => {
     expect(deskMoment(previous.startsAt, ANTANANARIVO)).toBe('mercredi 26 août à 09:00');
   });
 
-  it('traite le créneau perdu comme un cas normal, pas comme une panne', () => {
-    const refusal = moveRefusal(previous, ANTANANARIVO, 'SLOT_NO_LONGER_AVAILABLE', 'peu importe');
-
-    expect(refusal.tone).toBe('warning');
-    // « Indisponible » et non « déjà pris » : le titre est la première chose
-    // qu'on lit, et c'est là que l'ancienne version affirmait le plus fort une
-    // cause que le refus ne donne pas (#611).
-    expect(refusal.title).toBe('Créneau indisponible — rendez-vous remis en place');
-    // Les deux choses que l'opérateur doit lire : où le rendez-vous est revenu,
-    // et pourquoi il n'a pas pu aller ailleurs.
-    expect(refusal.body).toContain(
-      'Le rendez-vous de Rina Andriamana est resté le mercredi 26 août à 09:00',
+  it('suit la langue de la session pour le jour et le joint', () => {
+    // Ce libellé est inséré dans des phrases traduites — la question du
+    // changement de praticien et la bannière de retour arrière (#848) : une date
+    // française au milieu d'une phrase anglaise se lit comme un défaut
+    // d'affichage. Le fuseau, lui, décide de l'heure et jamais de son écriture.
+    expect(deskMoment(previous.startsAt, ANTANANARIVO, { locale: 'en' })).toBe(
+      'Wednesday, August 26 at 09:00',
     );
-    expect(refusal.body).toContain('chez Hasina');
-    expect(refusal.body).toContain(MOVE_CONFLICT_MESSAGE);
-  });
-
-  it('reprend le refus de l’API quand il n’est pas passager', () => {
-    const refusal = moveRefusal(
-      previous,
-      ANTANANARIVO,
-      'SLOT_OUTSIDE_WORKING_HOURS',
-      'Hasina ne travaille pas à cette heure-là.',
-    );
-
-    expect(refusal.tone).toBe('danger');
-    expect(refusal.body).toContain('Hasina ne travaille pas à cette heure-là.');
-  });
-
-  it('lit un 404 comme un rendez-vous disparu, jamais comme une route absente', () => {
-    // `POST /appointments/:id/reschedule` est servie depuis #464 : sur un
-    // report, `NOT_FOUND` ne peut plus vouloir dire que l'API ne sait pas
-    // déplacer. Annoncer « le formulaire est complet, l'enregistrement suivra »
-    // sur un glisser-déposer promettrait un enregistrement qui ne viendra pas.
-    for (const code of ['NOT_FOUND', 'HTTP_404']) {
-      const refusal = moveRefusal(previous, ANTANANARIVO, code, 'Cannot POST …');
-
-      expect(refusal.tone).toBe('danger');
-      expect(refusal.body).toContain(MOVE_GONE_MESSAGE);
-      expect(refusal.body).not.toContain(DESK_ROUTE_MISSING_MESSAGE);
-    }
   });
 });
 
@@ -459,15 +419,72 @@ describe('les créneaux du moteur, ramenés au sélecteur du tiroir', () => {
     expect(nearestDeskSlot([], '10:00')).toBeNull();
     expect(deskSlotOptions([], ANTANANARIVO)).toEqual([]);
   });
+});
 
-  it('ne prétend plus savoir pourquoi un créneau est refusé', () => {
-    // Le 409 couvre cinq refus — pris, hors horaires, congé, préavis, praticien
-    // qui ne tient pas le soin — et n'en distingue aucun. Le message le disait
-    // pourtant, et envoyait chercher une course entre postes qui n'avait pas eu
-    // lieu (#611).
-    for (const message of [SLOT_CONFLICT_MESSAGE, MOVE_CONFLICT_MESSAGE]) {
-      expect(message).not.toContain('vient d’être pris depuis un autre poste');
-      expect(message).toContain('n’est pas — ou n’est plus — réservable');
-    }
-  });
+/**
+ * La rédaction d'un créneau refusé, dans les deux langues — #611.
+ *
+ * Le 409 couvre cinq refus — pris entre l'affichage et la validation, hors des
+ * heures du praticien, congé, préavis, praticien qui ne tient pas ce soin — et
+ * n'en distingue aucun : `details` ne rend que le `staffId` et le `startsAt` que
+ * l'appelant vient d'envoyer. Les messages l'affirmaient pourtant, et envoyaient
+ * l'opératrice chercher une collègue qui n'avait rien réservé.
+ *
+ * L'invariant se vérifiait jusqu'ici sur deux constantes du module que plus
+ * aucun écran ne rendait. Il porte désormais sur le **catalogue** lui-même, donc
+ * sur ce que le produit dit vraiment, et sur les **deux langues** — l'anglais
+ * n'était couvert par rien (#1187). La règle est écrite à l'en-tête du
+ * namespace, `messages/admin-planning.d.ts`.
+ */
+describe('un créneau refusé n’annonce pas une cause que l’API ne donne pas', () => {
+  /**
+   * `affirmation` est une **expression**, et non la phrase exacte d'autrefois.
+   *
+   * L'ancienne rédaction française se cite telle quelle — c'est elle qu'on
+   * interdit de revenir. L'anglaise, elle, n'a jamais existé : le catalogue en
+   * est né corrigé, et une chaîne inventée ne serait jamais retrouvée, quelle
+   * que soit la retraduction. Ce qui se refuse ici est donc la **forme
+   * affirmative** — « has been taken », « was taken » —, que « may have been
+   * taken » ne satisfait pas.
+   */
+  const ATTENDU = {
+    fr: {
+      prudence: 'n’est pas — ou n’est plus — réservable',
+      affirmation: /vient d’être pris depuis un autre poste|a été pris depuis un autre poste/,
+      titre: 'Créneau indisponible',
+    },
+    en: {
+      prudence: 'is not — or is no longer — bookable',
+      affirmation: /\b(has|had|was|is) (just )?been taken from another workstation/,
+      titre: 'Slot unavailable',
+    },
+  } as const;
+
+  for (const locale of ['fr', 'en'] as const) {
+    it(`énumère les causes sans en désigner une — ${locale}`, () => {
+      const words = planningWords(locale);
+      const { prudence, affirmation } = ATTENDU[locale];
+
+      // Le tiroir et le glisser-déposer ont deux phrases distinctes — l'une
+      // promet que les saisies sont conservées, l'autre renvoie au tiroir —,
+      // mais la même retenue les tient toutes les deux.
+      for (const body of [words.desk.conflictBody, words.move.conflictBody]) {
+        expect(body).toContain(prudence);
+        expect(body).not.toMatch(affirmation);
+      }
+    });
+
+    it(`garde ce doute dans les deux titres qui les coiffent — ${locale}`, () => {
+      // « Indisponible » et non « déjà pris » : le titre est la première chose
+      // que l'opératrice lit, et c'est là que l'ancienne version affirmait le
+      // plus fort. Le tiroir a le sien (`desk.conflictTitle`, rendu par la
+      // bannière de refus d'écriture) et le report le sien : les oublier l'un
+      // ou l'autre laisserait le doute à moitié tenu.
+      const words = planningWords(locale);
+
+      for (const title of [words.desk.conflictTitle, words.move.conflictTitle]) {
+        expect(title).toContain(ATTENDU[locale].titre);
+      }
+    });
+  }
 });
