@@ -292,8 +292,22 @@ describe('saisie d’un montant — dans la langue de l’écran (#1123)', () =>
     // L'opérateur se voyait refuser le montant que sa propre pile de totaux
     // affichait — exactement ce que #1123 corrige ailleurs.
     const swiss = { locale: 'en', countryCode: 'CH' } as const;
+    /*
+     * La forme groupée vient d'`Intl`, et non d'un caractère écrit ici.
+     *
+     * Le séparateur de `en-CH` a changé d'une version de CLDR à l'autre — la
+     * même raison qui fait ramener les espaces insécables en tête de fichier —,
+     * et le figer donnait un test vert sur le poste et rouge en CI, sans
+     * qu'aucun code de production n'ait bougé. Ce qui se vérifie ici n'est pas
+     * quel caractère cette région emploie, mais que **ce qu'elle écrit se
+     * relit**.
+     */
+    const grouped = new Intl.NumberFormat('en-CH', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }).format(1200);
 
-    expect(parseAmountInput('1’200.00', 'EUR', swiss)?.amountMinor).toBe(120000);
+    expect(parseAmountInput(grouped, 'EUR', swiss)?.amountMinor).toBe(120000);
     // Rien ne se perd de la lecture simple ni de la tolérance.
     expect(parseAmountInput('35.00', 'EUR', swiss)?.amountMinor).toBe(3500);
     expect(parseAmountInput('35,00', 'EUR', swiss)?.amountMinor).toBe(3500);
