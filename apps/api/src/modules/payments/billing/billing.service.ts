@@ -73,8 +73,15 @@ export class BillingService {
   /**
    * Ouvre une session Stripe Checkout : l'offre unique, avec son essai gratuit,
    * la carte enregistrée d'emblée. Rend l'adresse de la page hébergée.
+   *
+   * `submittedLocale` est la langue de la session qui clique, quand l'appelant en
+   * envoie une — voir {@link localeFor}.
    */
-  public async startCheckout(tenantId: string, userId: string): Promise<{ url: string }> {
+  public async startCheckout(
+    tenantId: string,
+    userId: string,
+    submittedLocale?: Locale,
+  ): Promise<{ url: string }> {
     const record = await this.requireRecord();
 
     if (record.status === 'managed') {
@@ -114,7 +121,7 @@ export class BillingService {
       trialDays: record.status === 'pending' ? SUBSCRIPTION_PLAN.trialDays : 0,
       successUrl: returnUrl('paiement'),
       cancelUrl: returnUrl('annule'),
-      locale: await this.localeFor(userId, record),
+      locale: await this.localeFor(userId, record, submittedLocale),
     });
 
     await this.repository.updateCurrent({
@@ -126,8 +133,13 @@ export class BillingService {
     return { url: session.url };
   }
 
-  /** Le portail client de Stripe : carte, factures, résiliation. */
-  public async openPortal(userId: string): Promise<{ url: string }> {
+  /**
+   * Le portail client de Stripe : carte, factures, résiliation.
+   *
+   * `submittedLocale` joue le même rôle que pour la page de paiement — voir
+   * {@link localeFor}.
+   */
+  public async openPortal(userId: string, submittedLocale?: Locale): Promise<{ url: string }> {
     const record = await this.requireRecord();
 
     if (record.stripeCustomerId === null) {
@@ -139,7 +151,7 @@ export class BillingService {
       returnUrl: tenantPublicUrl(record.slug, '/admin/abonnement', {
         baseUrl: this.config.appUrl,
       }),
-      locale: await this.localeFor(userId, record),
+      locale: await this.localeFor(userId, record, submittedLocale),
     });
   }
 
@@ -166,29 +178,59 @@ export class BillingService {
   }
 
   /**
-   * La langue des pages hébergées par Stripe — #1231.
+   * La langue des pages hébergées par Stripe — #1231, corrigé par #1261.
    *
    * ## La règle, dans l'ordre
    *
-   * La préférence du gérant qui clique (`users.locale`), la langue de
-   * l'établissement (`tenants.default_locale`) sinon, et `en` en dernier ressort
-   * — ce dernier repli étant tenu par `toTenantLocale`, dans le dépôt. C'est
-   * exactement la règle de `resolveRecipientLocale` pour les notifications
-   * (#854) : une personne qui a choisi sa langue la retrouve partout, y compris
-   * sur une page qui n'est pas la nôtre.
+   * 1. **La langue soumise** — celle que le back-office affiche à l'instant du
+   *    clic, transmise par l'appelant. Ce qu'une personne a explicitement demandé
+   *    gagne sur ce qu'on sait d'elle ;
+   * 2. **la préférence du compte** (`users.locale`), qui vaut pour tous ses
+   *    appareils ;
+   * 3. **la langue de l'établissement** (`tenants.default_locale`) ;
+   * 4. **`en`** en dernier ressort — repli tenu par `toTenantLocale`, dans le
+   *    dépôt.
+   *
+   * C'est **l'ordre d'`apps/web/i18n/resolve.ts`** (#845), amputé du seul signal
+   * qui n'a pas de sens ici : `Accept-Language`, que le front consulte pour
+   * deviner la langue de qui n'a rien demandé, et qui n'arriverait jusqu'à cette
+   * route que via une action serveur dont l'en-tête est celui du serveur.
+   *
+   * #1231 s'arrêtait à l'étape 2, et les signaux se trouvaient donc **inversés**
+   * par rapport au reste du produit : un gérant dont le compte est en français et
+   * qui bascule l'interface en anglais obtenait encore une page Stripe en
+   * français. L'export CSV du reporting avait déjà tranché dans ce sens (#851,
+   * « la langue vient de l'interface au moment de l'export »).
+   *
+   * ## Ce que cette méthode ne fait pas : juger la langue soumise
+   *
+   * Elle reçoit une `Locale`, jamais une chaîne : `billingRedirectRequestSchema`
+   * l'a validée à la frontière, et une valeur qui ne désigne aucune des deux
+   * langues du contrat a déjà rendu 400 `VALIDATION_ERROR` sans atteindre ce
+   * service. Retomber ici sur la préférence du compte aurait ouvert la page dans
+   * une langue que personne n'a demandée, en masquant l'appelant fautif.
    *
    * ## Pourquoi à l'ouverture, et non à l'inscription
    *
    * La session Checkout et la session de portail sont créées à chaque clic : la
    * langue se résout donc à l'instant où la page s'ouvre. Un gérant qui bascule
-   * son compte en anglais et rouvre son abonnement voit l'anglais, sans qu'il y
+   * l'interface en anglais et rouvre son abonnement voit l'anglais, sans qu'il y
    * ait rien à réémettre chez Stripe.
    *
    * `record` est celui que l'appelant a déjà lu — le repli d'établissement ne
-   * coûte aucune requête de plus, seule la préférence du compte en demande une.
+   * coûte aucune requête de plus. La préférence du compte en demande une, et une
+   * langue soumise l'épargne : l'étape 1 court-circuite la lecture.
    */
-  private async localeFor(userId: string, record: BillingRecord): Promise<Locale> {
-    return (await this.repository.findAccountLocale(userId)) ?? record.defaultLocale;
+  private async localeFor(
+    userId: string,
+    record: BillingRecord,
+    submittedLocale?: Locale,
+  ): Promise<Locale> {
+    return (
+      submittedLocale ??
+      (await this.repository.findAccountLocale(userId)) ??
+      record.defaultLocale
+    );
   }
 
   private async syncFromStripe(tenantId: string, record: BillingRecord): Promise<BillingRecord> {

@@ -1,11 +1,24 @@
-import { Controller, Get, HttpCode, HttpStatus, Post } from '@nestjs/common';
-import { ApiConflictResponse, ApiCreatedResponse, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { Body, Controller, Get, HttpCode, HttpStatus, Post } from '@nestjs/common';
+import {
+  ApiBadRequestResponse,
+  ApiBody,
+  ApiConflictResponse,
+  ApiCreatedResponse,
+  ApiOkResponse,
+  ApiOperation,
+  ApiTags,
+} from '@nestjs/swagger';
 import type { BillingRedirect, TenantBilling } from '@spa/shared';
 
 import { AuthWith } from '../../identity/auth.decorator';
 import type { AuthenticatedUser } from '../../identity/identity.types';
 import { CurrentUser } from '../../identity/jwt-auth.guard';
 import { AllowUnpaidTenant } from '../../identity/tenant-billing.guard';
+import {
+  BillingRedirectDto,
+  billingRedirectBody,
+  type BillingRedirectBody,
+} from '../dto/billing-redirect.dto';
 import { BillingService } from './billing.service';
 
 /**
@@ -14,6 +27,13 @@ import { BillingService } from './billing.service';
  * Réservé à l'administrateur (`settings:write`, la permission des réglages du
  * salon), et **ouvert même quand l'abonnement est inactif** : c'est la seule
  * porte par laquelle un salon fermé peut se rouvrir.
+ *
+ * ## La langue des pages hébergées (#1261)
+ *
+ * Les deux ouvertures acceptent un corps facultatif portant la langue de la
+ * session qui clique — voir `dto/billing-redirect.dto.ts`. Aucune donnée de
+ * carte n'entre par là, ni par aucune autre porte de ce contrôleur : ces routes
+ * rendent une **adresse**, et la carte se saisit chez Stripe (SAQ A).
  */
 @ApiTags('billing')
 @Controller({ path: 'billing', version: '1' })
@@ -34,19 +54,29 @@ export class BillingController {
   @Post('checkout')
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({ summary: 'Ouvrir le paiement de l’abonnement (Stripe Checkout)' })
+  @ApiBody({ type: BillingRedirectDto, required: false })
   @ApiCreatedResponse({ description: 'L’adresse de la page de paiement hébergée par Stripe.' })
+  @ApiBadRequestResponse({ description: 'Langue inconnue du contrat — `VALIDATION_ERROR`.' })
   @ApiConflictResponse({ description: 'Salon géré par la plateforme, ou abonnement déjà en cours.' })
-  public async checkout(@CurrentUser() user: AuthenticatedUser): Promise<BillingRedirect> {
-    return this.billing.startCheckout(user.tenantId, user.userId);
+  public async checkout(
+    @CurrentUser() user: AuthenticatedUser,
+    @Body(billingRedirectBody) body: BillingRedirectBody,
+  ): Promise<BillingRedirect> {
+    return this.billing.startCheckout(user.tenantId, user.userId, body.locale);
   }
 
   /** Le portail client de Stripe : carte, factures, résiliation. */
   @Post('portal')
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({ summary: 'Ouvrir le portail de gestion de l’abonnement' })
+  @ApiBody({ type: BillingRedirectDto, required: false })
   @ApiCreatedResponse({ description: 'L’adresse du portail hébergé par Stripe.' })
+  @ApiBadRequestResponse({ description: 'Langue inconnue du contrat — `VALIDATION_ERROR`.' })
   @ApiConflictResponse({ description: 'Aucun moyen de paiement enregistré.' })
-  public async portal(@CurrentUser() user: AuthenticatedUser): Promise<BillingRedirect> {
-    return this.billing.openPortal(user.userId);
+  public async portal(
+    @CurrentUser() user: AuthenticatedUser,
+    @Body(billingRedirectBody) body: BillingRedirectBody,
+  ): Promise<BillingRedirect> {
+    return this.billing.openPortal(user.userId, body.locale);
   }
 }
