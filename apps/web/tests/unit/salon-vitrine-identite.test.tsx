@@ -27,6 +27,7 @@ import { SalonHeader } from '@/components/salon/salon-header';
 import { SalonTeam, teamFromServices } from '@/components/salon/salon-team';
 import { ServiceCatalog } from '@/components/salon/service-catalog';
 import { BOOKING_QUERY_KEYS } from '@/lib/booking/draft';
+import fr from '@/messages/fr/booking.json';
 
 import { service, tenant } from './fixtures';
 
@@ -216,7 +217,10 @@ describe('l’équipe (BM-VITRINE-06)', () => {
   };
 
   it('réunit les praticiens du catalogue sans les compter deux fois', () => {
-    const team = teamFromServices([service, soinVisage]);
+    // Le titre des prestations non classées est passé explicitement depuis #1142 :
+    // `group-services.ts` ne lit plus le catalogue, et `teamFromServices` non plus.
+    // Les deux prestations de ce cas portent une rubrique, il n'est donc jamais lu.
+    const team = teamFromServices([service, soinVisage], fr.salon.catalog.unclassified);
 
     expect(team.map((member) => member.displayName)).toEqual(['Hery', 'Lila']);
     // Hery tient les deux rubriques ; elles le qualifient, faute d'un métier
