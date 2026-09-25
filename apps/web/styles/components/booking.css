@@ -1836,11 +1836,37 @@
  * elle reste dans le flux de l'étape : elle tient le bas de la fenêtre tant que
  * l'étape déborde, puis se pose sous son contenu dès qu'il tient en entier.
  *
- * ## Les marges négatives
+ * ## La marge négative en ligne
  *
- * Le contenu porte la gouttière de page. Sans elles, la barre s'arrêterait à
+ * Le contenu porte la gouttière de page. Sans elle, la barre s'arrêterait à
  * 16 px des bords et laisserait voir la page défiler au-dessous d'elle — une
  * barre qui ne touche pas le bord ne se lit plus comme une barre.
+ *
+ * ## Le pendant vertical a été retiré (#1141)
+ *
+ * La barre portait aussi `margin-block-end: calc(var(--spa-space-10) * -1)`,
+ * qui annulait la gouttière basse de `.spa-booking__main`. Cette règle avait un
+ * sens tant que la barre **fermait la colonne** : au bout du défilement, elle se
+ * posait alors exactement sur le bord du document au lieu de flotter 40 px
+ * au-dessus.
+ *
+ * #846 a mis fin à cette prémisse en ajoutant le sélecteur de langue derrière
+ * elle — délibérément hors du formulaire de l'étape, le sélecteur étant lui-même
+ * un `<form>` et trois des cinq étapes en étant un. La barre ne ferme plus rien :
+ * quoi qu'on fasse de cette marge, le sélecteur et sa gouttière de 20 px la
+ * séparent désormais du bas du document. Tout ce qu'il lui restait à faire était
+ * de remonter le sélecteur de 40 px — sous une barre opaque rehaussée par
+ * `--spa-z-sticky`, qui lui mangeait 20 px de tête : les ascendantes de
+ * « Français » et le bord haut d'« English », à 360 px, dans les deux langues.
+ *
+ * La retirer, et ne rien mettre à sa place, rend au sélecteur ces 20 px **et**
+ * laisse la page sa gouttière basse. Ce que la barre ne perd pas : c'est
+ * `position: sticky` et `inset-block-end: 0` qui la tiennent au ras de la
+ * fenêtre tant que l'étape déborde, et ni l'un ni l'autre ne dépend d'une marge.
+ *
+ * La déplacer sur le dernier bloc de la colonne aurait été l'autre correction
+ * possible — et elle aurait pris au sélecteur la gouttière de page que la barre
+ * lui laissait : les deux boutons de langue collés au bord de l'écran.
  */
 .spa-booking__bar {
   position: sticky;
@@ -1852,7 +1878,6 @@
   flex-direction: column;
   gap: var(--spa-space-2);
   margin-inline: calc(var(--booking-gutter) * -1);
-  margin-block-end: calc(var(--spa-space-10) * -1);
   padding: var(--spa-space-3) var(--booking-gutter) var(--spa-space-4);
   /* Opaque : c'est ce qui masque le contenu qui passe dessous. Une barre
    * translucide rendrait les deux textes illisibles. */
@@ -1954,7 +1979,6 @@
   .spa-booking__bar {
     position: static;
     margin-inline: 0;
-    margin-block-end: 0;
     padding: 0;
     background: none;
     border-block-start: 0;
