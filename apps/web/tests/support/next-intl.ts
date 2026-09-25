@@ -1,6 +1,8 @@
 import type { Locale } from '@spa/shared';
 import { vi } from 'vitest';
 
+import { nextIntlFixe, nextIntlServerFixe } from './langue-figee';
+
 /**
  * La langue des suites unitaires — #845, avant-dernier critère d'acceptation :
  * *« les tests existants qui vérifient des libellés français continuent de
@@ -44,119 +46,24 @@ import { vi } from 'vitest';
  * *« `getTranslations` is not supported in Client Components »* — non parce que
  * le code est fautif, mais parce qu'aucune requête n'existe pour porter la
  * langue. L'amorce la fournit, comme elle la fournit aux crochets.
+ *
+ * ## Deux lignes, et rien de plus (#1283)
+ *
+ * L'amorce n'est qu'un cas particulier de la doublure à langue figée : celui où
+ * la langue est `fr`. Elle montait pourtant sa propre fabrique et son propre
+ * cache, comme trois suites anglaises montaient les leurs — quatre écritures du
+ * même mécanisme. Tout ce qui n'est pas le choix de la langue vit désormais dans
+ * `langue-figee.ts` et `traducteur.ts`, y compris la mémoïsation du formateur
+ * ICU, que les crochets et le serveur se partagent.
+ *
+ * Le compte n'est pas soldé pour autant : une douzaine de suites montent encore
+ * la leur à la main (`admin-staff-i18n`, `admin-planning-i18n`,
+ * `transverse-i18n`…). Voir `langue-figee.ts`.
  */
 
 /** La langue des suites — celle dans laquelle elles ont été écrites. */
 export const TEST_LOCALE: Locale = 'fr';
 
-/**
- * Le traducteur de la langue des suites, pour un namespace donné.
- *
- * Fabriqué à la demande plutôt qu'une fois pour toutes : `vi.mock` est hissé, et
- * les catalogues ne doivent être lus qu'au premier appel — c'est-à-dire quand la
- * fabrique du module est évaluée, pas quand ce fichier est chargé.
- *
- * À la demande, mais **une seule fois par namespace** : sans ce cache, chaque
- * appel à `getTranslations` relisait les sept catalogues sur le disque et
- * remontait un formateur ICU, pour un résultat identique.
- */
-const SERVER_TRANSLATORS = new Map<string, unknown>();
+vi.mock('next-intl', () => nextIntlFixe(TEST_LOCALE));
 
-async function frenchTranslator(namespace?: string): Promise<unknown> {
-  const key = namespace ?? '';
-  const cached = SERVER_TRANSLATORS.get(key);
-
-  if (cached !== undefined) {
-    return cached;
-  }
-
-  const actual = await vi.importActual<typeof import('next-intl')>('next-intl');
-  const { loadMessages } = await import('../../i18n/messages');
-
-  /**
-   * `createTranslator` est typé sur le catalogue complet ; l'appeler avec un
-   * namespace dont le nom n'est connu qu'à l'exécution demande de relâcher la
-   * contrainte, une fois, ici. Le comportement, lui, est celui de la
-   * bibliothèque.
-   */
-  const translator = actual.createTranslator as unknown as (options: {
-    locale: string;
-    messages: unknown;
-    namespace?: string;
-  }) => unknown;
-  const messages = loadMessages(TEST_LOCALE);
-
-  const made = translator(
-    namespace === undefined
-      ? { locale: TEST_LOCALE, messages }
-      : { locale: TEST_LOCALE, messages, namespace },
-  );
-
-  SERVER_TRANSLATORS.set(key, made);
-
-  return made;
-}
-
-vi.mock('next-intl', async () => {
-  const actual = await vi.importActual<typeof import('next-intl')>('next-intl');
-  const { loadMessages } = await import('../../i18n/messages');
-
-  const messages = loadMessages(TEST_LOCALE);
-
-  const translator = actual.createTranslator as unknown as (options: {
-    locale: string;
-    messages: unknown;
-    namespace?: string;
-  }) => unknown;
-
-  /**
-   * Un traducteur par namespace, fabriqué une fois.
-   *
-   * Sans ce cache, `createTranslator` — qui monte un formateur ICU — serait
-   * rappelé à **chaque rendu de chaque composant** : `Button` lit
-   * `ui.button` sur tous ses rendus, et un écran qui en affiche trente en
-   * paie trente par passe de rendu. Le vrai `useTranslations` ne fait rien de
-   * tel : il mémoïse sur le contexte de la requête. La doublure doit donc
-   * mémoïser aussi, sans quoi elle mesure le coût de la doublure et non celui
-   * du composant — et fait déborder le délai de 5 s des suites les plus
-   * lourdes (tunnel de réservation, sélecteur de pays).
-   *
-   * La clé `''` est celle du traducteur sans namespace : `undefined` ne se
-   * distingue pas d'une absence dans une `Map`.
-   */
-  const cache = new Map<string, unknown>();
-
-  return {
-    ...actual,
-    useLocale: () => TEST_LOCALE,
-    useTranslations: (namespace?: string) => {
-      const key = namespace ?? '';
-      const cached = cache.get(key);
-
-      if (cached !== undefined) {
-        return cached;
-      }
-
-      const made = translator(
-        namespace === undefined
-          ? { locale: TEST_LOCALE, messages }
-          : { locale: TEST_LOCALE, messages, namespace },
-      );
-
-      cache.set(key, made);
-
-      return made;
-    },
-  };
-});
-
-vi.mock('next-intl/server', () => ({
-  getLocale: () => Promise.resolve(TEST_LOCALE),
-  /**
-   * `getTranslations('ns')` et `getTranslations({ namespace })` — les deux
-   * formes de la bibliothèque. La langue passée, elle, est ignorée : les suites
-   * n'ont qu'une langue, et c'est tout l'objet de cette amorce.
-   */
-  getTranslations: (options?: string | { readonly namespace?: string }) =>
-    frenchTranslator(typeof options === 'string' ? options : options?.namespace),
-}));
+vi.mock('next-intl/server', () => nextIntlServerFixe(TEST_LOCALE));
