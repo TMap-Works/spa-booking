@@ -1,3 +1,4 @@
+import { PASSWORD_MIN_LENGTH, validationPhrases } from '@spa/shared';
 import { cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -42,6 +43,17 @@ function renderForm(): void {
 
 /** Ce que rend le champ téléphone pour un numéro français trop court (#825). */
 const PHONE_INCOMPLETE = 'Ce numéro est incomplet pour ce pays (France, +33).';
+
+/*
+ * Les deux bornes du contrat, dites par `zodErrorMap` depuis #1232.
+ *
+ * Elles étaient jusqu'ici des littéraux français écrits dans les schémas
+ * partagés, que ce formulaire affichait tels quels — y compris rendu en anglais.
+ * Les lire du catalogue de `@spa/shared` plutôt que de les recopier est ce qui
+ * fait échouer cette suite le jour où la phrase change de langue sans prévenir.
+ */
+const CHAMP_REQUIS = validationPhrases('fr').required;
+const MOT_DE_PASSE_COURT = validationPhrases('fr').tooShort(PASSWORD_MIN_LENGTH);
 
 /**
  * La saisie exacte de #698 : « Nom » laissé vide, les trois autres fautifs.
@@ -103,12 +115,12 @@ describe('inscription — première soumission', () => {
     await user.click(screen.getByRole('button', { name: /Créer mon compte/ }));
 
     // Le critère de l'issue : quatre erreurs, en une seule soumission.
-    expect(await screen.findByText('ce champ est obligatoire')).toBeDefined();
+    expect(await screen.findByText(CHAMP_REQUIS)).toBeDefined();
     expect(messagesAffiches()).toEqual([
-      'ce champ est obligatoire',
+      CHAMP_REQUIS,
       'adresse e-mail invalide',
       PHONE_INCOMPLETE,
-      'le mot de passe fait au moins 12 caractères',
+      MOT_DE_PASSE_COURT,
     ]);
     expect(registerAction).not.toHaveBeenCalled();
   });
@@ -123,7 +135,7 @@ describe('inscription — première soumission', () => {
     await user.click(screen.getByRole('button', { name: /Créer mon compte/ }));
 
     const nom = await screen.findByLabelText(/^Nom/);
-    const message = await screen.findByText('ce champ est obligatoire');
+    const message = await screen.findByText(CHAMP_REQUIS);
     expect(nom.getAttribute('aria-invalid')).toBe('true');
     expect(nom.getAttribute('aria-describedby')).toContain(message.id);
   });
@@ -136,16 +148,16 @@ describe('inscription — correction', () => {
 
     await saisieDuRapport(user);
     await user.click(screen.getByRole('button', { name: /Créer mon compte/ }));
-    await screen.findByText('ce champ est obligatoire');
+    await screen.findByText(CHAMP_REQUIS);
 
     await user.type(screen.getByLabelText(/^Nom/), 'Ranaivo');
 
-    expect(screen.queryByText('ce champ est obligatoire')).toBeNull();
+    expect(screen.queryByText(CHAMP_REQUIS)).toBeNull();
     // Les trois autres restent signalées : corriger un champ n'absout pas les autres.
     expect(messagesAffiches()).toEqual([
       'adresse e-mail invalide',
       PHONE_INCOMPLETE,
-      'le mot de passe fait au moins 12 caractères',
+      MOT_DE_PASSE_COURT,
     ]);
   });
 
