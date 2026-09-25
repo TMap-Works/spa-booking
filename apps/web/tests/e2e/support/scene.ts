@@ -24,6 +24,7 @@ import { test as base, expect, type Locator, type Page } from '@playwright/test'
 import { CLIENTE, MOT_DE_PASSE, chemins, dansNJours } from './environnement';
 import { lireJeuDessai, type JeuDessai } from './jeu-dessai';
 import { debuteParLibelle, libelle } from './libelles';
+import { COOKIE_ACCES_CLIENT, COOKIE_PRESENCE_CLIENT } from './sessions';
 
 export interface Fixtures {
   readonly jeu: JeuDessai;
@@ -130,6 +131,25 @@ function ligneDe(carte: Locator): Locator {
   return carte.locator('xpath=ancestor::label[1]');
 }
 
+/** Ce qui change d'une traversée du tunnel à l'autre. */
+export interface OptionsTunnel {
+  /**
+   * La cliente est **déjà connectée** — le tunnel ne barre alors pas la route.
+   *
+   * `gated` vaut `account === null && step === 'coordonnees'`
+   * (`booking-tunnel.tsx`) : avec une session, l'étape « Identification » n'existe
+   * pas, et la chercher ferait échouer la scène sur un écran que le produit a
+   * raison de ne pas afficher.
+   *
+   * C'est ce qui permet aux deux scénarios qui ne surveillent que la console de
+   * repartir de la session enregistrée par le projet `sessions` au lieu d'ouvrir
+   * une connexion de plus (#1129, registre dans `support/sessions.ts`). Les
+   * traversées qui éprouvent le parcours, elles, gardent la porte : c'en est une
+   * étape depuis le 2026-09-22.
+   */
+  readonly sessionOuverte?: boolean;
+}
+
 /**
  * Le tunnel client, de la vitrine à la confirmation — sans aucun raccourci.
  *
@@ -151,8 +171,17 @@ function ligneDe(carte: Locator): Locator {
  * **Deux écrans font exception**, et c'est écrit à l'endroit où on les
  * traverse : la connexion et l'inscription de l'espace client ne sont pas
  * encore traduites — c'est leur propre ticket de l'épique #843.
+ *
+ * ## Et, depuis #1129, la porte du compte peut être déjà franchie
+ *
+ * `options.sessionOuverte` dit que la cliente arrive connectée : l'étape 4
+ * n'existe alors pas, et la scène ne la cherche pas. Voir `OptionsTunnel`.
  */
-export async function reserverParLeTunnel(page: Page, langue: Locale = 'fr'): Promise<Reservation> {
+export async function reserverParLeTunnel(
+  page: Page,
+  langue: Locale = 'fr',
+  options: OptionsTunnel = {},
+): Promise<Reservation> {
   await test.step('1. Vitrine — entrer dans le tunnel', async () => {
     await page.goto(chemins.salon());
     // Le bouton de la vitrine, dans le contenu : l'en-tête et le pied du salon
@@ -225,36 +254,51 @@ export async function reserverParLeTunnel(page: Page, langue: Locale = 'fr'): Pr
     await creneau.click();
   });
 
-  await test.step('4. Identification — se connecter pour réserver', async () => {
-    // Réserver exige un compte depuis le 2026-09-22 : sans session, le tunnel
-    // s'arrête ici, le créneau rappelé, et mène à la connexion du salon. Le
-    // lien est cherché dans le contenu : l'en-tête du tunnel n'en porte pas,
-    // mais c'est ce qui le garantit.
-    await expect(
-      page.getByRole('heading', { level: 1, name: libelle(langue, 'booking.tunnel.gateStep.title') }),
-    ).toBeVisible();
-    await page
-      .getByRole('main')
-      .getByRole('link', { name: libelle(langue, 'booking.tunnel.gateStep.signIn') })
-      .click();
+  if (options.sessionOuverte === true) {
+    await test.step('4. Identification — la session est déjà ouverte', async () => {
+      // Rien à franchir : l'étape « Coordonnées » s'ouvre directement sur
+      // l'encart du compte. On l'attend quand même, et on n'enchaîne pas à
+      // l'aveugle — sans ce repère, une session qui n'aurait pas été reprise
+      // laisserait la scène cocher un consentement sur l'écran de la porte.
+      await expect(
+        page.getByText(libelle(langue, 'booking.tunnel.contactStep.identityLabel')),
+      ).toBeVisible({ timeout: 20_000 });
+    });
+  } else {
+    await test.step('4. Identification — se connecter pour réserver', async () => {
+      // Réserver exige un compte depuis le 2026-09-22 : sans session, le tunnel
+      // s'arrête ici, le créneau rappelé, et mène à la connexion du salon. Le
+      // lien est cherché dans le contenu : l'en-tête du tunnel n'en porte pas,
+      // mais c'est ce qui le garantit.
+      await expect(
+        page.getByRole('heading', {
+          level: 1,
+          name: libelle(langue, 'booking.tunnel.gateStep.title'),
+        }),
+      ).toBeVisible();
+      await page
+        .getByRole('main')
+        .getByRole('link', { name: libelle(langue, 'booking.tunnel.gateStep.signIn') })
+        .click();
 
-    // Ces trois lignes attendaient leur catalogue : #1134 a traduit l'écran de
-    // connexion de l'espace client, elles passent donc au namespace `account`
-    // comme la note qui les tenait en français l'annonçait. Les y laisser en dur
-    // aurait fait échouer le parcours anglais sur « Email address » — non parce
-    // que l'écran a perdu un champ, mais parce que la scène ne parlait qu'une
-    // des deux langues.
-    await page.getByLabel(libelle(langue, 'account.login.email')).fill(CLIENTE.email);
-    await page.getByLabel(libelle(langue, 'account.login.password')).fill(MOT_DE_PASSE);
-    await page.getByRole('button', { name: libelle(langue, 'account.login.submit') }).click();
+      // Ces trois lignes attendaient leur catalogue : #1134 a traduit l'écran de
+      // connexion de l'espace client, elles passent donc au namespace `account`
+      // comme la note qui les tenait en français l'annonçait. Les y laisser en dur
+      // aurait fait échouer le parcours anglais sur « Email address » — non parce
+      // que l'écran a perdu un champ, mais parce que la scène ne parlait qu'une
+      // des deux langues.
+      await page.getByLabel(libelle(langue, 'account.login.email')).fill(CLIENTE.email);
+      await page.getByLabel(libelle(langue, 'account.login.password')).fill(MOT_DE_PASSE);
+      await page.getByRole('button', { name: libelle(langue, 'account.login.submit') }).click();
 
-    // Le retour au tunnel (#1087) : le brouillon de l'onglet est repris, et
-    // l'étape s'ouvre sur l'encart du compte au lieu de ses champs (#1050).
-    await page.waitForURL(`**${chemins.reservation()}**`);
-    await expect(
-      page.getByText(libelle(langue, 'booking.tunnel.contactStep.identityLabel')),
-    ).toBeVisible({ timeout: 20_000 });
-  });
+      // Le retour au tunnel (#1087) : le brouillon de l'onglet est repris, et
+      // l'étape s'ouvre sur l'encart du compte au lieu de ses champs (#1050).
+      await page.waitForURL(`**${chemins.reservation()}**`);
+      await expect(
+        page.getByText(libelle(langue, 'booking.tunnel.contactStep.identityLabel')),
+      ).toBeVisible({ timeout: 20_000 });
+    });
+  }
 
   await test.step('5. Coordonnées — donner son accord', async () => {
     // Connectée, la cliente n'a rien à retaper : le compte a prérempli nom et
@@ -338,6 +382,46 @@ export async function connexionComptoir(page: Page, email: string): Promise<void
     await expect(
       page.getByRole('navigation', { name: 'Sections du tableau de bord' }),
     ).toBeVisible({ timeout: 20_000 });
+  });
+}
+
+/**
+ * Ouvre la session de la cliente, dans l'espace client.
+ *
+ * Le pendant de `connexionComptoir` pour l'autre surface du produit, et il n'a
+ * qu'un appelant : le projet `sessions` (`sessions.setup.ts`), qui l'enregistre
+ * une fois pour toute la suite. Les scénarios qui éprouvent la **porte** du
+ * tunnel, eux, passent par elle — `reserverParLeTunnel` sans `sessionOuverte`.
+ *
+ * ## Ce qui est vérifié à l'arrivée, et pourquoi ce sont les cookies
+ *
+ * Pas un libellé de l'accueil : ce qui doit être vrai pour qu'une session
+ * enregistrée serve à quelque chose, ce sont les **deux** cookies. Le jeton
+ * ouvre l'espace client ; la présence, elle, est le seul signal que le tunnel
+ * reçoit — les jetons sont bornés à `/{slug}/compte` et `/{slug}/reservation`
+ * ne les voit jamais (`lib/account-presence.ts`). Un enregistrement amputé du
+ * second rouvrirait la porte au milieu du tunnel, et la panne se lirait trois
+ * scénarios plus loin, sur un consentement introuvable.
+ */
+export async function connexionCliente(page: Page, langue: Locale = 'fr'): Promise<void> {
+  await test.step('Espace client — ouvrir la session de la cliente', async () => {
+    await page.goto(chemins.connexionClient());
+    await page.getByLabel(libelle(langue, 'account.login.email')).fill(CLIENTE.email);
+    await page.getByLabel(libelle(langue, 'account.login.password')).fill(MOT_DE_PASSE);
+    await page.getByRole('button', { name: libelle(langue, 'account.login.submit') }).click();
+
+    // Sans `retour` dans l'adresse, la connexion dépose sur l'accueil de
+    // l'espace client (`login-form.tsx`, #1087).
+    await page.waitForURL(`**${chemins.espaceClient()}`, { timeout: 60_000 });
+
+    const noms = (await page.context().cookies()).map((cookie) => cookie.name);
+    expect(noms, "La connexion cliente n'a pas déposé le jeton de l'espace client.").toContain(
+      COOKIE_ACCES_CLIENT,
+    );
+    expect(
+      noms,
+      'Le tunnel lit la présence sur ce cookie : sans lui, il redemanderait le compte.',
+    ).toContain(COOKIE_PRESENCE_CLIENT);
   });
 }
 

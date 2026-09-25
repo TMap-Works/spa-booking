@@ -43,22 +43,28 @@ import {
 } from './support/api';
 import { COMPTES, chemins, dansNJours, heureDuSalon } from './support/environnement';
 import { compteClient } from './support/jeu-dessai';
-import {
-  blocRendezVous,
-  connexionComptoir,
-  expect,
-  jourDuScenario,
-  test,
-  tiroir,
-} from './support/scene';
+import { blocRendezVous, expect, jourDuScenario, test, tiroir } from './support/scene';
+import { SESSION_COMPTOIR } from './support/sessions';
 
 /** Le nom du compte client du jeu d'essai, tel qu'il s'affiche au comptoir. */
 const CLIENTE_FICHIER = 'Clara Parcours';
 
 test.describe('Comptoir', () => {
-  test.beforeEach(async ({ page }) => {
-    await connexionComptoir(page, COMPTES.manager);
-  });
+  /**
+   * La session du comptoir est **reprise**, et non rouverte à chaque scénario.
+   *
+   * Un `beforeEach` qui se connectait ouvrait cinq sessions du même compte pour
+   * cinq gestes du même comptoir — la moitié des neuf connexions que #1129 a
+   * relevées, sur un plafond de dix par minute et par cible (#1127). Un salon
+   * n'ouvre pas une session par geste, et la suite n'a aucune raison de le
+   * faire : le projet `sessions` l'ouvre une fois (`sessions.setup.ts`), et
+   * chaque scénario repart des cookies déjà posés.
+   *
+   * Ce que cela ne retire à personne : la connexion du back-office reste
+   * éprouvée à l'écran — par `sessions.setup.ts` lui-même, qui échoue comme un
+   * test si elle cède, et par `session-expiree.e2e.ts`, dont elle est l'objet.
+   */
+  test.use({ storageState: SESSION_COMPTOIR });
 
   /**
    * La journée est **vide au départ**, et c'est le sujet du scénario.

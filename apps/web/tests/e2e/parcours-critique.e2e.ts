@@ -10,21 +10,28 @@
  * Les trois maillons sont trois `test.step` de premier niveau. C'est ce
  * découpage que le rapport d'échec restitue : quand cette suite rougit, la
  * première ligne du journal dit lequel des trois a cédé.
+ *
+ * ## Deux suites, deux sessions de départ (#1129)
+ *
+ * Le parcours lui-même part de la session du **comptoir**, reprise du projet
+ * `sessions` : la cliente, elle, se connecte pour de bon au milieu du tunnel —
+ * c'en est une étape depuis le 2026-09-22, et la traverser avec des cookies déjà
+ * posés ne prouverait plus rien d'elle.
+ *
+ * La surveillance de console, en revanche, rejouait le tunnel entier pour
+ * regarder ailleurs : elle repart de la session **cliente** enregistrée, et
+ * n'ouvre donc aucune connexion. Voir le registre dans `support/sessions.ts`.
  */
 
 import { connecter, trouverRendezVous } from './support/api';
 import { CLIENTE, COMPTES, chemins, dateDuSalon, heureDuSalon } from './support/environnement';
 import { assertAucunAppelStripe } from './support/stripe-garde';
-import {
-  blocRendezVous,
-  connexionComptoir,
-  expect,
-  reserverParLeTunnel,
-  test,
-  tiroir,
-} from './support/scene';
+import { blocRendezVous, expect, reserverParLeTunnel, test, tiroir } from './support/scene';
+import { SESSION_CLIENTE, SESSION_COMPTOIR } from './support/sessions';
 
 test.describe('Parcours critique', () => {
+  test.use({ storageState: SESSION_COMPTOIR });
+
   test('réserver, confirmer, puis encaisser en espèces', async ({ page, request, traficReseau }) => {
     let identifiant = '';
     let dateSalon = '';
@@ -60,7 +67,11 @@ test.describe('Parcours critique', () => {
       blocRendezVous(page, CLIENTE.nom).filter({ hasText: `${heureSalon} –` });
 
     await test.step('Confirmer — le salon accepte depuis le tiroir', async () => {
-      await connexionComptoir(page, COMPTES.manager);
+      // La session du comptoir est déjà là — `test.use({ storageState })` en tête
+      // de suite. L'onglet passe donc du tunnel public au planning du salon sans
+      // repasser par l'écran de connexion : les cookies des deux espaces portent
+      // des noms distincts et des chemins distincts, et cohabitent sans se voir
+      // (`admin/session.ts`).
       await page.goto(chemins.calendrier(dateSalon));
 
       const bloc = blocDuJour();
@@ -122,8 +133,21 @@ test.describe('Parcours critique', () => {
       assertAucunAppelStripe(traficReseau, 'Règlement en espèces');
     });
   });
+});
 
-  test("la console du parcours ne porte aucune erreur", async ({ page }) => {
+test.describe('La console du parcours', () => {
+  /**
+   * Cliente déjà connectée — la traversée surveille la console, pas la porte.
+   *
+   * Elle rejouait le tunnel du premier au dernier écran, connexion comprise, pour
+   * une propriété qui ne porte sur aucun de ces écrans en particulier : c'était la
+   * neuvième des connexions que #1129 a relevées, et la plus facile à rendre. La
+   * porte du compte reste éprouvée par le scénario ci-dessus, qui la franchit
+   * pour de bon.
+   */
+  test.use({ storageState: SESSION_CLIENTE });
+
+  test('ne porte aucune erreur', async ({ page }) => {
     const erreurs: string[] = [];
     page.on('console', (message) => {
       if (message.type() === 'error') {
@@ -132,7 +156,7 @@ test.describe('Parcours critique', () => {
     });
     page.on('pageerror', (erreur) => erreurs.push(erreur.message));
 
-    await reserverParLeTunnel(page);
+    await reserverParLeTunnel(page, 'fr', { sessionOuverte: true });
 
     // Le 404 de `favicon.ico` est le seul bruit toléré — il ne vient d'aucun
     // composant et n'a pas de correctif dans le périmètre du MVP.
