@@ -6,6 +6,7 @@ import {
   type CountryCode,
 } from 'libphonenumber-js/min';
 import metadata from 'libphonenumber-js/min/metadata';
+import { useLocale } from 'next-intl';
 import {
   useCallback,
   useEffect,
@@ -31,6 +32,7 @@ import {
   phoneExample,
   phoneInvalidMessage,
   resolvePhoneCountry,
+  resolvePhoneLocale,
   toPhoneInputValue,
   type PhoneLocale,
 } from '@/lib/phone';
@@ -95,6 +97,14 @@ interface PhoneFieldProps {
    * d'édition. À défaut, celui de `PhoneCountryProvider`.
    */
   readonly defaultCountry?: string | null | undefined;
+  /**
+   * Force la langue du sélecteur, des noms de pays et du refus du numéro.
+   *
+   * À omettre : le champ lit la langue de la session (`useLocale()`), comme
+   * toute brique du design system. La propriété ne reste que pour l'écran qui
+   * saurait, un jour, devoir montrer un numéro dans une autre langue que la
+   * sienne — et pour éprouver les deux langues sans monter deux contextes.
+   */
   readonly locale?: PhoneLocale | undefined;
   /**
    * `tel` par défaut. Le back-office passe `off` : le comptoir saisit le
@@ -145,10 +155,22 @@ export function PhoneField({
   onChange,
   onBlur,
   defaultCountry,
-  locale = 'fr',
+  locale,
   autoComplete = 'tel',
   ref,
 }: PhoneFieldProps) {
+  /**
+   * La langue de l'écran (#1267).
+   *
+   * Lue ici et non reçue de l'appelant : sept formulaires montent ce champ, et
+   * le repli `'fr'` posé à titre transitoire par #845 faisait parler français
+   * les six qui ne passaient pas la propriété — sélecteur d'indicatif, noms de
+   * pays, recherche et refus du numéro compris. Une brique du design system
+   * connaît la langue de la session comme elle connaît son thème ; l'appelant
+   * n'a plus rien à lui redire.
+   */
+  const session = useLocale();
+  const active = locale ?? resolvePhoneLocale(session);
   const contextCountry = usePhoneCountry();
   const startCountry = resolvePhoneCountry(
     defaultCountry === undefined ? contextCountry : defaultCountry,
@@ -165,7 +187,7 @@ export function PhoneField({
     () => countryOf(inputValue) ?? startCountry,
   );
   const flags = useFlags();
-  const labels = phoneLabels(locale);
+  const labels = phoneLabels(active);
   const example = phoneExample(country);
   // Stable tant que le champ garde son identifiant : le sélecteur s'en sert
   // comme dépendance d'effet, et ne doit le rappeler qu'à sa fermeture.
@@ -198,7 +220,7 @@ export function PhoneField({
         id={id}
         metadata={metadata}
         labels={labels}
-        locales={locale}
+        locales={active}
         defaultCountry={startCountry}
         // Le pays de l'établissement en tête de liste, puis tous les autres
         // dans l'ordre alphabétique de la langue de l'écran.
@@ -235,7 +257,7 @@ export function PhoneField({
         countrySelectComponent={CountryPicker}
         countrySelectProps={
           {
-            locale,
+            locale: active,
             flags,
             onPicked: focusNumber,
           } satisfies CountryPickerOwnProps
@@ -248,7 +270,7 @@ export function PhoneField({
       )}
       {invalid ? (
         <p id={errorId} className="spa-field__error" role="alert">
-          {phoneInvalidMessage(inputValue ?? '', country, locale)}
+          {phoneInvalidMessage(inputValue ?? '', country, active)}
         </p>
       ) : null}
     </div>
