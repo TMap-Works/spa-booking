@@ -1,5 +1,6 @@
 'use client';
 
+import { useTranslations } from 'next-intl';
 import { useEffect, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 
@@ -31,15 +32,32 @@ const PRINTING_ATTRIBUTE = 'data-printing';
  * d'imprimer une seconde fois. Chaque clic incrémente `requests`, et c'est ce
  * compteur — pas un booléen qu'`afterprint` devrait rabattre — qui relance
  * l'impression.
+ *
+ * ## Le libellé vient du catalogue — #1199
+ *
+ * `label` était une **prop facultative dont le défaut était français**, et son
+ * unique appelant (`checkout-receipt.tsx`) ne la passait pas : le bouton disait
+ * « Imprimer le ticket » sous un rouleau entièrement traduit par #1248, à côté
+ * de deux boutons de PDF qui, eux, suivaient la langue. C'était le dernier mot
+ * français de l'aperçu du ticket de caisse anglais.
+ *
+ * La prop est retirée plutôt que rebranchée sur un défaut traduit : une valeur
+ * par défaut écrite ici resterait hors de portée de la règle de lint — un défaut
+ * de paramètre n'est pas du JSX —, et aucun appelant n'en voulait d'autre. Le
+ * libellé se lit donc sur `admin-checkout`, le namespace du comptoir, seul lieu
+ * d'où ce bouton est monté.
+ *
+ * `useTranslations` et non `getTranslations` : le fichier porte `'use client'`
+ * — il tient un état et un effet — et `next-intl/server` lève « not supported in
+ * Client Components » (web-frontend §1).
  */
 export function TicketPrinter({
   children,
-  label = 'Imprimer le ticket',
 }: {
   /** Ce qui s'imprime — le même rendu que l'aperçu à l'écran. */
   readonly children: ReactNode;
-  readonly label?: string;
 }) {
+  const t = useTranslations('admin-checkout');
   const [requests, setRequests] = useState(0);
 
   useEffect(() => {
@@ -70,7 +88,7 @@ export function TicketPrinter({
         }}
         variant="accent"
       >
-        {label}
+        {t('receipt.print')}
       </Button>
       {requests === 0
         ? null

@@ -125,6 +125,7 @@
     "unavailableTitle": "Ticket indisponible",
     "retry": "Réessayer",
     "loadFailed": "Le ticket n’a pas pu être chargé. Vérifiez la connexion et réessayez.",
+    "print": "Imprimer le ticket",
     "pdfTicket": "PDF ticket",
     "pdfInvoice": "Facture A4",
     "finalTitle": "Ticket n° {number}",
