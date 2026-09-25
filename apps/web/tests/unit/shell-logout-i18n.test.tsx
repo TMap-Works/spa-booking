@@ -5,6 +5,8 @@ import { cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { fixerLangue, nextIntlMobile } from '../support/langue-mobile';
+
 /** Ce fichier, d'où part la racine d'`apps/web` lue par la garde de lint. */
 const here = path.dirname(fileURLToPath(import.meta.url));
 
@@ -30,59 +32,17 @@ const here = path.dirname(fileURLToPath(import.meta.url));
  * 3. **la règle de lint anti-texte-en-dur couvre les deux fichiers**, sans quoi
  *    un littéral pourrait y revenir sans qu'aucun outil ne le dise.
  *
- * ## Pourquoi une doublure de langue à soi
+ * ## Pourquoi une doublure de langue commutable
  *
  * L'amorce des suites fixe la langue à `fr` pour toutes
  * (`tests/support/next-intl.ts`). Rendre le même bouton dans les deux langues
  * demande de la remplacer par une doublure **commutable** : elle lit les vrais
- * catalogues, langue par langue, et c'est `langue()` qui choisit laquelle avant
- * chaque rendu.
+ * catalogues, langue par langue, et c'est `fixerLangue()` qui choisit laquelle
+ * avant chaque rendu. Cette doublure est écrite une fois pour toutes les suites
+ * qui en ont besoin, dans `tests/support/langue-mobile.ts` (#1287).
  */
 
-/** La langue du rendu courant, partagée avec la fabrique hissée de `vi.mock`. */
-const etat = vi.hoisted(() => ({ locale: 'fr' as 'fr' | 'en' }));
-
-/** Fixe la langue du prochain rendu. */
-function langue(locale: 'fr' | 'en'): void {
-  etat.locale = locale;
-}
-
-vi.mock('next-intl', async () => {
-  const actual = await vi.importActual<typeof import('next-intl')>('next-intl');
-  const { loadMessages } = await import('../../i18n/messages');
-
-  const translator = actual.createTranslator as unknown as (options: {
-    locale: string;
-    messages: unknown;
-    namespace?: string;
-  }) => unknown;
-  /** Un traducteur par langue et par namespace — comme l'amorce, qui mémoïse. */
-  const cache = new Map<string, unknown>();
-
-  return {
-    ...actual,
-    useLocale: () => etat.locale,
-    useTranslations: (namespace?: string) => {
-      const key = `${etat.locale}|${namespace ?? ''}`;
-      const cached = cache.get(key);
-
-      if (cached !== undefined) {
-        return cached;
-      }
-
-      const messages = loadMessages(etat.locale);
-      const made = translator(
-        namespace === undefined
-          ? { locale: etat.locale, messages }
-          : { locale: etat.locale, messages, namespace },
-      );
-
-      cache.set(key, made);
-
-      return made;
-    },
-  };
-});
+vi.mock('next-intl', () => nextIntlMobile());
 
 const adminLogoutAction = vi.fn();
 const logoutAction = vi.fn();
@@ -151,12 +111,12 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
-  langue('fr');
+  fixerLangue('fr');
 });
 
 describe('le bouton de déconnexion du rail du back-office', () => {
   it.each(['fr', 'en'] as const)('se nomme dans la langue de la session — %s', (locale) => {
-    langue(locale);
+    fixerLangue(locale);
     render(<AdminLogoutButton tenantSlug={SLUG} />);
 
     expect(screen.getByRole('button', { name: ATTENDU[locale].signOut })).toBeDefined();
@@ -166,7 +126,7 @@ describe('le bouton de déconnexion du rail du back-office', () => {
     // L'action ne se résout jamais : le bouton reste sur son état d'attente, qui
     // est justement ce qu'on vient lire.
     adminLogoutAction.mockImplementation(() => new Promise<void>(() => {}));
-    langue(locale);
+    fixerLangue(locale);
     render(<AdminLogoutButton tenantSlug={SLUG} />);
 
     await userEvent.click(screen.getByRole('button', { name: ATTENDU[locale].signOut }));
@@ -175,7 +135,7 @@ describe('le bouton de déconnexion du rail du back-office', () => {
   });
 
   it('ferme la session du salon qu’on lui donne, quelle que soit la langue', async () => {
-    langue('en');
+    fixerLangue('en');
     render(<AdminLogoutButton tenantSlug={SLUG} />);
 
     await userEvent.click(screen.getByRole('button', { name: 'Sign out' }));
@@ -188,7 +148,7 @@ describe('le bouton de déconnexion du rail du back-office', () => {
 
 describe('le bouton de déconnexion du menu de l’espace client', () => {
   it.each(['fr', 'en'] as const)('se nomme dans la langue de la session — %s', (locale) => {
-    langue(locale);
+    fixerLangue(locale);
     render(<LogoutButton tenantSlug={SLUG} />);
 
     expect(screen.getByRole('button', { name: ATTENDU[locale].signOut })).toBeDefined();
@@ -196,7 +156,7 @@ describe('le bouton de déconnexion du menu de l’espace client', () => {
 
   it.each(['fr', 'en'] as const)('dit l’attente dans la même langue — %s', async (locale) => {
     logoutAction.mockImplementation(() => new Promise<void>(() => {}));
-    langue(locale);
+    fixerLangue(locale);
     render(<LogoutButton tenantSlug={SLUG} />);
 
     await userEvent.click(screen.getByRole('button', { name: ATTENDU[locale].signOut }));
@@ -205,7 +165,7 @@ describe('le bouton de déconnexion du menu de l’espace client', () => {
   });
 
   it('ferme la session du salon qu’on lui donne, quelle que soit la langue', async () => {
-    langue('en');
+    fixerLangue('en');
     render(<LogoutButton tenantSlug={SLUG} />);
 
     await userEvent.click(screen.getByRole('button', { name: 'Sign out' }));

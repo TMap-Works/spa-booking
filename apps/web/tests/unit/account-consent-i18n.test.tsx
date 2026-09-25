@@ -1,6 +1,8 @@
 import { cleanup, render } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { fixerLangue, nextIntlMobile } from '../support/langue-mobile';
+
 import { RegisterForm } from '@/app/(account)/[tenantSlug]/compte/components/register-form';
 import { ContactStep } from '@/app/(booking)/[tenantSlug]/reservation/steps/contact-step';
 import { loadMessages, type MessageTree } from '@/i18n/messages';
@@ -45,49 +47,12 @@ import { emptyBookingDraft } from '@/lib/booking/draft';
  * (`tests/support/next-intl.ts`, #845), et la promesse éprouvée ici est
  * précisément que l'écran **change** de langue. La doublure ci-dessous est celle
  * de l'amorce, à une chose près : la langue est une variable que chaque test
- * pose. Le formatage reste celui de la bibliothèque, sur les catalogues du
- * dépôt — même conduite que `signup-i18n.test.tsx`.
+ * pose par `fixerLangue()`. Le formatage reste celui de la bibliothèque, sur les
+ * catalogues du dépôt — même conduite que `signup-i18n.test.tsx`, et la même
+ * écriture, celle de `tests/support/langue-mobile.ts` (#1287).
  */
 
-const state = vi.hoisted(() => ({ locale: 'fr' as 'fr' | 'en' }));
-
-vi.mock('next-intl', async () => {
-  const actual = await vi.importActual<typeof import('next-intl')>('next-intl');
-  const { loadMessages: load } = await import('@/i18n/messages');
-
-  const translator = actual.createTranslator as unknown as (options: {
-    locale: string;
-    messages: unknown;
-    namespace?: string;
-  }) => unknown;
-
-  /** Un traducteur par langue et par namespace — voir l'amorce sur le coût. */
-  const cache = new Map<string, unknown>();
-
-  return {
-    ...actual,
-    useLocale: () => state.locale,
-    useTranslations: (namespace?: string) => {
-      const key = `${state.locale}:${namespace ?? ''}`;
-      const cached = cache.get(key);
-
-      if (cached !== undefined) {
-        return cached;
-      }
-
-      const messages = load(state.locale);
-      const made = translator(
-        namespace === undefined
-          ? { locale: state.locale, messages }
-          : { locale: state.locale, messages, namespace },
-      );
-
-      cache.set(key, made);
-
-      return made;
-    },
-  };
-});
+vi.mock('next-intl', () => nextIntlMobile());
 
 const registerAction = vi.fn();
 
@@ -105,7 +70,7 @@ vi.mock('next/navigation', () => ({
 const SLUG = 'maison-lotus';
 
 beforeEach(() => {
-  state.locale = 'fr';
+  fixerLangue('fr');
   window.sessionStorage.clear();
 });
 
@@ -126,14 +91,14 @@ function texteDuBloc(): string {
 }
 
 function rendreInscription(langue: 'fr' | 'en'): string {
-  state.locale = langue;
+  fixerLangue(langue);
   render(<RegisterForm tenantSlug={SLUG} />);
 
   return texteDuBloc();
 }
 
 function rendreEtapeCoordonnees(langue: 'fr' | 'en'): string {
-  state.locale = langue;
+  fixerLangue(langue);
   render(
     <ContactStep
       contact={emptyBookingDraft().contact}

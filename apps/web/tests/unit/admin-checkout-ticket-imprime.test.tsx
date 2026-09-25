@@ -2,6 +2,8 @@ import type { Locale, SaleReceipt } from '@spa/shared';
 import { cleanup, render } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { fixerLangue, nextIntlMobile } from '../support/langue-mobile';
+
 /**
  * Le ticket de caisse imprimé, en français **et** en anglais — #1248.
  *
@@ -28,57 +30,22 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
  * ## Comment les deux langues coexistent dans un seul fichier
  *
  * L'amorce des suites fixe la langue à `fr` (#845, `tests/support/next-intl.ts`).
- * La doublure ci-dessous est celle d'`admin-billing-panel.test.tsx` : un état
- * hissé porte la langue, et chaque rendu la choisit. C'est le **changement** de
- * langue qui est la promesse du ticket — le figer à `en` pour tout le fichier,
- * comme le fait `admin-checkout-i18n.test.tsx`, ne prouverait que la moitié.
+ * La doublure ci-dessous est la langue **mobile** partagée
+ * (`tests/support/langue-mobile.ts`, #1287), celle qu'emploie aussi
+ * `admin-billing-panel.test.tsx` : une variable porte la langue, et chaque rendu
+ * la choisit par `fixerLangue()`. C'est le **changement** de langue qui est la
+ * promesse du ticket — le figer à `en` pour tout le fichier, comme le fait
+ * `admin-checkout-i18n.test.tsx`, ne prouverait que la moitié.
  */
 
-const state = vi.hoisted(() => ({ locale: 'fr' as Locale }));
-
-vi.mock('next-intl', async () => {
-  const actual = await vi.importActual<typeof import('next-intl')>('next-intl');
-  const { loadMessages } = await import('@/i18n/messages');
-
-  const translator = actual.createTranslator as unknown as (options: {
-    locale: string;
-    messages: unknown;
-    namespace?: string;
-  }) => unknown;
-
-  const cache = new Map<string, unknown>();
-
-  return {
-    ...actual,
-    useLocale: () => state.locale,
-    useTranslations: (namespace?: string) => {
-      const key = `${state.locale}:${namespace ?? ''}`;
-      const cached = cache.get(key);
-
-      if (cached !== undefined) {
-        return cached;
-      }
-
-      const messages = loadMessages(state.locale);
-      const made = translator(
-        namespace === undefined
-          ? { locale: state.locale, messages }
-          : { locale: state.locale, messages, namespace },
-      );
-
-      cache.set(key, made);
-
-      return made;
-    },
-  };
-});
+vi.mock('next-intl', () => nextIntlMobile());
 
 import { ReceiptTicket } from '@/app/(admin)/[tenantSlug]/admin/components/receipt-ticket';
 import { formatTicketDateTime } from '@/lib/format';
 
 afterEach(() => {
   cleanup();
-  state.locale = 'fr';
+  fixerLangue('fr');
 });
 
 /** Le salon de référence : Antananarivo, donc un fuseau qui n'est pas celui d'ici. */
@@ -183,7 +150,7 @@ function print(
   receipt: SaleReceipt = RECEIPT,
   countryCode: string | null = null,
 ): Printed {
-  state.locale = locale;
+  fixerLangue(locale);
 
   const { container, unmount } = render(
     <ReceiptTicket countryCode={countryCode} receipt={receipt} />,
