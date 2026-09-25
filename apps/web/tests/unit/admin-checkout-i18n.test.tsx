@@ -153,6 +153,38 @@ function appointment(status: AppointmentStatus = 'confirmed'): Appointment {
   };
 }
 
+/**
+ * Mille deux cents euros — le montant dont l'écriture anglaise porte une virgule
+ * de milliers, et c'est elle qui était refusée à la saisie (#1123).
+ */
+const LARGE = { amountMinor: 120000, currency: 'EUR' } as const;
+
+const SALE_ID = '99999999-0000-4000-8000-000000000009';
+
+/** Un rendez-vous dont le prix dépasse le millier, prix de la prestation compris. */
+function largeAppointment(): Appointment {
+  const base = appointment();
+
+  return { ...base, price: { ...LARGE }, service: { ...base.service, price: { ...LARGE } } };
+}
+
+/** Le ticket qu'`openCheckoutTicketAction` rend, entièrement dû. */
+function ticketFor(total: { readonly amountMinor: number; readonly currency: string }): SaleSummary {
+  return {
+    id: SALE_ID,
+    appointmentId: APPOINTMENT_ID,
+    cashierUserId: 'bbbbbbbb-0000-4000-8000-000000000008',
+    subtotal: { ...total },
+    tax: { amountMinor: 0, currency: total.currency },
+    tip: { amountMinor: 0, currency: total.currency },
+    total: { ...total },
+    settled: { amountMinor: 0, currency: total.currency },
+    remaining: { ...total },
+    settledAt: null,
+    createdAt: '2026-09-05T07:00:00.000Z',
+  };
+}
+
 const CASH_TRANSACTION: PaymentTransaction = {
   id: 'ffffffff-0000-4000-8000-000000000005',
   appointmentId: APPOINTMENT_ID,
@@ -463,22 +495,7 @@ describe('le panneau d’encaissement, rendu en anglais', () => {
   });
 
   it('bascule en anglais sur le refus 409, plutôt que de laisser le bouton actif', async () => {
-    openCheckoutTicketAction.mockResolvedValue({
-      ok: true,
-      data: {
-        id: '99999999-0000-4000-8000-000000000009',
-        appointmentId: APPOINTMENT_ID,
-        cashierUserId: 'bbbbbbbb-0000-4000-8000-000000000008',
-        subtotal: { ...DUE },
-        tax: { amountMinor: 0, currency: 'EUR' },
-        tip: { amountMinor: 0, currency: 'EUR' },
-        total: { ...DUE },
-        settled: { amountMinor: 0, currency: 'EUR' },
-        remaining: { ...DUE },
-        settledAt: null,
-        createdAt: '2026-09-05T07:00:00.000Z',
-      },
-    });
+    openCheckoutTicketAction.mockResolvedValue({ ok: true, data: ticketFor(DUE) });
     settleTicketAction.mockResolvedValue({
       ok: false,
       code: 'SALE_ALREADY_SETTLED',
@@ -511,6 +528,95 @@ describe('le panneau d’encaissement, rendu en anglais', () => {
 
     expect(screen.getByText('Nothing to settle')).toBeDefined();
     expect(screen.getByText(/the slot has been released/iu)).toBeDefined();
+  });
+
+  /**
+   * Les montants **saisis** au comptoir, et non plus seulement ceux qu'on y lit —
+   * #1123.
+   *
+   * `parseAmountInput` était figé sur les séparateurs français : sur un comptoir
+   * anglais, l'opérateur lisait « €1,200.00 » dans la pile des totaux et se
+   * voyait refuser « Unreadable amount » en recopiant ce montant dans « Amount
+   * handed over ». Le panneau lui passe désormais son contexte d'affichage, celui
+   * dont `formatMoney` se sert déjà.
+   */
+  it('relit le montant tendu tel que l’écran anglais l’a écrit, virgule de milliers comprise', async () => {
+    openCheckoutTicketAction.mockResolvedValue({ ok: true, data: ticketFor(LARGE) });
+    // Le ticket soldé monte le reçu, qui lit la pièce dès son effet : sans cette
+    // doublure, la promesse absente ferait tomber le composant.
+    loadReceiptAction.mockResolvedValue({ ok: false, code: 'X', message: 'x' });
+    settleTicketAction.mockResolvedValue({
+      ok: true,
+      data: {
+        saleId: SALE_ID,
+        payment: { ...CASH_TRANSACTION, amount: { ...LARGE } },
+        settled: { ...LARGE },
+        remaining: { amountMinor: 0, currency: 'EUR' },
+        settledAt: '2026-09-05T07:05:00.000Z',
+        change: { amountMinor: 0, currency: 'EUR' },
+        replayed: false,
+      },
+    });
+    render(
+      <CheckoutPanel
+        appointment={largeAppointment()}
+        countryCode="US"
+        tenantSlug={SLUG}
+        timeZone={TIMEZONE}
+      />,
+    );
+
+    await userEvent.type(
+      screen.getByLabelText('Amount handed over by the client'),
+      // Exactement ce que la pile des totaux affiche, symbole retiré.
+      '1,200.00',
+    );
+    await userEvent.click(screen.getByRole('button', { name: 'Take €1,200.00 in cash' }));
+
+    expect(settleTicketAction).toHaveBeenCalledWith(
+      SLUG,
+      SALE_ID,
+      { method: 'CASH', tenderedAmountMinor: 120000 },
+      expect.any(String),
+    );
+    expect(screen.queryByText(/Unreadable amount/u)).toBeNull();
+  });
+
+  it('accepte aussi la virgule décimale tapée sur un écran anglais', async () => {
+    openCheckoutTicketAction.mockResolvedValue({ ok: true, data: ticketFor(LARGE) });
+    settleTicketAction.mockResolvedValue({
+      ok: true,
+      data: {
+        saleId: SALE_ID,
+        payment: { ...CASH_TRANSACTION, amount: { amountMinor: 1250, currency: 'EUR' } },
+        settled: { amountMinor: 1250, currency: 'EUR' },
+        remaining: { amountMinor: 118750, currency: 'EUR' },
+        settledAt: null,
+        change: { amountMinor: 0, currency: 'EUR' },
+        replayed: false,
+      },
+    });
+    render(
+      <CheckoutPanel
+        appointment={largeAppointment()}
+        countryCode="US"
+        tenantSlug={SLUG}
+        timeZone={TIMEZONE}
+      />,
+    );
+
+    await userEvent.click(screen.getByLabelText(/Settle part of it/u));
+    // Une virgule décimale sous un écran anglais : c'est ce qu'une opératrice
+    // francophone tape, et ce n'est pas une faute de saisie.
+    await userEvent.type(screen.getByLabelText('Amount for this settlement'), '12,50');
+    await userEvent.click(screen.getByRole('button', { name: /Take €12\.50 in cash/u }));
+
+    expect(settleTicketAction).toHaveBeenCalledWith(
+      SLUG,
+      SALE_ID,
+      { method: 'CASH', amountMinor: 1250 },
+      expect.any(String),
+    );
   });
 });
 

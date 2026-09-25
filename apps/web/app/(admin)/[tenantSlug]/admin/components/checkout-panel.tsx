@@ -91,6 +91,12 @@ import { useAdminSessionRenewal } from './use-admin-session-renewal';
  * ou ce que la cliente a tendu —, et il passe par `parseAmountInput`, qui
  * n'emploie aucun flottant et refuse une saisie plus précise que la devise.
  *
+ * Il reçoit le **contexte d'affichage**, comme `formatMoney` juste au-dessus de
+ * lui (#1123) : l'opérateur d'un comptoir anglais lit « €1,200.00 » dans la pile
+ * des totaux, et ce qu'il recopie dans « Montant remis » doit se relire. Sans lui,
+ * la virgule de milliers de l'anglais faisait refuser un montant que l'écran
+ * venait d'afficher.
+ *
  * ## Le double clic, et la clé d'idempotence
  *
  * Deux protections, et elles ne font pas doublon. Côté écran, `Button` se
@@ -242,7 +248,7 @@ export function CheckoutPanel({
 
   /** Le montant de **ce** règlement — `null` quand la saisie est illisible. */
   function plannedAmount(): Money | null {
-    return partial ? parseAmountInput(amountText, currency) : outstanding;
+    return partial ? parseAmountInput(amountText, currency, display) : outstanding;
   }
 
   /**
@@ -290,7 +296,7 @@ export function CheckoutPanel({
     // offert, et une valeur qui y aurait survécu à une case cochée ne doit pas
     // se glisser dans le corps.
     const tenderable = !partial && tenderedText.trim() !== '';
-    const tendered = tenderable ? parseAmountInput(tenderedText, currency) : null;
+    const tendered = tenderable ? parseAmountInput(tenderedText, currency, display) : null;
 
     if (tenderable && tendered === null) {
       return { ok: false, field: 'tendered', message: t('amount.invalid') };
