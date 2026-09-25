@@ -6,6 +6,7 @@ import {
   ERROR_CODES,
   SLUG_MAX_LENGTH,
   longTextSchema,
+  resourceSlugSchema,
   slugSchema,
   zodErrorMap,
   type CreateServiceRequest,
@@ -139,8 +140,9 @@ interface ServiceFormMessages {
  * d'autre que des minuscules, ne dit pas à la gérante ce qu'elle doit corriger —
  * et c'est un nom réservé de la plateforme qu'elle vient de saisir. Le verdict
  * reste celui du contrat ; on ne fait que lire **quel** de ses contrôles a
- * échoué. Les codes sont ceux de zod : `custom` pour le refus de nom réservé,
- * `too_big` pour la borne de longueur, `invalid_string` pour le motif.
+ * échoué. La borne de longueur se lit sur le code `too_big` de zod ; le nom
+ * réservé et la faute de forme rendent tous deux un `custom` depuis #1232, et se
+ * départagent en rejouant `resourceSlugSchema` (voir ci-dessous).
  *
  * Même écriture dans `category-manager.tsx` : ce qui serait mis en commun n'est
  * pas la règle — elle est déjà partagée — mais un branchement de formulaire.
@@ -155,13 +157,23 @@ function slugRefusal(
     return null;
   }
 
-  const codes = new Set(parsed.error.issues.map((issue) => issue.code));
-
-  if (codes.has('too_big')) {
+  if (parsed.error.issues.some((issue) => issue.code === 'too_big')) {
     return messages.slugTooLong;
   }
 
-  return codes.has('custom') ? messages.slugReserved : messages.slug;
+  /*
+   * Le nom réservé se distingue de la faute de forme en rejouant **la seule
+   * règle qui les sépare** : `slugSchema` est `resourceSlugSchema` plus la liste
+   * des noms que la plateforme garde. Une adresse que le second accepte et que
+   * le premier refuse est donc réservée, et pas autre chose.
+   *
+   * Lu ainsi plutôt que sur le code de l'`issue` depuis #1232 : les deux règles
+   * du contrat sont maintenant des `refine` — c'est ce qui leur permet de porter
+   * une clé de message traduisible —, et elles rendent donc toutes les deux un
+   * `custom`. Le code ne les distinguait plus, et `www` se serait vu reprocher
+   * une minuscule qu'il a déjà.
+   */
+  return resourceSlugSchema.safeParse(value).success ? messages.slugReserved : messages.slug;
 }
 
 /**

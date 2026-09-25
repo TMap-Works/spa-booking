@@ -1,11 +1,18 @@
 'use client';
 
 import { zodResolver } from '@hookform/resolvers/zod';
-import { e164PhoneSchema, ERROR_CODES, PASSWORD_MIN_LENGTH, registerRequestSchema } from '@spa/shared';
-import { useTranslations } from 'next-intl';
+import {
+  e164PhoneSchema,
+  ERROR_CODES,
+  PASSWORD_MIN_LENGTH,
+  registerRequestSchema,
+  zodErrorMap,
+  type Locale,
+} from '@spa/shared';
+import { useLocale, useTranslations } from 'next-intl';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Controller, useForm } from 'react-hook-form';
 import { z } from 'zod';
 
@@ -80,6 +87,7 @@ interface RegisterFormProps {
 
 export function RegisterForm({ tenantSlug }: RegisterFormProps) {
   const t = useTranslations('account.register');
+  const locale = useLocale() as Locale;
   const router = useRouter();
   /*
    * Le retour reçu du lien « Créer mon compte » de la connexion, rejugé ici
@@ -89,6 +97,18 @@ export function RegisterForm({ tenantSlug }: RegisterFormProps) {
    */
   const returnTo = safeReturnPath(useSearchParams().get(RETURN_QUERY_KEY), tenantSlug);
   const [failure, setFailure] = useState<string | null>(null);
+  /*
+   * Les bornes du contrat — longueur du mot de passe, adresse e-mail, numéro
+   * incomplet — sont dites par `zodErrorMap(locale)` depuis #1232 : elles
+   * venaient jusqu'ici de phrases françaises écrites dans les schémas partagés,
+   * qui s'affichaient telles quelles sous cet écran en anglais. Le consentement,
+   * lui, garde le message de `consentSchema` : il s'adresse à la cliente, pas à
+   * un appelant d'API (voir l'en-tête de ce module).
+   */
+  const resolver = useMemo(
+    () => zodResolver(registerFormSchema, { errorMap: zodErrorMap(locale), path: [], async: true }),
+    [locale],
+  );
 
   const {
     register,
@@ -97,7 +117,7 @@ export function RegisterForm({ tenantSlug }: RegisterFormProps) {
     watch,
     formState: { errors, isSubmitting },
   } = useForm<RegisterFormValues, unknown, z.output<typeof registerFormSchema>>({
-    resolver: zodResolver(registerFormSchema),
+    resolver,
     // La case part décochée, et il n'y a pas d'autre valeur possible : un
     // consentement pré-coché n'est pas un consentement (#734).
     defaultValues: {

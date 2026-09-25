@@ -35,6 +35,7 @@ import {
   type SetStaffScheduleRequest,
   type StaffScheduleEntry,
 } from '@spa/shared';
+import type { ZodIssue } from 'zod';
 
 import { weekStartOf, type WeekStart } from './calendar-range';
 import { fillMessage, staffWords, STAFF_FALLBACK_LOCALE } from './staff-messages';
@@ -241,30 +242,53 @@ export function validateScheduleRows(
   return {
     ok: false,
     rowId: index === null ? null : (rows[index]?.id ?? null),
-    message: scheduleIssueMessage(issue, index, words),
+    message: scheduleIssueMessage(issue, words),
   };
 }
 
 /**
  * La phrase du catalogue qui dit **ce que** le schéma vient de refuser.
  *
- * Les deux règles métier du contrat sont des `refine`, donc des issues `custom`,
- * et c'est ce qui les distingue d'une borne illisible : celle de la ligne dit
+ * Les deux règles métier du contrat sont nommées par une **clé de message**
+ * (`messageKey`, #1232), et c'est cette clé qu'on lit : celle de la ligne dit
  * qu'une fin précède son début, celle de l'ensemble que deux plages du même jour
  * se recouvrent. Tout le reste est une faute de **forme** — une borne qui n'est
  * pas `HH:MM` —, que le formulaire écarte déjà en ne servant que des
  * `<input type="time">`, et qui garde donc le repli.
+ *
+ * Le code d'`issue` ne suffit plus à les séparer : depuis #1232 `localTimeSchema`
+ * est lui aussi un `refine`, donc une issue `custom`, et une heure illisible se
+ * serait vu reprocher une fin antérieure à son début.
  */
 function scheduleIssueMessage(
-  issue: { readonly code?: string } | undefined,
-  index: number | null,
+  issue: ZodIssue | undefined,
   words: ReturnType<typeof staffWords>['schedule'],
 ): string {
-  if (issue?.code !== 'custom') {
-    return words.invalid;
+  switch (validationKeyOf(issue)) {
+    case 'availability.scheduleOverlap':
+      return words.overlap;
+    case 'availability.scheduleRangeOrder':
+      return words.endBeforeStart;
+    default:
+      return words.invalid;
+  }
+}
+
+/** La clé de message que le contrat a posée sur cette `issue`, s'il en a posé une. */
+function validationKeyOf(issue: ZodIssue | undefined): string | null {
+  if (issue === undefined || issue.code !== 'custom') {
+    return null;
   }
 
-  return index === null ? words.overlap : words.endBeforeStart;
+  const params: unknown = issue.params;
+
+  if (typeof params !== 'object' || params === null) {
+    return null;
+  }
+
+  const key: unknown = (params as Record<string, unknown>).validationKey;
+
+  return typeof key === 'string' ? key : null;
 }
 
 /**

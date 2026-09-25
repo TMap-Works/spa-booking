@@ -1,6 +1,6 @@
 'use client';
 
-import { e164PhoneSchema, STAFF_ROLES, type StaffRole } from '@spa/shared';
+import { e164PhoneSchema, STAFF_ROLES, zodErrorMap, type Locale, type StaffRole } from '@spa/shared';
 import { useLocale, useTranslations } from 'next-intl';
 import { useRouter } from 'next/navigation';
 import { useState, useTransition } from 'react';
@@ -141,7 +141,7 @@ function collectInviteErrors(issues: readonly ZodIssue[]): {
 
 export function StaffInviteForm({ tenantSlug }: { readonly tenantSlug: string }) {
   const t = useTranslations('admin-staff');
-  const locale = useLocale();
+  const locale = useLocale() as Locale;
   const router = useRouter();
   const { renewIfExpired } = useAdminSessionRenewal(tenantSlug);
   const [draft, setDraft] = useState<InviteDraft>({ ...EMPTY });
@@ -176,15 +176,21 @@ export function StaffInviteForm({ tenantSlug }: { readonly tenantSlug: string })
   }
 
   async function invite(): Promise<void> {
-    const parsed = inviteStaffAccountRequestSchema.safeParse({
-      firstName: draft.firstName,
-      lastName: draft.lastName,
-      email: draft.email,
-      role: draft.role,
-      // « Absent » et « vide » disent la même chose à la création : pas de
-      // numéro. Envoyer une chaîne vide se ferait refuser par le motif.
-      ...(draft.phone === '' ? {} : { phone: draft.phone }),
-    });
+    // La carte d'erreurs est **passée** : les bornes du contrat ne se disent que
+    // par elle depuis #1232, et sans elle ce formulaire afficherait la langue du
+    // repli de `@spa/shared`, pas celle de la page.
+    const parsed = inviteStaffAccountRequestSchema.safeParse(
+      {
+        firstName: draft.firstName,
+        lastName: draft.lastName,
+        email: draft.email,
+        role: draft.role,
+        // « Absent » et « vide » disent la même chose à la création : pas de
+        // numéro. Envoyer une chaîne vide se ferait refuser par le motif.
+        ...(draft.phone === '' ? {} : { phone: draft.phone }),
+      },
+      { errorMap: zodErrorMap(locale) },
+    );
     // Le contrat de la requête décrit la **forme** d'un numéro, et laisse au
     // serveur le soin de le compléter avec le pays du salon (#824). Le champ
     // émet déjà un E.164 (#825) : il se juge donc ici, avec la règle de l'API,

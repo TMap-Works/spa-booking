@@ -1,10 +1,17 @@
 'use client';
 
 import { zodResolver } from '@hookform/resolvers/zod';
-import { e164PhoneSchema, localeSchema, nameSchema, type SessionUser } from '@spa/shared';
-import { useTranslations } from 'next-intl';
+import {
+  e164PhoneSchema,
+  localeSchema,
+  nameSchema,
+  zodErrorMap,
+  type Locale,
+  type SessionUser,
+} from '@spa/shared';
+import { useLocale, useTranslations } from 'next-intl';
 import { useRouter } from 'next/navigation';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Controller, useForm } from 'react-hook-form';
 import { z } from 'zod';
 
@@ -103,6 +110,7 @@ interface ProfileFormProps {
 
 export function ProfileForm({ tenantSlug, profile }: ProfileFormProps) {
   const t = useTranslations('account.profile');
+  const locale = useLocale() as Locale;
   // Les noms de langues sont ceux du sélecteur : « Français » et « English »,
   // chacun dans sa propre langue, et identiques dans les deux catalogues (#845).
   // Les redire ici en aurait fait une seconde écriture, qui aurait pu diverger.
@@ -112,6 +120,17 @@ export function ProfileForm({ tenantSlug, profile }: ProfileFormProps) {
   const [saved, setSaved] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
 
+  /*
+   * Les refus des champs viennent du contrat, donc de `zodErrorMap(locale)` :
+   * `nameSchema` et `phoneSchema` ne portent plus de phrase depuis #1232, et
+   * sans cette carte cet écran afficherait celle du repli — en français, sous un
+   * profil consulté en anglais.
+   */
+  const resolver = useMemo(
+    () => zodResolver(profileFormSchema, { errorMap: zodErrorMap(locale), path: [], async: true }),
+    [locale],
+  );
+
   const {
     register,
     control,
@@ -119,7 +138,7 @@ export function ProfileForm({ tenantSlug, profile }: ProfileFormProps) {
     reset,
     formState: { errors, isSubmitting, isDirty },
   } = useForm<ProfileFormValues, unknown, z.output<typeof profileFormSchema>>({
-    resolver: zodResolver(profileFormSchema),
+    resolver,
     defaultValues: {
       firstName: profile.firstName,
       lastName: profile.lastName,
