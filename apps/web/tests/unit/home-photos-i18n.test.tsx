@@ -1,8 +1,7 @@
-import type { Locale } from '@spa/shared';
 import { cleanup, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { fixerLangue, nextIntlMobile } from '../support/langue-mobile';
+import { fixerLangue, nextIntlMobile, nextIntlServerMobile } from '../support/langue-mobile';
 
 import HomePage from '@/app/page';
 import { PHOTOS, type PhotoName } from '@/lib/photos';
@@ -29,23 +28,13 @@ import fr from '@/messages/fr/booking.json';
  * second point demande de rendre le **même** écran en anglais. Il y faut **deux**
  * doublures déplacées ensemble : l'accueil est un Server Component et lit ses
  * messages par `getTranslations`, mais le formulaire qu'il monte est un Client
- * Component et passe par les crochets. Celle des crochets est la langue mobile
- * partagée (`tests/support/langue-mobile.ts`) ; celle de `next-intl/server` est
- * posée ici, la mutualiser demandant de modifier ce fichier partagé, hors de
- * l'empreinte de ce ticket — c'est l'objet d'une issue de suivi. `parler()` les
- * déplace d'un seul geste, pour qu'aucune des deux ne reste en arrière.
+ * Component et passe par les crochets. Les deux viennent désormais de la langue
+ * mobile partagée (`tests/support/langue-mobile.ts`, #1277), où elles lisent la
+ * **même** variable : un seul `fixerLangue()` les déplace, et aucune ne peut
+ * rester en arrière.
  */
 
 const readSalonIdentity = vi.fn();
-
-/** La langue de la requête simulée — voir `parler()`. */
-let langue: Locale = 'fr';
-
-/** Pose la langue des deux doublures à la fois. À remettre à `fr` en `afterEach`. */
-function parler(prochaine: Locale): void {
-  langue = prochaine;
-  fixerLangue(prochaine);
-}
 
 vi.mock('@/lib/salon-identity', () => ({
   readSalonIdentity: (...args: unknown[]) => readSalonIdentity(...args),
@@ -59,42 +48,7 @@ vi.mock('next/headers', () => ({
 
 vi.mock('next-intl', () => nextIntlMobile());
 
-vi.mock('next-intl/server', async () => {
-  const actual = await vi.importActual<typeof import('next-intl')>('next-intl');
-  const { loadMessages } = await import('../../i18n/messages');
-
-  /** Voir `tests/support/langue-mobile.ts` : la même entorse, pour la même raison. */
-  const translator = actual.createTranslator as unknown as (options: {
-    locale: string;
-    messages: unknown;
-    namespace?: string;
-  }) => unknown;
-  const cache = new Map<string, unknown>();
-
-  return {
-    getLocale: () => Promise.resolve(langue),
-    getTranslations: (options?: string | { readonly namespace?: string }) => {
-      const namespace = typeof options === 'string' ? options : options?.namespace;
-      const key = `${langue}:${namespace ?? ''}`;
-      const cached = cache.get(key);
-
-      if (cached !== undefined) {
-        return Promise.resolve(cached);
-      }
-
-      const messages = loadMessages(langue);
-      const made = translator(
-        namespace === undefined
-          ? { locale: langue, messages }
-          : { locale: langue, messages, namespace },
-      );
-
-      cache.set(key, made);
-
-      return Promise.resolve(made);
-    },
-  };
-});
+vi.mock('next-intl/server', () => nextIntlServerMobile());
 
 /** Les descriptions, telles que les catalogues les écrivent. */
 const LEGENDES = { fr: fr.home.photos, en: en.home.photos } as const;
@@ -112,7 +66,7 @@ const RENDUES: readonly PhotoName[] = [
 afterEach(() => {
   cleanup();
   readSalonIdentity.mockReset();
-  parler('fr');
+  fixerLangue('fr');
 });
 
 describe('le registre des photographies', () => {
@@ -150,7 +104,7 @@ describe('l’accueil de la plateforme', () => {
   });
 
   it('les décrit en anglais quand la requête est en anglais', async () => {
-    parler('en');
+    fixerLangue('en');
 
     render(await HomePage());
 
