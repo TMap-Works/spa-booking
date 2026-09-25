@@ -231,7 +231,6 @@
       "address": "Adresse",
       "legalName": "Raison sociale",
       "language": "Langue du salon",
-      "languageUnknown": "Indisponible tant que le salon est suspendu",
       "missing": "Non renseigné",
       "missingFeminine": "Non renseignée"
     },

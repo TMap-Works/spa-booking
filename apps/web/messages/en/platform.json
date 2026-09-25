@@ -231,7 +231,6 @@
       "address": "Address",
       "legalName": "Legal name",
       "language": "Salon language",
-      "languageUnknown": "Unavailable while the salon is suspended",
       "missing": "Not provided",
       "missingFeminine": "Not provided"
     },

@@ -9,7 +9,7 @@ import Link from 'next/link';
 import { notFound, redirect } from 'next/navigation';
 
 import { Icon } from '@/components/ui/icon';
-import { ApiClientError, fetchPlatformTenantDetail, fetchPublicTenant } from '@/lib/api-client';
+import { ApiClientError, fetchPlatformTenantDetail } from '@/lib/api-client';
 import { formatReceiptPhone } from '@/lib/admin/receipt-ticket';
 import type { DisplayLocale } from '@/lib/format';
 import {
@@ -47,15 +47,13 @@ import { PLATFORM_SESSION_END_PATH } from '../../../session/fin/path';
  * **région** de mise en forme, elle, est celle du pays du salon quand il en a
  * saisi un — un salon montréalais écrit ses dates comme le Québec (#1106).
  *
- * ## La langue du salon vient de sa fiche publique
+ * ## La langue du salon vient du contrat de la console
  *
- * `GET /platform/tenants/:id` ne rend pas `defaultLocale` : le contrat de la
- * console (`platformTenantDetailSchema`) est antérieur au champ de #844, et
- * l'étendre sort de l'empreinte de #1106. La langue est donc lue sur
- * `GET /public/{slug}`, qui la rend déjà — le même détour que le personnel du
- * back-office fait pour le pays de l'établissement. Un salon **suspendu** répond
- * 404 sur cette route, par conception : la fiche le dit alors plutôt que de
- * mentir sur une langue.
+ * `GET /platform/tenants/:id` rend `defaultLocale` (#1189). La fiche la lisait
+ * auparavant sur `GET /public/{slug}` — un appel HTTP de plus par ouverture, et
+ * un blanc sur les salons **suspendus**, dont la vitrine ne répond plus par
+ * conception. Une donnée que la console est en droit de lire n'a pas à
+ * transiter par une route publique.
  */
 
 interface PlatformTenantPageProps {
@@ -113,18 +111,8 @@ export default async function PlatformTenantPage({ params }: PlatformTenantPageP
     throw error;
   }
 
-  const { tenant, activity, billing } = detail;
+  const { tenant, activity, billing, defaultLocale: salonLocale } = detail;
   const zone = tenant.timezone;
-  /**
-   * La langue du salon, lue sur sa fiche publique — voir l'en-tête.
-   *
-   * Un échec ne coûte que cette ligne d'affichage : la fiche de la console n'a
-   * aucune raison de tomber parce que la vitrine n'a pas répondu, et elle ne
-   * répond pas, par conception, sur un salon suspendu.
-   */
-  const salonLocale = await fetchPublicTenant(tenant.slug)
-    .then((published) => published.defaultLocale)
-    .catch(() => null);
   // La région de mise en forme vient du pays que la fiche porte déjà : c'est le
   // `country_code` de l'établissement, et il ne demande aucun appel de plus.
   const display: DisplayLocale = {
@@ -482,21 +470,15 @@ export default async function PlatformTenantPage({ params }: PlatformTenantPageP
                 La langue par défaut du salon (#844) — celle qu'on lui a donnée en
                 l'ouvrant, et dans laquelle sa vitrine et ses e-mails s'écrivent.
                 Nommée dans sa propre langue, comme dans le sélecteur de #845.
+
+                Toujours affichée : la fiche la tient de son propre contrat
+                (#1189), et la colonne est `NOT NULL` avec un défaut — il n'y a
+                donc pas de salon sans langue, fût-il suspendu.
               */}
               <div>
                 <dt>{t('record.contact.language')}</dt>
                 <dd>
-                  {salonLocale === null ? (
-                    // La suspension n'est annoncée que si le salon l'est
-                    // vraiment : `salonLocale` est aussi `null` quand la vitrine
-                    // n'a pas répondu, et affirmer alors une suspension
-                    // contredirait la pastille « Actif » de l'en-tête.
-                    t(tenant.isActive ? 'record.contact.missing' : 'record.contact.languageUnknown')
-                  ) : (
-                    <span lang={salonLocale}>
-                      {languages(`names.${salonLocale}` as 'names.en')}
-                    </span>
-                  )}
+                  <span lang={salonLocale}>{languages(`names.${salonLocale}` as 'names.en')}</span>
                 </dd>
               </div>
             </dl>
