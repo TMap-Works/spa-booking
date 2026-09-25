@@ -801,6 +801,14 @@ export class PlatformTenantDetailDto {
   @ApiProperty({ nullable: true, type: String })
   public legalName!: string | null;
 
+  @ApiProperty({
+    enum: LOCALES,
+    description:
+      'La langue du salon — celle de sa vitrine et de ses e-mails. Rendue aussi ' +
+      'pour un salon suspendu, dont la vitrine ne répond plus.',
+  })
+  public defaultLocale!: Locale;
+
   @ApiProperty({ description: 'Statut, fin d’essai, fin de période et client Stripe.' })
   public billing!: PlatformTenantDetail['billing'];
 
@@ -868,6 +876,7 @@ export function toPlatformTenantDetailDto(view: TenantDetailView): PlatformTenan
     contact: { email: record.contactEmail, phone: record.contactPhone },
     address: record.address === null ? null : { ...record.address },
     legalName: record.legalName,
+    defaultLocale: record.defaultLocale,
     billing: {
       status: record.summary.billingStatus,
       trialEndsAt: isoOrNull(record.summary.trialEndsAt),

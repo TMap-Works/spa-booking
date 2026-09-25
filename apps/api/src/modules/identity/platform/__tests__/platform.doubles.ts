@@ -1,5 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
+import type { Locale } from '@spa/shared';
+
 import type { PlatformConsoleRepository } from '../platform-console.repository';
 import type { PlatformRepository, ProvisioningRecord, TenantAdminRecord } from '../platform.repository';
 import { TenantSlugTakenError } from '../platform.errors';
@@ -228,6 +230,14 @@ export class FakePlatformConsoleRepository {
     staffWithSchedule: 0,
     firstAppointmentAt: null,
   };
+  /**
+   * La langue que la fiche rapporte (#1189).
+   *
+   * `fr` et non `DEFAULT_LOCALE` — qui vaut `en` : une assertion sur la langue
+   * par défaut du système passerait au vert même si la valeur ne venait pas du
+   * dépôt.
+   */
+  public tenantLocale: Locale = 'fr';
   public activityRecord: TenantActivityRecord = {
     createdLast30Days: 0,
     upcoming: 0,
@@ -262,6 +272,7 @@ export class FakePlatformConsoleRepository {
       address: { line1: '12 rue des Lilas', line2: null, postalCode: '75011', city: 'Paris', country: 'FR' },
       legalName: null,
       hasLegalId: false,
+      defaultLocale: this.tenantLocale,
       currentPeriodEndsAt: null,
       stripeCustomerId: null,
     };

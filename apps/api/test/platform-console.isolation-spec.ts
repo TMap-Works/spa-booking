@@ -48,14 +48,16 @@ const PLATFORM_TENANTS = '/api/v1/platform/tenants';
 describe('Console plateforme — étanchéité des deux espaces (#806)', () => {
   let harness: TenantHarness;
   let platform: FakePlatformRepository;
+  let consoleRepository: FakePlatformConsoleRepository;
   let totpSecret: string;
 
   beforeEach(async () => {
     platform = new FakePlatformRepository();
+    consoleRepository = new FakePlatformConsoleRepository(platform);
     harness = await createTenantHarness({
       overrides: [
         { provide: PlatformRepository, useValue: platform },
-        { provide: PlatformConsoleRepository, useValue: new FakePlatformConsoleRepository(platform) },
+        { provide: PlatformConsoleRepository, useValue: consoleRepository },
       ],
     });
 
@@ -410,6 +412,37 @@ describe('Console plateforme — étanchéité des deux espaces (#806)', () => {
       const body = response.body as { tenant: { slug: string }; links: Record<string, string> };
       expect(body.tenant.slug).toBe('salon-des-lilas');
       expect(JSON.stringify(body.links)).not.toContain('token=');
+    });
+
+    it('rend la langue du salon sur la fiche, même suspendu (#1189)', async () => {
+      const tenant = platform.addTenant({ slug: 'salon-des-lilas' });
+      const token = `Bearer ${await platformToken()}`;
+      consoleRepository.tenantLocale = 'fr';
+
+      const ouvert = await request(server())
+        .get(`${PLATFORM_TENANTS}/${tenant.id}`)
+        .set('Authorization', token)
+        .expect(200);
+
+      expect((ouvert.body as { defaultLocale: string }).defaultLocale).toBe('fr');
+
+      // Un salon suspendu ne publie plus sa vitrine : c'est le cas où la console
+      // lisait « non renseignée » faute de réponse sur `GET /public/{slug}`.
+      //
+      // La langue **change** entre les deux lectures, et ce n'est pas un détail :
+      // réaffirmer `fr` ne distinguerait pas une valeur relue d'une constante, et
+      // la route passerait au vert en rendant n'importe quoi de figé.
+      platform.setActive(tenant.id, false);
+      consoleRepository.tenantLocale = 'en';
+
+      const suspendu = await request(server())
+        .get(`${PLATFORM_TENANTS}/${tenant.id}`)
+        .set('Authorization', token)
+        .expect(200);
+
+      const body = suspendu.body as { tenant: { isActive: boolean }; defaultLocale: string };
+      expect(body.tenant.isActive).toBe(false);
+      expect(body.defaultLocale).toBe('en');
     });
 
     it('refuse une note vide — 400', async () => {

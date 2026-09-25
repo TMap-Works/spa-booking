@@ -6,6 +6,7 @@ import {
   PRISMA_UNSCOPED,
   type UnscopedPrismaClient,
 } from '../../../infrastructure/database/prisma-clients';
+import { toTenantLocale } from '../locale';
 import { TENANT_SUMMARY_SELECT, tenantOrigin, toTenantSummary } from './platform.repository';
 import type {
   OverviewCounts,
@@ -158,7 +159,7 @@ export class PlatformConsoleRepository {
     };
   }
 
-  /** La fiche d'un salon — coordonnées, identité, facturation. `null` s'il n'existe pas. */
+  /** La fiche d'un salon — coordonnées, identité, langue, facturation. `null` s'il n'existe pas. */
   public async findTenantDetail(id: string): Promise<TenantDetailRecord | null> {
     const row = await this.prismaUnscoped.tenant.findUnique({
       where: { id },
@@ -173,6 +174,7 @@ export class PlatformConsoleRepository {
         countryCode: true,
         legalName: true,
         legalId: true,
+        defaultLocale: true,
         currentPeriodEndsAt: true,
         stripeCustomerId: true,
       },
@@ -200,6 +202,10 @@ export class PlatformConsoleRepository {
             },
       legalName: row.legalName,
       hasLegalId: row.legalId !== null,
+      // `tenants.default_locale` est un `VARCHAR(5)` : la contrainte `CHECK` en
+      // tient le vocabulaire, `toTenantLocale` le dit au compilateur — même
+      // frontière que la vitrine (`identity/locale.ts`).
+      defaultLocale: toTenantLocale(row.defaultLocale),
       currentPeriodEndsAt: row.currentPeriodEndsAt,
       stripeCustomerId: row.stripeCustomerId,
     };
