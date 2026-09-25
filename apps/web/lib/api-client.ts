@@ -138,11 +138,10 @@ import {
   type UpdateStaffMemberRequest,
   type UpdateTenantRequest,
 } from '@spa/shared';
-import { cookies, headers } from 'next/headers';
 import { z } from 'zod';
 
-import { ACCOUNT_LOCALE_COOKIE, LOCALE_COOKIE } from '@/i18n/cookies';
 import { resolveLocale } from '@/i18n/resolve';
+import { requestLocaleSignals } from '@/i18n/signals';
 
 // Les formes d'encaissement, désormais **étendues du contrat partagé** : #554 y
 // a porté les `nullable` de l'encaissement, et il ne reste ici que la
@@ -278,13 +277,23 @@ export class ApiClientError extends Error {
  * attendrait donc la configuration de requête **qui l'attend lui-même** : un
  * interblocage, sur une branche rare et donc découverte tard.
  *
- * L'ordre de `i18n/resolve.ts` est rejoué ici **sans son quatrième signal** :
- * choix explicite, compte, `Accept-Language`, puis `en`. C'est exactement ce que
- * `requestLocale()` consulte avant de songer à l'établissement — la seule étape
- * qui coûte un appel réseau, et la seule qui reboucle. Un salon dont le visiteur
- * n'a ni cookie ni `Accept-Language` exploitable lira donc ce refus-ci en
- * anglais plutôt que dans la langue du salon ; tout navigateur envoie un
- * `Accept-Language`, et le cas ne se rencontre qu'avec un client fabriqué.
+ * ## Les signaux ne sont plus relus ici — #1286
+ *
+ * Ce qui précède interdit d'appeler `server.ts`, et rien de plus. Les trois
+ * signaux que la requête porte d'elle-même — choix explicite, compte,
+ * `Accept-Language` — se lisent donc dans `i18n/signals.ts`, la **feuille** que
+ * `requestLocale()` emploie elle aussi, et qui n'appelle l'API nulle part.
+ * Auparavant recopiés ici, ils divergeaient au premier signal ajouté ou au
+ * premier cookie renommé, sans qu'aucun test ne le dise ; une suite tient
+ * désormais l'égalité des deux lecteurs
+ * (`tests/unit/i18n-signaux-partages.test.ts`).
+ *
+ * Ce qui reste propre à ce module est le **quatrième signal manquant** :
+ * l'établissement n'est pas consulté, puisque le lire est précisément ce qui
+ * reboucle. Un salon dont le visiteur n'a ni cookie ni `Accept-Language`
+ * exploitable lira donc ce refus-ci en anglais plutôt que dans la langue du
+ * salon ; tout navigateur envoie un `Accept-Language`, et le cas ne se
+ * rencontre qu'avec un client fabriqué.
  *
  * Hors requête — un script, une suite de tests, une tâche de fond — il n'y a
  * aucun signal à lire : `next/headers` lève, et `DEFAULT_LOCALE` tranche. Une
@@ -293,13 +302,7 @@ export class ApiClientError extends Error {
  */
 async function refusalLocale(): Promise<Locale> {
   try {
-    const [cookieStore, headerList] = await Promise.all([cookies(), headers()]);
-
-    return resolveLocale({
-      explicit: cookieStore.get(LOCALE_COOKIE)?.value ?? null,
-      account: cookieStore.get(ACCOUNT_LOCALE_COOKIE)?.value ?? null,
-      acceptLanguage: headerList.get('accept-language'),
-    });
+    return resolveLocale(await requestLocaleSignals());
   } catch {
     return DEFAULT_LOCALE;
   }
