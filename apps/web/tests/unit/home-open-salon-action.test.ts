@@ -1,5 +1,6 @@
-import type { Locale } from '@spa/shared';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+
+import { fixerLangue, nextIntlServerMobile } from '../support/langue-mobile';
 
 /**
  * #927 — ouvrir un salon depuis l'accueil.
@@ -16,23 +17,14 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
  * où l'action cesserait de lire le catalogue.
  *
  * Une action serveur n'est pas un composant : elle lit ses messages par
- * `getTranslations`. La doublure ci-dessous est donc celle de `next-intl/server`
- * — l'amorce des suites (`tests/support/next-intl.ts`) en pose une qui fige la
- * langue à `fr`, et il en faut une qui bouge. Son pendant pour les crochets
- * existe déjà dans `tests/support/langue-mobile.ts` ; la mutualiser avec lui
- * demandait de modifier ce fichier partagé, hors de l'empreinte de ce ticket —
- * c'est l'objet d'une issue de suivi.
+ * `getTranslations`. La doublure est donc celle de `next-intl/server` —
+ * l'amorce des suites (`tests/support/next-intl.ts`) en pose une qui fige la
+ * langue à `fr`, et il en faut une qui bouge. Elle est partagée, comme son
+ * pendant pour les crochets : `tests/support/langue-mobile.ts` (#1277).
  */
 
 const readSalonIdentity = vi.fn();
 const setCookie = vi.fn();
-
-/** La langue de la requête simulée, que `fixerLangue()` déplace. */
-let langue: Locale = 'fr';
-
-function fixerLangue(prochaine: Locale): void {
-  langue = prochaine;
-}
 
 vi.mock('@/lib/salon-identity', () => ({
   readSalonIdentity: (...args: unknown[]) => readSalonIdentity(...args),
@@ -42,46 +34,7 @@ vi.mock('next/headers', () => ({
   cookies: () => Promise.resolve({ get: () => undefined, set: setCookie }),
 }));
 
-vi.mock('next-intl/server', async () => {
-  const actual = await vi.importActual<typeof import('next-intl')>('next-intl');
-  const { loadMessages } = await import('../../i18n/messages');
-
-  /**
-   * `createTranslator` est typé sur le catalogue complet ; l'appeler avec un
-   * namespace dont le nom n'est connu qu'à l'exécution demande de relâcher la
-   * contrainte, une fois, ici — comme dans l'amorce et dans `langue-mobile.ts`.
-   */
-  const translator = actual.createTranslator as unknown as (options: {
-    locale: string;
-    messages: unknown;
-    namespace?: string;
-  }) => unknown;
-  const cache = new Map<string, unknown>();
-
-  return {
-    getLocale: () => Promise.resolve(langue),
-    getTranslations: (options?: string | { readonly namespace?: string }) => {
-      const namespace = typeof options === 'string' ? options : options?.namespace;
-      const key = `${langue}:${namespace ?? ''}`;
-      const cached = cache.get(key);
-
-      if (cached !== undefined) {
-        return Promise.resolve(cached);
-      }
-
-      const messages = loadMessages(langue);
-      const made = translator(
-        namespace === undefined
-          ? { locale: langue, messages }
-          : { locale: langue, messages, namespace },
-      );
-
-      cache.set(key, made);
-
-      return Promise.resolve(made);
-    },
-  };
-});
+vi.mock('next-intl/server', () => nextIntlServerMobile());
 
 class RedirectSignal extends Error {
   public constructor(public readonly destination: string) {

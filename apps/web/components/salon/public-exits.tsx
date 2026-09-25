@@ -40,11 +40,26 @@ import fr from '@/messages/fr/public-exits.json';
  *
  * Le namespace `public-exits` les tient, dans les deux langues. Il est lu de
  * deux façons, pour la même raison que `lib/appointment-status.ts` : le
- * composant passe par `useTranslations`, et `publicExitLabels(locale)` par un
- * **import direct des deux fichiers JSON** — ce registre est lu depuis
- * `app/salon-doors.ts`, un module sans React qu'un crochet rendrait
- * inappelable. Les deux lectures visent les mêmes fichiers : il n'y a qu'une
- * écriture de ces libellés.
+ * composant `PublicExits` passe par `useTranslations`, et
+ * `publicExitLabels(locale)` par un **import direct des deux fichiers JSON**.
+ * Les deux lectures visent les mêmes fichiers : il n'y a qu'une écriture de ces
+ * libellés.
+ *
+ * Pourquoi la fonction ne passe pas, elle aussi, par le crochet : trois de ses
+ * appelants sont des **Server Components asynchrones**, où aucun crochet n'est
+ * appelable — `app/page.tsx`, `app/(admin)/[tenantSlug]/admin/connexion/page.tsx`
+ * et `.../invitation/page.tsx`, qui résolvent la langue par `getLocale()` et
+ * composent ces libellés en **données** : une table `Record<SalonDoor, string>`
+ * pour l'accueil, des entrées `{ href, label }` pour les deux écrans
+ * d'authentification. Les cinq autres appelants sont des Client Components —
+ * `components/home/salon-finder.tsx`, `components/salon/salon-shell.tsx`,
+ * `salon-header.tsx`, `salon-booking-bar.tsx` et
+ * `app/(account)/[tenantSlug]/error.tsx` — et lisent la même fonction avec
+ * `useLocale()` : une seule porte d'entrée, un seul jeu de clés, des deux côtés
+ * de la frontière serveur/client.
+ *
+ * `app/salon-doors.ts` n'est plus du nombre : il a cessé de nommer les portes
+ * en #1233, et ne porte plus que des identifiants et des chemins (#1277).
  */
 
 /** Les destinations que le parcours public sait nommer. */
@@ -57,13 +72,14 @@ const CATALOG = { fr, en } as const;
  * La langue employée quand l'appelant n'en passe pas.
  *
  * `'fr'`, et c'est **transitoire** — même arbitrage que `FALLBACK_LOCALE` de
- * `lib/appointment-status.ts`, et pour les mêmes raisons : les six surfaces qui
- * lisent ce registre (vitrine, tunnel, accueil de la plateforme, connexion et
- * invitation du back-office, page d'erreur de l'espace client) sont hors de
- * l'empreinte de #845 et passeront la langue résolue dans leur propre ticket de
- * l'épique #843. Ce n'est pas `DEFAULT_LOCALE` du contrat, qui vaut `en` : le
- * défaut d'ici garde le comportement d'avant le ticket plutôt que de basculer
- * en anglais des écrans dont personne n'a encore relu la traduction.
+ * `lib/appointment-status.ts`, et pour les mêmes raisons. Les six surfaces que
+ * #845 avait laissées sans langue résolue (vitrine, tunnel, accueil de la
+ * plateforme, connexion et invitation du back-office, page d'erreur de l'espace
+ * client) sont toutes passées à `publicExitLabels(locale)` depuis : plus aucun
+ * appelant de production ne s'en remet à ce défaut, qui ne sert plus qu'à
+ * `PUBLIC_EXIT_LABELS` ci-dessous. Ce n'est pas `DEFAULT_LOCALE` du contrat, qui
+ * vaut `en` : le défaut d'ici garde le comportement d'avant #845 plutôt que de
+ * basculer en anglais des écrans dont personne n'a encore relu la traduction.
  */
 const FALLBACK_LOCALE: Locale = 'fr';
 
@@ -104,11 +120,15 @@ export function publicExitLabels(
 /**
  * La même table, figée en français.
  *
- * @deprecated Transitoire (#845). Les six surfaces qui la lisent passeront à
- * `publicExitLabels(locale)` dans leur propre ticket de l'épique #843 ; elle
- * disparaît avec la dernière. La garder évite de basculer en anglais des écrans
- * dont la traduction n'a pas encore été relue, et surtout de sortir de
- * l'empreinte de ce ticket pour aller les réécrire.
+ * @deprecated Transitoire (#845). **Le décompte des surfaces restantes est à
+ * zéro** : les six que #845 annonçait — vitrine, tunnel, accueil de la
+ * plateforme, connexion et invitation du back-office, page d'erreur de l'espace
+ * client — sont toutes passées à `publicExitLabels(locale)` au fil de l'épique
+ * #843. Ne la lisent plus que deux suites unitaires, qui s'en servent comme du
+ * libellé français attendu : `tests/unit/account-nav.test.tsx` et
+ * `tests/unit/auth-screens.test.tsx`, dont l'amorce fixe la langue à `fr`. Elle
+ * disparaît quand ces deux-là liront `publicExitLabels(TEST_LOCALE)`, comme
+ * `tests/unit/home-page.test.tsx` le fait déjà (#1277).
  */
 export const PUBLIC_EXIT_LABELS: Readonly<Record<PublicExitKey, string>> =
   CATALOG[FALLBACK_LOCALE].exits;
