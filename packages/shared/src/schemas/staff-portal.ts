@@ -163,7 +163,7 @@ export const myStaffAppointmentSchema = z
      */
     utcOffsetMinutes: z
       .number()
-      .int({ message: 'un décalage horaire s’exprime en minutes entières' })
+      .int()
       .min(UTC_OFFSET_MINUTES_MIN)
       .max(UTC_OFFSET_MINUTES_MAX),
     service: z

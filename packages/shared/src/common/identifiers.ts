@@ -22,6 +22,7 @@ import {
   REASON_MAX_LENGTH,
   SLUG_MAX_LENGTH,
 } from '../constants/limits';
+import { messageKey } from '../errors/zod-messages';
 import { DNS_LABEL_PATTERN, isReservedTenantSlug } from './tenant-url';
 
 /**
@@ -75,7 +76,7 @@ export const UUID_V4_PATTERN =
  */
 export const uuidSchema = z
   .string()
-  .regex(UUID_V4_PATTERN, { message: 'identifiant attendu au format UUID v4' });
+  .refine((value) => UUID_V4_PATTERN.test(value), messageKey('identifier.uuid'));
 
 export type Uuid = z.infer<typeof uuidSchema>;
 
@@ -101,9 +102,7 @@ export const resourceSlugSchema = z
   .toLowerCase()
   .min(1)
   .max(SLUG_MAX_LENGTH)
-  .regex(DNS_LABEL_PATTERN, {
-    message: 'slug attendu en minuscules, chiffres et tirets simples',
-  });
+  .refine((value) => DNS_LABEL_PATTERN.test(value), messageKey('identifier.slug'));
 
 export type ResourceSlug = z.infer<typeof resourceSlugSchema>;
 
@@ -141,11 +140,12 @@ export type ResourceSlug = z.infer<typeof resourceSlugSchema>;
  * en **lecture**, une ligne parfaitement légitime écrite avant ce ticket — voir
  * `resourceSlugSchema`.
  */
-export const slugSchema = resourceSlugSchema.refine((value) => !isReservedTenantSlug(value), {
-  // Le message ne cite pas la valeur : il s'affiche sous le champ qui la porte,
-  // où l'utilisateur la relit déjà.
-  message: 'ce nom est réservé par la plateforme — choisissez-en un autre',
-});
+// Le message ne cite pas la valeur : il s'affiche sous le champ qui la porte, où
+// l'utilisateur la relit déjà.
+export const slugSchema = resourceSlugSchema.refine(
+  (value) => !isReservedTenantSlug(value),
+  messageKey('identifier.slugReserved'),
+);
 
 export type Slug = z.infer<typeof slugSchema>;
 
@@ -176,11 +176,13 @@ export type Slug = z.infer<typeof slugSchema>;
  * (320), qui est la largeur de la colonne.
  *
  * Le motif n'est pas une seconde validation d'adresse : il ne juge que la
- * position du premier `@`, `.email()` gardant tout le reste. Son alternative
- * `[^@]*$` est ce qui l'empêche de **doubler** le refus de `.email()` sur une
- * chaîne sans `@` : deux checks qui échouent produisent deux `issues` de même
- * message, et un formulaire qui les rend toutes affiche « adresse e-mail
- * invalide » deux fois sous le même champ.
+ * position du premier `@`, la syntaxe étant gardée par `.email()` de zod. Les
+ * deux sont réunis dans **un seul** `refine` depuis #1232, pour deux raisons qui
+ * vont dans le même sens : une `issue` `custom` est la seule que zod laisse
+ * porter une clé de message traduisible (`messageKey`), et une seule `issue`
+ * est de toute façon ce qu'il faut — deux checks qui échouent ensemble
+ * affichaient « adresse e-mail invalide » deux fois sous le même champ, ce que
+ * l'alternative `[^@]*$` du motif s'employait déjà à éviter.
  *
  * Ce que ces bornes ne couvrent **pas**, et qui reste à l'avantage de l'API :
  * validator.js refuse aussi un label de domaine de plus de 63 octets. Le
@@ -188,13 +190,20 @@ export type Slug = z.infer<typeof slugSchema>;
  * l'adresse une seconde fois — l'écart est laissé en l'état, un tel domaine
  * n'étant pas enregistrable.
  */
+const EMAIL_SYNTAX = z.string().email();
+
+/** La partie locale d'une adresse, bornée à 64 octets (RFC 5321 §4.5.3.1.1). */
+const EMAIL_LOCAL_PART_PATTERN = /^(?:[^@]{0,64}@|[^@]*$)/;
+
 export const emailSchema = z
   .string()
   .trim()
   .toLowerCase()
   .max(EMAIL_ADDRESS_MAX_LENGTH)
-  .email({ message: 'adresse e-mail invalide' })
-  .regex(/^(?:[^@]{0,64}@|[^@]*$)/, { message: 'adresse e-mail invalide' });
+  .refine(
+    (value) => EMAIL_SYNTAX.safeParse(value).success && EMAIL_LOCAL_PART_PATTERN.test(value),
+    messageKey('identifier.email'),
+  );
 
 export type Email = z.infer<typeof emailSchema>;
 
@@ -223,7 +232,7 @@ export const countryCodeSchema = z
   .string()
   .trim()
   .toUpperCase()
-  .regex(COUNTRY_CODE_PATTERN, { message: 'code pays ISO 3166-1 alpha-2 attendu (« FR »)' });
+  .refine((value) => COUNTRY_CODE_PATTERN.test(value), messageKey('identifier.countryCode'));
 
 export type CountryCodeAlpha2 = z.infer<typeof countryCodeSchema>;
 
@@ -245,12 +254,14 @@ export type CountryCodeAlpha2 = z.infer<typeof countryCodeSchema>;
  * connexion. Le durcissement appartient à la saisie, et il vit dans
  * `phoneSchema` ci-dessous.
  */
+const PHONE_PATTERN = /^[+0-9][0-9\s().-]*$/;
+
 export const storedPhoneSchema = z
   .string()
   .trim()
   .min(1)
   .max(PHONE_MAX_LENGTH)
-  .regex(/^[+0-9][0-9\s().-]*$/, { message: 'numéro de téléphone invalide' });
+  .refine((value) => PHONE_PATTERN.test(value), messageKey('identifier.phone'));
 
 /**
  * Numéro de téléphone **saisi** — `storedPhoneSchema` plus un plancher de
@@ -282,9 +293,7 @@ export const storedPhoneSchema = z
  */
 export const phoneSchema = storedPhoneSchema.refine(
   (value) => (value.match(/\d/g) ?? []).length >= PHONE_MIN_DIGITS,
-  {
-    message: `numéro de téléphone incomplet — au moins ${PHONE_MIN_DIGITS} chiffres attendus`,
-  },
+  messageKey('identifier.phoneTooShort', { min: PHONE_MIN_DIGITS }),
 );
 
 export type Phone = z.infer<typeof phoneSchema>;
@@ -469,22 +478,23 @@ export function e164PhoneSchemaFor(defaultCountry?: string | null) {
       const normalized = normalizeToE164(value, defaultCountry);
 
       if (normalized === null) {
+        // La clé dit ce que l'appelant peut faire, et cela dépend de ce qu'on
+        // sait de lui : sans pays, seule la forme internationale est
+        // complétable, et l'annoncer autrement enverrait la personne corriger un
+        // numéro que rien ne pourra accepter.
+        //
+        // Avec un pays, le message **ne donne pas d'exemple national** : le seul
+        // qu'on saurait écrire serait celui d'un plan de numérotation
+        // particulier, et « 06 12 34 56 78 » proposé à un salon américain
+        // décrirait une forme que rien n'y acceptera jamais. Le pays est nommé,
+        // ce qui suffit — c'est celui que l'établissement a saisi.
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
-          // Le message dit ce que l'appelant peut faire, et cela dépend de ce
-          // qu'on sait de lui : sans pays, seule la forme internationale est
-          // complétable, et l'annoncer autrement enverrait la personne corriger
-          // un numéro que rien ne pourra accepter.
-          //
-          // Avec un pays, le message **ne donne pas d'exemple national** : le
-          // seul qu'on saurait écrire serait celui d'un plan de numérotation
-          // particulier, et « 06 12 34 56 78 » proposé à un salon américain
-          // décrirait une forme que rien n'y acceptera jamais. Le pays est
-          // nommé, ce qui suffit — c'est celui que l'établissement a saisi.
-          message:
+          ...messageKey(
             defaultCountry === null || defaultCountry === undefined
-              ? 'numéro attendu au format international, indicatif compris — par exemple +261 34 12 345 67'
-              : 'numéro de téléphone invalide — au format national du pays de l’établissement, ou au format international (+261 34 12 345 67)',
+              ? 'identifier.phoneInternational'
+              : 'identifier.phoneNational',
+          ),
         });
 
         return z.NEVER;
@@ -508,51 +518,32 @@ export const e164PhoneSchema = e164PhoneSchemaFor();
 export type E164Phone = z.infer<typeof e164PhoneSchema>;
 
 /**
- * Ce qu'affiche un champ obligatoire laissé vide.
+ * Le plancher et le plafond d'un champ de saisie ne portent **aucune phrase** —
+ * #613 les avait posées, #1232 les retire.
  *
- * Le message est **générique** parce que le schéma ignore l'intitulé du champ
- * qui le monte : `nameSchema` sert « Prénom », « Nom » et le nom d'une rubrique,
- * et une formule qui nommerait l'un des trois serait fausse sous les deux
- * autres. Le contexte, c'est `Field` qui le donne, en posant le message **sous
- * son champ** (skill web-frontend §4).
+ * Ce n'est pas un retour en arrière : le défaut que #613 refermait était le
+ * libellé brut de Zod — « String must contain at least 1 character(s) » — sur
+ * huit écrans par ailleurs entièrement français, et un message écrit ici le
+ * refermait. Mais un message écrit ici l'emporte sur toute carte d'erreurs, par
+ * conception de zod : la même phrase française s'affichait donc sur les écrans
+ * **anglais**, et aucune traduction ne pouvait la rattraper.
  *
- * Sans lui, `.min(1)` rendait le libellé par défaut de Zod — « String must
- * contain at least 1 character(s) » — sur huit écrans par ailleurs entièrement
- * français (#613). Le défaut n'était pas une traduction manquante mais un
- * message manquant : Zod ne se traduit pas, il se renseigne.
+ * `zodErrorMap(locale)` dit exactement la même chose dans les deux langues — « Ce
+ * champ est obligatoire. » / « This field is required. », « Ne dépassez pas 80
+ * caractères. » / « Use at most 80 characters. » —, bornes interpolées
+ * comprises : « faites plus court » sans dire combien oblige à tâtonner
+ * caractère par caractère. Et elle reste **générique**, comme la phrase qu'elle
+ * remplace, parce que le schéma ignore l'intitulé du champ qui le monte :
+ * `nameSchema` sert « Prénom », « Nom » et le nom d'une rubrique. Le contexte,
+ * c'est `Field` qui le donne, en posant le message **sous son champ** (skill
+ * web-frontend §4).
  */
-const REQUIRED_FIELD_MESSAGE = 'ce champ est obligatoire';
-
-/**
- * Ce qu'affiche un champ dont la saisie dépasse la borne de sa colonne.
- *
- * Le plafond a le même angle mort que le plancher : sans message, `.max()` rend
- * « String must contain at most 80 character(s) », et le cas est atteignable —
- * les champs ne portent pas d'attribut `maxLength` et les formulaires sont en
- * `noValidate`, si bien qu'un nom collé depuis une autre fiche sort une phrase
- * anglaise sous un libellé français. Corriger le seul plancher aurait laissé
- * #613 à moitié fait.
- *
- * La borne est **interpolée** : « faites plus court » sans dire combien oblige
- * à tâtonner caractère par caractère.
- */
-function tooLongMessage(max: number): string {
-  return `ce champ fait au plus ${String(max)} caractères`;
-}
 
 /** Prénom, nom, catégorie — `VARCHAR(80)`. */
-export const nameSchema = z
-  .string()
-  .trim()
-  .min(1, { message: REQUIRED_FIELD_MESSAGE })
-  .max(NAME_MAX_LENGTH, { message: tooLongMessage(NAME_MAX_LENGTH) });
+export const nameSchema = z.string().trim().min(1).max(NAME_MAX_LENGTH);
 
 /** Nom d'établissement, de prestation, nom public de praticien — `VARCHAR(160)`. */
-export const displayNameSchema = z
-  .string()
-  .trim()
-  .min(1, { message: REQUIRED_FIELD_MESSAGE })
-  .max(DISPLAY_NAME_MAX_LENGTH, { message: tooLongMessage(DISPLAY_NAME_MAX_LENGTH) });
+export const displayNameSchema = z.string().trim().min(1).max(DISPLAY_NAME_MAX_LENGTH);
 
 /** Description, biographie, note de rendez-vous — `VARCHAR(2000)`. */
 export const longTextSchema = z.string().trim().max(LONG_TEXT_MAX_LENGTH);
@@ -572,14 +563,7 @@ export const reasonSchema = z.string().trim().max(REASON_MAX_LENGTH);
  * rendrait le mot de passe irreproductible depuis un gestionnaire de mots de
  * passe qui, lui, ne la retire pas.
  */
-export const passwordSchema = z
-  .string()
-  .min(PASSWORD_MIN_LENGTH, {
-    message: `le mot de passe fait au moins ${String(PASSWORD_MIN_LENGTH)} caractères`,
-  })
-  .max(PASSWORD_MAX_LENGTH, {
-    message: `le mot de passe fait au plus ${String(PASSWORD_MAX_LENGTH)} caractères`,
-  });
+export const passwordSchema = z.string().min(PASSWORD_MIN_LENGTH).max(PASSWORD_MAX_LENGTH);
 
 /**
  * Mot de passe **soumis à vérification** — la connexion, la confirmation du mot
@@ -598,15 +582,11 @@ export const passwordSchema = z
  * Le plafond, lui, reste : c'est une borne de coût argon2id, pas une règle de
  * composition.
  */
-export const submittedPasswordSchema = z
-  .string()
-  .min(1, { message: 'mot de passe attendu' })
-  .max(PASSWORD_MAX_LENGTH, {
-    // Même phrase que `passwordSchema` : le plafond est le même des deux côtés,
-    // et deux rédactions pour une seule borne se liraient comme deux règles.
-    // Rien n'est divulgué que le refus lui-même ne dise déjà.
-    message: `le mot de passe fait au plus ${String(PASSWORD_MAX_LENGTH)} caractères`,
-  });
+// Les deux bornes se disent par `zodErrorMap(locale)`, comme celles de
+// `passwordSchema` : le plafond est le même des deux côtés, et deux rédactions
+// pour une seule borne se liraient comme deux règles. Rien n'est divulgué que le
+// refus lui-même ne dise déjà.
+export const submittedPasswordSchema = z.string().min(1).max(PASSWORD_MAX_LENGTH);
 
 /**
  * Jeton opaque — jeton d'accès, de rafraîchissement, ou secret client d'un

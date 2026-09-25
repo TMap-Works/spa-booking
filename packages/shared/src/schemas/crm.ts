@@ -265,9 +265,7 @@ export const customerSearchQuerySchema = paginationQuerySchema
     q: z
       .string()
       .trim()
-      .min(CUSTOMER_SEARCH_MIN_LENGTH, {
-        message: `la recherche demande au moins ${String(CUSTOMER_SEARCH_MIN_LENGTH)} caractères`,
-      })
+      .min(CUSTOMER_SEARCH_MIN_LENGTH)
       .max(CUSTOMER_SEARCH_MAX_LENGTH)
       .optional(),
     // **Pas** `z.coerce.boolean()`, et c'est le piège à ne pas retomber dedans :

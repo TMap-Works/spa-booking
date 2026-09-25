@@ -60,6 +60,7 @@ import {
   normalizeAppointmentReference,
 } from '../constants/appointment';
 import { MAX_APPOINTMENT_RANGE_DAYS } from '../constants/limits';
+import { messageKey } from '../errors/zod-messages';
 import { submittedLocaleSchema } from '../locale/index';
 
 import { serviceSummarySchema, staffMemberSummarySchema } from './catalog';
@@ -434,9 +435,9 @@ export type GuestContact = z.infer<typeof guestContactSchema>;
  * message-là remonte jusqu'au formulaire. C'est la même raison, et la même
  * écriture, que `consentSchema` côté web (`apps/web/lib/booking/consent.tsx`).
  */
-export const dataConsentSchema = z.boolean().refine((accepted) => accepted, {
-  message: 'le traitement des données doit être accepté pour réserver',
-});
+export const dataConsentSchema = z
+  .boolean()
+  .refine((accepted) => accepted, messageKey('appointment.dataConsent'));
 
 /**
  * Prise de rendez-vous depuis le **parcours public**, par une cliente
@@ -646,7 +647,7 @@ export const appointmentListQuerySchema = z
   })
   .strict()
   .refine((query) => query.from === undefined || query.to === undefined || query.to >= query.from, {
-    message: 'la fin de la plage ne peut pas précéder son début',
+    ...messageKey('availability.rangeOrder'),
     path: ['to'],
   })
   .refine(
@@ -655,7 +656,7 @@ export const appointmentListQuerySchema = z
       query.to === undefined ||
       calendarDaysBetween(query.from, query.to) <= MAX_APPOINTMENT_RANGE_DAYS,
     {
-      message: `la plage demandée dépasse ${String(MAX_APPOINTMENT_RANGE_DAYS)} jours`,
+      ...messageKey('availability.rangeTooWide', { max: MAX_APPOINTMENT_RANGE_DAYS }),
       path: ['to'],
     },
   );

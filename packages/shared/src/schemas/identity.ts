@@ -29,6 +29,7 @@ import {
   uuidSchema,
 } from '../common/identifiers';
 import { utcInstantSchema } from '../common/time';
+import { messageKey } from '../errors/zod-messages';
 import { localeSchema, submittedLocaleSchema } from '../locale/index';
 import { tenantBillingSchema } from './billing';
 import { PERMISSIONS } from '../constants/permissions';
@@ -104,9 +105,9 @@ export type UserSummary = z.infer<typeof userSummarySchema>;
  * refus littéral de Zod 3 s'annonce « Invalid literal value, expected true », et
  * ce message-là remonterait jusqu'au formulaire.
  */
-export const accountDataConsentSchema = z.boolean().refine((accepted) => accepted, {
-  message: 'le traitement des données doit être accepté pour créer un compte',
-});
+export const accountDataConsentSchema = z
+  .boolean()
+  .refine((accepted) => accepted, messageKey('identity.accountDataConsent'));
 
 /**
  * Inscription d'un client depuis le parcours public.
@@ -465,7 +466,7 @@ export type CreateStaffAccountRequest = z.infer<typeof createStaffAccountRequest
  * `AcceptInvitationDto` applique déjà en `class-validator`, écrite ici pour que
  * le contrat la porte à son tour.
  */
-const receivedTokenSchema = opaqueTokenSchema.max(4096, { message: 'jeton trop long' });
+const receivedTokenSchema = opaqueTokenSchema.max(4096);
 
 /**
  * Demande de réinitialisation d'un mot de passe oublié — #809, premier critère.

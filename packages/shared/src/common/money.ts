@@ -14,6 +14,7 @@
 import { z } from 'zod';
 
 import { ERROR_CODES } from '../errors/error-codes';
+import { messageKey } from '../errors/zod-messages';
 
 /**
  * Bornes d'un `integer` PostgreSQL (32 bits signés) — la largeur réellement
@@ -38,17 +39,15 @@ export const currencyCodeSchema = z
   .string()
   .trim()
   .toUpperCase()
-  .length(3, { message: 'un code devise ISO 4217 fait exactement trois lettres' })
-  .regex(/^[A-Z]{3}$/, { message: 'code devise ISO 4217 invalide' });
+  // Une seule règle, donc un seul refus : trois lettres. Le `.length(3)` qui la
+  // doublait produisait une seconde `issue` disant la même chose sous le même
+  // champ, et sa phrase — comme celle du motif — ne se traduisait pas (#1232).
+  .refine((value) => /^[A-Z]{3}$/.test(value), messageKey('money.currencyCode'));
 
 export type CurrencyCode = z.infer<typeof currencyCodeSchema>;
 
 /** Montant en plus petite unité — entier, borné par la colonne qui l'accueille. */
-export const amountMinorSchema = z
-  .number()
-  .int({ message: 'un montant est un entier dans la plus petite unité monétaire' })
-  .min(AMOUNT_MINOR_MIN)
-  .max(AMOUNT_MINOR_MAX);
+export const amountMinorSchema = z.number().int().min(AMOUNT_MINOR_MIN).max(AMOUNT_MINOR_MAX);
 
 /**
  * Le type monétaire du contrat. `.strict()` : un objet qui porterait un champ
@@ -66,12 +65,12 @@ export type Money = z.infer<typeof moneySchema>;
 
 /** Montant qui ne peut pas être négatif — un prix affiché, un encaissement. */
 export const nonNegativeMoneySchema = moneySchema.extend({
-  amountMinor: amountMinorSchema.min(0, { message: 'ce montant ne peut pas être négatif' }),
+  amountMinor: amountMinorSchema.min(0),
 });
 
 /** Montant strictement positif — un remboursement de zéro n'est pas une opération. */
 export const positiveMoneySchema = moneySchema.extend({
-  amountMinor: amountMinorSchema.min(1, { message: 'ce montant doit être strictement positif' }),
+  amountMinor: amountMinorSchema.min(1),
 });
 
 /**

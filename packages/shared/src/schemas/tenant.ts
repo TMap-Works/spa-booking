@@ -43,6 +43,7 @@ import {
   isValidLegalId,
   isValidVatNumber,
 } from '../constants/receipt';
+import { messageKey } from '../errors/zod-messages';
 import { isoWeekdaySchema, scheduleEndTimeSchema, wallMinutesOrNull } from './availability';
 
 /**
@@ -124,7 +125,7 @@ export const openingHoursEntrySchema = z
       return opens !== null && closes !== null && closes > opens;
     },
     {
-      message: 'la fermeture doit être strictement postérieure à l’ouverture',
+      ...messageKey('tenant.closesAfterOpens'),
       path: ['closesAt'],
     },
   );
@@ -171,12 +172,11 @@ export function openingHoursOverlap(entries: readonly OpeningHoursEntry[]): bool
 /** La semaine d'ouverture telle qu'elle entre et telle qu'elle sort. */
 export const openingHoursSchema = z
   .array(openingHoursEntrySchema)
-  .max(MAX_OPENING_HOURS_ENTRIES, {
-    message: `au plus ${String(MAX_OPENING_HOURS_ENTRIES)} plages d’ouverture par semaine`,
-  })
-  .refine((entries) => !openingHoursOverlap(entries), {
-    message: 'deux plages d’ouverture du même jour se recouvrent',
-  });
+  .refine(
+    (entries) => entries.length <= MAX_OPENING_HOURS_ENTRIES,
+    messageKey('tenant.openingHoursTooMany', { max: MAX_OPENING_HOURS_ENTRIES }),
+  )
+  .refine((entries) => !openingHoursOverlap(entries), messageKey('tenant.openingHoursOverlap'));
 
 /**
  * Vitrine publique d'un établissement, servie **avant toute authentification**
@@ -297,9 +297,7 @@ export const receiptPrefixSchema = z
   .string()
   .trim()
   .toUpperCase()
-  .regex(RECEIPT_PREFIX_PATTERN, {
-    message: 'préfixe attendu : 2 à 8 lettres majuscules ou chiffres, sans tiret',
-  });
+  .refine((value) => RECEIPT_PREFIX_PATTERN.test(value), messageKey('tenant.receiptPrefix'));
 
 /**
  * Le numéro de TVA **tel qu'on le saisit** — forme commune à l'Union, plus la
@@ -312,11 +310,9 @@ export const receiptPrefixSchema = z
  * Durcir la sortie aurait rendu illisible la fiche d'un salon déjà en base —
  * c'est-à-dire cassé la lecture pour corriger l'écriture.
  */
-export const vatNumberSchema = legalIdSchema.toUpperCase().refine(isValidVatNumber, {
-  message:
-    'numéro de TVA attendu : deux lettres de pays puis 8 à 13 caractères ' +
-    '(la clé du numéro français est vérifiée)',
-});
+export const vatNumberSchema = legalIdSchema
+  .toUpperCase()
+  .refine(isValidVatNumber, messageKey('tenant.vatNumber'));
 
 /**
  * Le taux de taxe des ventes au comptoir, en **points de base** — `2000` vaut
@@ -327,13 +323,7 @@ export const vatNumberSchema = legalIdSchema.toUpperCase().refine(isValidVatNumb
  * une multiplication d'entiers suivie d'une division entière — exacte et
  * reproductible au centime près.
  */
-export const taxRateBpsSchema = z
-  .number()
-  .int({ message: 'un taux de taxe s’exprime en points de base entiers' })
-  .min(0, { message: `taux attendu entre 0 et ${String(MAX_TAX_RATE_BPS)} points de base` })
-  .max(MAX_TAX_RATE_BPS, {
-    message: `taux attendu entre 0 et ${String(MAX_TAX_RATE_BPS)} points de base`,
-  });
+export const taxRateBpsSchema = z.number().int().min(0).max(MAX_TAX_RATE_BPS);
 
 /**
  * La nature et l'identifiant **tels qu'on les saisit**, casse normalisée.
@@ -483,8 +473,7 @@ export const updateTenantRequestSchema = z
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: [changes.legalId === null ? 'legalId' : 'legalIdType'],
-        message:
-          'la nature et l’identifiant d’entreprise se posent ou s’effacent ensemble',
+        ...messageKey('tenant.legalIdPair'),
       });
       return;
     }
@@ -497,7 +486,7 @@ export const updateTenantRequestSchema = z
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ['legalId'],
-        message: `identifiant invalide pour la nature « ${changes.legalIdType} »`,
+        ...messageKey('tenant.legalIdInvalid', { type: changes.legalIdType }),
       });
     }
   });
@@ -530,23 +519,15 @@ export const tenantBookingSettingsSchema = z
     /** Pas de découpage des créneaux proposés, en minutes. */
     slotIntervalMinutes: z
       .number()
-      .int({ message: 'un pas de créneau s’exprime en minutes entières' })
-      .min(MIN_SLOT_INTERVAL_MINUTES, {
-        message: `pas de créneau attendu entre ${String(MIN_SLOT_INTERVAL_MINUTES)} et ${String(MAX_SLOT_INTERVAL_MINUTES)} minutes`,
-      })
-      .max(MAX_SLOT_INTERVAL_MINUTES, {
-        message: `pas de créneau attendu entre ${String(MIN_SLOT_INTERVAL_MINUTES)} et ${String(MAX_SLOT_INTERVAL_MINUTES)} minutes`,
-      }),
+      .int()
+      .min(MIN_SLOT_INTERVAL_MINUTES)
+      .max(MAX_SLOT_INTERVAL_MINUTES),
     /** Délai minimum avant le début d'un créneau proposable, en minutes. */
     minBookingNoticeMinutes: z
       .number()
-      .int({ message: 'un délai de réservation s’exprime en minutes entières' })
-      .min(MIN_BOOKING_NOTICE_MINUTES_FLOOR, {
-        message: `délai minimum attendu entre ${String(MIN_BOOKING_NOTICE_MINUTES_FLOOR)} et ${String(MAX_MIN_BOOKING_NOTICE_MINUTES)} minutes`,
-      })
-      .max(MAX_MIN_BOOKING_NOTICE_MINUTES, {
-        message: `délai minimum attendu entre ${String(MIN_BOOKING_NOTICE_MINUTES_FLOOR)} et ${String(MAX_MIN_BOOKING_NOTICE_MINUTES)} minutes`,
-      }),
+      .int()
+      .min(MIN_BOOKING_NOTICE_MINUTES_FLOOR)
+      .max(MAX_MIN_BOOKING_NOTICE_MINUTES),
   })
   .strict();
 
