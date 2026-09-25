@@ -1,3 +1,7 @@
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -221,8 +225,9 @@ describe('la langue des libellés', () => {
   });
 
   it('garde le français par défaut — aucun appelant ne bascule sans le demander', () => {
-    // Le repli transitoire de l'épique #843 : le tableau de bord lit ce module
-    // sans lui demander un mot, et n'a pas à changer de signature pour cela.
+    // Le repli transitoire de l'épique #843 : les écrans qui lisent ce module
+    // sans lui demander un mot — `rangeOfPeriod`, `windowOfRange` — n'ont pas à
+    // changer de signature pour cela, et ne basculent pas de langue tout seuls.
     expect(shortDayLabel('2026-09-03')).toBe(shortDayLabel('2026-09-03', { locale: 'fr' }));
     expect(rangeLabel({ from: '2026-09-01', to: '2026-09-30' })).toBe(
       rangeLabel({ from: '2026-09-01', to: '2026-09-30' }, { locale: 'fr' }),
@@ -246,5 +251,65 @@ describe('la langue des libellés', () => {
     expect(reportPeriodLabels('fr')['trente-jours']).toBe('30 derniers jours');
     expect(reportPeriodLabels('en')['trente-jours']).toBe('Last 30 days');
     expect(Object.keys(reportPeriodLabels('en'))).toEqual(Object.keys(reportPeriodLabels('fr')));
+  });
+});
+
+/**
+ * Une seule écriture de l'abscisse quotidienne — #1193.
+ *
+ * ## Pourquoi une garde de source, et pas seulement un cas d'égalité
+ *
+ * Le tableau de bord a longtemps eu son propre `barDayLabel` : `shortDayLabel`
+ * fixait encore `fr-FR` en dur quand #1104 a branché les sept barres de la
+ * semaine sur la langue de la session, et `reporting-window.ts` était hors de
+ * l'empreinte de ce ticket-là. Les deux écritures ont coexisté le temps que
+ * l'épique #843 déroule ses écrans, et le même jour pouvait dès lors se graduer
+ * de deux façons sur deux écrans du même back-office.
+ *
+ * Une fois la seconde écriture supprimée, rien n'empêche la prochaine de
+ * revenir : c'est une ligne de `Intl.DateTimeFormat` que n'importe quel écran
+ * peut réécrire « pour ne pas dépendre du reporting ». Un cas d'égalité entre
+ * deux appels de `shortDayLabel` ne le verrait pas — il ne parle que de la
+ * fonction restée. C'est donc la **source** des deux écrans à graphique
+ * quotidien qui est lue.
+ *
+ * Ce que la garde cherche est **tout formateur de date construit sur place**,
+ * et non la seule option `month: 'short'` : une abscisse réécrite en
+ * `dateStyle: 'medium'`, ou avec des guillemets doubles, gradue tout autant de
+ * travers, et un motif collé à une orthographe se contourne sans le vouloir.
+ * Ces deux écrans n'ont aucune date à mettre en forme eux-mêmes — ils lisent
+ * `lib/format.ts` et ce module.
+ *
+ * Le périmètre s'arrête à eux. Les autres abréviations de mois de `apps/web` —
+ * la pastille de date du parcours public, le planning, les absences du
+ * personnel, l'axe **hebdomadaire** de la console de plateforme
+ * (`app/plateforme/components/overview-widgets.tsx`) — ne sont pas l'abscisse
+ * quotidienne d'un graphique de reporting, et rien ici ne les concerne.
+ */
+describe('l’abscisse quotidienne ne s’écrit qu’ici', () => {
+  const webDir = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
+
+  /** Les deux écrans qui portent un graphique gradué en journées. */
+  const CHART_SCREENS: readonly string[] = [
+    'app/(admin)/[tenantSlug]/admin/tableau-de-bord/page.tsx',
+    'app/(admin)/[tenantSlug]/admin/reporting/page.tsx',
+  ];
+
+  it.each(CHART_SCREENS)('%s lit shortDayLabel au lieu de réécrire son axe', (screen) => {
+    const source = readFileSync(path.join(webDir, screen), 'utf8');
+
+    expect(source).toContain('shortDayLabel');
+    expect(source).not.toMatch(/Intl\.DateTimeFormat/u);
+  });
+
+  it('gradue selon la région du pays du salon, et pas seulement sa langue', () => {
+    // Ce que les deux écrans affichent est désormais ce seul appel : ce cas dit
+    // donc ce qu'il gradue là où les deux écrans, eux, sont tenus par la garde
+    // de source ci-dessus. La région compte autant que la langue — `en-US`
+    // antépose le mois là où `en-GB` (cas plus haut) le postpose.
+    const jour = '2026-09-03';
+
+    expect(shortDayLabel(jour, { locale: 'en', countryCode: 'US' })).toBe('Sep 3');
+    expect(shortDayLabel(jour, { locale: 'en', countryCode: 'GB' })).toBe('3 Sept');
   });
 });
