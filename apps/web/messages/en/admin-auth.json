@@ -75,10 +75,6 @@
     "expiredLink": "This activation link is no longer valid: it has expired, or it has already been used. Ask for a new link from the person who sent it to you — or, if your account is already active, sign in.",
     "goToLogin": "Go to sign-in"
   },
-  "logout": {
-    "label": "Sign out",
-    "pending": "Signing out…"
-  },
   "retry": {
     "label": "Try again",
     "pending": "Retrying…"

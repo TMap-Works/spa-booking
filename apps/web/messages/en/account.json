@@ -7,9 +7,7 @@
     "signIn": "Sign in",
     "myAccount": "My account",
     "myAccountPrefix": "My account: ",
-    "clientAccount": "Client account",
-    "signOut": "Sign out",
-    "signingOut": "Signing out…"
+    "clientAccount": "Client account"
   },
   "appointments": {
     "heading": "Upcoming appointments",

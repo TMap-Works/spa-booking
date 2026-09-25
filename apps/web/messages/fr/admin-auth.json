@@ -75,10 +75,6 @@
     "expiredLink": "Ce lien d’activation n’est plus valable : il a expiré, ou il a déjà servi. Demandez un nouveau lien à la personne qui vous l’a envoyé — ou, si votre compte est déjà activé, connectez-vous.",
     "goToLogin": "Aller à la connexion"
   },
-  "logout": {
-    "label": "Se déconnecter",
-    "pending": "Déconnexion en cours…"
-  },
   "retry": {
     "label": "Réessayer",
     "pending": "Nouvelle tentative en cours…"
