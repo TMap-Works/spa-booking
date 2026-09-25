@@ -1448,16 +1448,33 @@ export type ReceiptPdfFormat = 'ticket-80' | 'a4';
  * Hors d'`authorizedRequest`, qui lit du JSON : ici le corps est binaire, et
  * seul un refus en porte. Le nom de fichier vient de l'API
  * (`Content-Disposition`), qui y écrit le numéro de pièce.
+ *
+ * ## `locale` est la langue **de l'écran**, et elle est exigée (#1259)
+ *
+ * La pièce est composée **par le serveur** : aucun catalogue du front ne
+ * l'atteint, et #1230 lui a donc ouvert un `?locale=fr|en` avec repli sur
+ * `Tenant.defaultLocale`. Ne rien transmettre revenait à laisser ce repli
+ * décider seul — un gérant travaillant en anglais dans un salon réglé sur `fr`
+ * tendait un ticket français à sa cliente, et la migration
+ * `20260919140000_add_locale_preferences` ayant posé `default_locale = 'en'` sur
+ * tout établissement antérieur à #844, une caisse basculée en français imprimait
+ * de l'anglais.
+ *
+ * Exigée au point d'appel, bien que facultative dans le contrat HTTP — même
+ * règle que `startBillingCheckout` depuis #1261 : le back-office connaît
+ * toujours sa langue, et la rendre obligatoire ici est ce qui empêche de
+ * l'oublier sur l'une des deux mises en page.
  */
 export async function fetchSaleReceiptPdf(
   accessToken: string,
   saleId: string,
   format: ReceiptPdfFormat,
+  locale: Locale,
 ): Promise<{ readonly bytes: ArrayBuffer; readonly disposition: string | null }> {
   let response: Response;
   try {
     response = await fetch(
-      `${apiBaseUrl()}/sales/${encodeURIComponent(saleId)}/receipt.pdf?format=${format}`,
+      `${apiBaseUrl()}/sales/${encodeURIComponent(saleId)}/receipt.pdf?format=${format}&locale=${locale}`,
       {
         headers: { accept: 'application/pdf', authorization: `Bearer ${accessToken}` },
         cache: 'no-store',
