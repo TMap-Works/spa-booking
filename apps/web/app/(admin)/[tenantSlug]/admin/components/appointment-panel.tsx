@@ -463,7 +463,9 @@ export function AppointmentPanel({
         return;
       }
       // La disponibilité illisible ne ferme pas le comptoir : le sélecteur
-      // retombe sur la saisie libre, et l'API reste juge du créneau.
+      // retombe sur la saisie libre, et l'API reste juge du créneau. Le ton de
+      // `desk.slotsUnreadable` est donc celui d'un avertissement et non d'une
+      // panne — ce qui suit reste possible, seulement moins sûr (#611).
       setSlots(null);
       setSlotsFailure(t('desk.slotsUnreadable'));
     });
@@ -520,11 +522,34 @@ export function AppointmentPanel({
    * La composition vit ici depuis #848, et non plus dans
    * `lib/admin/appointment-desk.ts` : le **verdict** reste au module — c'est
    * `isSlotConflict` qui dit si le refus est un créneau perdu —, la phrase vient
-   * du catalogue. Un module de calcul pur n'a pas de traducteur sous la main.
+   * du catalogue. Un module de calcul pur n'a pas de traducteur sous la main. Le
+   * module en gardait encore une copie française morte jusqu'à #1187.
+   *
+   * ## Pourquoi `desk.conflictBody` ne nomme pas la cause (#611)
+   *
+   * Un créneau perdu sous concurrence n'est **pas** une panne : c'est le cas
+   * normal d'un salon à plusieurs postes (web-frontend §3), d'où le ton
+   * `warning` du bloc qui le rend, le rechargement des créneaux, et la promesse
+   * — tenue ici, et seulement ici — que les autres saisies sont conservées.
+   *
+   * Mais le refus ne dit pas *pourquoi* : `SLOT_NO_LONGER_AVAILABLE` couvre à
+   * lui seul cinq situations — pris entre l'affichage et la validation, hors
+   * des heures du praticien, congé, préavis, praticien qui ne tient pas ce soin
+   * — et son `details` ne rend que ce que l'appelant vient d'envoyer. La phrase
+   * les énumère donc sans en désigner une. L'ancienne version affirmait « vient
+   * d'être pris depuis un autre poste » et envoyait l'opératrice chercher une
+   * collègue qui n'avait rien réservé. La règle, qui tient les deux langues et
+   * les quatre clés concernées, est écrite à l'en-tête du namespace
+   * (`messages/admin-planning.d.ts`).
+   *
+   * ## `desk.routeMissing` dit un manque identifié, pas une panne
    *
    * `NOT_FOUND` et `HTTP_404` sont les deux façons dont un 404 remonte du client
    * d'API ; sur les écritures du comptoir, les deux disent la même absence de
-   * route.
+   * route. L'écran est écrit contre le contrat partagé et **dégrade** : il
+   * s'affiche, il valide, il dit ce qui manque — plutôt qu'un message générique
+   * qui masquerait un manque parfaitement identifié derrière une phrase qui
+   * n'aide personne.
    */
   const failureMessage = useCallback(
     (code: string, message: string): string => {
@@ -702,10 +727,12 @@ export function AppointmentPanel({
     //
     // Le refus ne passe **pas** par `refuse` : celui-ci lit un `CONFLICT` comme
     // un créneau perdu et un `NOT_FOUND` comme une route absente — deux lectures
-    // que l'annulation ne supporte pas, sa route étant servie depuis #40 et
-    // n'ayant aucun créneau à reprendre. Le 409 y désigne deux annulations
-    // concurrentes, et tout le reste se dit avec le message de l'API, qui nomme
-    // déjà le refus — `INVALID_STATE_TRANSITION` compris.
+    // que l'annulation ne supporte pas (#754), sa route étant servie depuis #40
+    // et n'ayant aucun créneau à reprendre. Le 409 y désigne deux annulations
+    // concurrentes (`appointments.service.ts`, `ConflictError`), le 404 un
+    // rendez-vous introuvable ou d'un autre établissement, et tout le reste se
+    // dit avec le message de l'API, qui nomme déjà le refus —
+    // `INVALID_STATE_TRANSITION` compris.
     setConflict(null);
     setFailure(
       result.code === ERROR_CODES.CONFLICT ? t('desk.cancelConflict') : result.message,
@@ -932,7 +959,23 @@ export function AppointmentPanel({
             Hors du `<form>`, et pour la raison qui vaut déjà pour le journal
             d'envois : l'y mettre ferait remonter ce `<textarea>` à la soumission
             du tiroir, c'est-à-dire au report — et le motif d'une annulation n'a
-            rien à voir avec un déplacement d'heure. */}
+            rien à voir avec un déplacement d'heure.
+
+            `desk.cancelQuestion` dit ce que le geste **fait**, et non ce qu'il
+            s'appelle : le créneau repart à la réservation dans la seconde, et
+            `cancelled` est un état terminal. C'est ce que web-frontend §5 exige
+            d'une action destructive — confirmation, et réversibilité annoncée
+            telle qu'elle est. Ici elle est nulle, et le dire vaut mieux que de
+            le laisser découvrir : reposer le rendez-vous suppose que le créneau
+            soit encore libre.
+
+            `desk.cancelReasonHint` dit ce que le motif est — et ce qu'il n'est
+            pas : facultatif, et jamais montré à la cliente. C'est une note
+            interne au salon, et l'opératrice qui l'ignore écrirait autrement.
+
+            Ces deux phrases vivaient aussi en constantes françaises dans
+            `lib/admin/appointment-desk.ts`, où plus rien ne les lisait depuis
+            #848 ; leur justification les a suivies jusqu'ici (#1187). */}
         {!confirmingCancel ? null : (
           <div className="spa-admin-appointment__cancel">
             <Notification tone="warning" title={t('desk.cancelTitle')}>

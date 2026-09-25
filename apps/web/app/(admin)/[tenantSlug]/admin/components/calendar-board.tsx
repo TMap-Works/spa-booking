@@ -696,9 +696,40 @@ export function CalendarBoard({
    * `isSlotConflict` qui dit si le refus est passager, et lui seul.
    *
    * Ce que la bannière annonce n'a pas changé d'un mot : où le rendez-vous est
-   * revenu, et pourquoi il n'a pas pu aller ailleurs. Le ton distingue le
-   * passager du définitif — un créneau pris depuis un autre poste est le cas
-   * normal de la concurrence (web-frontend §3), un autre horaire le lève.
+   * revenu, et pourquoi il n'a pas pu aller ailleurs. Replacer le bloc ne
+   * suffirait pas — un rendez-vous qui saute à sa place d'origine sans un mot
+   * passe pour un bug de l'écran, et l'opérateur recommence le même geste.
+   *
+   * Le ton distingue le passager du définitif — un créneau pris depuis un autre
+   * poste est le cas normal de la concurrence (web-frontend §3), un autre
+   * horaire le lève ; un praticien qui ne pratique pas la prestation, un
+   * rendez-vous déjà soldé ou une session expirée, non.
+   *
+   * ## Pourquoi le report a ses propres phrases, et non celles du tiroir (#611)
+   *
+   * `move.conflictBody` ne se replie pas sur `desk.conflictBody` : celui-ci
+   * promet que « vos autres saisies sont conservées », ce qui est vrai dans le
+   * tiroir, où un formulaire attend, et hors sujet sur un glisser-déposer, où il
+   * n'y a rien de saisi. Le lâcher vise en outre une **rangée de la grille**,
+   * qui n'est pas un créneau du moteur — d'où le renvoi explicite vers le
+   * tiroir, seul endroit où la liste des créneaux réellement proposés est
+   * offerte.
+   *
+   * Même correction de fond que lui, en revanche : le code ne dit pas *pourquoi*
+   * le créneau est refusé, et l'affirmer envoyait chercher une course entre
+   * postes qui n'avait pas eu lieu. La règle qui tient la rédaction des deux
+   * langues est à l'en-tête du namespace (`messages/admin-planning.d.ts`).
+   *
+   * `move.goneBody`, lui, existe parce qu'un 404 ne veut plus dire la même chose
+   * ici : le tiroir de #50 le lisait comme une route absente, ce qui était vrai
+   * avant que l'API serve les écritures du comptoir. Elle les sert depuis #464.
+   * Annoncer « le formulaire est complet, l'enregistrement suivra » sur un
+   * glisser-déposer parlerait d'un formulaire qui n'existe pas et promettrait un
+   * enregistrement qui ne viendra jamais.
+   *
+   * Ces deux phrases et leurs deux titres vivaient encore en constantes
+   * françaises dans `lib/admin/appointment-desk.ts`, que plus rien ne rendait
+   * depuis #848 ; leur justification les a suivies jusqu'ici (#1187).
    */
   const refusalOf = useCallback(
     (previous: Appointment, code: string, message: string): DeskMoveRefusal => {
