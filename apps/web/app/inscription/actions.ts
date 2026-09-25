@@ -10,9 +10,19 @@
  *
  * Si Stripe ne répond pas, le salon existe quand même : l'adresse rendue est
  * alors celle de l'écran d'abonnement, qui propose de reprendre le paiement.
+ *
+ * ## La langue de la page de paiement (#1261)
+ *
+ * Celle dans laquelle le formulaire d'inscription vient d'être rempli
+ * (`getLocale()`, donc la résolution de `i18n/resolve.ts` — sélecteur compris).
+ * C'est le seul signal qui existe à cet instant : le compte vient d'être créé et
+ * n'a encore exprimé aucune préférence, et laisser l'API choisir seule ferait
+ * basculer en anglais, par `tenants.default_locale`, une inscription entièrement
+ * suivie en français.
  */
 
 import { salonSignupRequestSchema } from '@spa/shared';
+import { getLocale } from 'next-intl/server';
 
 import { failure, invalid, type AdminActionResult } from '@/app/(admin)/[tenantSlug]/admin/action-result';
 import { adminBillingPath } from '@/app/(admin)/[tenantSlug]/admin/paths';
@@ -41,7 +51,7 @@ export async function signupSalonAction(values: unknown): Promise<AdminActionRes
   await writeAdminSession(parsed.data.slug, opened);
 
   try {
-    const checkout = await startBillingCheckout(opened.session.accessToken);
+    const checkout = await startBillingCheckout(opened.session.accessToken, await getLocale());
     return { ok: true, data: { next: checkout.url } };
   } catch {
     return { ok: true, data: { next: adminBillingPath(parsed.data.slug) } };

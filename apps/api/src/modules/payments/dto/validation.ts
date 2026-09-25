@@ -9,6 +9,7 @@ import {
   registerDecorator,
   type ValidationOptions,
 } from 'class-validator';
+import { z, type ZodTypeAny } from 'zod';
 
 /**
  * Briques de validation du module `payments` (#62), **branchées sur le contrat
@@ -26,7 +27,9 @@ import {
  *
  * L'ADR 0008 ne s'applique pas à ce fichier : il ne décrit pas une **route**,
  * donc il n'y a pas de schéma d'entrée à monter en pipe. Ce qui reste ici est ce
- * que le contrat ne porte pas — voir les deux notes d’écart plus bas.
+ * que le contrat ne porte pas — voir les deux notes d’écart plus bas — et, depuis
+ * #1261, `optionalBody`, la brique dont un corps **entièrement facultatif** a
+ * besoin pour être monté en pipe ailleurs dans le module.
  *
  * ## Ce qui reste local, et pourquoi
  *
@@ -173,6 +176,38 @@ export class PageQueryDto {
 /** Les valeurs par défaut de la pagination, appliquées une fois. */
 export function toPageBounds(dto: PageQueryDto): { page: number; pageSize: number } {
   return { page: dto.page ?? 1, pageSize: dto.pageSize ?? DEFAULT_PAGE_SIZE };
+}
+
+/**
+ * Un corps **absent** vaut un corps vide — la propriété que
+ * `ValidationPipe.toEmptyIfNil` tenait avant la substitution de l'ADR 0008.
+ *
+ * Elle ne se voit que sur les corps dont **aucun** champ n'est obligatoire, et
+ * les deux ouvertures de page Stripe en sont : `POST /billing/checkout` et
+ * `POST /billing/portal` n'avaient pas de corps du tout avant #1261, et une
+ * requête qui n'en envoie toujours pas doit continuer de rendre 201.
+ *
+ * Ce qui l'empêcherait sans cette enveloppe : Express 5 et body-parser 2 laissent
+ * `req.body` à `undefined` quand la requête ne porte aucun en-tête
+ * `Content-Type`, et le `ValidationPipe` global ne le normalise **plus** — il ne
+ * normalise que les paramètres dont la métadonnée est une classe à valider, et le
+ * paramètre du handler est typé par un alias, dont la métadonnée émise est
+ * `Object`. Sans conversion, l'ouverture sortirait en 400 « Required » sur un
+ * corps qu'elle n'exige pas.
+ *
+ * `ZodValidationPipe` déballe les `ZodEffects` avant de vérifier `.strict()`, si
+ * bien que la garde de champ inconnu reste posée sur le schéma enveloppé — un
+ * `tenantId`, ou un champ de carte, y reste refusé.
+ *
+ * Jumeau de ceux d'`appointments/dto/validation.ts` et de
+ * `catalog/dto/validation.ts`, dupliqué pour la raison qui vaut déjà pour
+ * `IsOffsetDateTime` : un module n'importe pas un fichier profond d'un autre
+ * (api-module §3).
+ */
+export function optionalBody<TSchema extends ZodTypeAny>(
+  schema: TSchema,
+): z.ZodEffects<TSchema, z.output<TSchema>, unknown> {
+  return z.preprocess((value) => value ?? {}, schema);
 }
 
 /**

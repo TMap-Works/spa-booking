@@ -244,7 +244,7 @@ describe('les gestes de l’écran d’abonnement (#1105)', () => {
 
     await user.click(screen.getByRole('button', { name: 'Démarrer mon essai gratuit' }));
 
-    expect(startBillingCheckoutAction).toHaveBeenCalledWith('maison-lotus');
+    expect(startBillingCheckoutAction).toHaveBeenCalledWith('maison-lotus', 'fr');
   });
 
   it('ouvre le portail Stripe depuis un abonnement actif', async () => {
@@ -254,7 +254,7 @@ describe('les gestes de l’écran d’abonnement (#1105)', () => {
 
     await user.click(screen.getByRole('button', { name: 'Gérer mon abonnement' }));
 
-    expect(openBillingPortalAction).toHaveBeenCalledWith('maison-lotus');
+    expect(openBillingPortalAction).toHaveBeenCalledWith('maison-lotus', 'fr');
   });
 
   it('annonce en anglais l’échec d’ouverture de Stripe, message compris', async () => {
@@ -279,6 +279,37 @@ describe('les gestes de l’écran d’abonnement (#1105)', () => {
       screen.queryByText('Le prestataire de paiement est momentanément indisponible.'),
     ).toBeNull();
   });
+
+  it.each(['fr', 'en'] as const)(
+    'transmet la langue lue — %s — aux deux pages hébergées par Stripe (#1261)',
+    async (langue) => {
+      // Le défaut de #1231 : un gérant dont le compte est en français bascule
+      // l'interface en anglais et repart sur une page Stripe française. C'est le
+      // sélecteur de langue qui doit gagner, comme partout ailleurs (#845).
+      state.locale = langue;
+      startBillingCheckoutAction.mockResolvedValue({
+        ok: true,
+        data: 'https://checkout.stripe.test/s',
+      });
+      openBillingPortalAction.mockResolvedValue({ ok: true, data: 'https://portal.stripe.test/s' });
+      const user = userEvent.setup();
+      const libelles =
+        langue === 'fr'
+          ? { essai: 'Démarrer mon essai gratuit', gestion: 'Gérer mon abonnement' }
+          : { essai: 'Start my free trial', gestion: 'Manage my subscription' };
+
+      afficher({ status: 'pending' });
+      await user.click(screen.getByRole('button', { name: libelles.essai }));
+
+      expect(startBillingCheckoutAction).toHaveBeenCalledWith('maison-lotus', langue);
+
+      cleanup();
+      afficher({ status: 'active' });
+      await user.click(screen.getByRole('button', { name: libelles.gestion }));
+
+      expect(openBillingPortalAction).toHaveBeenCalledWith('maison-lotus', langue);
+    },
+  );
 
   it('retombe sur le message du refus pour un code qu’il ne connaît pas', async () => {
     openBillingPortalAction.mockResolvedValue({

@@ -13,6 +13,7 @@
 import { z } from 'zod';
 
 import { utcInstantSchema } from '../common/time';
+import { submittedLocaleSchema } from '../locale/index';
 
 /**
  * L'offre unique. Le montant est en **plus petite unité** de la devise
@@ -74,6 +75,52 @@ export const tenantBillingSchema = z.object({
 });
 
 export type TenantBilling = z.infer<typeof tenantBillingSchema>;
+
+/**
+ * Ce que l'écran d'abonnement demande en ouvrant une page hébergée par Stripe —
+ * la page de paiement ou le portail de gestion (#1261).
+ *
+ * ## Un corps qui ne porte qu'une langue, et pourquoi il en porte une
+ *
+ * `locale` est la langue **de la session en cours de lecture** : celle que le
+ * sélecteur du back-office affiche à l'instant du clic. Sans elle, la langue des
+ * pages Stripe se déduisait du seul `users.locale` (#1231), si bien qu'un gérant
+ * dont le compte est en français et qui basculait l'interface en anglais partait
+ * sur une page de paiement française. Les signaux étaient inversés par rapport au
+ * reste du produit, où le choix explicite gagne sur la préférence enregistrée
+ * (`apps/web/i18n/resolve.ts`, #845) — et où l'export CSV du reporting avait déjà
+ * tranché dans ce sens (#851).
+ *
+ * Elle est **facultative** : un appelant qui n'en envoie pas retrouve exactement
+ * le comportement d'avant ce ticket — `users.locale`, puis
+ * `tenants.default_locale`, puis `en`. C'est ce qui permet de livrer le contrat
+ * sans casser l'appelant qui ne l'a pas encore adopté.
+ *
+ * `submittedLocaleSchema` et non `localeSchema` : la valeur vient d'un navigateur,
+ * donc d'une saisie au sens large — `FR` et ` fr ` désignent la même langue, et
+ * refuser sur la casse ferait échouer une ouverture de page de paiement pour une
+ * raison qui n'en est pas une. Ce qui ne désigne **aucune** des deux langues du
+ * contrat, en revanche, est refusé en 400 : une page de paiement s'ouvre dans une
+ * langue connue ou ne s'ouvre pas, un repli silencieux masquerait l'appelant
+ * fautif.
+ *
+ * ## Ce que ce corps ne porte pas, et ne portera pas
+ *
+ * **Rien qui touche une carte.** Ni numéro, ni CVC, ni date d'expiration, ni
+ * jeton de moyen de paiement : les deux routes rendent une **adresse**, et la
+ * carte se saisit sur la page hébergée par Stripe (payments-stripe §1, SAQ A). Le
+ * `.strict()` n'est donc pas qu'une précaution d'isolation — il est aussi ce qui
+ * refuse un champ de carte glissé dans ce corps par un appelant zélé.
+ *
+ * Ni `tenantId` : la portée vient du jeton, jamais du corps (tenant-isolation §2).
+ */
+export const billingRedirectRequestSchema = z
+  .object({
+    locale: submittedLocaleSchema.optional(),
+  })
+  .strict();
+
+export type BillingRedirectRequest = z.infer<typeof billingRedirectRequestSchema>;
 
 /** Une redirection vers une page hébergée par Stripe — Checkout ou portail. */
 export const billingRedirectSchema = z.object({

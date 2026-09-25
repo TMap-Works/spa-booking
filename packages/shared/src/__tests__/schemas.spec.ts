@@ -19,6 +19,7 @@ import {
   rescheduleAppointmentRequestSchema,
 } from '../schemas/appointment';
 import { availabilityQuerySchema } from '../schemas/availability';
+import { billingRedirectRequestSchema } from '../schemas/billing';
 import {
   assignServiceStaffRequestSchema,
   createServiceRequestSchema,
@@ -1357,5 +1358,39 @@ describe('espace client — #47', () => {
     expect(
       myAppointmentsQuerySchema.safeParse({ limit: MY_APPOINTMENTS_MAX_LIMIT + 1 }).success,
     ).toBe(false);
+  });
+});
+
+describe('abonnement du salon — la langue des pages Stripe (#1261)', () => {
+  it('accepte l’absence de langue : l’appelant d’avant le ticket reste servi', () => {
+    // Le repli est alors celui de l'API — `users.locale`, puis
+    // `tenants.default_locale`, puis `en`. Exiger le champ aurait sorti en 400
+    // tout appelant antérieur à #1261, page de paiement comprise.
+    expect(billingRedirectRequestSchema.parse({})).toEqual({});
+  });
+
+  it('normalise la casse et les espaces de la langue soumise', () => {
+    expect(billingRedirectRequestSchema.parse({ locale: ' FR ' }).locale).toBe('fr');
+    expect(billingRedirectRequestSchema.parse({ locale: 'en' }).locale).toBe('en');
+  });
+
+  it('refuse ce qui ne désigne aucune des deux langues du contrat', () => {
+    // Un repli silencieux ouvrirait la page dans une langue que personne n'a
+    // demandée, sans que rien ne désigne l'appelant fautif.
+    expect(billingRedirectRequestSchema.safeParse({ locale: 'de' }).success).toBe(false);
+    expect(billingRedirectRequestSchema.safeParse({ locale: 'fr-CA' }).success).toBe(false);
+    expect(billingRedirectRequestSchema.safeParse({ locale: null }).success).toBe(false);
+  });
+
+  it('refuse toute donnée de carte, et tout établissement, glissés dans ce corps', () => {
+    // Les deux routes rendent une **adresse** : la carte se saisit sur la page
+    // hébergée par Stripe (payments-stripe §1, SAQ A). Le `.strict()` est ce qui
+    // garantit qu'aucun champ de carte ne puisse même être accepté.
+    expect(
+      billingRedirectRequestSchema.safeParse({ locale: 'fr', cardNumber: '4242424242424242' })
+        .success,
+    ).toBe(false);
+    expect(billingRedirectRequestSchema.safeParse({ cvc: '123' }).success).toBe(false);
+    expect(billingRedirectRequestSchema.safeParse({ tenantId: OTHER_UUID }).success).toBe(false);
   });
 });

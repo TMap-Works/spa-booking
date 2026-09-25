@@ -38,6 +38,17 @@ import { adminCatalogPath, adminDashboardPath } from '../paths';
  * Le **prix** vient de `lib/plan.ts` : un entier dans la plus petite unité de sa
  * devise, mis en forme dans la langue lue. Ce que le catalogue porte est la
  * phrase autour, jamais le montant.
+ *
+ * ## Les pages de Stripe suivent la même langue (#1261)
+ *
+ * Les deux gestes quittent la page pour une page hébergée par Stripe, et
+ * **transmettent la langue lue** en partant. Sans cela, la page d'arrivée suivait
+ * la seule préférence du compte (#1231) : un back-office basculé en anglais
+ * ouvrait une page de paiement française, alors que le reste du produit range le
+ * choix explicite avant la préférence enregistrée (`i18n/resolve.ts`, #845).
+ *
+ * Cela ne change rien à la frontière PCI : ce qui voyage est une étiquette de
+ * langue, et la carte reste saisie chez Stripe (payments-stripe §1).
  */
 
 export type BillingReturn = 'paiement' | 'annule' | null;
@@ -178,10 +189,13 @@ export function BillingPanel({
     setPending(true);
     setFailure(null);
 
+    // La langue lue à l'instant du clic, et non celle du compte : c'est elle que
+    // Stripe doit servir (#1261). `locale` vient de `useLocale()`, donc de la
+    // résolution de `i18n/resolve.ts` — sélecteur compris.
     const result =
       shape.action === 'checkout'
-        ? await startBillingCheckoutAction(tenantSlug)
-        : await openBillingPortalAction(tenantSlug);
+        ? await startBillingCheckoutAction(tenantSlug, locale)
+        : await openBillingPortalAction(tenantSlug, locale);
 
     if (!result.ok) {
       const key = REDIRECT_ERROR_KEYS[result.code];
