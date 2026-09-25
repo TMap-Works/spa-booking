@@ -74,6 +74,7 @@ import {
   type AvailabilityQuery,
   type AvailabilityResponse,
   type BillingRedirect,
+  type BillingRedirectRequest,
   type BookGuestAppointmentRequest,
   type BookedAppointment,
   type CancelAppointmentRequest,
@@ -90,6 +91,7 @@ import {
   type CustomerPage,
   type CustomerSearchQuery,
   type CustomerVisitHistory,
+  type Locale,
   type LoginRequest,
   type MyStaffAgenda,
   type MyStaffProfile,
@@ -2427,24 +2429,46 @@ export async function fetchBilling(accessToken: string): Promise<TenantBilling> 
   return payload;
 }
 
-/** La page de paiement Stripe de l'essai — son adresse. */
-export async function startBillingCheckout(accessToken: string): Promise<BillingRedirect> {
+/**
+ * La page de paiement Stripe de l'essai — son adresse.
+ *
+ * `locale` est la langue **lue à l'écran** à l'instant du clic (#1261). L'API la
+ * range devant la préférence du compte, comme le fait `i18n/resolve.ts` pour nos
+ * propres pages : sans elle, un gérant dont le compte est en français et qui
+ * bascule l'interface en anglais repartirait sur une page de paiement française.
+ *
+ * Exigée ici, bien que facultative dans le contrat : le back-office connaît
+ * toujours sa langue, et la rendre obligatoire au point d'appel est ce qui
+ * empêche de l'oublier sur l'une des deux portes.
+ *
+ * Aucune donnée de carte ne circule par cet appel — il rend une **adresse**, et
+ * la carte se saisit sur la page hébergée par Stripe (payments-stripe §1).
+ */
+export async function startBillingCheckout(
+  accessToken: string,
+  locale: Locale,
+): Promise<BillingRedirect> {
   const { payload } = await authorizedRequest({
     method: 'POST',
     path: '/billing/checkout',
     accessToken,
+    body: { locale } satisfies BillingRedirectRequest,
     schema: billingRedirectSchema,
   });
 
   return payload;
 }
 
-/** Le portail client de Stripe — son adresse. */
-export async function openBillingPortal(accessToken: string): Promise<BillingRedirect> {
+/** Le portail client de Stripe — son adresse, dans la langue lue (#1261). */
+export async function openBillingPortal(
+  accessToken: string,
+  locale: Locale,
+): Promise<BillingRedirect> {
   const { payload } = await authorizedRequest({
     method: 'POST',
     path: '/billing/portal',
     accessToken,
+    body: { locale } satisfies BillingRedirectRequest,
     schema: billingRedirectSchema,
   });
 

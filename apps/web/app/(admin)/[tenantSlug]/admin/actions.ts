@@ -19,7 +19,9 @@ import {
   acceptInvitationRequestSchema,
   loginRequestSchema,
   slugSchema,
+  submittedLocaleSchema,
   updateTenantRequestSchema,
+  type Locale,
   type SessionUser,
   type Tenant,
 } from '@spa/shared';
@@ -176,28 +178,48 @@ export async function updateTenantSettingsAction(
  * Ouvre la page de paiement Stripe de l'abonnement (ADR 0016) et en rend
  * l'adresse — le navigateur y part aussitôt. La carte n'est saisie que chez
  * Stripe (payments-stripe §1).
+ *
+ * `locale` est la langue lue à l'écran au moment du clic (#1261) — voir
+ * {@link billingRedirect}.
  */
 export async function startBillingCheckoutAction(
   tenantSlug: string,
+  locale: string,
 ): Promise<AdminActionResult<string>> {
-  return billingRedirect(tenantSlug, startBillingCheckout);
+  return billingRedirect(tenantSlug, locale, startBillingCheckout);
 }
 
 /** Ouvre le portail client de Stripe : carte, factures, résiliation. */
 export async function openBillingPortalAction(
   tenantSlug: string,
+  locale: string,
 ): Promise<AdminActionResult<string>> {
-  return billingRedirect(tenantSlug, openBillingPortal);
+  return billingRedirect(tenantSlug, locale, openBillingPortal);
 }
 
+/**
+ * Le tronc commun des deux ouvertures de page hébergée.
+ *
+ * `locale` arrive en `string` et non en `Locale` : une action serveur est une
+ * **frontière réseau**, et rien ne garantit qu'un appel vienne du panneau
+ * d'abonnement. Elle est donc jugée ici par `submittedLocaleSchema` — le schéma
+ * du contrat, celui-là même que l'API rejouera de son côté (web-frontend §4) —
+ * et une langue inconnue s'arrête avant l'appel plutôt que d'aller chercher un
+ * 400 à l'autre bout.
+ */
 async function billingRedirect(
   tenantSlug: string,
-  open: (accessToken: string) => Promise<{ url: string }>,
+  locale: string,
+  open: (accessToken: string, locale: Locale) => Promise<{ url: string }>,
 ): Promise<AdminActionResult<string>> {
   const slug = slugSchema.safeParse(tenantSlug);
+  const submitted = submittedLocaleSchema.safeParse(locale);
 
   if (!slug.success) {
     return invalid('Établissement inconnu.');
+  }
+  if (!submitted.success) {
+    return invalid('Langue inconnue.');
   }
 
   const access = await adminActionAccess(slug.data);
@@ -207,7 +229,7 @@ async function billingRedirect(
   }
 
   try {
-    return { ok: true, data: (await open(access.accessToken)).url };
+    return { ok: true, data: (await open(access.accessToken, submitted.data)).url };
   } catch (error) {
     return failure(error);
   }
