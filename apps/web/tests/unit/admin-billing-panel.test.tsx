@@ -3,6 +3,8 @@ import { cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { fixerLangue, nextIntlMobile } from '../support/langue-mobile';
+
 import { BillingPanel } from '@/app/(admin)/[tenantSlug]/admin/components/billing-panel';
 import { planPriceLabel } from '@/lib/plan';
 
@@ -11,7 +13,9 @@ import { planPriceLabel } from '@/lib/plan';
  *
  * La doublure de `next-intl` est celle de `signup-i18n.test.tsx`, et pour la
  * même raison : l'amorce des suites fixe la langue à `fr` (#845), or c'est le
- * **changement** de langue qui est ici la promesse du ticket.
+ * **changement** de langue qui est ici la promesse du ticket. Toutes deux la
+ * lisent désormais à `tests/support/langue-mobile.ts` (#1287), où elle est
+ * écrite une fois, et chaque test pose la sienne par `fixerLangue()`.
  *
  * ## Ce qu'elle protège
  *
@@ -22,44 +26,7 @@ import { planPriceLabel } from '@/lib/plan';
  * mais garde le fuseau du salon (`CLAUDE.md`, « Fuseaux horaires »).
  */
 
-const state = vi.hoisted(() => ({ locale: 'fr' as 'fr' | 'en' }));
-
-vi.mock('next-intl', async () => {
-  const actual = await vi.importActual<typeof import('next-intl')>('next-intl');
-  const { loadMessages } = await import('@/i18n/messages');
-
-  const translator = actual.createTranslator as unknown as (options: {
-    locale: string;
-    messages: unknown;
-    namespace?: string;
-  }) => unknown;
-
-  const cache = new Map<string, unknown>();
-
-  return {
-    ...actual,
-    useLocale: () => state.locale,
-    useTranslations: (namespace?: string) => {
-      const key = `${state.locale}:${namespace ?? ''}`;
-      const cached = cache.get(key);
-
-      if (cached !== undefined) {
-        return cached;
-      }
-
-      const messages = loadMessages(state.locale);
-      const made = translator(
-        namespace === undefined
-          ? { locale: state.locale, messages }
-          : { locale: state.locale, messages, namespace },
-      );
-
-      cache.set(key, made);
-
-      return made;
-    },
-  };
-});
+vi.mock('next-intl', () => nextIntlMobile());
 
 const startBillingCheckoutAction = vi.fn();
 const openBillingPortalAction = vi.fn();
@@ -75,7 +42,7 @@ vi.mock('next/navigation', () => ({
 }));
 
 beforeEach(() => {
-  state.locale = 'fr';
+  fixerLangue('fr');
 });
 
 afterEach(() => {
@@ -165,7 +132,7 @@ describe('les statuts de l’abonnement sont traduits (#1105)', () => {
   });
 
   it.each(CAS)('rend « $statut » en anglais', ({ statut, fr, en, action }) => {
-    state.locale = 'en';
+    fixerLangue('en');
     afficher({ status: statut });
 
     expect(screen.getByText(en)).toBeDefined();
@@ -190,7 +157,7 @@ describe('le prix et l’échéance suivent la langue, le fuseau reste celui du 
   });
 
   it('annonce le même prix, écrit pour l’anglais', () => {
-    state.locale = 'en';
+    fixerLangue('en');
     afficher({ status: 'pending' });
     const ligne = screen.getByText(/month, no commitment/u).parentElement;
 
@@ -208,7 +175,7 @@ describe('le prix et l’échéance suivent la langue, le fuseau reste celui du 
   });
 
   it('écrit la même fin d’essai en anglais, dans le même fuseau', () => {
-    state.locale = 'en';
+    fixerLangue('en');
     afficher({ status: 'trialing', trialEndsAt: '2026-10-06T03:00:00.000Z' });
 
     expect(screen.getByText(/Free trial until October 5, 2026/u)).toBeDefined();
@@ -260,7 +227,7 @@ describe('les gestes de l’écran d’abonnement (#1105)', () => {
   it('annonce en anglais l’échec d’ouverture de Stripe, message compris', async () => {
     // Le message du refus est écrit côté serveur, donc en français : c'est le
     // **code** qui décide de ce que le back-office anglais affiche.
-    state.locale = 'en';
+    fixerLangue('en');
     openBillingPortalAction.mockResolvedValue({
       ok: false,
       code: ERROR_CODES.PAYMENT_PROVIDER_UNAVAILABLE,
@@ -286,7 +253,7 @@ describe('les gestes de l’écran d’abonnement (#1105)', () => {
       // Le défaut de #1231 : un gérant dont le compte est en français bascule
       // l'interface en anglais et repart sur une page Stripe française. C'est le
       // sélecteur de langue qui doit gagner, comme partout ailleurs (#845).
-      state.locale = langue;
+      fixerLangue(langue);
       startBillingCheckoutAction.mockResolvedValue({
         ok: true,
         data: 'https://checkout.stripe.test/s',
@@ -327,7 +294,7 @@ describe('les gestes de l’écran d’abonnement (#1105)', () => {
   ] as const)(
     'donne un message générique traduit pour un code inconnu — %s',
     async (langue, bouton, attendu) => {
-      state.locale = langue;
+      fixerLangue(langue);
       openBillingPortalAction.mockResolvedValue({
         ok: false,
         code: 'CODE_QUI_NEXISTE_PAS',
@@ -362,7 +329,7 @@ describe('les encarts de retour de paiement sont traduits (#1105)', () => {
   });
 
   it('l’accueille en anglais', () => {
-    state.locale = 'en';
+    fixerLangue('en');
     render(
       <BillingPanel
         tenantSlug="maison-lotus"
@@ -378,7 +345,7 @@ describe('les encarts de retour de paiement sont traduits (#1105)', () => {
   });
 
   it('explique un paiement interrompu dans la langue lue', () => {
-    state.locale = 'en';
+    fixerLangue('en');
     render(
       <BillingPanel
         tenantSlug="maison-lotus"

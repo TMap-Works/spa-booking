@@ -71,6 +71,20 @@ export function fixerLangue(prochaine: Locale): void {
   langue = prochaine;
 }
 
+/**
+ * La langue posée à cet instant — pour les **autres** doublures d'une suite.
+ *
+ * Une suite ne double pas que `next-intl` : `transverse-i18n` double aussi
+ * `next/headers`, parce que c'est là que `lib/api-client.ts` lit la langue de la
+ * requête, et le cookie qu'elle rend doit porter la même langue que le rendu. Y
+ * tenir une seconde variable la remettrait exactement dans la situation que
+ * `nextIntlServerMobile()` a retirée en #1277 : deux langues à garder en phase à
+ * la main, dont l'une finit par diverger sans que rien ne le dise.
+ */
+export function langueCourante(): Locale {
+  return langue;
+}
+
 /** La doublure de `next-intl` — les **crochets** —, sur la langue mobile. */
 export function nextIntlMobile(): Promise<Record<string, unknown>> {
   return doublureCrochets(() => langue);

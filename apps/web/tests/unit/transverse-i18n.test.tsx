@@ -1,10 +1,17 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { ERROR_CODES, errorMessage, type Locale } from '@spa/shared';
+import { ERROR_CODES, errorMessage } from '@spa/shared';
 import { cleanup, render, screen } from '@testing-library/react';
 import { useState } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+import {
+  fixerLangue,
+  langueCourante,
+  nextIntlMobile,
+  nextIntlServerMobile,
+} from '../support/langue-mobile';
 
 /** Ce fichier, d'où part la racine d'`apps/web` lue par la garde de lint. */
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -42,60 +49,26 @@ const here = path.dirname(fileURLToPath(import.meta.url));
  * L'amorce des suites fixe la langue à `fr` pour toutes
  * (`tests/support/next-intl.ts`). Ce ticket promet précisément le **changement**
  * de langue : la doublure lit les vrais catalogues du dépôt, langue par langue,
- * et `state.locale` choisit laquelle avant chaque rendu — même forme que
- * `shell-logout-i18n.test.tsx`.
+ * et `fixerLangue()` choisit laquelle avant chaque rendu — même doublure que
+ * `shell-logout-i18n.test.tsx`, celle de `tests/support/langue-mobile.ts`
+ * (#1287).
  *
  * `next/headers` est doublé pour la même raison : c'est là que `api-client` lit
- * la langue de la requête, et une suite sous jsdom n'a pas de requête.
+ * la langue de la requête, et une suite sous jsdom n'a pas de requête. Le cookie
+ * qu'il rend porte `langueCourante()`, et non une seconde variable : les deux
+ * chemins de lecture de la langue ne peuvent donc pas diverger.
  */
 
 const state = vi.hoisted(() => ({
-  locale: 'fr' as Locale,
   /** Ce que le navigateur annonce — le troisième signal de `i18n/resolve.ts`. */
   acceptLanguage: null as string | null,
   /** `true` pour rejouer l'absence de requête : `next/headers` lève alors. */
   horsRequete: false,
 }));
 
-vi.mock('next-intl', async () => {
-  const actual = await vi.importActual<typeof import('next-intl')>('next-intl');
-  const { loadMessages } = await import('@/i18n/messages');
+vi.mock('next-intl', () => nextIntlMobile());
 
-  const translator = actual.createTranslator as unknown as (options: {
-    locale: string;
-    messages: unknown;
-    namespace?: string;
-  }) => unknown;
-  const cache = new Map<string, unknown>();
-
-  return {
-    ...actual,
-    useLocale: () => state.locale,
-    useTranslations: (namespace?: string) => {
-      const key = `${state.locale}:${namespace ?? ''}`;
-      const cached = cache.get(key);
-
-      if (cached !== undefined) {
-        return cached;
-      }
-
-      const messages = loadMessages(state.locale);
-      const made = translator(
-        namespace === undefined
-          ? { locale: state.locale, messages }
-          : { locale: state.locale, messages, namespace },
-      );
-
-      cache.set(key, made);
-
-      return made;
-    },
-  };
-});
-
-vi.mock('next-intl/server', () => ({
-  getLocale: () => Promise.resolve(state.locale),
-}));
+vi.mock('next-intl/server', () => nextIntlServerMobile());
 
 vi.mock('next/headers', async () => {
   const { LOCALE_COOKIE } = await import('@/i18n/cookies');
@@ -116,7 +89,7 @@ vi.mock('next/headers', async () => {
       return Promise.resolve({
         get: (name: string) =>
           name === LOCALE_COOKIE && state.acceptLanguage === null
-            ? { name, value: state.locale }
+            ? { name, value: langueCourante() }
             : undefined,
       });
     },
@@ -141,7 +114,7 @@ import { ApiClientError, fetchPublicTenant } from '@/lib/api-client';
 const LANGUES = ['fr', 'en'] as const;
 
 beforeEach(() => {
-  state.locale = 'fr';
+  fixerLangue('fr');
   state.acceptLanguage = null;
   state.horsRequete = false;
 });
@@ -187,7 +160,7 @@ describe('le squelette des écrans du back-office annonce le chargement dans la 
   } as const;
 
   it.each(LANGUES)('dit la phrase de « %s » au lecteur d’écran', (locale) => {
-    state.locale = locale;
+    fixerLangue(locale);
     const { container } = render(<AdminScreenSkeleton />);
 
     const annonce = container.querySelector('.spa-visually-hidden');
@@ -235,7 +208,7 @@ describe('la marque d’un onglet se dit dans la langue lue', () => {
   } as const;
 
   it.each(LANGUES)('nomme la marque en « %s » quand l’appelant ne précise rien', (locale) => {
-    state.locale = locale;
+    fixerLangue(locale);
     render(<Categories />);
 
     expect(screen.getByRole('tab', { name: `Corps · ${ATTENDU[locale]}` })).toBeDefined();
@@ -246,7 +219,7 @@ describe('la marque d’un onglet se dit dans la langue lue', () => {
   });
 
   it('laisse l’appelant nommer ce qui est retenu quand « choix » ne suffit pas', () => {
-    state.locale = 'en';
+    fixerLangue('en');
     render(<Categories markedLabel="contains the service you picked" />);
 
     // La propriété reste la porte de sortie : c'est l'écran qui sait de quoi il
@@ -275,7 +248,7 @@ describe('le client d’API dit ses propres refus dans la langue de la requête'
   }
 
   it.each(LANGUES)('rend la phrase de SERVICE_UNAVAILABLE en « %s »', async (locale) => {
-    state.locale = locale;
+    fixerLangue(locale);
 
     const refus = await refusReseau();
 
@@ -300,7 +273,7 @@ describe('le client d’API dit ses propres refus dans la langue de la requête'
     // Un script, une tâche de fond, une suite de tests : il n'y a aucun signal
     // à lire, et `next/headers` lève. Une phrase en anglais vaut mieux qu'une
     // seconde panne par-dessus celle qu'on rapporte.
-    state.locale = 'fr';
+    fixerLangue('fr');
     state.horsRequete = true;
 
     const refus = await refusReseau();
@@ -309,7 +282,7 @@ describe('le client d’API dit ses propres refus dans la langue de la requête'
   });
 
   it.each(LANGUES)('donne la phrase générique à un corps d’erreur hors contrat — %s', async (locale) => {
-    state.locale = locale;
+    fixerLangue(locale);
     // Un 502 d'un intermédiaire : ni `code`, ni `message`, rien que le HTML
     // d'une passerelle. Le client fabrique alors un `HTTP_502` que la table des
     // codes ne connaît pas — et c'est `INTERNAL_ERROR` qui parle.
@@ -332,7 +305,7 @@ describe('les refus du back-office ne réémettent plus le message de l’API', 
    * quinzaine d'écrans du back-office l'affichent tels quels.
    */
   it.each(LANGUES)('dit un refus nommé par sa phrase de « %s »', async (locale) => {
-    state.locale = locale;
+    fixerLangue(locale);
 
     const refus = await failure(
       new ApiClientError(
@@ -351,7 +324,7 @@ describe('les refus du back-office ne réémettent plus le message de l’API', 
   });
 
   it.each(LANGUES)('donne la phrase générique à un code inconnu — %s', async (locale) => {
-    state.locale = locale;
+    fixerLangue(locale);
 
     const refus = await failure(new ApiClientError('HTTP_418', 'Je suis une théière.', 418));
 
@@ -360,7 +333,7 @@ describe('les refus du back-office ne réémettent plus le message de l’API', 
   });
 
   it.each(LANGUES)('traite ce qui n’est pas un refus d’API comme INTERNAL_ERROR — %s', async (locale) => {
-    state.locale = locale;
+    fixerLangue(locale);
 
     const refus = await failure(new Error('une action serveur qui lève'));
 
@@ -369,7 +342,7 @@ describe('les refus du back-office ne réémettent plus le message de l’API', 
   });
 
   it.each(LANGUES)('dit la session perdue dans la langue lue — %s', async (locale) => {
-    state.locale = locale;
+    fixerLangue(locale);
 
     const refus = await expired();
 

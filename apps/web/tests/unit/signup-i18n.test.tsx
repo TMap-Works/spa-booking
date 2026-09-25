@@ -3,6 +3,8 @@ import { cleanup, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { fixerLangue, nextIntlMobile } from '../support/langue-mobile';
+
 import { SignupForm } from '@/app/inscription/components/signup-form';
 import { planPriceLabel } from '@/lib/plan';
 
@@ -18,9 +20,11 @@ import { planPriceLabel } from '@/lib/plan';
  * n'en connaîtrait qu'une ne pourrait pas le montrer.
  *
  * La doublure ci-dessous est donc celle de l'amorce, à une chose près : la
- * langue est une variable, et chaque test la pose. Le formatage reste celui de
- * la bibliothèque, sur les catalogues du dépôt — un libellé vérifié ici est
- * celui que la visiteuse lit.
+ * langue est une variable, et chaque test la pose par `fixerLangue()`. Le
+ * formatage reste celui de la bibliothèque, sur les catalogues du dépôt — un
+ * libellé vérifié ici est celui que la visiteuse lit. Elle vient de
+ * `tests/support/langue-mobile.ts` (#1287), où elle est écrite une fois pour
+ * toutes les suites qui changent de langue en cours de route.
  *
  * ## Ce qu'elle protège
  *
@@ -32,45 +36,7 @@ import { planPriceLabel } from '@/lib/plan';
  * s'affiche dans la langue de l'écran, et non dans celle du serveur.
  */
 
-const state = vi.hoisted(() => ({ locale: 'fr' as 'fr' | 'en' }));
-
-vi.mock('next-intl', async () => {
-  const actual = await vi.importActual<typeof import('next-intl')>('next-intl');
-  const { loadMessages } = await import('@/i18n/messages');
-
-  const translator = actual.createTranslator as unknown as (options: {
-    locale: string;
-    messages: unknown;
-    namespace?: string;
-  }) => unknown;
-
-  /** Un traducteur par langue et par namespace — voir l'amorce sur le coût. */
-  const cache = new Map<string, unknown>();
-
-  return {
-    ...actual,
-    useLocale: () => state.locale,
-    useTranslations: (namespace?: string) => {
-      const key = `${state.locale}:${namespace ?? ''}`;
-      const cached = cache.get(key);
-
-      if (cached !== undefined) {
-        return cached;
-      }
-
-      const messages = loadMessages(state.locale);
-      const made = translator(
-        namespace === undefined
-          ? { locale: state.locale, messages }
-          : { locale: state.locale, messages, namespace },
-      );
-
-      cache.set(key, made);
-
-      return made;
-    },
-  };
-});
+vi.mock('next-intl', () => nextIntlMobile());
 
 const signupSalonAction = vi.fn();
 
@@ -79,7 +45,7 @@ vi.mock('@/app/inscription/actions', () => ({
 }));
 
 beforeEach(() => {
-  state.locale = 'fr';
+  fixerLangue('fr');
   signupSalonAction.mockResolvedValue({ ok: true, data: { next: 'https://checkout.stripe.test/x' } });
 });
 
@@ -228,7 +194,7 @@ describe('les libellés de l’inscription suivent la langue lue (#1105)', () =>
   });
 
   it('rend le formulaire en anglais, sans un mot de français', () => {
-    state.locale = 'en';
+    fixerLangue('en');
     render(<SignupForm />);
 
     expect(screen.getByRole('heading', { name: 'Create my salon' })).toBeDefined();
@@ -249,7 +215,7 @@ describe('les noms de pays suivent la langue lue (#1105)', () => {
   it('les nomme en anglais quand l’écran est en anglais', () => {
     // C'est le point du critère : les libellés figés de `lib/salon-presets.ts`
     // sont français, et un salon américain les lisait tels quels.
-    state.locale = 'en';
+    fixerLangue('en');
     render(<SignupForm />);
     const options = within(champ(LABELS.en.country)).getAllByRole('option');
     const labels = options.map((option) => option.textContent);
@@ -270,7 +236,7 @@ describe('la promesse de l’offre est une phrase traduite (#1105)', () => {
   });
 
   it('l’écrit en anglais, avec le prix mis en forme pour l’anglais', () => {
-    state.locale = 'en';
+    fixerLangue('en');
     render(<SignupForm />);
     const fineprint = normalise(screen.getByText(/days free/u).textContent);
 
@@ -312,7 +278,7 @@ describe('les messages de validation suivent la langue de l’écran (#1105)', (
   });
 
   it('le refuse en anglais, sans un mot de français ni de Zod', async () => {
-    state.locale = 'en';
+    fixerLangue('en');
     const user = frappe();
     render(<SignupForm />);
 
@@ -332,7 +298,7 @@ describe('les messages de validation suivent la langue de l’écran (#1105)', (
     // Un message unique par champ dirait à qui saisit `support` d'employer des
     // minuscules et des tirets — qu'il a déjà écrits.
     for (const langue of ['fr', 'en'] as const) {
-      state.locale = langue;
+      fixerLangue(langue);
       const user = frappe();
       render(<SignupForm />);
 
@@ -350,7 +316,7 @@ describe('les messages de validation suivent la langue de l’écran (#1105)', (
   });
 
   it('annonce la confirmation qui ne correspond pas, dans la langue lue', async () => {
-    state.locale = 'en';
+    fixerLangue('en');
     const user = frappe();
     render(<SignupForm />);
 
@@ -379,7 +345,7 @@ describe('les refus de l’inscription s’affichent dans la langue de l’écra
   });
 
   it('la pose en anglais quand l’écran est en anglais', async () => {
-    state.locale = 'en';
+    fixerLangue('en');
     signupSalonAction.mockResolvedValue({
       ok: false,
       code: ERROR_CODES.TENANT_SLUG_TAKEN,
@@ -397,7 +363,7 @@ describe('les refus de l’inscription s’affichent dans la langue de l’écra
   it('n’affiche pas le message français du serveur sur un écran anglais', async () => {
     // Le message d'un refus est écrit côté serveur : le lire tel quel rendrait
     // l'écran bilingue à la première erreur. Le front trie sur le **code**.
-    state.locale = 'en';
+    fixerLangue('en');
     signupSalonAction.mockResolvedValue({
       ok: false,
       code: ERROR_CODES.INTERNAL_ERROR,
@@ -427,7 +393,7 @@ describe('les refus de l’inscription s’affichent dans la langue de l’écra
     ['fr', 'Une erreur inattendue est survenue. Réessayez dans un instant.'],
     ['en', 'Something went wrong. Please try again in a moment.'],
   ] as const)('donne un message générique traduit pour un code inconnu — %s', async (locale, attendu) => {
-    state.locale = locale;
+    fixerLangue(locale);
     signupSalonAction.mockResolvedValue({
       ok: false,
       code: 'CODE_QUI_NEXISTE_PAS',

@@ -10,8 +10,7 @@ import { doublureCrochets, doublureServeur } from './traducteur';
  * L'amorce fixe la langue de toutes les suites à `fr`
  * (`tests/support/next-intl.ts`) : c'est celle dans laquelle elles ont été
  * écrites. Une suite qui éprouve un écran **en anglais** doit donc la remplacer,
- * et trois d'entre elles s'écrivaient pour cela leur propre `vi.mock` —
- * `admin-catalog-i18n`, `admin-clients-i18n`, `validation-i18n`. Trois copies du
+ * et chacune s'écrivait pour cela son propre `vi.mock` — autant de copies du
  * même mécanisme, chacune remontant son formateur ICU, que rien n'empêchait de
  * diverger.
  *
@@ -21,11 +20,13 @@ import { doublureCrochets, doublureServeur } from './traducteur';
  * que le fait que la langue soit **une constante**. L'amorce elle-même n'est
  * rien d'autre que ces doublures appliquées à `fr` : elle les emploie.
  *
- * Il reste, hors de ce dispositif, une douzaine de suites qui montent encore
- * leur propre `vi.mock('next-intl', …)` à la main — `admin-staff-i18n`,
- * `admin-planning-i18n`, `transverse-i18n` et les autres. Elles se rebranchent
- * ici sans rien changer à ce qu'elles éprouvent ; ce ticket n'en a converti que
- * trois.
+ * Le compte est soldé depuis #1287 : plus aucune suite de `tests/unit/` ne monte
+ * la sienne. Les suites à langue constante passent par ce fichier
+ * (`admin-catalog-i18n`, `admin-clients-i18n`, `validation-i18n`,
+ * `admin-staff-i18n`, `admin-planning-i18n`, `admin-reporting-i18n`,
+ * `admin-my-planning-i18n`, `admin-checkout-i18n`, `platform-console-i18n`),
+ * celles dont la langue bouge par `langue-mobile.ts`. Une nouvelle suite
+ * anglaise se branche ici plutôt que de recopier une fabrique.
  *
  * ## Figée, et non mobile
  *

@@ -56,9 +56,11 @@ import { nextIntlFixe, nextIntlServerFixe } from './langue-figee';
  * `langue-figee.ts` et `traducteur.ts`, y compris la mémoïsation du formateur
  * ICU, que les crochets et le serveur se partagent.
  *
- * Le compte n'est pas soldé pour autant : une douzaine de suites montent encore
- * la leur à la main (`admin-staff-i18n`, `admin-planning-i18n`,
- * `transverse-i18n`…). Voir `langue-figee.ts`.
+ * Le compte est soldé depuis #1287 : les douze suites qui montaient encore la
+ * leur à la main — `admin-staff-i18n`, `admin-planning-i18n`,
+ * `transverse-i18n`… — passent toutes par `langue-figee.ts` ou
+ * `langue-mobile.ts`, selon que leur langue est constante ou commutable. Le
+ * mécanisme n'est plus écrit qu'une fois, dans `traducteur.ts`.
  */
 
 /** La langue des suites — celle dans laquelle elles ont été écrites. */
