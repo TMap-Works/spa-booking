@@ -32,4 +32,15 @@ export type { ErrorCode } from './error-codes';
 // c'est l'annotation `Record<ErrorCode, string>` qui garantit qu'aucun code ne
 // reste sans message dans l'une des deux langues.
 export { ERROR_MESSAGES, errorMessage } from './error-messages';
-export { validationPhrases, zodErrorMap } from './zod-messages';
+// `messageKey` est ce que les schémas posent à la place d'une phrase (#1232) ;
+// `VALIDATION_MESSAGES` est la table que `zodErrorMap` y lit.
+export {
+  DIAGNOSTIC_LOCALE,
+  VALIDATION_MESSAGES,
+  isValidationMessageKey,
+  messageKey,
+  validationMessage,
+  validationPhrases,
+  zodErrorMap,
+} from './zod-messages';
+export type { ValidationMessageKey, ValidationMessageVars } from './zod-messages';
