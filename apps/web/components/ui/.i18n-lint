@@ -6,4 +6,5 @@ locale-switcher.tsx
 password-field.tsx
 route-error.tsx
 sheet.tsx
+tabs.tsx
 theme-toggle.tsx

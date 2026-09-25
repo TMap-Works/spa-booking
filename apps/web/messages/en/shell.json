@@ -26,6 +26,7 @@
   },
   "admin": {
     "metadataTitle": "Back office",
+    "loading": "Loading the screen…",
     "topbar": {
       "storefront": "View my storefront",
       "newTab": " (new tab)",
