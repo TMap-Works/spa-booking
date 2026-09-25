@@ -8,14 +8,19 @@ import {
   type DeskTarget,
 } from '@/app/(admin)/[tenantSlug]/admin/components/appointment-panel';
 import { CalendarBoard } from '@/app/(admin)/[tenantSlug]/admin/components/calendar-board';
-import {
-  DESK_CANCEL_QUESTION,
-  DESK_NO_SLOT_MESSAGE,
-  DESK_ROUTE_MISSING_MESSAGE,
-  DESK_SLOTS_UNREADABLE_MESSAGE,
-} from '@/lib/admin/appointment-desk';
+import { planningWords } from '@/lib/admin/calendar-messages';
 
 import { deskSlot, deskSlots } from './admin-desk-fixtures';
+
+/**
+ * Les phrases du planning, lues là où elles s'écrivent — #1187.
+ *
+ * Ces quatre-là arrivaient de constantes de `lib/admin/appointment-desk.ts`, qui
+ * en gardait une copie française que plus aucun écran ne rendait depuis #848 :
+ * ce fichier lui servait d'oracle, et c'est ce qui la maintenait verte. Les
+ * assertions visent désormais le catalogue que le composant rend réellement.
+ */
+const MOTS = planningWords('fr');
 
 /**
  * Le tiroir de rendez-vous du comptoir (#50, les cinq critères).
@@ -518,7 +523,7 @@ describe('#754 — le salon annule depuis le tiroir', () => {
 
     await user.click(screen.getByRole('button', { name: 'Annuler le rendez-vous' }));
 
-    expect(screen.getByText(DESK_CANCEL_QUESTION)).toBeDefined();
+    expect(screen.getByText(MOTS.desk.cancelQuestion)).toBeDefined();
     expect(screen.getByLabelText(/Motif de l’annulation/)).toBeDefined();
     expect(cancelDeskAppointmentAction).not.toHaveBeenCalled();
     // Le pied ne porte plus que la réponse : « Enregistrer » déplacerait le
@@ -534,7 +539,7 @@ describe('#754 — le salon annule depuis le tiroir', () => {
     await user.click(screen.getByRole('button', { name: 'Annuler le rendez-vous' }));
     await user.click(screen.getByRole('button', { name: 'Garder ce rendez-vous' }));
 
-    expect(screen.queryByText(DESK_CANCEL_QUESTION)).toBeNull();
+    expect(screen.queryByText(MOTS.desk.cancelQuestion)).toBeNull();
     expect(screen.getByRole('button', { name: 'Enregistrer' })).toBeDefined();
     expect(cancelDeskAppointmentAction).not.toHaveBeenCalled();
   });
@@ -578,6 +583,27 @@ describe('#754 — le salon annule depuis le tiroir', () => {
     await waitFor(() => {
       expect(cancelDeskAppointmentAction).toHaveBeenCalledWith(SLUG, CONFIRME.id, {});
     });
+  });
+
+  it('lit le 409 d’une annulation comme une annulation concurrente, et non un créneau perdu', async () => {
+    // `desk.cancelConflict` et non `desk.conflictBody` : sur une annulation, le
+    // 409 désigne deux postes qui annulent le même rendez-vous à la fois
+    // (`appointments.service.ts`, `ConflictError`), et il n'y a aucune heure à
+    // reprendre dans une liste (#754).
+    const user = userEvent.setup();
+    cancelDeskAppointmentAction.mockResolvedValue({
+      ok: false,
+      code: 'CONFLICT',
+      message: 'peu importe',
+    });
+
+    renderPanel({ kind: 'edit', appointment: CONFIRME });
+
+    await user.click(screen.getByRole('button', { name: 'Annuler le rendez-vous' }));
+    await user.click(screen.getByRole('button', { name: 'Confirmer l’annulation' }));
+
+    expect(await screen.findByText(MOTS.desk.cancelConflict)).toBeDefined();
+    expect(screen.queryByText(MOTS.desk.conflictBody)).toBeNull();
   });
 
   it('laisse la question posée quand l’annulation échoue, motif compris', async () => {
@@ -631,7 +657,7 @@ describe('la dégradation, tant que l’API ne sert pas l’écriture', () => {
     // ne déclencherait rien, et le test passerait sans rien prouver.
     await user.click(await enregistrerArme('Enregistrer'));
 
-    expect(await screen.findByText(DESK_ROUTE_MISSING_MESSAGE)).toBeDefined();
+    expect(await screen.findByText(MOTS.desk.routeMissing)).toBeDefined();
   });
 
   it('dit que le catalogue est vide plutôt que d’offrir un sélecteur muet', () => {
@@ -700,7 +726,7 @@ describe('#611 — le tiroir n’offre que des créneaux réservables', () => {
     loadDeskAvailabilityAction.mockResolvedValue({ ok: true, data: { slots: [] } });
     renderPanel(CREATION);
 
-    expect(await screen.findByText(DESK_NO_SLOT_MESSAGE)).toBeDefined();
+    expect(await screen.findByText(MOTS.desk.slotsEmpty)).toBeDefined();
     // Le bouton reste hors d'atteinte : ce qui manque est un créneau, et aucune
     // saisie ne peut y remédier.
     expect(
@@ -717,7 +743,7 @@ describe('#611 — le tiroir n’offre que des créneaux réservables', () => {
     });
     renderPanel(CREATION);
 
-    expect(await screen.findByText(DESK_SLOTS_UNREADABLE_MESSAGE)).toBeDefined();
+    expect(await screen.findByText(MOTS.desk.slotsUnreadable)).toBeDefined();
 
     // Un champ de saisie, et non un sélecteur vide : une disponibilité illisible
     // ne ferme pas le comptoir, et c'est l'API qui juge le créneau.
@@ -788,7 +814,7 @@ describe('#611 — le tiroir n’offre que des créneaux réservables', () => {
     loadDeskAvailabilityAction.mockResolvedValue({ ok: true, data: { slots: [] } });
     renderPanel({ kind: 'edit', appointment: CONFIRME });
 
-    expect(await screen.findByText(DESK_NO_SLOT_MESSAGE)).toBeDefined();
+    expect(await screen.findByText(MOTS.desk.slotsEmpty)).toBeDefined();
 
     const heures = screen.getByLabelText<HTMLSelectElement>(/Heure de début/);
     expect(heures.value).toBe('09:00');
@@ -813,7 +839,7 @@ describe('#611 — le tiroir n’offre que des créneaux réservables', () => {
       expect(screen.getByText(/Lecture des créneaux disponibles/)).toBeDefined();
     });
     expect(loadDeskAvailabilityAction.mock.calls.length).toBe(appelsAvant);
-    expect(screen.queryByText(DESK_SLOTS_UNREADABLE_MESSAGE)).toBeNull();
+    expect(screen.queryByText(MOTS.desk.slotsUnreadable)).toBeNull();
   });
 });
 
@@ -1083,5 +1109,59 @@ describe('#1210 — le tiroir n’offre pas un constat avant l’heure du soin',
     expect(
       await screen.findByText('Transition « COMPLETED » → « NO_SHOW » interdite.'),
     ).toBeDefined();
+  });
+});
+
+/**
+ * Le seul cas du retour arrière que rien ne couvrait — #1187.
+ *
+ * La bannière de report refusé est exercée à l'écran par
+ * `admin-calendar-move.test.tsx`, qui en tient le conflit, le refus définitif
+ * et la session expirée. Le **404**, lui, n'était couvert que par le test
+ * unitaire de `moveRefusal` — la fonction pure que ce ticket retire, sa
+ * composition ayant rejoint `calendar-board.tsx` avec #848. Le cas est donc
+ * repris ici plutôt que perdu.
+ *
+ * Ce qu'il exige : sur un report, un 404 ne dit plus l'absence de route.
+ * `POST /appointments/:id/reschedule` est servie depuis #464, et ce code ne
+ * peut plus vouloir dire qu'une chose — le rendez-vous qu'on vient de saisir
+ * n'est plus là. Annoncer « le formulaire est complet, l'enregistrement
+ * suivra » sur un glisser-déposer promettrait un enregistrement qui ne viendra
+ * jamais.
+ */
+describe('#51 — un report tombé sur un 404 dit le rendez-vous disparu', () => {
+  it('rend move.goneBody, et jamais le message d’absence de route du tiroir', async () => {
+    const user = userEvent.setup();
+    rescheduleDeskAppointmentAction.mockResolvedValue({
+      ok: false,
+      code: 'NOT_FOUND',
+      message: 'Cannot POST …',
+    });
+
+    render(
+      <CalendarBoard
+        date="2026-08-26"
+        initialPeriods={{ 'jour:2026-08-26': [CONFIRME] }}
+        loadError={null}
+        services={[MASSAGE]}
+        staff={[]}
+        tenantSlug={SLUG}
+        timeZone={TIMEZONE}
+        view="jour"
+      />,
+    );
+
+    // La poignée, puis la cellule visée : le même trajet qu'un glisser-déposer,
+    // au clavier comme à la souris.
+    await user.click(screen.getByRole('button', { name: /Déplacer Rina Andriamana/ }));
+    await user.click(screen.getByRole('button', { name: /08 h 00.*déplacer ici/ }));
+
+    const alerte = await screen.findByRole('alert');
+
+    expect(alerte.textContent).toContain(MOTS.move.goneBody);
+    // `danger` et non `warning` : le rendez-vous a disparu, et réessayer le même
+    // geste ne le rendra pas.
+    expect(alerte.className).toContain('spa-notification--danger');
+    expect(alerte.textContent).not.toContain(MOTS.desk.routeMissing);
   });
 });

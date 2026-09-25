@@ -36,7 +36,6 @@ import {
   type TimeZone,
 } from '@spa/shared';
 
-import { appointmentStatusLabelInSentence } from '../appointment-status';
 import { formattingLocale, type DisplayLocale } from '../format';
 import { fillMessage, planningWords, CALENDAR_FALLBACK_LOCALE } from './calendar-messages';
 import { zonedFields } from './calendar-grid';
@@ -45,86 +44,34 @@ import { zonedFields } from './calendar-grid';
 const FALLBACK_DISPLAY: DisplayLocale = { locale: CALENDAR_FALLBACK_LOCALE };
 
 // ---------------------------------------------------------------------------
-// Les routes que l'API ne sert pas encore
+// Le verdict d'un refus — la cause, jamais la phrase
 // ---------------------------------------------------------------------------
 
 /**
- * Ce que le tiroir affiche quand une écriture tombe sur une route absente.
+ * `true` si le refus est un créneau perdu sous concurrence, et non une panne.
  *
- * `apps/api` sert l'agenda (`GET /appointments`, #444) et l'annulation
- * (`POST /appointments/:id/cancel`, #40), mais **aucune écriture de comptoir** :
- * ni `POST /appointments`, ni `/:id/reschedule`, ni `/:id/status`. Le contrat
- * partagé les décrit pourtant — `createAppointmentRequestSchema.clientId` est
- * annoté « réservé au back-office », `changeAppointmentStatusRequestSchema` dit
- * « changement de statut par le back-office ».
- *
- * L'écran est donc écrit contre le contrat et **dégrade**, comme la grille de
- * #49 a dégradé jusqu'à ce que #444 serve sa route : il s'affiche, il valide, il
- * dit ce qui manque, et il fonctionnera sans une ligne à changer ici le jour où
- * les routes existeront. Un message générique aurait masqué un manque
- * parfaitement identifié derrière une phrase qui n'aide personne — même
- * raisonnement que `CALENDAR_ROUTE_MISSING_MESSAGE`.
- */
-export const DESK_ROUTE_MISSING_MESSAGE =
-  'L’écriture de rendez-vous au comptoir n’est pas encore servie par l’API : le formulaire est complet, l’enregistrement suivra.';
-
-/**
- * Ce qu'on montre quand l'API refuse le créneau en `SLOT_NO_LONGER_AVAILABLE`.
- *
- * Sous concurrence, ce n'est **pas** une panne : c'est le cas normal que le
- * quatrième critère du ticket demande de traiter (web-frontend §3). D'où un ton
- * `warning` et non `danger`, et d'où le rechargement de la période plutôt qu'un
+ * Sous concurrence, ce n'est **pas** une panne : c'est le cas normal d'un salon
+ * à plusieurs postes (web-frontend §3). D'où, chez les deux appelants, un ton
+ * `warning` plutôt que `danger`, et un rechargement de la période plutôt qu'un
  * formulaire vidé.
  *
- * ## Ce message n'affirme plus une cause qu'il ne connaît pas (#611)
+ * ## Ce module dit ce qu'**est** le refus, plus comment l'écrire (#1187)
  *
- * Il a longtemps dit « vient d'être pris depuis un autre poste ». C'était une
- * **déduction**, et elle était fausse la plupart du temps : le contrôleur
- * annonce noir sur blanc que ce seul code « couvre toutes les façons dont le
- * créneau n'est pas réservable — pris entre l'affichage et la validation, hors
- * des heures du praticien, pendant un congé, sous le préavis, ou chez un
- * praticien qui ne pratique pas ce soin »
- * (`apps/api/src/modules/appointments/appointments.controller.ts`). Rien dans le
- * corps du refus ne permet de trancher — `details` ne rend que le `staffId` et
- * le `startsAt` que l'appelant vient d'envoyer, délibérément, pour ne pas faire
- * de ce 409 une sonde d'agenda.
+ * Les phrases correspondantes vivent dans `messages/{fr,en}/admin-planning.json`
+ * depuis #848, et les deux composants qui les rendent les y lisent avec leur
+ * traducteur : `appointment-panel.tsx` pour le tiroir — `desk.conflictBody`,
+ * `desk.routeMissing`, `desk.cancelConflict` — et `calendar-board.tsx` pour le
+ * glisser-déposer — `move.conflictBody`, `move.goneBody`. Les avoir gardées ici
+ * en double laissait la copie morte diverger du catalogue sans qu'aucun test ne
+ * le dise : corriger une faute de frappe dans les JSON ne l'aurait pas touchée.
  *
- * La campagne de QA a mesuré ce que coûte cette invention : six refus
- * consécutifs au comptoir, tous annoncés comme une course perdue entre postes,
- * sur une journée qui ne portait **aucun** rendez-vous. L'opératrice cherchait
- * une collègue qui n'avait rien réservé.
- *
- * Le message énumère donc les causes possibles sans en désigner une, et se
- * termine par le seul geste qui débloque : reprendre une heure dans la liste.
+ * Le verdict, lui, reste ici : c'est un fait sur un code d'erreur, pas un mot —
+ * et les deux appelants doivent le lire de la même façon. Le **pourquoi** de la
+ * formulation qui en découle est écrit à l'en-tête du namespace,
+ * `messages/admin-planning.d.ts`.
  */
-export const SLOT_CONFLICT_MESSAGE =
-  'Ce créneau n’est pas — ou n’est plus — réservable : il a pu être pris depuis un autre poste, sortir des heures du praticien, ou ne plus être proposé pour cette prestation. Le planning a été rechargé ; reprenez une heure dans la liste — vos autres saisies sont conservées.';
-
-/**
- * `HTTP_404` est le repli du client d'API quand le corps d'erreur ne suit pas le
- * contrat — un 404 servi par le cadre HTTP plutôt que par le filtre d'exception
- * de Nest. Sur les routes d'écriture du comptoir, les deux disent la même chose.
- *
- * Le `NOT_FOUND` du filtre, lui, est **ambigu** sur `/:id/reschedule` et
- * `/:id/status` : il peut désigner la route absente comme le rendez-vous
- * introuvable. Il n'y a pas moyen de trancher depuis le front, et c'est assumé —
- * tant qu'aucune des deux routes n'existe, l'absence est la seule lecture
- * possible ; quand elles existeront, ce module n'aura plus à le dire du tout.
- */
-const MISSING_ROUTE_CODES: readonly string[] = [ERROR_CODES.NOT_FOUND, 'HTTP_404'];
-
-/** `true` si le refus est un créneau perdu sous concurrence, et non une panne. */
 export function isSlotConflict(code: string): boolean {
   return code === ERROR_CODES.SLOT_NO_LONGER_AVAILABLE || code === ERROR_CODES.CONFLICT;
-}
-
-/** Le message à afficher pour un refus d'écriture du comptoir. */
-export function deskFailureMessage(code: string, message: string): string {
-  if (isSlotConflict(code)) {
-    return SLOT_CONFLICT_MESSAGE;
-  }
-
-  return MISSING_ROUTE_CODES.includes(code) ? DESK_ROUTE_MISSING_MESSAGE : message;
 }
 
 // ---------------------------------------------------------------------------
@@ -417,36 +364,27 @@ export function nearestDeskSlot(
   );
 }
 
-/**
- * Ce que le tiroir dit quand la liste des créneaux n'a pas pu être lue.
- *
- * Le sélecteur retombe alors sur une saisie libre plutôt que de se bloquer :
- * une lecture de disponibilité en panne ne doit pas fermer le comptoir, et
- * l'API reste de toute façon le juge du créneau. Le ton est celui d'un
- * avertissement, pas d'une panne — ce qui suit est possible, seulement moins
- * sûr.
- */
-export const DESK_SLOTS_UNREADABLE_MESSAGE =
-  'Les créneaux proposés par le planning n’ont pas pu être lus : saisissez l’heure à la main, elle sera vérifiée à l’enregistrement.';
-
-/** Ce que le sélecteur affiche à la place d'une liste vide. */
-export const DESK_NO_SLOT_MESSAGE =
-  'Aucun créneau ce jour-là pour cette prestation. Changez de date, de praticien, ou de prestation.';
-
 // ---------------------------------------------------------------------------
 // Ce que le pied du tiroir propose — cinquième critère
 // ---------------------------------------------------------------------------
 
-/** Une action de statut offerte par le pied du tiroir. */
+/**
+ * Une action de statut offerte par le pied du tiroir.
+ *
+ * Elle porte la transition et l'allure du bouton, **pas son libellé** : celui-ci
+ * se compose dans l'écran qui le rend, à partir du catalogue et dans la langue
+ * de la session — `appointment-panel.tsx` au comptoir, `my-planning-client.tsx`
+ * sur « Mon planning ». Les deux le faisaient déjà depuis #848 ; le champ
+ * `label` qui subsistait ici n'était plus lu que par son propre test (#1187).
+ */
 export interface DeskStatusAction {
   readonly status: AppointmentStatus;
-  readonly label: string;
   /** Variante du bouton, telle que `components/ui/button.tsx` la nomme. */
   readonly variant: 'danger' | 'quiet' | 'neutral';
 }
 
 /**
- * Libellés des transitions que le comptoir déclenche par la route de statut.
+ * Les transitions que le comptoir déclenche par la route de statut.
  * `cancelled` n'y est pas, et n'a pas à y être : l'annulation a sa propre route
  * (`POST /appointments/:id/cancel`, #40), son propre corps — un motif — et sa
  * propre confirmation. Ce sont ces trois choses que le pied du tiroir rend
@@ -471,28 +409,21 @@ export interface DeskStatusAction {
  * (`POST /appointments/:id/status`, seuil `STAFF`), `APPOINTMENT_STATUS_TRANSITIONS`
  * autorise `pending → confirmed` depuis l'origine, et
  * `markDeskAppointmentStatusAction` passe n'importe quel statut que
- * `changeAppointmentStatusRequestSchema` accepte. Il manquait la ligne qui dit
- * comment nommer le bouton.
+ * `changeAppointmentStatusRequestSchema` accepte. Il manquait la ligne qui
+ * déclare la marche offerte.
  *
- * ## Deux libellés sont **composés**, le troisième est **écrit** (#917, #973)
+ * ## Le nom de la table a survécu à ses libellés (#1187)
  *
- * Le bouton du no-show disait « Marquer non présenté » quand la pastille juste à
- * côté allait dire « Non honoré », pour la même transition. `completed` et
- * `no_show` lisent donc leur mot de `lib/appointment-status.ts`, qui est le seul
- * endroit du front où ce vocabulaire s'écrit.
- *
- * « Confirmer le rendez-vous » ne se compose pas de la même façon, et « Marquer
- * confirmé » aurait été faux : les deux autres **constatent** ce qui a eu lieu
- * au salon — la cliente est venue, ou elle n'est pas venue —, là où confirmer est
- * un **acte** que le comptoir pose à l'instant du clic. Le bouton nomme donc le
- * geste, exactement comme « Annuler le rendez-vous » à l'autre bout du pied, et
- * la pastille continue de dire ce qu'il produit — « Confirmé ». Le vocabulaire ne
- * diverge pas pour autant : c'est le même mot, au verbe plutôt qu'au participe.
+ * Elle n'en porte plus : depuis #848 les boutons composent leur mot dans la
+ * langue de la session, et ce qui reste ici est la table des transitions que le
+ * comptoir **offre** — sa clé et l'allure du bouton. Le nom est conservé tel
+ * quel parce que trois scénarios de bout en bout le citent dans leurs en-têtes
+ * pour expliquer ce que le pied du tiroir propose ; le renommer y laisserait
+ * des renvois vers un symbole qui n'existe plus.
  */
 const DESK_STATUS_LABELS: Partial<Record<AppointmentStatus, DeskStatusAction>> = {
   confirmed: {
     status: 'confirmed',
-    label: 'Confirmer le rendez-vous',
     // `neutral`, et non `accent` : le design system réserve l'accent à l'action
     // principale (`styles/README.md`, « Variantes »), et le pied en porte déjà
     // une — le report. Deux accents côte à côte ne hiérarchisent plus rien.
@@ -502,12 +433,10 @@ const DESK_STATUS_LABELS: Partial<Record<AppointmentStatus, DeskStatusAction>> =
   },
   completed: {
     status: 'completed',
-    label: `Marquer ${appointmentStatusLabelInSentence('completed')}`,
     variant: 'neutral',
   },
   no_show: {
     status: 'no_show',
-    label: `Marquer ${appointmentStatusLabelInSentence('no_show')}`,
     variant: 'quiet',
   },
 };
@@ -554,49 +483,6 @@ export function isCancellable(status: AppointmentStatus): boolean {
  */
 export function isReschedulable(status: AppointmentStatus): boolean {
   return isCancellable(status);
-}
-
-// ---------------------------------------------------------------------------
-// L'annulation au comptoir — #754
-// ---------------------------------------------------------------------------
-
-/**
- * La question posée avant d'annuler.
- *
- * Elle dit ce que le geste **fait**, et non ce qu'il s'appelle : le créneau
- * repart à la réservation dans la seconde, et le statut `cancelled` est
- * terminal. C'est ce que web-frontend §5 exige des actions destructives —
- * confirmation, et réversibilité annoncée telle qu'elle est. Ici elle est nulle,
- * et le dire vaut mieux que de le laisser découvrir : reposer le rendez-vous
- * suppose que le créneau soit encore libre.
- */
-export const DESK_CANCEL_QUESTION =
-  'Annuler ce rendez-vous ? Le créneau repart immédiatement à la réservation, et l’annulation ne se défait pas.';
-
-/** Ce que le motif est — et ce qu'il n'est pas. */
-export const DESK_CANCEL_REASON_HINT =
-  'Facultatif, et jamais montré à la cliente : c’est une note interne au salon.';
-
-/** Ce qu'on montre quand deux postes annulent le même rendez-vous à la fois. */
-export const DESK_CANCEL_CONFLICT_MESSAGE =
-  'Ce rendez-vous vient d’être modifié depuis un autre poste : rouvrez-le pour voir son état avant de réessayer.';
-
-/**
- * Le message à afficher pour un refus d'**annulation** — #754.
- *
- * `deskFailureMessage` ne convient pas ici, et ses deux traductions le disent :
- * il rend `CONFLICT` en « reprenez une heure dans la liste », alors qu'une
- * annulation n'a aucun créneau à reprendre — le 409 y désigne deux annulations
- * concurrentes (`appointments.service.ts`, `ConflictError`) ; et il rend
- * `NOT_FOUND` en « l'API ne sert pas encore cette écriture », alors que
- * `POST /appointments/:id/cancel` est servie depuis #40 — le 404 y désigne un
- * rendez-vous introuvable, ou d'un autre établissement.
- *
- * Tout le reste se dit avec le message de l'API, qui nomme déjà le refus —
- * `INVALID_STATE_TRANSITION` compris.
- */
-export function deskCancelFailureMessage(code: string, message: string): string {
-  return code === ERROR_CODES.CONFLICT ? DESK_CANCEL_CONFLICT_MESSAGE : message;
 }
 
 // ---------------------------------------------------------------------------
@@ -742,84 +628,15 @@ export function deskMoment(
 }
 
 /**
- * Le créneau refusé, dit pour un **report** et non pour une saisie.
+ * Ce que la bannière de retour arrière annonce.
  *
- * `SLOT_CONFLICT_MESSAGE` promet que « vos autres saisies sont conservées » : vrai
- * dans le tiroir, où un formulaire attend ; hors sujet sur un glisser-déposer, où
- * il n'y a rien de saisi et où la seule chose à dire est qu'il faut viser
- * ailleurs.
- *
- * Même correction de fond que lui (#611) : le code ne dit pas *pourquoi* le
- * créneau est refusé, et l'affirmer envoyait chercher une course entre postes
- * qui n'avait pas eu lieu. Le lâcher vise en outre une **rangée de la grille**,
- * qui n'est pas un créneau du moteur — d'où le renvoi explicite vers le tiroir,
- * seul endroit où la liste des créneaux réellement proposés est offerte.
+ * La **composition** de ces trois champs vit dans `calendar-board.tsx`, seul
+ * endroit où un traducteur est disponible (#848) ; ce module n'en garde que la
+ * forme et le verdict qui l'alimente, `isSlotConflict`.
  */
-export const MOVE_CONFLICT_MESSAGE =
-  'Ce créneau n’est pas — ou n’est plus — réservable : il a pu être pris depuis un autre poste, ou sortir des heures du praticien. Ouvrez le rendez-vous pour choisir parmi les créneaux proposés.';
-
-/**
- * Le rendez-vous a disparu sous le geste.
- *
- * `deskFailureMessage` lit encore `NOT_FOUND` comme « la route n'existe pas » —
- * c'était vrai du tiroir de #50, écrit avant que l'API serve les écritures du
- * comptoir. Elle les sert depuis #464, et sur un report ce code ne peut plus
- * dire qu'une chose : le rendez-vous qu'on vient de saisir n'est plus là. Le
- * message d'absence de route parlerait ici d'un formulaire qui n'existe pas et
- * promettrait un enregistrement qui ne viendra jamais.
- */
-export const MOVE_GONE_MESSAGE =
-  'Ce rendez-vous n’existe plus : il vient d’être déplacé ou annulé depuis un autre poste. Rechargez le planning.';
-
-/** Ce que la bannière de retour arrière annonce. */
 export interface DeskMoveRefusal {
   readonly title: string;
   readonly body: string;
   /** `warning` pour un créneau perdu, `danger` pour un refus qui ne se rejoue pas. */
   readonly tone: 'warning' | 'danger';
-}
-
-/**
- * Le retour arrière rendu lisible — troisième critère, et le cœur du ticket.
- *
- * Replacer le bloc ne suffit pas : un rendez-vous qui saute à sa place d'origine
- * sans un mot passe pour un bug de l'écran, et l'opérateur recommence le même
- * geste. La bannière dit donc **les deux** choses qu'il lui faut — où le
- * rendez-vous est revenu, et pourquoi il n'a pas pu aller ailleurs.
- *
- * Le ton distingue le passager du définitif, comme le fait le tiroir : un créneau
- * pris depuis un autre poste est le cas normal de la concurrence (web-frontend
- * §3), un autre horaire le lève. Un praticien qui ne pratique pas la prestation,
- * un rendez-vous déjà soldé ou une session expirée, non.
- */
-export function moveRefusal(
-  previous: Appointment,
-  timeZone: TimeZone,
-  code: string,
-  message: string,
-): DeskMoveRefusal {
-  const transient = isSlotConflict(code);
-  const client = `${previous.client.firstName} ${previous.client.lastName}`;
-  // « Le rendez-vous de X est resté le … » plutôt que « X est resté au … » : la
-  // phrase s'accorde alors sur le rendez-vous, et non sur une cliente dont le
-  // contrat ne porte pas le genre — `userSummarySchema` n'a qu'un nom.
-  const restored = `Le rendez-vous de ${client} est resté le ${deskMoment(previous.startsAt, timeZone)}, chez ${previous.staff.displayName}.`;
-  // `MISSING_ROUTE_CODES` porte les deux façons dont un 404 remonte. Sur un
-  // report, il ne dit plus l'absence de route mais l'absence du rendez-vous.
-  const reason = transient
-    ? MOVE_CONFLICT_MESSAGE
-    : MISSING_ROUTE_CODES.includes(code)
-      ? MOVE_GONE_MESSAGE
-      : deskFailureMessage(code, message);
-
-  return {
-    title: transient
-      ? // « Indisponible » et non « déjà pris » : le titre est la première chose
-        // que l'opératrice lit, et c'est là que l'ancienne version affirmait le
-        // plus fort une cause que le refus ne donne pas (#611).
-        'Créneau indisponible — rendez-vous remis en place'
-      : 'Report refusé — rendez-vous remis en place',
-    body: `${restored} ${reason}`,
-    tone: transient ? 'warning' : 'danger',
-  };
 }
