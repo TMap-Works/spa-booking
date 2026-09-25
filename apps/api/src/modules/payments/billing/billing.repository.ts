@@ -1,11 +1,12 @@
 import { Inject, Injectable } from '@nestjs/common';
 import type { TenantBillingStatus as PrismaBillingStatus } from '@prisma/client';
-import type { TenantBillingStatus } from '@spa/shared';
+import type { Locale, TenantBillingStatus } from '@spa/shared';
 
 import {
   PRISMA,
   type ScopedPrismaClient,
 } from '../../../infrastructure/database/prisma-clients';
+import { toAccountLocale, toTenantLocale } from '../../identity/locale';
 
 /**
  * La facturation du salon **courant** — ADR 0016.
@@ -25,6 +26,12 @@ export interface BillingRecord {
   readonly stripeCustomerId: string | null;
   readonly stripeSubscriptionId: string | null;
   readonly stripeCheckoutSessionId: string | null;
+  /**
+   * La langue de l'établissement — le repli quand le gérant n'a exprimé aucune
+   * préférence (#1231). Toujours rendue : la colonne est `NOT NULL`, et
+   * `toTenantLocale` couvre la valeur qui aurait échappé à sa contrainte.
+   */
+  readonly defaultLocale: Locale;
 }
 
 export interface BillingChanges {
@@ -46,6 +53,7 @@ const BILLING_SELECT = {
   stripeCustomerId: true,
   stripeSubscriptionId: true,
   stripeCheckoutSessionId: true,
+  defaultLocale: true,
 } as const;
 
 @Injectable()
@@ -59,8 +67,33 @@ export class BillingRepository {
       return null;
     }
 
-    const { billingStatus, ...rest } = row;
-    return { ...rest, status: billingStatus.toLowerCase() as TenantBillingStatus };
+    const { billingStatus, defaultLocale, ...rest } = row;
+    return {
+      ...rest,
+      status: billingStatus.toLowerCase() as TenantBillingStatus,
+      defaultLocale: toTenantLocale(defaultLocale),
+    };
+  }
+
+  /**
+   * La langue que **ce compte** a choisie, ou `null` — « aucune préférence
+   * enregistrée » (#1231).
+   *
+   * `null` n'est pas un défaut déguisé : c'est l'appelant qui retombe alors sur
+   * `defaultLocale` de l'établissement, déjà lu par `findCurrent`. Les confondre
+   * ferait paraître choisie une langue que personne n'a demandée — l'invariant
+   * de #844, tenu ici par `toAccountLocale`.
+   *
+   * Le client est scopé : le compte d'un établissement voisin est introuvable,
+   * et se lit donc « aucune préférence », jamais la préférence du voisin.
+   */
+  public async findAccountLocale(userId: string): Promise<Locale | null> {
+    const row = await this.prisma.user.findFirst({
+      where: { id: userId },
+      select: { locale: true },
+    });
+
+    return toAccountLocale(row?.locale ?? null);
   }
 
   public async updateCurrent(changes: BillingChanges): Promise<void> {
