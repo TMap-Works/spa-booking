@@ -1,5 +1,6 @@
 'use client';
 
+import { useTranslations } from 'next-intl';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import {
@@ -99,57 +100,54 @@ export interface AdminAnnouncementRequest {
   readonly href?: string;
 }
 
-interface AnnouncementWording {
-  readonly tone: NotificationTone;
-  readonly title: (subject: string) => string;
-  readonly body: string;
-  /**
-   * Le geste suivant, offert dans le bandeau.
-   *
-   * Une ancre et non un chemin : l'annonce se lit sur l'écran qui porte déjà la
-   * section visée, et l'y amener ne coûte aucun aller-retour. Le lien du design
-   * system reste un `<Link>` — c'est lui qui gère le défilement et le focus.
-   */
-  readonly next: { readonly label: string; readonly hash?: string };
-}
+/**
+ * Le **ton** de chaque annonce — l'une des deux seules parts de l'annonce qui ne
+ * se traduisent pas (#1192).
+ *
+ * Les **phrases**, elles, vivent dans le catalogue : `announcement.<motif>` du
+ * namespace `admin-catalog`, une entrée `title`, `body` et `next` par motif.
+ * C'étaient jusqu'ici trois littéraux français, si bien que « Prestation
+ * « Massage suédois » créée » s'affichait sur la fiche anglaise à laquelle la
+ * création venait de mener. Un seul namespace pour les trois motifs, et non un
+ * par écran d'origine : la région est **un** composant, et lui faire lire deux
+ * catalogues pour une seule table de mots aurait coûté un crochet de plus sans
+ * rien isoler.
+ *
+ * Ce que les phrases disent n'a pas bougé. Celle de la création dit **ce qu'il
+ * reste à faire** pour que la prestation existe vraiment côté cliente — le
+ * constat du panneau des praticiens, mot pour mot : « tant qu'aucun praticien ne
+ * pratique cette prestation, le moteur de disponibilité ne proposera aucun
+ * créneau pour elle » (`service-staff-panel.tsx`). Le **sujet** inséré, lui,
+ * n'est jamais traduit : le nom d'une prestation est la saisie du salon, et le
+ * jour et l'heure d'un rendez-vous sont déjà mis en forme par l'appelant, dans le
+ * fuseau du salon et la langue de la requête.
+ *
+ * Le ton de la création reprend le bandeau d'édition du même formulaire,
+ * « Prestation enregistrée » : une création obtenue est un `success`. Les deux
+ * annonces du temps réel, elles, disent ce qui arrive au planning **sans** que
+ * l'équipe l'ait fait : `info` et `warning` plutôt que `success`, ce n'est pas
+ * l'issue d'un de ses gestes. C'est le même partage que dans l'espace client
+ * (`account-announcement.tsx`), dont ce fichier reprend le geste.
+ */
+const TONES: Record<AdminAnnouncementKind, NotificationTone> = {
+  'service-created': 'success',
+  'appointment-booked': 'info',
+  'appointment-cancelled': 'warning',
+};
 
 /**
- * Les mots, tenus ici plutôt que chez les appelants — deux écrans qui annoncent
- * la même chose doivent l'annoncer de la même façon.
+ * L'ancre du geste suivant, quand l'annonce n'apporte pas d'adresse à elle.
  *
- * Le ton reprend celui du bandeau d'édition du même formulaire, « Prestation
- * enregistrée » : une création obtenue est un `success`.
+ * Une ancre et non un chemin : l'annonce se lit sur l'écran qui porte déjà la
+ * section visée, et l'y amener ne coûte aucun aller-retour. Le lien du design
+ * system reste un `<Link>` — c'est lui qui gère le défilement et le focus.
  *
- * La phrase dit **ce qu'il reste à faire** pour que la prestation existe
- * vraiment côté cliente. C'est le constat du panneau des praticiens, mot pour
- * mot : « tant qu'aucun praticien ne pratique cette prestation, le moteur de
- * disponibilité ne proposera aucun créneau pour elle »
- * (`service-staff-panel.tsx`). Une prestation créée et jamais affectée est
- * invisible à la réservation — et c'est exactement ce qu'un succès muet laissait
- * découvrir plus tard.
+ * Les deux annonces du temps réel n'y figurent pas : leur geste suivant est le
+ * jour du planning où tombe le rendez-vous, que l'appelant calcule et passe en
+ * `href` (`admin-live-announcements.tsx`).
  */
-const WORDING: Record<AdminAnnouncementKind, AnnouncementWording> = {
-  'service-created': {
-    tone: 'success',
-    title: (subject) => `Prestation « ${subject} » créée`,
-    body: 'Elle ne sera proposée à la réservation qu’une fois un praticien affecté.',
-    next: { label: 'Affecter un praticien', hash: '#prestation-praticiens' },
-  },
-  // Les deux annonces du temps réel : ce qui arrive au planning sans que la
-  // gérante l'ait fait. `info` et non `success` — ce n'est pas l'issue d'un de
-  // ses gestes. Le sujet est le jour et l'heure, dans le fuseau du salon.
-  'appointment-booked': {
-    tone: 'info',
-    title: (subject) => `Nouveau rendez-vous : ${subject}`,
-    body: 'Il vient d’arriver au planning.',
-    next: { label: 'Voir le planning du jour' },
-  },
-  'appointment-cancelled': {
-    tone: 'warning',
-    title: (subject) => `Rendez-vous du ${subject} annulé par la cliente`,
-    body: 'Le créneau est de nouveau proposé à la réservation.',
-    next: { label: 'Voir le planning du jour' },
-  },
+const NEXT_HASH: Partial<Record<AdminAnnouncementKind, string>> = {
+  'service-created': '#prestation-praticiens',
 };
 
 type Announce = (request: AdminAnnouncementRequest) => void;
@@ -253,9 +251,9 @@ export function AdminAnnouncementProvider({ children }: AdminAnnouncementProvide
  * aurait fait lire la phrase deux fois.
  */
 export function AdminAnnouncementRegion() {
+  const t = useTranslations('admin-catalog');
   const message = useContext(MessageContext);
-  const wording = message === null ? null : WORDING[message.kind];
-  const href = message?.href ?? wording?.next.hash;
+  const href = message === null ? undefined : (message.href ?? NEXT_HASH[message.kind]);
 
   return (
     <div
@@ -263,11 +261,26 @@ export function AdminAnnouncementRegion() {
       aria-live="polite"
       aria-atomic="true"
     >
-      {message === null || wording === null ? null : (
-        <Notification tone={wording.tone} title={wording.title(message.subject)}>
+      {message === null ? null : (
+        <Notification
+          tone={TONES[message.kind]}
+          /* Le motif compose la clé, comme dans l'espace client
+             (`account-announcement.tsx`) : les entrées du catalogue portent
+             exactement les noms des motifs, si bien qu'il n'y a ici aucune table
+             de correspondance à tenir à jour. La conversion de type est le prix
+             de cette clé calculée — `tsc` ne sait pas qu'un motif compose une
+             clé, et les trois clés ont la même forme. */
+          title={t(`announcement.${message.kind}.title` as 'announcement.service-created.title', {
+            subject: message.subject,
+          })}
+        >
           <p>
-            {wording.body}{' '}
-            {href === undefined ? null : <Link href={href}>{wording.next.label}</Link>}
+            {t(`announcement.${message.kind}.body` as 'announcement.service-created.body')}{' '}
+            {href === undefined ? null : (
+              <Link href={href}>
+                {t(`announcement.${message.kind}.next` as 'announcement.service-created.next')}
+              </Link>
+            )}
           </p>
         </Notification>
       )}
