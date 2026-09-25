@@ -311,19 +311,38 @@ describe('les gestes de l’écran d’abonnement (#1105)', () => {
     },
   );
 
-  it('retombe sur le message du refus pour un code qu’il ne connaît pas', async () => {
-    openBillingPortalAction.mockResolvedValue({
-      ok: false,
-      code: 'CODE_QUI_NEXISTE_PAS',
-      message: 'Un refus que le front ne sait pas nommer.',
-    });
-    const user = userEvent.setup();
-    afficher({ status: 'active' });
+  /*
+   * Le repli d'un code inconnu — #1234, second critère d'acceptation : *« aucun
+   * écran ne retombe sur un message brut de l'API ; un code inconnu donne un
+   * message générique traduit »*.
+   *
+   * L'encart affichait `result.message`, la phrase du serveur — écrite en
+   * français, l'API n'ayant pas de langue de requête. Il lit désormais
+   * `errorMessage(code, locale)` du contrat partagé, dont le repli est la phrase
+   * générique d'`INTERNAL_ERROR`.
+   */
+  it.each([
+    ['fr', 'Gérer mon abonnement', 'Une erreur inattendue est survenue. Réessayez dans un instant.'],
+    ['en', 'Manage my subscription', 'Something went wrong. Please try again in a moment.'],
+  ] as const)(
+    'donne un message générique traduit pour un code inconnu — %s',
+    async (langue, bouton, attendu) => {
+      state.locale = langue;
+      openBillingPortalAction.mockResolvedValue({
+        ok: false,
+        code: 'CODE_QUI_NEXISTE_PAS',
+        message: 'Un refus que le front ne sait pas nommer.',
+      });
+      const user = userEvent.setup();
+      afficher({ status: 'active' });
 
-    await user.click(screen.getByRole('button', { name: 'Gérer mon abonnement' }));
+      await user.click(screen.getByRole('button', { name: bouton }));
 
-    expect(await screen.findByText('Un refus que le front ne sait pas nommer.')).toBeDefined();
-  });
+      expect(await screen.findByText(attendu)).toBeDefined();
+      // Et surtout : la phrase du serveur ne s'affiche plus, dans aucune langue.
+      expect(screen.queryByText('Un refus que le front ne sait pas nommer.')).toBeNull();
+    },
+  );
 });
 
 describe('les encarts de retour de paiement sont traduits (#1105)', () => {
