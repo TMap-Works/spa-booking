@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { DEFAULT_LOCALE, isLocale, type Locale } from '@spa/shared';
 
 import { NotFoundError } from '../../common/errors';
 import type { Money, PaymentCardChannel } from './payments.types';
@@ -52,6 +53,25 @@ function toParty(person: { firstName: string; lastName: string }): ReceiptParty 
   return { displayName: displayNameOf(person) };
 }
 
+/**
+ * La langue de l'établissement, telle que la colonne la porte — #1230.
+ *
+ * `tenants.default_locale` est un `VARCHAR(5)` borné par une contrainte `CHECK`,
+ * et Prisma la type donc `string` : quelqu'un doit dire au compilateur ce que la
+ * base garantit déjà. Le repli couvre le seul cas que la contrainte n'exclut
+ * pas — une valeur posée hors de l'application —, et il **sert la pièce** plutôt
+ * que de la faire tomber : un ticket doit sortir de l'imprimante du comptoir,
+ * dans la langue par défaut du système à défaut de mieux.
+ *
+ * Le même geste que `toTenantLocale` chez `identity`, **réécrit** plutôt
+ * qu'importé : un module n'importe pas l'interne d'un autre (api-module §3), et
+ * la ligne que cela duplique coûte moins qu'une dépendance de `payments` vers
+ * `identity`. C'est l'arbitrage déjà retenu pour `contentDisposition`.
+ */
+function toIssuerLocale(value: string): Locale {
+  return isLocale(value) ? value : DEFAULT_LOCALE;
+}
+
 function toIssuer(tenant: ReceiptRow['tenant']): ReceiptIssuer {
   return {
     name: tenant.name,
@@ -70,6 +90,7 @@ function toIssuer(tenant: ReceiptRow['tenant']): ReceiptIssuer {
     footer: tenant.receiptFooter,
     receiptPrefix: tenant.receiptPrefix,
     timezone: tenant.timezone,
+    defaultLocale: toIssuerLocale(tenant.defaultLocale),
   };
 }
 

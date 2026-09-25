@@ -34,6 +34,7 @@ function issuer(overrides: Partial<ReceiptRow['tenant']> = {}): ReceiptRow['tena
     receiptFooter: null,
     receiptPrefix: 'TIC',
     timezone: 'Europe/Paris',
+    defaultLocale: 'fr',
     ...overrides,
   };
 }
@@ -386,6 +387,36 @@ describe('L’émetteur — identité légale et coordonnées', () => {
     expect(toSaleReceiptDto(await serviceFor(row()).bySaleId(SALE_ID)).issuer).toEqual({
       name: 'Barber Tana',
     });
+  });
+
+  /**
+   * **#1230** — la langue de l'établissement est le repli de la langue du PDF.
+   *
+   * Elle est lue dans le domaine et **jamais servie** dans le reçu JSON : le
+   * contrat partagé n'en porte pas, et un champ de plus dans la réponse serait
+   * un champ que personne ne lit. Même régime que `slug`.
+   */
+  it('porte la langue de l’établissement dans le domaine, sans la servir', async () => {
+    const receipt = await serviceFor(row({ tenant: issuer({ defaultLocale: 'en' }) })).bySaleId(
+      SALE_ID,
+    );
+
+    expect(receipt.issuer.defaultLocale).toBe('en');
+    expect(JSON.stringify(toSaleReceiptDto(receipt))).not.toContain('defaultLocale');
+  });
+
+  /**
+   * La colonne est un `VARCHAR(5)` borné par une contrainte `CHECK`, ce que le
+   * système de types ne voit pas. Une valeur posée hors de l'application — la
+   * seule que la contrainte n'exclut pas — ne doit pas faire tomber l'impression
+   * d'un ticket au comptoir : elle se replie sur la langue par défaut du système.
+   */
+  it('se replie sur la langue du système quand la colonne porte autre chose', async () => {
+    const receipt = await serviceFor(row({ tenant: issuer({ defaultLocale: 'de' }) })).bySaleId(
+      SALE_ID,
+    );
+
+    expect(receipt.issuer.defaultLocale).toBe('en');
   });
 
   it('n’expose pas une adresse incomplète — le triplet minimal ou rien', async () => {

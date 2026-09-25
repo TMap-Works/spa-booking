@@ -54,6 +54,9 @@ const ISSUER_SELECT = {
   receiptFooter: true,
   receiptPrefix: true,
   timezone: true,
+  // La langue de l'établissement — #1230. Elle ne s'imprime pas : elle est le
+  // repli de la langue du PDF quand la demande n'en porte aucune.
+  defaultLocale: true,
 } as const;
 
 /** Un nom d'affichage, et **rien d'autre** — voir l'en-tête de ce fichier. */
@@ -162,6 +165,8 @@ export interface ReceiptRow {
     receiptFooter: string | null;
     receiptPrefix: string;
     timezone: string;
+    /** `VARCHAR(5)` borné par `tenants_default_locale_check` — d'où le `string`. */
+    defaultLocale: string;
   };
   cashier: { firstName: string; lastName: string };
   appointment: {
