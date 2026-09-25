@@ -2,18 +2,24 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import type { Service, ServiceCategory } from '@spa/shared';
+import type { Locale, Service, ServiceCategory } from '@spa/shared';
 import { cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { renderToStaticMarkup } from 'react-dom/server';
 import type { ReactNode } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { fixerLangue, nextIntlMobile } from '../support/langue-mobile';
+
 import {
   AdminAnnouncementProvider,
   AdminAnnouncementRegion,
+  useAdminAnnouncement,
+  type AdminAnnouncementKind,
 } from '@/app/(admin)/[tenantSlug]/admin/components/admin-announcement';
 import { ServiceForm } from '@/app/(admin)/[tenantSlug]/admin/components/service-form';
+import enAdminCatalog from '@/messages/en/admin-catalog.json';
+import frAdminCatalog from '@/messages/fr/admin-catalog.json';
 
 /**
  * L'annonce d'une création menée à son terme dans le back-office — #1037.
@@ -41,8 +47,26 @@ import { ServiceForm } from '@/app/(admin)/[tenantSlug]/admin/components/service
  * - une annonce lue puis quittée ne se rallume pas au retour ;
  * - l'enregistrement d'une prestation **existante** reste annoncé où il l'était,
  *   dans le formulaire : l'écran ne bouge pas, et faire transiter ce bandeau-là
- *   par la région aurait déplacé un message qui allait bien.
+ *   par la région aurait déplacé un message qui allait bien ;
+ * - les **trois** motifs de la région s'énoncent dans la langue de la session
+ *   (#1192), et le sujet inséré — nom de prestation, jour et heure — reste tel
+ *   qu'il est enregistré : c'étaient trois littéraux français, si bien que
+ *   « Prestation « Massage suédois » créée » s'affichait sur une fiche par
+ *   ailleurs entièrement en anglais.
  */
+
+/**
+ * La langue du rendu, pilotée par les tests.
+ *
+ * L'amorce des suites fixe `fr` pour toutes (`tests/support/next-intl.ts`) : les
+ * assertions françaises ci-dessous sont exactement celles d'avant. Le dernier
+ * point demande de rendre la **même** région en anglais, ce que seule une langue
+ * mobile permet — un `NextIntlClientProvider` posé autour du rendu ne servirait à
+ * rien, l'amorce remplaçant `useTranslations` lui-même. La doublure est celle de
+ * `tests/support/langue-mobile.ts`, partagée avec
+ * `admin-catalogue-sans-praticien.test.tsx`.
+ */
+vi.mock('next-intl', () => nextIntlMobile());
 
 const createServiceAction = vi.fn();
 const updateServiceAction = vi.fn();
@@ -80,6 +104,7 @@ vi.mock('@/app/(admin)/[tenantSlug]/admin/catalogue/actions', () => ({
 afterEach(() => {
   cleanup();
   pathname = NOUVEAU;
+  fixerLangue('fr');
   createServiceAction.mockReset();
   updateServiceAction.mockReset();
   push.mockReset();
@@ -306,6 +331,107 @@ describe('back-office — la prestation créée s’annonce sur sa fiche', () =>
     pathname = FICHE;
     rerender(fiche());
     expect(region(container).textContent).toBe('');
+  });
+});
+
+/**
+ * Ce qui déclenche une annonce sans passer par l'écran qui la produit.
+ *
+ * Les deux motifs du temps réel arrivent du flux de rendez-vous
+ * (`admin-live-announcements.tsx`), qui a besoin d'une connexion et d'un fuseau de
+ * salon : monter cette chaîne pour éprouver **des mots** aurait fait dépendre la
+ * suite de tout autre chose que ce qu'elle vérifie.
+ */
+function Declencheur({
+  kind,
+  subject,
+  href,
+}: {
+  readonly kind: AdminAnnouncementKind;
+  readonly subject: string;
+  /** Requise mais nullable : `exactOptionalPropertyTypes` distingue les deux. */
+  readonly href: string | undefined;
+}) {
+  const announce = useAdminAnnouncement();
+
+  return (
+    <button
+      type="button"
+      onClick={() =>
+        announce(
+          href === undefined
+            ? { kind, subject, path: pathname }
+            : { kind, subject, path: pathname, href },
+        )
+      }
+    >
+      déclencher
+    </button>
+  );
+}
+
+describe('back-office — les trois motifs de la région suivent la langue (#1192)', () => {
+  /** Le jour et l'heure, déjà mis en forme par l'appelant, dans le fuseau du salon. */
+  const MOMENT = 'jeudi 2 octobre à 14:00';
+
+  const MOTIFS: readonly {
+    readonly kind: AdminAnnouncementKind;
+    readonly subject: string;
+    readonly href: string | undefined;
+  }[] = [
+    { kind: 'service-created', subject: 'Gommage corps', href: undefined },
+    { kind: 'appointment-booked', subject: MOMENT, href: CALENDRIER },
+    { kind: 'appointment-cancelled', subject: MOMENT, href: CALENDRIER },
+  ];
+
+  const CATALOGUES: readonly { readonly locale: Locale; readonly words: typeof frAdminCatalog }[] = [
+    { locale: 'fr', words: frAdminCatalog },
+    { locale: 'en', words: enAdminCatalog },
+  ];
+
+  for (const { locale, words } of CATALOGUES) {
+    for (const { kind, subject, href } of MOTIFS) {
+      it(`énonce « ${kind} » en « ${locale} », sujet inséré tel quel`, async () => {
+        fixerLangue(locale);
+        pathname = FICHE;
+        const { container } = render(backOffice(<Declencheur kind={kind} subject={subject} href={href} />));
+        const user = userEvent.setup();
+
+        await user.click(screen.getByRole('button', { name: 'déclencher' }));
+
+        const wording = words.announcement[kind];
+        const lu = region(container).textContent ?? '';
+
+        // Le titre est celui du catalogue, sujet substitué — et non une chaîne
+        // recopiée dans le test : recopier aurait laissé la suite verte le jour où
+        // le catalogue et l'écran divergent.
+        expect(lu).toContain(wording.title.replace('{subject}', subject));
+        expect(lu).toContain(wording.body);
+        // Le sujet n'est jamais traduit : c'est la saisie du salon, ou une date
+        // déjà mise en forme par l'appelant.
+        expect(lu).toContain(subject);
+        // Le geste suivant aussi est au catalogue — et son adresse, elle, n'en
+        // vient pas : l'ancre de la création est tenue par le composant, le jour du
+        // planning est calculé par l'appelant.
+        const lien = screen.getByRole('link', { name: wording.next });
+
+        expect(lien.getAttribute('href')).toBe(href ?? '#prestation-praticiens');
+      });
+    }
+  }
+
+  it('ne laisse aucun des trois motifs en français sur un écran anglais', () => {
+    for (const { kind } of MOTIFS) {
+      expect(enAdminCatalog.announcement[kind].title).not.toBe(
+        frAdminCatalog.announcement[kind].title,
+      );
+      expect(enAdminCatalog.announcement[kind].body).not.toBe(
+        frAdminCatalog.announcement[kind].body,
+      );
+      expect(enAdminCatalog.announcement[kind].next).not.toBe(
+        frAdminCatalog.announcement[kind].next,
+      );
+    }
   });
 });
 
