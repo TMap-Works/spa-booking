@@ -7,9 +7,7 @@
     "signIn": "Se connecter",
     "myAccount": "Mon compte",
     "myAccountPrefix": "Mon compte : ",
-    "clientAccount": "Compte client",
-    "signOut": "Se déconnecter",
-    "signingOut": "Déconnexion en cours…"
+    "clientAccount": "Compte client"
   },
   "appointments": {
     "heading": "Rendez-vous à venir",
