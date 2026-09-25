@@ -39,7 +39,22 @@
         "reservation": "Recherche du salon, puis ouverture de la réservation…",
         "account": "Recherche du salon, puis ouverture de vos rendez-vous…",
         "backOffice": "Recherche du salon, puis ouverture du back-office…"
+      },
+      "errors": {
+        "empty": "Saisissez le nom de votre salon ou le lien qu’il vous a transmis.",
+        "unknown": "Aucun salon ne répond à « {address} ». Vérifiez le lien reçu dans votre e-mail de confirmation, ou demandez-le au salon.",
+        "unavailable": "Le service est momentanément injoignable. Merci de réessayer dans un instant."
       }
+    },
+    "photos": {
+      "spaInterieur": "L’intérieur d’un spa, ouvert sur un bassin et des plantes",
+      "soinPierresChaudes": "Un soin aux pierres chaudes posées le long du dos",
+      "massageDos": "Les mains d’une praticienne pendant un massage du dos",
+      "coiffureBrushing": "Une coiffeuse termine un brushing dans un salon lumineux",
+      "salonInterieur": "Les postes de coiffage alignés dans un salon",
+      "soinVisage": "Un soin du visage appliqué au pinceau, en institut",
+      "natureMorteSpa": "Une serviette roulée, un flacon de soin et des fleurs",
+      "barbier": "Un rasage en cours chez le barbier"
     },
     "trust": {
       "label": "Nos engagements",

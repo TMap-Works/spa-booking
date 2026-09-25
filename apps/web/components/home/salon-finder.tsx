@@ -43,16 +43,16 @@ import { Notification } from '@/components/ui/notification';
  *
  * Le **nom des deux premières portes** n'en vient pas : il est lu dans
  * `publicExitLabels`, la source unique des destinations du parcours public, pour
- * que la même page ne s'appelle pas autrement ici que sur la vitrine (#749). Le
- * registre `SALON_DOOR_LABELS` de `app/salon-doors.ts` reste figé en français le
- * temps de l'épique #843 et n'est pas dans l'empreinte de ce ticket : l'accueil
- * et ce formulaire lisent donc la source directement. Deux compositions, mais
- * une seule écriture de chaque libellé — c'est ce que #749 demande.
+ * que la même page ne s'appelle pas autrement ici que sur la vitrine (#749).
+ * L'accueil et ce formulaire lisent donc la source directement. Deux
+ * compositions, mais une seule écriture de chaque libellé — c'est ce que #749
+ * demande.
  *
- * Ce qui reste en français quelle que soit la langue : les **messages d'erreur**
- * de `app/actions.ts`, que ce composant ne fait qu'afficher. Ce module est hors
- * de l'empreinte de #846 ; le ticket qui le reprendra lui fera rendre des clés
- * plutôt que des phrases.
+ * Les **messages d'erreur** qu'affiche ce composant sont restés français le
+ * temps d'un ticket : `app/actions.ts` les écrivait en dur. Ils viennent
+ * désormais du même namespace, sous `home.finder.errors` (#1233), et l'action
+ * les résout côté serveur — le champ et son refus se lisent dans la même
+ * langue.
  */
 
 interface SalonFinderProps {
