@@ -145,6 +145,49 @@ describe('La barre basse du tunnel tient le bas de l’écran (#735, #1047)', ()
   });
 });
 
+/*
+ * Plus rien n'annule la gouttière basse de la page (#1141).
+ *
+ * La barre portait `margin-block-end: calc(var(--spa-space-10) * -1)`, qui avait
+ * un sens tant qu'elle **fermait la colonne** : au bout du défilement elle se
+ * posait sur le bord du document plutôt que 40 px au-dessus. #846 a mis fin à
+ * cette prémisse en posant le sélecteur de langue derrière elle — hors du
+ * formulaire de l'étape, un `<form>` ne s'imbriquant pas. La marge ne pouvait
+ * plus faire affleurer quoi que ce soit ; il ne lui restait qu'à remonter le
+ * sélecteur de 40 px, sous une barre opaque qui lui mangeait 20 px de tête.
+ *
+ * La géométrie se mesure au navigateur — `parcours-bilingue.e2e.ts`. Ce qui se
+ * tient ici est ce qu'aucune mesure ne rattraperait : que **rien** dans la
+ * feuille ne reprend cette annulation, ni sur la barre ni ailleurs. La déplacer
+ * sur le dernier bloc de la colonne corrigerait le recouvrement tout aussi bien
+ * — et prendrait au sélecteur la gouttière de page, laissant les deux boutons de
+ * langue collés au bord de l'écran.
+ */
+describe('Plus rien n’annule la gouttière basse de la page (#1141)', () => {
+  it('la barre ne porte plus de marge négative verticale', () => {
+    assert.equal(
+      declaration(rulesFor(base, '.spa-booking__bar').join(' '), 'margin-block-end'),
+      null,
+      'La barre reprend la marge négative verticale : elle remonte de 40 px le ' +
+        'sélecteur de langue posé derrière elle et en tronque les ascendantes à ' +
+        '360 px — le défaut de #1141.',
+    );
+  });
+
+  it('et aucune autre règle de la feuille ne la reprend à son compte', () => {
+    // La feuille **entière**, paliers compris : l'annulation pourrait tout
+    // aussi bien réapparaître sous un `@media`.
+    assert.doesNotMatch(
+      booking,
+      /margin-block-end:\s*calc\(var\(--spa-space-10\)\s*\*\s*-1\)/u,
+      'Une règle annule de nouveau la gouttière basse de `.spa-booking__main`. ' +
+        'Quel que soit le bloc qui la porte, le pied du tunnel perd les 40 px qui ' +
+        'le séparent du bord de l’écran — et si c’est le dernier bloc de la ' +
+        'colonne, ce sont les deux boutons de langue qui s’y collent.',
+    );
+  });
+});
+
 describe('La colonne récapitulative suit la cliente au bureau (#1047)', () => {
   it('ouvre une seconde piste de 22 rem à partir de 64 rem', () => {
     // Lu sur la feuille **entière** : cette règle est un palier, c'est tout son

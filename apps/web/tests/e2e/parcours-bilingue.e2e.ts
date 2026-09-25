@@ -29,7 +29,30 @@
  *
  * Le fuseau, lui, reste celui du salon : la langue ne le touche pas, et c'est
  * précisément ce que le ticket demande de vérifier.
+ *
+ * ## Et, depuis #1141, la place que le sélecteur occupe
+ *
+ * Le sélecteur est au pied de la colonne du tunnel, derrière la barre collante
+ * du CTA. La barre annulait la gouttière basse de la page par une marge négative
+ * — elle fermait la colonne, et c'était son rôle —, et cette marge s'est mise à
+ * mordre sur le sélecteur dès que #846 l'a posé derrière elle : 20 px de tête
+ * sous une barre opaque, à 360 px, dans les deux langues. La dernière suite
+ * ci-dessous relève les boîtes au navigateur et tient les **trois** propriétés à
+ * la fois — le sélecteur entièrement dégagé de la barre, la gouttière basse de
+ * la page conservée sous lui, et la barre toujours au ras de la fenêtre tant que
+ * l'étape déborde. Aucun test unitaire ne peut le faire : `jsdom` n'a pas de
+ * moteur de mise en page, et une marge négative n'y a pas de géométrie.
+ *
+ * Les trois ensemble, parce que chacune seule se satisfait d'une correction qui
+ * casse une autre : supprimer la marge et décoller la barre, ou la déplacer d'un
+ * cran et coller les deux boutons de langue au bord de l'écran.
+ *
+ * Elle est ici et non dans une suite à part parce que la mesure se prend dans
+ * les **deux** langues : c'est un pied de colonne bilingue, et « Français » et
+ * « English » n'ont ni la même largeur ni les mêmes ascendantes.
  */
+
+import type { Page } from '@playwright/test';
 
 import { connecter, trouverRendezVous } from './support/api';
 import { COMPTES, chemins } from './support/environnement';
@@ -159,3 +182,131 @@ test.describe('Changer de langue au milieu du tunnel', () => {
     expect(apres.get('etape')).toBe(avant.get('etape'));
   });
 });
+
+/** Le pouce : 360 px de large, la mesure de référence des tickets de mise en page. */
+const POUCE = { width: 360, height: 640 } as const;
+
+/**
+ * La même largeur, une fenêtre trop basse pour l'étape.
+ *
+ * C'est la seule façon d'observer la barre **collée** sans dépendre du nombre de
+ * prestations du jeu d'essai : `.spa-booking` vaut `min-block-size: 100dvh` et
+ * `.spa-booking__main` grandit pour la remplir, si bien qu'une étape courte ne
+ * fait jamais déborder la page et ne colle jamais rien.
+ */
+const POUCE_COURT = { width: 360, height: 360 } as const;
+
+interface Boites {
+  /** Le bas de la barre collante, dans la fenêtre. */
+  readonly barreBas: number;
+  /** Le haut du sélecteur de langue, dans la fenêtre. */
+  readonly selecteurHaut: number;
+  /** Son bas, et celui de la page qui le contient : leur écart est la gouttière basse. */
+  readonly selecteurBas: number;
+  readonly principalBas: number;
+  /** `padding-block-end` de `.spa-booking__main`, lu et non supposé. */
+  readonly gouttiere: number;
+  readonly fenetre: number;
+  readonly document: number;
+}
+
+/**
+ * Toutes les boîtes en un seul relevé.
+ *
+ * `getBoundingClientRect` plutôt que `boundingBox()` de Playwright : il faut les
+ * trois boîtes, la gouttière calculée et la hauteur de la fenêtre au même
+ * instant — quatre appels successifs ne mesureraient pas la même page.
+ */
+async function releverLesBoites(page: Page): Promise<Boites> {
+  return page.evaluate(() => {
+    const principal = document.querySelector('.spa-booking__main');
+    const barre = document.querySelector('.spa-booking__bar');
+    const selecteur = document.querySelector('.spa-booking__content > .spa-locale-switcher');
+
+    if (principal === null || barre === null || selecteur === null) {
+      throw new Error('Le pied de colonne du tunnel est incomplet : barre ou sélecteur absent.');
+    }
+
+    return {
+      barreBas: barre.getBoundingClientRect().bottom,
+      selecteurHaut: selecteur.getBoundingClientRect().top,
+      selecteurBas: selecteur.getBoundingClientRect().bottom,
+      principalBas: principal.getBoundingClientRect().bottom,
+      gouttiere: Number.parseFloat(getComputedStyle(principal).paddingBlockEnd),
+      fenetre: window.innerHeight,
+      document: document.documentElement.scrollHeight,
+    };
+  });
+}
+
+for (const langue of ['fr', 'en'] as const) {
+  test.describe(`Le sélecteur de langue au pied du tunnel, à 360 px (${langue})`, () => {
+    test.use({ locale: langue === 'fr' ? 'fr-FR' : 'en-US', viewport: POUCE });
+
+    test('reste entièrement visible, sans décoller la barre du bas de la fenêtre', async ({
+      page,
+    }) => {
+      await page.goto(chemins.reservation());
+
+      // Une prestation retenue, sinon le bouton de la barre porte encore le
+      // libellé d'attente (`submitDisabled`) et la colonne n'a pas sa hauteur.
+      const prestation = page.getByRole('radio').first();
+      await expect(prestation).toBeEnabled({ timeout: 20_000 });
+      await prestation.locator('xpath=ancestor::label[1]').click();
+
+      await expect(
+        page.getByRole('button', { name: libelle(langue, 'booking.tunnel.serviceStep.submit') }),
+      ).toBeEnabled();
+
+      // **Au bas du défilement**, et non en haut de page : c'est là, et là
+      // seulement, que le chevauchement de #1141 se voit. Tant que l'étape
+      // déborde, la barre est collée au bas de la fenêtre et le sélecteur est
+      // hors champ, cent pixels plus bas — leurs deux boîtes ne se rencontrent
+      // pas, et la comparaison serait vraie même avec la marge fautive rendue à
+      // la barre. Une fois en bas, la barre est revenue à sa position de flux,
+      // le sélecteur la suit, et l'écart mesuré est celui que la cliente voit.
+      await page.evaluate(() => {
+        window.scrollTo(0, document.documentElement.scrollHeight);
+      });
+
+      const boites = await releverLesBoites(page);
+
+      // 1. Le défaut de #1141 : le sélecteur commençait 20 px au-dessus du bas
+      //    d'une barre opaque, qui lui mangeait ses ascendantes.
+      expect(
+        boites.selecteurHaut,
+        `Le sélecteur commence à ${boites.selecteurHaut} px, sous une barre qui finit à ${boites.barreBas} px.`,
+      ).toBeGreaterThanOrEqual(boites.barreBas);
+
+      // 2. Et la page garde sa gouttière basse **sous** le sélecteur. C'est ce
+      //    que l'autre correction possible aurait pris : déplacer la marge
+      //    négative de la barre sur le dernier bloc de la colonne découvre le
+      //    sélecteur tout aussi bien, et le colle au bord de l'écran.
+      //
+      //    `>=` et non une égalité : `.spa-booking__main` est `flex: 1 0 auto`
+      //    dans une coquille à `min-block-size: 100dvh`, et s'étire donc au-delà
+      //    de son contenu dès qu'une étape courte tient dans la fenêtre. La
+      //    gouttière est un plancher, jamais un écart exact.
+      expect(
+        boites.principalBas - boites.selecteurBas,
+        `Le sélecteur finit à ${boites.principalBas - boites.selecteurBas} px du bas de la page, pour une gouttière de ${boites.gouttiere} px.`,
+      ).toBeGreaterThanOrEqual(boites.gouttiere);
+
+      // 3. Reste à voir la barre **collée**, ce qu'une fenêtre trop basse pour
+      //    l'étape garantit. Son bord inférieur est alors celui de la fenêtre.
+      await page.setViewportSize(POUCE_COURT);
+      await page.evaluate(() => window.scrollTo(0, 0));
+
+      const collee = await releverLesBoites(page);
+
+      expect(
+        collee.document,
+        'L’étape tient encore dans la fenêtre : la barre n’est pas collée.',
+      ).toBeGreaterThan(collee.fenetre);
+      expect(
+        collee.barreBas,
+        `La barre s’arrête à ${collee.barreBas} px pour une fenêtre de ${collee.fenetre} px.`,
+      ).toBeCloseTo(collee.fenetre, 0);
+    });
+  });
+}
