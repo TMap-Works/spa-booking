@@ -21,7 +21,7 @@ import { Field } from '@/components/ui/field';
 import { Notification } from '@/components/ui/notification';
 import { PasswordField } from '@/components/ui/password-field';
 import { PhoneField } from '@/components/ui/phone-field';
-import { ACCOUNT_CONSENT, ConsentField, consentSchema } from '@/lib/booking/consent';
+import { ConsentField, consentSchema } from '@/lib/booking/consent';
 
 import { registerAction } from '../actions';
 import { RETURN_QUERY_KEY, safeReturnPath, withReturnPath } from '../connexion/return-path';
@@ -287,13 +287,22 @@ export function RegisterForm({ tenantSlug }: RegisterFormProps) {
             changer de produit, et deux formulations de la même promesse se
             liraient comme deux sites (#734).
 
+            `variant` et non une copie passée en propriété (#1264) : le composant
+            lit lui-même son texte dans le catalogue, donc **dans la langue de la
+            requête**. La copie qu'on lui passait jusqu'ici, `ACCOUNT_CONSENT`,
+            était figée sur le catalogue français importé en dur, et cet écran
+            rendu en anglais gardait trois phrases françaises — le paragraphe
+            d'information, le résumé du dépliant et le libellé de la case. Les
+            deux surfaces lisent désormais la **même** écriture, `consentCopy`,
+            et elle n'existe plus qu'une fois.
+
             Le message n'a pas à être conditionné ici comme il l'est là-bas : ce
             formulaire valide `onSubmit`, donc aucune erreur n'apparaît avant
             que la question ait été posée. */}
         <ConsentField
           id="register-consent"
+          variant="account"
           tenantSlug={tenantSlug}
-          copy={ACCOUNT_CONSENT}
           error={errors.dataConsent?.message}
           {...register('dataConsent')}
         />
