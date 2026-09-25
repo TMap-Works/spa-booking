@@ -3,6 +3,8 @@ import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { nextIntlFixe } from '../support/langue-figee';
+
 /**
  * « Mon planning » en français et en anglais — #1104.
  *
@@ -24,43 +26,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
  * Le rendu d'un composant en anglais demande de remplacer l'amorce de langue des
  * suites, qui les fixe toutes en français (`tests/support/next-intl.ts`) : la
  * doublure ci-dessous lit le **vrai** catalogue anglais, par le même
- * `loadMessages` que le serveur.
+ * `loadMessages` que le serveur. Elle vient de
+ * `tests/support/langue-figee.ts` (#1287), où elle est écrite une fois pour
+ * toutes les suites anglaises.
  */
 
-vi.mock('next-intl', async () => {
-  const actual = await vi.importActual<typeof import('next-intl')>('next-intl');
-  const { loadMessages } = await import('../../i18n/messages');
-  const messages = loadMessages('en');
-  const translator = actual.createTranslator as unknown as (options: {
-    locale: string;
-    messages: unknown;
-    namespace?: string;
-  }) => unknown;
-  const cache = new Map<string, unknown>();
-
-  return {
-    ...actual,
-    useLocale: () => 'en',
-    useTranslations: (namespace?: string) => {
-      const key = namespace ?? '';
-      const cached = cache.get(key);
-
-      if (cached !== undefined) {
-        return cached;
-      }
-
-      const made = translator(
-        namespace === undefined
-          ? { locale: 'en', messages }
-          : { locale: 'en', messages, namespace },
-      );
-
-      cache.set(key, made);
-
-      return made;
-    },
-  };
-});
+vi.mock('next-intl', () => nextIntlFixe('en'));
 
 const markStatus = vi.fn();
 const refresh = vi.fn();

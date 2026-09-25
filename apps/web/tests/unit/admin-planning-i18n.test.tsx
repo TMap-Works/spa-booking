@@ -2,6 +2,8 @@ import type { Appointment, OpeningHoursEntry } from '@spa/shared';
 import { cleanup, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { nextIntlFixe } from '../support/langue-figee';
+
 /**
  * Le planning du back-office en français et en anglais — #848.
  *
@@ -24,44 +26,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
  *
  * Le rendu en anglais d'un composant demande de remplacer l'amorce de langue des
  * suites (`tests/support/next-intl.ts`), qui les fixe toutes en français : la
- * doublure locale ci-dessous lit le **vrai** catalogue anglais, par le même
- * `loadMessages` que le serveur.
+ * doublure ci-dessous lit le **vrai** catalogue anglais, par le même
+ * `loadMessages` que le serveur. Elle vient de `tests/support/langue-figee.ts`
+ * (#1287), où elle est écrite une fois pour toutes les suites anglaises.
  */
 
-vi.mock('next-intl', async () => {
-  const actual = await vi.importActual<typeof import('next-intl')>('next-intl');
-  const { loadMessages } = await import('../../i18n/messages');
-  const messages = loadMessages('en');
-  const translator = actual.createTranslator as unknown as (options: {
-    locale: string;
-    messages: unknown;
-    namespace?: string;
-  }) => unknown;
-  const cache = new Map<string, unknown>();
-
-  return {
-    ...actual,
-    useLocale: () => 'en',
-    useTranslations: (namespace?: string) => {
-      const key = namespace ?? '';
-      const cached = cache.get(key);
-
-      if (cached !== undefined) {
-        return cached;
-      }
-
-      const made = translator(
-        namespace === undefined
-          ? { locale: 'en', messages }
-          : { locale: 'en', messages, namespace },
-      );
-
-      cache.set(key, made);
-
-      return made;
-    },
-  };
-});
+vi.mock('next-intl', () => nextIntlFixe('en'));
 
 import { CalendarMoveConfirm } from '@/app/(admin)/[tenantSlug]/admin/components/calendar-move-confirm';
 import { planDeskMove } from '@/lib/admin/appointment-desk';
