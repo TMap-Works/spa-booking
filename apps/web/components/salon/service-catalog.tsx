@@ -24,13 +24,15 @@ const CATEGORY_TABS_PREFIX = 'rubrique';
  * annonce la mention à la gérante avant qu'elle ne la cherche dans la grille. Un
  * second écran qui la recopierait serait un second libellé à faire diverger.
  *
- * @deprecated Transitoire (#846). Le catalogue le tient désormais, et la ligne
- * du catalogue public le lit par `t('salon.catalog.unstaffed')` : cette
- * constante n'est plus là que pour les deux surfaces du back-office qui la
- * nomment — `admin/components/service-bookability-badge.tsx` et
- * `admin/catalogue/apercu/page.tsx` —, hors de l'empreinte de ce ticket. Elle
- * disparaît avec leur propre ticket de l'épique #843. Lue dans le catalogue
- * plutôt que réécrite ici : il n'y a qu'une écriture de ce libellé.
+ * @deprecated Plus aucune surface ne l'attend (#1192). Le catalogue le tient, et
+ * les trois écrans qui énoncent cette mention le lisent tous par
+ * `salon.catalog.unstaffed` — la ligne du catalogue public ici même, l'encart de
+ * l'aperçu du back-office (#849) et le badge de réservabilité de la liste du
+ * catalogue (#1192) —, si bien qu'ils la disent dans la langue de la session.
+ * Cette constante n'est plus lue que par la suite française de la vitrine
+ * (`tests/unit/salon-catalogue.test.tsx`), qui la préfère à une chaîne recopiée :
+ * recopier aurait laissé le test passer le jour où le composant et le catalogue
+ * divergent. Elle disparaît avec elle, hors de l'empreinte de ce ticket.
  */
 export const UNSTAFFED_SERVICE_LABEL: string = fr.salon.catalog.unstaffed;
 
