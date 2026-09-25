@@ -480,6 +480,43 @@ describe('le formulaire de prestation, rendu en anglais', () => {
       price: { amountMinor: 1990, currency: 'EUR' },
     });
   });
+
+  /**
+   * L'aller-retour affichage → édition → soumission, sur un écran anglais (#1123).
+   *
+   * Le champ était pré-rempli avec la virgule décimale du français quelle que soit
+   * la langue : la fiche annonçait « €35.00 » juste à côté d'un champ « 35,00 ».
+   */
+  it('pré-remplit le prix avec le séparateur décimal de la langue', () => {
+    render(
+      <ServiceForm tenantSlug={SLUG} currency="EUR" categories={CATEGORIES} service={SERVICE} />,
+    );
+
+    const price = screen.getByLabelText(/Price \(EUR\)/) as HTMLInputElement;
+
+    expect(price.value).toBe('35.00');
+    // Le gabarit du champ emploie le même séparateur : proposer une forme pour en
+    // refuser une autre est exactement ce que ce ticket corrige.
+    expect(price.getAttribute('placeholder')).toBe('35.00');
+  });
+
+  it('accepte le montant recopié depuis l’affichage anglais, virgule de milliers comprise', async () => {
+    createServiceAction.mockResolvedValue({ ok: true, data: SERVICE });
+    const user = userEvent.setup();
+    render(<ServiceForm tenantSlug={SLUG} currency="EUR" categories={CATEGORIES} />);
+
+    await user.type(screen.getByLabelText(/Service name/), 'Day pass');
+    await user.type(screen.getByLabelText(/Treatment duration/), '30');
+    // « €1,200.00 » recopié depuis l'écran, symbole retiré : la virgule y groupe
+    // les milliers, et le champ la refusait.
+    await user.type(screen.getByLabelText(/Price \(EUR\)/), '1,200.00');
+    await user.click(screen.getByRole('button', { name: 'Create the service' }));
+
+    expect(createServiceAction).toHaveBeenCalledWith(
+      SLUG,
+      expect.objectContaining({ price: { amountMinor: 120000, currency: 'EUR' } }),
+    );
+  });
 });
 
 describe('le panneau des praticiens, rendu en anglais', () => {

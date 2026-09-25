@@ -234,6 +234,111 @@ describe('saisie d’un montant — jamais de flottant', () => {
   });
 });
 
+describe('saisie d’un montant — dans la langue de l’écran (#1123)', () => {
+  const FR = { locale: 'fr' } as const;
+  const EN = { locale: 'en' } as const;
+
+  it('pré-remplit le champ avec le séparateur décimal de la langue', () => {
+    // Le défaut restait figé sur la virgule : un écran anglais affichait
+    // « $1,200.00 » au-dessus d'un champ pré-rempli « 1200,00 ».
+    expect(formatAmountInput({ amountMinor: 3500, currency: 'EUR' }, FR)).toBe('35,00');
+    expect(formatAmountInput({ amountMinor: 3500, currency: 'EUR' }, EN)).toBe('35.00');
+    expect(formatAmountInput({ amountMinor: 5, currency: 'EUR' }, EN)).toBe('0.05');
+    // Une devise sans décimale n'a pas de séparateur à traduire.
+    expect(formatAmountInput({ amountMinor: 3500, currency: 'MGA' }, EN)).toBe('3500');
+  });
+
+  it('ne fait pas dépendre le séparateur de la région du salon', () => {
+    // `fr-CA` groupe à l'espace fine comme `fr-FR`, `en-GB` à la virgule comme
+    // `en-US` : c'est la langue qui décide, et le pays n'a rien à dire ici.
+    const amount = { amountMinor: 3500, currency: 'EUR' } as const;
+
+    expect(formatAmountInput(amount, { locale: 'fr', countryCode: 'CA' })).toBe('35,00');
+    expect(formatAmountInput(amount, { locale: 'en', countryCode: 'GB' })).toBe('35.00');
+  });
+
+  it('relit dans les deux langues ce qu’il vient d’écrire — le premier critère', () => {
+    // L'aller-retour affichage → édition → soumission : c'est lui qui était rompu
+    // dès qu'un écran de saisie passait `locale: 'en'`.
+    for (const display of [FR, EN] as const) {
+      for (const amount of [
+        { amountMinor: 3500, currency: 'EUR' },
+        { amountMinor: 5, currency: 'EUR' },
+        { amountMinor: 0, currency: 'EUR' },
+        { amountMinor: 120000, currency: 'EUR' },
+        { amountMinor: 3500, currency: 'MGA' },
+      ] as const) {
+        expect(
+          parseAmountInput(formatAmountInput(amount, display), amount.currency, display),
+        ).toEqual(amount);
+      }
+    }
+  });
+
+  it('relit le montant recopié depuis l’affichage, séparateurs de milliers compris', () => {
+    // Ce que la gérante colle dans le champ, c'est ce qu'elle vient de lire :
+    // « 1 200,00 » en français — espace fine insécable —, « 1,200.00 » en anglais.
+    expect(parseAmountInput('1 200,00', 'EUR', FR)?.amountMinor).toBe(120000);
+    expect(parseAmountInput('1,200.00', 'EUR', EN)?.amountMinor).toBe(120000);
+    expect(parseAmountInput('1,234,567.89', 'EUR', EN)?.amountMinor).toBe(123456789);
+    // Sans décimale : le groupement se lit seul, et n'invente aucun centime.
+    expect(parseAmountInput('1,200', 'EUR', EN)?.amountMinor).toBe(120000);
+    expect(parseAmountInput('12,000', 'MGA', EN)?.amountMinor).toBe(12000);
+  });
+
+  it('relit aussi le groupement d’une région qui n’emploie ni virgule ni point', () => {
+    // Un salon suisse anglophone : `formatMoney` y écrit « CHF 1’200.00 », et
+    // l'apostrophe typographique n'est dans aucune des deux expressions groupées.
+    // L'opérateur se voyait refuser le montant que sa propre pile de totaux
+    // affichait — exactement ce que #1123 corrige ailleurs.
+    const swiss = { locale: 'en', countryCode: 'CH' } as const;
+    /*
+     * La forme groupée vient d'`Intl`, et non d'un caractère écrit ici.
+     *
+     * Le séparateur de `en-CH` a changé d'une version de CLDR à l'autre — la
+     * même raison qui fait ramener les espaces insécables en tête de fichier —,
+     * et le figer donnait un test vert sur le poste et rouge en CI, sans
+     * qu'aucun code de production n'ait bougé. Ce qui se vérifie ici n'est pas
+     * quel caractère cette région emploie, mais que **ce qu'elle écrit se
+     * relit**.
+     */
+    const grouped = new Intl.NumberFormat('en-CH', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }).format(1200);
+
+    expect(parseAmountInput(grouped, 'EUR', swiss)?.amountMinor).toBe(120000);
+    // Rien ne se perd de la lecture simple ni de la tolérance.
+    expect(parseAmountInput('35.00', 'EUR', swiss)?.amountMinor).toBe(3500);
+    expect(parseAmountInput('35,00', 'EUR', swiss)?.amountMinor).toBe(3500);
+    // Et l'aller-retour tient là aussi.
+    const amount = { amountMinor: 120000, currency: 'EUR' } as const;
+
+    expect(parseAmountInput(formatAmountInput(amount, swiss), 'EUR', swiss)).toEqual(amount);
+  });
+
+  it('reste tolérant à ce qu’une personne tape vraiment — le troisième critère', () => {
+    // Une virgule sur un écran anglais, un point sur un écran français : les deux
+    // arrivent, et aucun des deux n'est une erreur de saisie.
+    expect(parseAmountInput('19,90', 'EUR', EN)?.amountMinor).toBe(1990);
+    expect(parseAmountInput('19.90', 'EUR', FR)?.amountMinor).toBe(1990);
+    // Trois chiffres après la virgule, et c'est le groupement qui l'emporte :
+    // « 1,200 » sur un écran anglais est mille deux cents, pas un euro vingt.
+    expect(parseAmountInput('1,20', 'EUR', EN)?.amountMinor).toBe(120);
+  });
+
+  it('refuse ce qui est ambigu plutôt que de deviner un prix', () => {
+    // Aucune des deux lectures ne convient : un et deux dixièmes, ou mille deux
+    // cents ? Le refus est lisible, un prix faux ne l'est pas.
+    expect(parseAmountInput('1.200,50', 'EUR', EN)).toBeNull();
+    expect(parseAmountInput('1,200', 'EUR', FR)).toBeNull();
+    // La précision de la devise fait toujours foi, quelle que soit la langue.
+    expect(parseAmountInput('35.005', 'EUR', EN)).toBeNull();
+    expect(parseAmountInput('3.5', 'MGA', EN)).toBeNull();
+    expect(parseAmountInput('35.00', 'EUR', EN)?.currency).toBe('EUR');
+  });
+});
+
 describe('formatDuration', () => {
   it.each([
     [45, '45 min'],

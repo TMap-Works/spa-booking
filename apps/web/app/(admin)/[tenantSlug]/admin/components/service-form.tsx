@@ -26,7 +26,12 @@ import { Field } from '@/components/ui/field';
 import { Notification } from '@/components/ui/notification';
 import { Select } from '@/components/ui/select';
 import { TextArea } from '@/components/ui/textarea';
-import { formatAmountInput, formatDuration, parseAmountInput } from '@/lib/format';
+import {
+  formatAmountInput,
+  formatDuration,
+  parseAmountInput,
+  type DisplayLocale,
+} from '@/lib/format';
 
 import { adminServicePath } from '../paths';
 import { createServiceAction, updateServiceAction } from '../catalogue/actions';
@@ -57,12 +62,19 @@ import { useAdminSessionRenewal } from './use-admin-session-renewal';
  *
  * ## Le prix ne passe jamais par un flottant
  *
- * La saisie est une chaîne (« 35,00 »), convertie par `parseAmountInput` en
- * entier de plus petite unité **par concaténation de chiffres**, jamais par une
- * multiplication. La devise est celle de l'établissement, lue sur ses réglages :
- * elle n'est pas saisissable ici, parce qu'un salon vend dans une seule monnaie
- * et qu'un choix par prestation ne ferait qu'ouvrir la porte à un catalogue
- * mélangé — donc à des totaux impossibles à additionner.
+ * La saisie est une chaîne (« 35,00 » en français, « 35.00 » en anglais),
+ * convertie par `parseAmountInput` en entier de plus petite unité **par
+ * concaténation de chiffres**, jamais par une multiplication. La devise est celle
+ * de l'établissement, lue sur ses réglages : elle n'est pas saisissable ici,
+ * parce qu'un salon vend dans une seule monnaie et qu'un choix par prestation ne
+ * ferait qu'ouvrir la porte à un catalogue mélangé — donc à des totaux
+ * impossibles à additionner.
+ *
+ * Le **séparateur décimal suit la langue de l'écran** (#1123) : la valeur
+ * pré-remplie, le gabarit du champ et la phrase qui refuse une saisie hors devise
+ * emploient tous les trois celui de la langue, et `parseAmountInput` relit ce que
+ * `formatAmountInput` vient d'écrire. Il reste tolérant aux deux séparateurs —
+ * une virgule tapée sur un écran anglais vaut un point.
  *
  * ## Ce que la durée bloquée montre, et pourquoi elle n'est pas saisissable
  *
@@ -185,7 +197,11 @@ function slugRefusal(
  * vide et non absent. La conversion se fait à l'envoi, et l'action serveur
  * revalide derrière avec le vrai contrat.
  */
-function serviceFormSchema(currency: string, messages: ServiceFormMessages) {
+function serviceFormSchema(
+  currency: string,
+  display: DisplayLocale,
+  messages: ServiceFormMessages,
+) {
   /** Chaîne d'entiers positifs — le contrôle le plus proche de la saisie réelle. */
   const digitsSchema = z.string().trim().regex(/^\d+$/, { message: messages.minutes });
 
@@ -224,7 +240,7 @@ function serviceFormSchema(currency: string, messages: ServiceFormMessages) {
     // cabine disponible avant la fin réelle du soin.
     bufferBeforeMinutes: z.union([z.literal(''), digitsSchema]),
     bufferAfterMinutes: z.union([z.literal(''), digitsSchema]),
-    price: z.string().refine((value) => parseAmountInput(value, currency) !== null, {
+    price: z.string().refine((value) => parseAmountInput(value, currency, display) !== null, {
       message: messages.amount,
     }),
   });
@@ -278,14 +294,29 @@ export function ServiceForm({
   const [saved, setSaved] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
   /**
+   * Ce qui met en forme un montant sur cet écran — la langue de la session.
+   *
+   * Sans `countryCode` : ce formulaire ne reçoit pas le pays de l'établissement,
+   * et le prix qu'il pré-remplit est le seul montant que cet écran affiche — la
+   * liste du catalogue, qui est l'autre endroit où on le lit, s'en passe de même
+   * (`catalogue/(liste)/page.tsx`). C'est `formatMoney` des écrans de caisse qui
+   * en a besoin, pas la saisie d'un prix.
+   *
+   * Mémorisé parce qu'il entre dans les dépendances du résolveur juste en
+   * dessous : un objet neuf à chaque rendu reconstruirait le schéma à chaque
+   * frappe.
+   */
+  const display = useMemo<DisplayLocale>(() => ({ locale }), [locale]);
+  /**
    * L'exemple de montant, une fois — il sert au gabarit du champ **et** à la
    * phrase qui refuse une saisie hors devise. Deux écritures finiraient par
    * diverger, et l'écran proposerait un séparateur pour en refuser un autre.
    *
-   * La **valeur** pré-remplie, elle, reste écrite avec la virgule décimale du
-   * français (`formatAmountInput`) : c'est l'objet de #1123, hors de l'empreinte
-   * de ce ticket. Rien ne se perd au passage — `parseAmountInput` accepte les
-   * deux séparateurs, et rend le même entier de plus petite unité.
+   * La **valeur** pré-remplie suit désormais la même langue (#1123) :
+   * `formatAmountInput` écrit « 35,00 » sous un formulaire français et « 35.00 »
+   * sous un formulaire anglais, là où il figeait la virgule. Rien ne se perd de la
+   * tolérance d'avant — `parseAmountInput` accepte toujours les deux séparateurs,
+   * et rend le même entier de plus petite unité.
    */
   const priceExample = t('priceExample');
   const amountMessage = t('errors.amount', { example: priceExample });
@@ -298,7 +329,7 @@ export function ServiceForm({
   const resolver = useMemo(
     () =>
       zodResolver(
-        serviceFormSchema(currency, {
+        serviceFormSchema(currency, display, {
           nameRequired: t('errors.nameRequired'),
           nameTooLong: t('errors.nameTooLong', { max: DISPLAY_NAME_MAX_LENGTH }),
           slug: t('errors.slug'),
@@ -310,7 +341,7 @@ export function ServiceForm({
         }),
         { errorMap: zodErrorMap(locale), path: [], async: true },
       ),
-    [amountMessage, currency, locale, t],
+    [amountMessage, currency, display, locale, t],
   );
 
   const {
@@ -329,7 +360,19 @@ export function ServiceForm({
       durationMinutes: service === undefined ? '' : String(service.durationMinutes),
       bufferBeforeMinutes: service === undefined ? '' : String(service.bufferBeforeMinutes),
       bufferAfterMinutes: service === undefined ? '' : String(service.bufferAfterMinutes),
-      price: service === undefined ? '' : formatAmountInput(service.price),
+      /*
+       * Écrit dans la langue de l'écran (#1123).
+       *
+       * `defaultValues` n'est lu qu'au **montage**. Le sélecteur de langue du
+       * rail, lui, pose un cookie et laisse Next rejouer la route sans navigation
+       * (`i18n/actions.ts`) : les étiquettes et le gabarit passent à l'anglais,
+       * la valeur déjà dans le champ reste écrite comme elle a été posée. Rien ne
+       * s'y perd — `parseAmountInput` reste tolérant aux deux séparateurs et rend
+       * le même entier —, et la réécrire d'office effacerait une saisie en cours
+       * de frappe pour un gain d'apparence. Au prochain chargement de la fiche,
+       * elle suit la langue.
+       */
+      price: service === undefined ? '' : formatAmountInput(service.price, display),
     },
     mode: 'onTouched',
   });
@@ -348,7 +391,7 @@ export function ServiceForm({
     setFailure(null);
     setSaved(false);
 
-    const price = parseAmountInput(values.price, currency);
+    const price = parseAmountInput(values.price, currency, display);
 
     if (price === null) {
       // Le schéma l'a déjà refusé ; ce garde-fou existe parce qu'une exception
