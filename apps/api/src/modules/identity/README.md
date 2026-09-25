@@ -170,9 +170,17 @@ conversion de casse que les rôles traînent depuis #510. Une valeur hors
 vocabulaire est refusée **à la frontière**, en 400 `VALIDATION_ERROR` nommant le
 champ ; la contrainte de base est la garantie, la validation est le message.
 
-Qui lit quoi : `GET /public/:slug` et `GET /tenant` rendent `defaultLocale`,
-`PATCH /tenant` l'écrit (rôle `ADMIN`) ; `GET /auth/me`, les trois routes de
-session et `PATCH /users/me` rendent `locale`, ce dernier l'écrit et l'efface.
+Qui lit quoi : `GET /public/:slug`, `GET /tenant` et `GET /platform/tenants/:id`
+rendent `defaultLocale`, `PATCH /tenant` l'écrit (rôle `ADMIN`) ; `GET /auth/me`,
+les trois routes de session et `PATCH /users/me` rendent `locale`, ce dernier
+l'écrit et l'efface.
+
+La fiche de la console est la troisième depuis #1189, et elle y est pour une
+raison qui tient à la **suspension** : `GET /public/:slug` ne répond pas pour un
+salon suspendu — c'est la vitrine, et une vitrine fermée n'a rien à dire. La
+console lisait la langue là, et taisait donc celle des salons qu'un opérateur
+consulte le plus. Une donnée que son propre contrat est en droit de porter n'a
+pas à transiter par une route publique.
 
 ## Ce qui tient le modèle en place
 
