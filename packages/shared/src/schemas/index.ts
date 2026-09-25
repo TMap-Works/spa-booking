@@ -129,6 +129,7 @@ export type {
 } from './catalog';
 
 export {
+  billingRedirectRequestSchema,
   billingRedirectSchema,
   isBillingOpen,
   SUBSCRIPTION_PLAN,
@@ -136,7 +137,12 @@ export {
   tenantBillingSchema,
   tenantBillingStatusSchema,
 } from './billing';
-export type { BillingRedirect, TenantBilling, TenantBillingStatus } from './billing';
+export type {
+  BillingRedirect,
+  BillingRedirectRequest,
+  TenantBilling,
+  TenantBillingStatus,
+} from './billing';
 
 export { salonSignupRequestSchema } from './signup';
 export type { SalonSignupRequest } from './signup';
