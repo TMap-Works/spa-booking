@@ -119,6 +119,10 @@ export function receiptFixture(overrides: Partial<SaleReceipt> = {}): SaleReceip
       footer: 'Aucun remboursement après 14 jours.',
       receiptPrefix: 'TIC',
       timezone: TIMEZONE,
+      // Le salon de référence tient sa caisse en français : c'est ce qui rend
+      // assertable le **repli** de #1230 — sans langue demandée, la pièce sort
+      // dans celle de l'établissement, et non dans celle du système.
+      defaultLocale: 'fr',
     },
     cashier: { displayName: 'Camille Roux' },
     client: { displayName: 'Awa Diallo' },

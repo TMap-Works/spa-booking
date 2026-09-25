@@ -894,6 +894,63 @@ Le canal n'est **pas** une donnée de carte : ni marque, ni porteur, ni chiffre.
 C'est le nom d'un tuyau, et c'est ce qui permet de rapprocher la pièce du bon
 relevé (payments-stripe §1).
 
+## La langue du ticket et de la facture PDF — #1230
+
+Le PDF servi par `GET /sales/:id/receipt.pdf` était composé **entièrement en
+français**, `LOCALE = 'fr-FR'` figé dans `receipt-pdf.format.ts`. Le produit
+sert l'anglais par défaut depuis #844 : un salon dont la caisse est en anglais
+tendait donc à sa cliente une pièce comptable française.
+
+### D'où vient la langue
+
+| Rang | Source | Ce qu'elle dit |
+|---|---|---|
+| 1 | `?locale=fr\|en` | la langue de l'**interface qui imprime** — la seule à savoir dans quelle langue on lit l'écran |
+| 2 | `tenants.default_locale` | la langue de l'**établissement**, celle de ses notifications |
+| 3 | `DEFAULT_LOCALE` (`en`) | le filet, pour une valeur de colonne posée hors de l'application |
+
+Ni `Accept-Language` — la préférence du navigateur, pas celle de l'interface —,
+ni la devise, ni le fuseau. C'est la même conduite que `?locale=` de l'export
+CSV du reporting (#851) et du dossier client de `crm`, au repli près : celui-ci
+est l'établissement, que le premier critère de #1230 désigne nommément.
+
+Le paramètre est **facultatif** ; une valeur inconnue est refusée en **400**
+nommant le champ, jamais repliée en silence — `?locale=de` qui rendrait de
+l'anglais laisserait croire l'allemand servi. La langue retenue est annoncée en
+`Content-Language`.
+
+### Ce que la langue change, et ce qu'elle ne change jamais
+
+| Suit la langue | N'en dépend jamais |
+|---|---|
+| les libellés et les mentions (`receipt-pdf.vocabulary.ts`) | les **montants**, entiers en plus petite unité monétaire |
+| l'ordre et les séparateurs d'une date, le cycle horaire | le **fuseau** du salon, qui dit de quel jour on parle |
+| la place du symbole, le séparateur des milliers | le **code devise**, et le nombre de décimales qu'il impose |
+| le mot du nom de fichier — `ticket-`/`facture-`, `receipt-`/`invoice-` | le **numéro de pièce**, qui identifie la même vente dans les deux langues |
+
+Deux impressions de la même vente dans les deux langues portent donc exactement
+les mêmes valeurs, écrites autrement — `receipt-pdf.template.spec.ts`, « porte
+exactement les mêmes montants dans les deux langues », compare les chiffres un à
+un. Ce qui reste écrit tel quel dans les deux pièces est ce que le salon a
+**saisi** : son enseigne, son identité légale, le libellé de ses prestations, ses
+mentions de pied, le motif d'un avoir. Ce sont des données, pas des libellés.
+
+Les mots vivent dans le module et non dans `apps/web/messages/` : le document
+est sérialisé par le serveur, qui ne lit aucun catalogue du front. Même arbitrage
+que `report-export.vocabulary.ts` chez `reporting`. La parité des deux tables est
+tenue par le typage — `Readonly<Record<Locale, ReceiptVocabulary>>` — et non par
+la relecture.
+
+### Aucune donnée de carte, dans aucune des deux langues
+
+Un vocabulaire est exactement l'endroit où un numéro de carte pourrait se glisser
+sans que personne ne relise. Les garanties de #819 et #1027 sont donc rejouées
+langue par langue dans `receipt-pdf.format.spec.ts` et
+`receipt-pdf.template.spec.ts` : le libellé d'un règlement est l'un des trois du
+vocabulaire, et il ne porte ni PAN, ni quatre derniers chiffres, ni marque
+(payments-stripe §1). Le périmètre PCI reste SAQ A — ce ticket ne déplace aucune
+frontière, il traduit des mots.
+
 ## Dette connue
 
 - **Le libellé du reçu **côté web** confond encore les deux cartes** —

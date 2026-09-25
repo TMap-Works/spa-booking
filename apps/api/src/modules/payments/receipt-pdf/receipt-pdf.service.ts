@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import type { Locale } from '@spa/shared';
 import PDFDocument from 'pdfkit';
 
 import { AppConfigService } from '../../../config/app-config.service';
@@ -10,6 +11,7 @@ import { mm, ReceiptCanvas, type CanvasOptions } from './receipt-pdf.canvas';
 import { bookingUrl, receiptFileName } from './receipt-pdf.format';
 import { renderReceipt, type TemplateContext } from './receipt-pdf.template';
 import type { ReceiptPdfFormat, RenderedReceiptPdf } from './receipt-pdf.types';
+import { receiptVocabulary } from './receipt-pdf.vocabulary';
 
 /**
  * Le ticket de caisse en PDF — #819.
@@ -41,6 +43,26 @@ import type { ReceiptPdfFormat, RenderedReceiptPdf } from './receipt-pdf.types';
  *
  * La passe de mesure n'est pas sérialisée — rien n'est branché sur son flux et
  * `end()` n'est jamais appelé : PDFKit n'écrit qu'à ce moment-là.
+ *
+ * ## La langue du document — #1230
+ *
+ * Elle se résout **ici**, en un seul endroit, et descend ensuite jusqu'au
+ * gabarit et au nom de fichier par `TemplateContext.locale`. La chaîne est celle
+ * que le premier critère de #1230 énonce :
+ *
+ * 1. la langue **demandée** — `?locale=`, c'est-à-dire celle de l'interface au
+ *    moment où on imprime, la seule qui sache dans quelle langue on lit l'écran ;
+ * 2. à défaut, `tenants.default_locale` — la langue de l'établissement, celle de
+ *    ses notifications ;
+ * 3. à défaut, `DEFAULT_LOCALE` — mais ce troisième cran n'est atteignable que
+ *    par une valeur de colonne posée hors de l'application, et il est tenu par
+ *    `ReceiptService`, qui normalise déjà ce qu'il lit.
+ *
+ * La hauteur mesurée dépend de la langue, puisque les libellés n'ont pas la même
+ * longueur d'une langue à l'autre : c'est pourquoi la passe de mesure reçoit le
+ * **même** contexte que la passe de rendu. Les mesurer dans une langue pour
+ * imprimer dans l'autre est exactement le genre d'écart qui coupe le pied d'un
+ * ticket thermique.
  */
 
 /** Largeur du rouleau, et largeur imprimable — deuxième critère. */
@@ -71,6 +93,19 @@ interface Geometry {
   readonly canvas: CanvasOptions;
 }
 
+/**
+ * La langue dans laquelle la pièce s'imprime — premier critère de #1230.
+ *
+ * La demande d'abord, l'établissement ensuite. Le troisième cran — la langue par
+ * défaut du système — est déjà appliqué par `ReceiptService`, qui normalise
+ * `tenants.default_locale` à la lecture : `issuer.defaultLocale` est donc
+ * toujours l'une des deux langues du contrat, et il n'y a pas de quatrième cas à
+ * traiter ici.
+ */
+function resolveLocale(receipt: SaleReceipt, requested: Locale | undefined): Locale {
+  return requested ?? receipt.issuer.defaultLocale;
+}
+
 function geometryOf(format: ReceiptPdfFormat): Geometry {
   if (format === 'a4') {
     return {
@@ -98,14 +133,22 @@ function geometryOf(format: ReceiptPdfFormat): Geometry {
 }
 
 /** Un document PDFKit à la bonne taille, polices embarquées enregistrées. */
-function newDocument(width: number, height: number, receipt: SaleReceipt): PDFKit.PDFDocument {
+function newDocument(
+  width: number,
+  height: number,
+  receipt: SaleReceipt,
+  locale: Locale,
+): PDFKit.PDFDocument {
   const doc = new PDFDocument({
     size: [width, height],
     // Les marges sont tenues par `ReceiptCanvas`, qui doit pouvoir décider du
     // haut de page : deux jeux de marges se seraient additionnés.
     margin: 0,
     info: {
-      Title: `Reçu ${receipt.saleId}`,
+      // Le titre que le visualiseur affiche dans son onglet suit la langue du
+      // document — #1230. L'identifiant de vente qu'il porte, non : c'est une
+      // clé technique, et elle ne nomme aucune personne.
+      Title: `${receiptVocabulary(locale).documentTitle} ${receipt.saleId}`,
       Author: receipt.issuer.legalName ?? receipt.issuer.name,
       // Aucune métadonnée de personne ni de moyen de paiement : les propriétés
       // d'un PDF sont lues par n'importe quel visualiseur, et survivent au
@@ -143,38 +186,50 @@ export class ReceiptPdfService {
   /**
    * Le PDF du ticket d'une vente de l'établissement courant.
    *
+   * `locale` est la langue **demandée** — celle de l'interface qui imprime. Son
+   * absence n'est pas une erreur : elle vaut « prends celle du salon », et c'est
+   * ce que fait {@link resolveLocale}.
+   *
    * @throws {NotFoundError} vente inconnue, ou d'un autre établissement — les
    * deux refus sont indiscernables, et c'est `ReceiptService` qui les rend
    * (tenant-isolation §4). Rien n'est imprimé avant que la lecture n'ait abouti.
    */
-  public async bySaleId(saleId: string, format: ReceiptPdfFormat): Promise<RenderedReceiptPdf> {
+  public async bySaleId(
+    saleId: string,
+    format: ReceiptPdfFormat,
+    locale?: Locale,
+  ): Promise<RenderedReceiptPdf> {
     const receipt = await this.receipts.bySaleId(saleId);
 
-    return this.render(receipt, format);
+    return this.render(receipt, format, locale);
   }
 
   /** Le rendu seul, sans lecture — le point d'entrée que les tests exercent. */
   public async render(
     receipt: SaleReceipt,
     format: ReceiptPdfFormat,
+    locale?: Locale,
   ): Promise<RenderedReceiptPdf> {
     const receiptNumber = receiptNumberOf(receipt);
+    const printed = resolveLocale(receipt, locale);
     const context: TemplateContext = {
       variant: format,
       receiptNumber,
       bookingUrl: bookingUrl(this.config.appUrl, receipt.issuer.slug),
+      locale: printed,
     };
     const geometry = geometryOf(format);
     const height = this.measure(receipt, context, geometry);
 
-    const doc = newDocument(geometry.width, height, receipt);
+    const doc = newDocument(geometry.width, height, receipt, printed);
 
     renderReceipt(new ReceiptCanvas(doc, geometry.canvas, true), receipt, context);
 
     return {
       bytes: await collect(doc),
-      fileName: receiptFileName(receiptNumber, format),
+      fileName: receiptFileName(receiptNumber, format, printed),
       receiptNumber,
+      locale: printed,
     };
   }
 
@@ -195,7 +250,10 @@ export class ReceiptPdfService {
       return A4_HEIGHT;
     }
 
-    const scratch = newDocument(geometry.width, MEASURE_HEIGHT, receipt);
+    // Le même contexte que la passe de rendu — langue comprise : « Thank you for
+    // your visit! » et « Merci de votre visite ! » ne tiennent pas sur le même
+    // nombre de lignes à 72 mm de large.
+    const scratch = newDocument(geometry.width, MEASURE_HEIGHT, receipt, context.locale);
     const canvas = new ReceiptCanvas(scratch, geometry.canvas, false);
 
     renderReceipt(canvas, receipt, context);

@@ -1,4 +1,4 @@
-import type { LegalIdType } from '@spa/shared';
+import type { LegalIdType, Locale } from '@spa/shared';
 
 import type { Money, PaymentCardChannel } from './payments.types';
 import type { SaleItemKind } from './pos.types';
@@ -47,6 +47,18 @@ export interface ReceiptIssuer {
   readonly receiptPrefix: string;
   /** Le fuseau de l'établissement, pour l'affichage des instants. */
   readonly timezone: string;
+  /**
+   * La langue de l'établissement — `tenants.default_locale`, #1230.
+   *
+   * Elle ne s'**imprime** pas : elle sert de repli quand la demande d'impression
+   * ne porte aucune langue (`GET /sales/:id/receipt.pdf` sans `?locale=`). C'est
+   * la même raison qui fait vivre `slug` ici et pas dans `SaleReceiptDto` — un
+   * champ dont le document a besoin, dont l'écran n'a que faire.
+   *
+   * Normalisée à la lecture : la colonne est un `VARCHAR(5)` borné par une
+   * contrainte `CHECK`, ce que le système de types ne voit pas.
+   */
+  readonly defaultLocale: Locale;
 }
 
 /**

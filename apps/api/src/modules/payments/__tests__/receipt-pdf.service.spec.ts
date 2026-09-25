@@ -140,6 +140,86 @@ describe('ReceiptPdfService', () => {
     expect((await service().bySaleId('s', 'a4')).fileName).toBe('facture-TIC-2026-000123.pdf');
   });
 
+  /**
+   * **#1230, premier critère** — la chaîne de résolution de la langue.
+   *
+   * Le salon du jeu d'essai tient sa caisse en français (`defaultLocale: 'fr'`).
+   * Sans langue demandée, la pièce sort donc en français ; avec une langue
+   * demandée, celle-ci l'emporte — c'est la langue de l'interface qui imprime,
+   * la seule à savoir dans quelle langue on lit l'écran.
+   */
+  describe('la langue de la pièce', () => {
+    it('suit celle de l’établissement quand la demande n’en porte aucune', async () => {
+      const pdf = await service().bySaleId('s', 'ticket-80');
+
+      expect(pdf.locale).toBe('fr');
+      expect(pdf.fileName).toBe('ticket-TIC-2026-000123.pdf');
+    });
+
+    it('suit celle de la demande quand elle en porte une', async () => {
+      const pdf = await service().bySaleId('s', 'a4', 'en');
+
+      expect(pdf.locale).toBe('en');
+      expect(pdf.fileName).toBe('invoice-TIC-2026-000123.pdf');
+    });
+
+    /** Un salon dont la caisse est en anglais, sans que rien ne soit demandé. */
+    it('se replie sur un établissement anglophone sans rien demander', async () => {
+      const receipt = receiptFixture();
+      const english = receiptFixture({
+        issuer: { ...receipt.issuer, defaultLocale: 'en' },
+      });
+      const pdf = await service(english).bySaleId('s', 'ticket-80');
+
+      expect(pdf.locale).toBe('en');
+      expect(pdf.fileName).toBe('receipt-TIC-2026-000123.pdf');
+    });
+
+    /** La langue demandée prime sur celle de l'établissement, dans les deux sens. */
+    it('laisse la demande l’emporter sur l’établissement', async () => {
+      const receipt = receiptFixture();
+      const english = receiptFixture({
+        issuer: { ...receipt.issuer, defaultLocale: 'en' },
+      });
+
+      expect((await service(english).bySaleId('s', 'ticket-80', 'fr')).locale).toBe('fr');
+      expect((await service().bySaleId('s', 'ticket-80', 'en')).locale).toBe('en');
+    });
+
+    /**
+     * Le titre des métadonnées suit la langue, l'identifiant de vente non : le
+     * premier s'affiche dans l'onglet d'un visualiseur, le second est une clé
+     * technique qui ne nomme aucune personne.
+     *
+     * Le titre anglais est de l'ASCII pur, que PDFKit écrit en clair ; le titre
+     * français porte une cédille, qui le fait passer en UTF-16BE. D'où deux
+     * assertions de nature différente sur la même clé — celle qui compte est
+     * qu'aucun des deux ne porte le mot de l'autre.
+     */
+    it('compose le titre du document dans la langue retenue', async () => {
+      const french = await service().bySaleId('sale-id', 'ticket-80');
+      const english = await service().bySaleId('sale-id', 'ticket-80', 'en');
+
+      expect(infoValue(english.bytes, 'Title')).toContain('Receipt');
+      expect(infoValue(french.bytes, 'Title')).not.toContain('Receipt');
+    });
+
+    /**
+     * La hauteur du rouleau est **mesurée dans la langue du rendu** : les
+     * libellés n'ont pas la même longueur d'une langue à l'autre, et mesurer
+     * dans l'une pour imprimer dans l'autre couperait le pied du ticket.
+     */
+    it('mesure le rouleau dans la langue où il s’imprime', async () => {
+      const french = await service().bySaleId('s', 'ticket-80');
+      const english = await service().bySaleId('s', 'ticket-80', 'en');
+
+      for (const pdf of [french, english]) {
+        expect(mediaBox(pdf.bytes).height).toBeGreaterThan(40 * MM);
+        expect(pageCount(pdf.bytes)).toBe(1);
+      }
+    });
+  });
+
   it('rend « proforma » tant que la vente n’est pas close', async () => {
     const open = receiptFixture({ sequence: null, issuedAt: null });
     const pdf = await service(open).bySaleId('s', 'ticket-80');

@@ -9,6 +9,7 @@ import {
   ParseUUIDPipe,
   Post,
   Query,
+  Res,
   StreamableFile,
 } from '@nestjs/common';
 import {
@@ -23,12 +24,17 @@ import {
   ApiTags,
   ApiUnprocessableEntityResponse,
 } from '@nestjs/swagger';
+import type { Response } from 'express';
 
 import { IDEMPOTENCY_HEADER, readIdempotencyKey } from '../../common/validation';
 import { AuthWith } from '../identity/auth.decorator';
 import type { AuthenticatedUser } from '../identity/identity.types';
 import { CurrentUser } from '../identity/jwt-auth.guard';
-import { ReceiptPdfQueryDto, toReceiptPdfFormat } from './dto/receipt-pdf.dto';
+import {
+  ReceiptPdfQueryDto,
+  toReceiptPdfFormat,
+  toReceiptPdfLocale,
+} from './dto/receipt-pdf.dto';
 import { SaleReceiptDto, toSaleReceiptDto } from './dto/receipt.dto';
 import {
   CreateSaleDto,
@@ -288,10 +294,26 @@ export class SalesController {
    * bancaire (TPE) ». Les métadonnées du PDF ne portent pas davantage de nom de
    * personne : un visualiseur les affiche, et elles survivent au document.
    *
+   * ## La langue du document — #1230
+   *
+   * `?locale=fr|en` compose la pièce dans la langue de l'interface qui imprime.
+   * Sans elle, c'est la langue de l'établissement (`tenants.default_locale`) qui
+   * s'applique — la chaîne que le premier critère de #1230 énonce.
+   *
+   * Elle ne touche **que les mots et leur mise en forme** : les montants restent
+   * des entiers dans la plus petite unité monétaire accompagnés de leur code
+   * devise, le nombre de décimales reste celui de la devise, et le fuseau de
+   * datation reste celui du salon. Deux impressions de la même vente dans les
+   * deux langues portent les mêmes valeurs.
+   *
+   * La langue retenue est annoncée en `Content-Language` : c'est la seule façon
+   * pour un appelant de savoir dans quelle langue la pièce lui est revenue quand
+   * il n'en a demandé aucune.
+   *
    * **404** pour un identifiant inconnu comme pour celui d'un ticket d'un autre
    * établissement, indistinctement (tenant-isolation §4) — le refus vient de la
-   * lecture, avant qu'aucun octet ne soit produit. **400** sur un `format`
-   * inconnu.
+   * lecture, avant qu'aucun octet ne soit produit. **400** sur un `format` ou
+   * une `locale` inconnus.
    */
   @Get(':id/receipt.pdf')
   @AuthWith('checkout:collect')
@@ -302,15 +324,28 @@ export class SalesController {
       'Le PDF. `Content-Disposition` porte le numéro de pièce — « proforma » tant que la vente est ouverte.',
     schema: { type: 'string', format: 'binary' },
   })
-  @ApiBadRequestResponse({ description: 'Format inconnu — seuls `ticket-80` et `a4` sont servis.' })
+  @ApiBadRequestResponse({
+    description:
+      'Format inconnu — seuls `ticket-80` et `a4` sont servis — ou langue inconnue : `fr` ou `en`.',
+  })
   @ApiNotFoundResponse({
     description: 'Aucun ticket de cet établissement ne porte cet identifiant.',
   })
   public async receiptPdf(
     @Param('id', ParseUUIDPipe) id: string,
     @Query() query: ReceiptPdfQueryDto,
+    // `passthrough` : Nest sérialise toujours le `StreamableFile` rendu, la
+    // réponse ne sert qu'à poser l'en-tête de langue que `StreamableFileOptions`
+    // ne sait pas porter. Même geste que `notification-dispatch.controller.ts`.
+    @Res({ passthrough: true }) response: Response,
   ): Promise<StreamableFile> {
-    const pdf = await this.receiptPdfs.bySaleId(id, toReceiptPdfFormat(query));
+    const pdf = await this.receiptPdfs.bySaleId(
+      id,
+      toReceiptPdfFormat(query),
+      toReceiptPdfLocale(query),
+    );
+
+    response.setHeader('Content-Language', pdf.locale);
 
     return new StreamableFile(pdf.bytes, {
       type: 'application/pdf',

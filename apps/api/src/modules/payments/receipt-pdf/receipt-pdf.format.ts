@@ -1,8 +1,12 @@
+import type { Locale } from '@spa/shared';
+
 import type { Money } from '../payments.types';
 import type { ReceiptSettlement } from '../receipt.types';
+import { receiptVocabulary } from './receipt-pdf.vocabulary';
 
 /**
- * La mise en forme de ce qui s'imprime — #819, cinquième et septième critères.
+ * La mise en forme de ce qui s'imprime — #819, cinquième et septième critères ;
+ * #1230 pour la langue.
  *
  * Tout est **pur** : des entiers et des `Date` entrent, des chaînes sortent.
  * Aucune de ces fonctions ne connaît PDFKit, ce qui est la raison pour laquelle
@@ -15,10 +19,20 @@ import type { ReceiptSettlement } from '../receipt.types';
  * aucun. Le fuseau du serveur est celui d'ECS — UTC —, et dater une pièce de
  * caisse en UTC la ferait tomber la veille pour un salon de Tananarive dès
  * 21 h 00 locales. C'est la faute de sévérité haute que CLAUDE.md nomme.
+ *
+ * ## La langue n'en a pas davantage — #1230
+ *
+ * Chaque fonction prend sa `Locale` en argument. `LOCALE = 'fr-FR'` était figé
+ * ici : un salon dont la session est en anglais recevait une pièce entièrement
+ * française, alors que le produit sert l'anglais par défaut depuis #844. La
+ * langue vient donc de l'appelant — le paramètre `?locale=` de la route, à
+ * défaut `tenants.default_locale` —, et jamais du fuseau ni de la devise, qui
+ * répondent à deux autres questions (`receipt-pdf.vocabulary.ts`).
+ *
+ * **Ce que la langue ne change pas** : les montants restent des entiers en plus
+ * petite unité monétaire, accompagnés de leur code devise, et c'est la devise —
+ * pas la langue — qui décide du nombre de décimales.
  */
-
-/** La locale d'impression. Le MVP sert des salons francophones (CDC §1.2). */
-const LOCALE = 'fr-FR';
 
 /**
  * L'espace fine insécable — U+202F — que `Intl` glisse entre les milliers en
@@ -57,8 +71,8 @@ export function printable(text: string): string {
  * flottant dans le domaine, et aucun total n'est jamais calculé ici
  * (payments-stripe §5).
  */
-export function formatMoney(money: Money): string {
-  const formatter = new Intl.NumberFormat(LOCALE, {
+export function formatMoney(money: Money, locale: Locale): string {
+  const formatter = new Intl.NumberFormat(receiptVocabulary(locale).intl, {
     style: 'currency',
     currency: money.currency,
     currencyDisplay: 'narrowSymbol',
@@ -75,19 +89,26 @@ export function formatMoney(money: Money): string {
  * un montant, et `maximumFractionDigits: 2` couvre les taux au centième de point
  * sans imprimer « 20,00 % » là où « 20 % » suffit.
  */
-export function formatTaxRate(rateBps: number): string {
+export function formatTaxRate(rateBps: number, locale: Locale): string {
   return printable(
-    new Intl.NumberFormat(LOCALE, {
+    new Intl.NumberFormat(receiptVocabulary(locale).intl, {
       style: 'percent',
       maximumFractionDigits: 2,
     }).format(rateBps / 10_000),
   );
 }
 
-/** « 17/09/2026 » — la date seule, dans le fuseau du salon. */
-export function formatDate(instant: Date, timeZone: string): string {
+/**
+ * La date seule, dans le fuseau du salon et l'ordre de la langue — « 17/09/2026 »
+ * en français, « 09/17/2026 » en anglais.
+ *
+ * Les deux formes datent **le même jour** : c'est le fuseau, et lui seul, qui
+ * décide duquel. L'ordre des composantes est une convention d'écriture, au même
+ * titre que le séparateur des milliers d'un montant.
+ */
+export function formatDate(instant: Date, timeZone: string, locale: Locale): string {
   return printable(
-    new Intl.DateTimeFormat(LOCALE, {
+    new Intl.DateTimeFormat(receiptVocabulary(locale).intl, {
       timeZone,
       day: '2-digit',
       month: '2-digit',
@@ -96,16 +117,25 @@ export function formatDate(instant: Date, timeZone: string): string {
   );
 }
 
-/** « 17/09/2026 à 08:30 » — la date et l'heure, dans le fuseau du salon. */
-export function formatDateTime(instant: Date, timeZone: string): string {
-  const time = new Intl.DateTimeFormat(LOCALE, {
+/**
+ * La date et l'heure, dans le fuseau du salon — « 17/09/2026 à 08:30 »,
+ * « 09/17/2026 at 8:30 AM ».
+ *
+ * Le cycle horaire suit la langue (`ReceiptVocabulary.hourCycle`) : 24 heures en
+ * français, 12 heures en anglais, comme l'un et l'autre s'écrivent. Le `printable`
+ * n'est pas décoratif sur l'heure anglaise non plus — certaines versions d'ICU
+ * glissent une espace fine insécable avant « AM », que Roboto ne porte pas.
+ */
+export function formatDateTime(instant: Date, timeZone: string, locale: Locale): string {
+  const words = receiptVocabulary(locale);
+  const time = new Intl.DateTimeFormat(words.intl, {
     timeZone,
     hour: '2-digit',
     minute: '2-digit',
-    hourCycle: 'h23',
+    hourCycle: words.hourCycle,
   }).format(instant);
 
-  return `${formatDate(instant, timeZone)} à ${printable(time)}`;
+  return `${formatDate(instant, timeZone, locale)} ${words.at} ${printable(time)}`;
 }
 
 /**
@@ -156,19 +186,24 @@ export function formatDateTime(instant: Date, timeZone: string): string {
  */
 export function formatSettlementMethod(
   settlement: Pick<ReceiptSettlement, 'method' | 'cardChannel' | 'terminalReference'>,
+  locale: Locale,
 ): string {
+  const words = receiptVocabulary(locale);
+
   if (settlement.method === 'CASH') {
-    return 'Espèces';
+    return words.cash;
   }
 
   if (settlement.cardChannel !== 'TERMINAL') {
-    return 'Carte bancaire (en ligne)';
+    return words.cardOnline;
   }
 
-  const label = 'Carte bancaire (TPE)';
+  const label = words.cardTerminal;
   const reference = settlement.terminalReference;
 
-  return reference === null || reference.trim() === '' ? label : `${label} — réf. ${reference}`;
+  return reference === null || reference.trim() === ''
+    ? label
+    : `${label} ${words.terminalReferencePrefix} ${reference}`;
 }
 
 /**
@@ -200,10 +235,27 @@ export function bookingUrl(appBaseUrl: string, tenantSlug: string): string {
  * préfixe d'établissement — que le salon saisit — et de chiffres, et rien ne
  * garantit que ce préfixe ne contienne jamais d'accent ni de séparateur de
  * chemin.
+ *
+ * ## Le nom suit la langue du document — #1230
+ *
+ * `facture-…` / `ticket-…` en français, `invoice-…` / `receipt-…` en anglais :
+ * le fichier qu'on télécharge est le document lui-même, et un dossier de
+ * téléchargements qui mêle les deux nommages n'aide personne. Le **numéro de
+ * pièce**, lui, ne bouge pas d'une langue à l'autre — c'est ce qui permet de
+ * retrouver la même vente quelle que soit la langue dans laquelle on l'a
+ * imprimée.
+ *
+ * `proforma` reste tel quel dans les deux langues : le mot est latin, et il est
+ * le même en français comme en anglais sur une pièce commerciale.
  */
-export function receiptFileName(receiptNumber: string | null, format: 'ticket-80' | 'a4'): string {
+export function receiptFileName(
+  receiptNumber: string | null,
+  format: 'ticket-80' | 'a4',
+  locale: Locale,
+): string {
+  const words = receiptVocabulary(locale);
   const stem = (receiptNumber ?? 'proforma').replaceAll(/[^A-Za-z0-9._-]/g, '-');
-  const suffix = format === 'a4' ? 'facture' : 'ticket';
+  const suffix = format === 'a4' ? words.invoiceFileStem : words.ticketFileStem;
 
   return `${suffix}-${stem}.pdf`;
 }
