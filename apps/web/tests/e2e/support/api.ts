@@ -73,6 +73,42 @@ async function exiger(
   throw new Error(`${contexte} : HTTP ${reponse.status()} — ${detail}`);
 }
 
+/** Un jeton déjà obtenu, et l'instant où il cesse d'être sûr. */
+interface SessionApi {
+  readonly jeton: string;
+  readonly echeance: number;
+}
+
+/**
+ * Les jetons déjà obtenus, par compte — #1129.
+ *
+ * Trois scénarios consécutifs redemandaient un jeton pour le **même** compte, à
+ * quelques secondes d'intervalle, alors qu'un jeton d'accès vaut un quart
+ * d'heure. C'était la moitié des neuf connexions que le ticket a relevées, pour
+ * un plafond de dix par minute et par cible (#1127).
+ *
+ * La portée est celle du processus de worker, et c'est exactement ce qu'il faut :
+ * la suite est séquentielle (`workers: 1`), donc un seul jeton par compte pour
+ * toute une passe — et un worker relancé après un échec repart d'une carte vide,
+ * ce qui est la bonne conduite quand on ne sait plus ce qui a cédé.
+ *
+ * Le jeton est une chaîne : le partager entre deux `APIRequestContext` ne pose
+ * aucune question, c'est un en-tête `Authorization` et rien d'autre.
+ */
+const SESSIONS = new Map<string, SessionApi>();
+
+/**
+ * La marge sous laquelle un jeton n'est plus rejoué — une minute.
+ *
+ * `JWT_EXPIRES_IN` vaut un quart d'heure par défaut (`env.schema.ts`) et la
+ * suite tient en quelques minutes : la relance est donc l'exception, pas la
+ * règle. Elle existe pour la passe longue — un `retries` qui rejoue une suite
+ * entière —, où un jeton périmé aurait fait rendre 401 à un appel de mise en
+ * situation, c'est-à-dire échouer un scénario pour une raison qui n'est pas la
+ * sienne.
+ */
+const MARGE_ECHEANCE_MS = 60_000;
+
 /**
  * Le jeton d'accès d'un compte de l'établissement d'essai.
  *
@@ -85,15 +121,28 @@ export async function connecter(
   request: APIRequestContext,
   email: string = COMPTES.manager,
 ): Promise<string> {
+  const ouverte = SESSIONS.get(email);
+  if (ouverte !== undefined && ouverte.echeance - Date.now() > MARGE_ECHEANCE_MS) {
+    return ouverte.jeton;
+  }
+
   const reponse = await request.post(`${BASE_API}/auth/login`, {
     data: { tenantSlug: SLUG, email, password: MOT_DE_PASSE },
   });
   await exiger(reponse, `connexion de ${email}`);
-  const corps = (await reponse.json()) as { accessToken?: string };
+  const corps = (await reponse.json()) as { accessToken?: string; expiresIn?: number };
   const jeton = corps.accessToken;
   if (jeton === undefined || jeton === '') {
     throw new Error(`connexion de ${email} : la réponse ne porte pas d'accessToken.`);
   }
+
+  // `expiresIn` est en secondes (`AuthTokensDto`). Absent ou aberrant, l'échéance
+  // tombe maintenant : le jeton sert à cet appel-ci et ne sera pas rejoué. Un
+  // repli écrit en dur ici mentirait sur une durée qui se règle par variable
+  // d'environnement.
+  const duree = typeof corps.expiresIn === 'number' && corps.expiresIn > 0 ? corps.expiresIn : 0;
+  SESSIONS.set(email, { jeton, echeance: Date.now() + duree * 1000 });
+
   return jeton;
 }
 
