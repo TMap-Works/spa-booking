@@ -299,6 +299,35 @@ export function formatMoneyCompact(
 }
 
 /**
+ * Ce que la langue emploie pour séparer les décimales et les milliers —
+ * « , » et l'espace fine insécable en français, « . » et « , » en anglais.
+ *
+ * Lu d'`Intl` plutôt que codé en dur, pour la même raison que
+ * {@link fractionDigitsOf} : une table locale finirait par diverger de CLDR, et
+ * c'est précisément ce que ce module refuse de faire pour l'affichage. Et la
+ * région y change bel et bien quelque chose, contrairement à ce qu'on pourrait
+ * supposer des deux seules langues du produit : `fr-FR` et `fr-CA` groupent tous
+ * deux à l'espace fine, mais `en-CH` groupe à l'apostrophe typographique
+ * (« 1’200.00 ») et `en-ZA` prend la virgule décimale du français.
+ *
+ * Le groupe est rendu tel quel, espace comprise : l'analyse s'en débarrasse de
+ * toute façon avec les autres blancs, et c'est la forme textuelle — « , » ou
+ * « . » — qui décide de la lecture groupée. Voir {@link splitAmountInput} pour
+ * le sort des séparateurs qui ne sont ni l'un ni l'autre.
+ */
+function separatorsOf(intlTag: string): { readonly decimal: string; readonly group: string } {
+  const parts = new Intl.NumberFormat(intlTag).formatToParts(12345.6);
+
+  return {
+    // Les replis ne devraient jamais servir — toute locale a un séparateur
+    // décimal —, mais `formatToParts` les déclare optionnels et un `undefined`
+    // glissé dans une expression régulière refuserait tous les montants.
+    decimal: parts.find((part) => part.type === 'decimal')?.value ?? '.',
+    group: parts.find((part) => part.type === 'group')?.value ?? '',
+  };
+}
+
+/**
  * Le montant en unité principale, **sans flottant**, avec le séparateur décimal
  * demandé — « 35,00 » ou « 35.00 » selon qui va le lire.
  *
@@ -328,14 +357,25 @@ function formatMajorUnits(amount: Money, decimalSeparator: string): string {
 }
 
 /**
- * Le montant tel qu'un champ de saisie le pré-remplit — « 35,00 », sans devise.
+ * Le montant tel qu'un champ de saisie le pré-remplit — « 35,00 » en français,
+ * « 35.00 » en anglais, sans devise ni séparateur de milliers.
  *
- * Virgule décimale : c'est ce que la locale `fr-FR` affiche, donc ce que la
- * gérante s'attend à relire dans le champ. `parseAmountInput` accepte de toute
- * façon les deux séparateurs au retour.
+ * Le séparateur décimal est **celui de la langue de l'écran** (#1123). Il était
+ * figé sur la virgule : le premier écran de saisie traduit affichait alors un
+ * total « €1,200.00 » au-dessus d'un champ pré-rempli « 1200,00 », et recoller
+ * dans ce champ le montant qu'on venait de lire se faisait refuser.
+ *
+ * Aucun séparateur de milliers, dans aucune des deux langues : un champ de
+ * formulaire se retape, et grouper « 1 200,00 » obligerait la gérante à
+ * reproduire une espace insécable pour corriger un prix. {@link parseAmountInput}
+ * sait de toute façon relire la forme groupée, qui est celle qu'on recopie depuis
+ * l'affichage.
  */
-export function formatAmountInput(amount: Money): string {
-  return formatMajorUnits(amount, ',');
+export function formatAmountInput(
+  amount: Money,
+  display: DisplayLocale = FALLBACK_DISPLAY,
+): string {
+  return formatMajorUnits(amount, separatorsOf(tag(display)).decimal);
 }
 
 /**
@@ -359,6 +399,81 @@ export function formatAmountMachine(amount: Money): string {
 }
 
 /**
+ * Un montant **groupé** dans la forme de la langue, indexé par son séparateur de
+ * milliers — « 1,200.50 » en anglais, « 1.200,50 » là où les deux rôles
+ * s'inversent.
+ *
+ * Le groupement est reconnu à sa **forme exacte** : un à trois chiffres, puis au
+ * moins un groupe de trois. C'est ce qui sépare « 1,200 » — mille deux cents sur
+ * un écran anglais — de « 19,90 », où la même virgule est celle qu'une
+ * francophone vient de taper dans un champ anglais. Sans cette exigence de trois
+ * chiffres, le second serait lu mille neuf cent quatre-vingt-dix.
+ *
+ * Littérales et non construites à la volée : deux expressions valent mieux qu'une
+ * `new RegExp` dont le contenu vient d'`Intl`.
+ */
+const GROUPED_AMOUNT: Readonly<Record<string, RegExp>> = {
+  ',': /^(\d{1,3}(?:,\d{3})+)(?:\.(\d*))?$/,
+  '.': /^(\d{1,3}(?:\.\d{3})+)(?:,(\d*))?$/,
+};
+
+/** N'importe quel nombre de chiffres, puis un séparateur décimal au plus. */
+const PLAIN_AMOUNT = /^(\d+)(?:[.,](\d*))?$/;
+
+/**
+ * Les deux parts d'un montant saisi — entière et décimale —, ou `null` si la
+ * chaîne n'est pas un nombre lisible.
+ *
+ * Deux lectures, essayées dans cet ordre, et **aucune devinette** au-delà :
+ *
+ * 1. la forme **groupée** de la langue, celle qu'on obtient en recopiant un
+ *    montant affiché : « 1,200.50 » lu sur un écran anglais, « 1 200,50 » sur un
+ *    écran français — dont les espaces sont déjà tombées ;
+ * 2. la forme **simple**, un séparateur décimal au plus, `,` ou `.` indifféremment.
+ *    C'est la tolérance que le troisième critère de #1123 demande : une virgule
+ *    tapée sur un écran anglais et un point tapé sur un écran français valent l'un
+ *    pour l'autre, parce que c'est ce qu'une personne fait réellement.
+ *
+ * Ce qui reste ambigu est **refusé** plutôt que deviné : « 1.200,50 » sur un
+ * écran anglais ne correspond à aucune des deux lectures, et rien ne dit si son
+ * auteur voulait mille deux cents ou un et deux dixièmes. Un prix faux vaut
+ * moins qu'un refus lisible.
+ */
+function splitAmountInput(
+  text: string,
+  group: string,
+): { readonly units: string; readonly fraction: string } | null {
+  // Espaces de groupement comprises : la classe `\s` de JavaScript couvre
+  // l'insécable (U+00A0) et l'espace fine insécable (U+202F), celles qu'`Intl`
+  // insère dans « 1 200,00 € » et qui reviennent telles quelles quand on recopie
+  // un montant affiché.
+  const blanksGone = text.replace(/\s/g, '');
+  // Et le séparateur de milliers qui n'est **ni** « , » ni « . » tombe avec
+  // elles : un salon suisse anglophone (`en-CH`) voit « 1’200.00 » dans la pile
+  // des totaux, et l'apostrophe typographique ne peut se lire comme une
+  // décimale — la retirer n'ouvre donc aucune ambiguïté. Les deux séparateurs qui
+  // en portent une, eux, restent à la charge de {@link GROUPED_AMOUNT}, qui
+  // exige la forme groupée complète avant de les effacer.
+  const cleaned =
+    group === '' || group === ',' || group === '.'
+      ? blanksGone
+      : blanksGone.split(group).join('');
+  const grouped = GROUPED_AMOUNT[group]?.exec(cleaned) ?? null;
+  const match = grouped ?? PLAIN_AMOUNT.exec(cleaned);
+
+  if (match === null) {
+    return null;
+  }
+
+  return {
+    // Les séparateurs de milliers de la lecture groupée n'ont plus rien à dire :
+    // seuls les chiffres comptent, et la conversion reste une concaténation.
+    units: (match[1] ?? '').replace(/[.,]/g, ''),
+    fraction: match[2] ?? '',
+  };
+}
+
+/**
  * « 35,00 » → `{ amountMinor: 3500, currency: 'EUR' }`, ou `null` si la saisie
  * n'est pas un montant de cette devise.
  *
@@ -370,30 +485,34 @@ export function formatAmountMachine(amount: Money): string {
  * l'ariary. Une saisie plus précise que la devise (« 35,005 » en euros) est
  * **refusée** plutôt qu'arrondie en silence : arrondir déciderait à la place de
  * la gérante du prix qu'elle vend.
+ *
+ * La langue de l'écran décide de la forme **groupée** qui sera reconnue (#1123),
+ * pas de ce qui est toléré : un point et une virgule restent interchangeables
+ * comme séparateur décimal dans les deux langues. Ce qu'elle garantit, c'est
+ * l'aller-retour — ce que {@link formatAmountInput} vient d'écrire se relit ici,
+ * en français comme en anglais. Voir {@link splitAmountInput}.
  */
-export function parseAmountInput(text: string, currency: string): Money | null {
-  // Même raison que `formatMajorUnits` : on ne lit ici que la précision de la
-  // devise, qui ne dépend d'aucune langue.
-  const digits = fractionDigitsOf(currency, tag(FALLBACK_DISPLAY));
-  // Espaces de groupement compris : la classe `\s` de JavaScript couvre
-  // l'insécable (U+00A0) et l'espace fine insécable (U+202F), celles qu'`Intl`
-  // insère dans « 1 200,00 € » et qui reviennent telles quelles quand on
-  // recopie un montant affiché.
-  const cleaned = text.replace(/\s/g, '').replace(',', '.');
-  const match = /^(\d+)(?:\.(\d*))?$/.exec(cleaned);
+export function parseAmountInput(
+  text: string,
+  currency: string,
+  display: DisplayLocale = FALLBACK_DISPLAY,
+): Money | null {
+  const intlTag = tag(display);
+  // La précision, elle, ne dépend d'aucune langue — c'est celle de la devise. Le
+  // même contexte est passé aux deux lectures pour n'avoir qu'une étiquette en
+  // circulation.
+  const digits = fractionDigitsOf(currency, intlTag);
+  const split = splitAmountInput(text, separatorsOf(intlTag).group);
 
-  if (match === null) {
+  if (split === null) {
     return null;
   }
 
-  const units = match[1] ?? '';
-  const fraction = match[2] ?? '';
-
-  if (fraction.length > digits) {
+  if (split.fraction.length > digits) {
     return null;
   }
 
-  const amountMinor = Number(`${units}${fraction.padEnd(digits, '0')}`);
+  const amountMinor = Number(`${split.units}${split.fraction.padEnd(digits, '0')}`);
 
   return amountMinor > AMOUNT_MINOR_MAX ? null : { amountMinor, currency };
 }
