@@ -1,11 +1,12 @@
 import type { PublicTenant } from '@spa/shared';
-import { useTranslations } from 'next-intl';
+import { useLocale, useTranslations } from 'next-intl';
 import type { CSSProperties, ReactNode } from 'react';
 
-import { openingStatus } from '@/components/salon/opening-hours';
+import { openingStatus, type HoursTranslator } from '@/components/salon/opening-hours';
 import { addressLines } from '@/components/salon/salon-address';
 import { Avatar } from '@/components/ui/avatar';
 import { Icon, type IconName } from '@/components/ui/icon';
+import type { DisplayLocale } from '@/lib/format';
 import { PHOTOS, type Photo } from '@/lib/photos';
 
 /**
@@ -113,8 +114,20 @@ interface SalonAuthScreenProps {
  * Un salon qui n'a publié ni adresse ni horaires ne produit aucun fait, et le
  * volet se borne alors à son identité : trois puces génériques valaient moins
  * que le silence, c'est le constat même de l'audit.
+ *
+ * `display` et `hours` viennent de l'écran (#1142) : `opening-hours.ts` est un
+ * module pur qui n'importe plus les catalogues — il embarquait `booking.json`
+ * entier, dans les deux langues, dans le bundle de tout Client Component qui
+ * l'atteignait. Ce cadre-ci y gagne au passage un état d'ouverture **traduit** :
+ * il se rendait jusqu'ici sur le repli français du module, quelle que soit la
+ * langue de la page.
  */
-function salonFacts(tenant: PublicTenant, now: Date): readonly SalonFact[] {
+function salonFacts(
+  tenant: PublicTenant,
+  now: Date,
+  display: DisplayLocale,
+  hours: HoursTranslator,
+): readonly SalonFact[] {
   const facts: SalonFact[] = [];
 
   if (tenant.address !== undefined) {
@@ -128,7 +141,7 @@ function salonFacts(tenant: PublicTenant, now: Date): readonly SalonFact[] {
     }
   }
 
-  const opening = openingStatus(tenant.openingHours ?? [], tenant.timezone, now);
+  const opening = openingStatus(tenant.openingHours ?? [], tenant.timezone, now, display, hours);
 
   if (opening !== null) {
     facts.push({ icon: 'clock', lines: [opening.label] });
@@ -159,13 +172,29 @@ export function SalonAuthScreen({
    * le français le met.
    */
   const t = useTranslations('auth.salon');
+  /*
+   * Le second traducteur, celui du namespace `booking` — les phrases d'état
+   * d'ouverture y vivent, sous `salon.hours`, parce que la vitrine les écrit
+   * aussi et qu'il n'y en a qu'une écriture (#1142). Il ne coûte rien à charger :
+   * le fournisseur du layout racine sert déjà tous les namespaces de la langue.
+   */
+  const hours = useTranslations('booking');
+  const locale = useLocale();
   const salonName = tenant?.name ?? null;
   const headline =
     salonName === null
       ? t(`${intent}.fallbackHeadline` as 'connexion.fallbackHeadline')
       : t(`${intent}.headline` as 'connexion.headline', { salonName });
   const lead = t(`${intent}.lead` as 'connexion.lead');
-  const facts = tenant === null ? [] : salonFacts(tenant, now);
+  const facts =
+    tenant === null
+      ? []
+      : salonFacts(
+          tenant,
+          now,
+          { locale, countryCode: tenant.address?.country ?? null } satisfies DisplayLocale,
+          hours,
+        );
 
   return (
     <div className="spa-auth spa-auth--salon">

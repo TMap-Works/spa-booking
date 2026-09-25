@@ -374,6 +374,14 @@ export function TenantSettingsForm({ tenantSlug, tenant }: TenantSettingsFormPro
   // chacun dans sa propre langue, et identiques dans les deux catalogues (#845).
   // Les redire ici en aurait fait une seconde écriture, qui aurait pu diverger.
   const languages = useTranslations('locale');
+  // Les noms de jours de la grille horaire viennent de `weekdayLabel`, et son
+  // repli « Jour {weekday} » vit dans le catalogue `booking` — là où la vitrine
+  // publique l'écrit. Ce module est pur et n'importe plus aucun catalogue
+  // (#1142) : sans cela, webpack agrégeait `booking.json` dans les deux langues
+  // au bundle de cet écran, soit quelque 11 kB pour un mot qui ne s'affiche
+  // jamais. Le fournisseur du layout racine sert déjà tous les namespaces de la
+  // langue : ce second traducteur ne charge rien de plus.
+  const hours = useTranslations('booking');
   const locale = useLocale() as Locale;
   const router = useRouter();
   const { renewIfExpired } = useAdminSessionRenewal(tenantSlug);
@@ -728,7 +736,7 @@ export function TenantSettingsForm({ tenantSlug, tenant }: TenantSettingsFormPro
           <div className="spa-admin-schedule">
             {WEEKDAYS.map((weekday, dayIndex) => {
               const display = { locale, countryCode: tenant.address?.country ?? null };
-              const day = weekdayLabel(weekday, display);
+              const day = weekdayLabel(weekday, display, hours);
               /*
                * Le même jour, au fil d'une phrase — c'est lui qui part dans les
                * noms accessibles, « Ouverture 1 du lundi ».

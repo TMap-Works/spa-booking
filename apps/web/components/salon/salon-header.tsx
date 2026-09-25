@@ -89,10 +89,12 @@ interface SalonHeaderProps {
  * ville, eux, sont du contenu : ils s'insèrent en paramètre de l'accroche et ne
  * se traduisent pas.
  *
- * L'état d'ouverture est calculé par `opening-hours.ts`, à qui la langue est
- * passée : c'est lui qui écrit « Ouvert — ferme à 19:00 », parce que la phrase
- * dépend de la branche empruntée. Le fuseau, lui, reste celui de
- * l'établissement — la langue n'y touche pas.
+ * L'état d'ouverture est calculé par `opening-hours.ts`, à qui la langue **et le
+ * traducteur** sont passés : c'est lui qui écrit « Ouvert — ferme à 19:00 »,
+ * parce que la phrase dépend de la branche empruntée, mais il ne lit plus le
+ * catalogue lui-même (#1142) — un module pur atteignable côté client en aurait
+ * embarqué les deux langues entières dans le bundle. Le fuseau, lui, reste celui
+ * de l'établissement — la langue n'y touche pas.
  *
  * ## Ce que l'accroche promet, elle le tient (#773)
  *
@@ -111,7 +113,7 @@ export function SalonHeader({ tenant, reservationHref, now = new Date() }: Salon
   const locale = useLocale();
   const display: DisplayLocale = { locale, countryCode: tenant.address?.country ?? null };
   const locality = addressLocality(tenant.address);
-  const status = openingStatus(tenant.openingHours ?? [], tenant.timezone, now, display);
+  const status = openingStatus(tenant.openingHours ?? [], tenant.timezone, now, display, t);
   const directions = tenant.address === undefined ? null : directionsUrl(tenant.name, tenant.address);
 
   return (

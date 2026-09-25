@@ -1,8 +1,6 @@
-import type { Locale, OpeningHoursEntry } from '@spa/shared';
+import type { OpeningHoursEntry } from '@spa/shared';
 
 import { formattingLocale, type DisplayLocale } from '@/lib/format';
-import en from '@/messages/en/booking.json';
-import fr from '@/messages/fr/booking.json';
 
 /**
  * Présentation des horaires d'ouverture de la vitrine (#343).
@@ -31,48 +29,65 @@ import fr from '@/messages/fr/booking.json';
  * - **les phrases** — « Fermé », « Ouvert — ferme à 19:00 » — viennent du
  *   catalogue, comme tout ce qu'un humain lit.
  *
- * Ce module est **pur et sans React** : il ne peut appeler aucun crochet. Il lit
- * donc les deux catalogues par import direct, exactement comme `lib/format.ts`
- * pour les mots qu'`Intl` ne sait pas dire et comme `public-exits.tsx` pour son
- * registre de sorties. Le mécanisme est le même, et la raison aussi : trois
- * appelants de ce module vivent hors de l'empreinte de #846 — la carte du salon
- * de l'espace client, le cadre d'accueil de la connexion et la grille horaire
- * des réglages — et un libellé rendu sous forme de clé les aurait cassés tous
- * les trois.
+ * Ce module est **pur et sans React** : il ne peut appeler aucun crochet.
  *
- * Chaque fonction qui écrit un mot reçoit donc un `DisplayLocale` **en dernier
- * paramètre, facultatif**. Le défaut est le français, celui d'avant le ticket :
- * il tombera avec le dernier ticket d'écran de l'épique #843, et `tsc` nommera
- * alors ce qui reste à brancher. Même arbitrage, et mêmes mots, que
- * `FALLBACK_LOCALE` de `lib/format.ts`.
+ * ## Il n'importe plus aucun catalogue (#1142)
+ *
+ * Il a lu les deux catalogues par import direct le temps de #846, et cela
+ * coûtait cher : ce module est atteignable depuis des Client Components — la
+ * grille horaire des réglages, la carte du salon de l'espace client —, webpack
+ * suivait donc l'import et agrégeait `booking.json` **entier, dans les deux
+ * langues**, dans leurs bundles, pour six chaînes réellement lues. Quelque 11 kB
+ * de First Load JS par écran, en pure duplication : ces mêmes chaînes atteignent
+ * déjà le navigateur par `NextIntlClientProvider`.
+ *
+ * Chaque fonction qui écrit un mot reçoit donc, **en derniers paramètres et tous
+ * deux obligatoires**, le contexte d'affichage et le **traducteur du namespace
+ * `booking`** de son appelant. Le module dit *quoi* dire — il choisit la clé et
+ * la branche —, l'appelant dit dans quelle langue. C'est la forme que l'épique
+ * #843 prescrit à un module pur, et exactement celle de `lib/booking/consent.tsx`
+ * depuis #1264.
+ *
+ * Un traducteur et non six chaînes résolues : quatre des six phrases portent des
+ * paramètres (`{time}`, `{day}`, `{weekday}`), et c'est ce module qui décide
+ * laquelle est écrite. Les lui faire toutes préparer par l'appelant reviendrait à
+ * lui faire porter la branche.
+ *
+ * Les défauts français — `FALLBACK_DISPLAY` et le `fill` maison — sont tombés du
+ * même geste, ce que l'en-tête d'hier annonçait pour la fin de l'épique #843 :
+ * `tsc` nomme désormais tout appelant qui ne résout pas la langue, au lieu de le
+ * laisser rendre du français sur un écran anglais.
  */
-
-/** Les catalogues, dans les deux langues — la même source que les composants. */
-const CATALOG = { fr, en } as const;
-
-/** Le contexte d'affichage employé quand l'appelant n'en passe pas encore. */
-const FALLBACK_DISPLAY: DisplayLocale = { locale: 'fr' };
-
-/** Les phrases de cette section du catalogue, dans la langue demandée. */
-function words(display: DisplayLocale): (typeof CATALOG)[Locale]['salon']['hours'] {
-  return CATALOG[display.locale].salon.hours;
-}
 
 /**
- * Le remplacement des paramètres d'un message lu **hors de React**.
+ * Les six phrases que ce module écrit, sous les clés du namespace `booking`.
  *
- * Même raison, et même forme, que le `fill` de `lib/format.ts` : ce module est
- * fait de fonctions pures, appelées depuis des Server Components et depuis des
- * tests sans DOM, où aucun crochet de `next-intl` n'est disponible. Les messages
- * concernés n'ont qu'un ou deux paramètres et aucune forme plurielle — un
- * remplacement littéral suffit.
+ * Énumérées plutôt que déduites d'un gabarit, pour la raison que
+ * `lib/booking/consent.tsx` donne à sa propre liste : le traducteur de
+ * `next-intl` est typé sur les clés **exactes** du catalogue, et une union plus
+ * large que la sienne ne l'accepterait pas en paramètre. La liste fait donc aussi
+ * office d'inventaire — la clé qui manquerait dans l'un des deux catalogues
+ * échoue à la compilation, et non à l'affichage.
  */
-function fill(message: string, values: Readonly<Record<string, string>>): string {
-  return Object.entries(values).reduce(
-    (text, [name, value]) => text.replaceAll(`{${name}}`, value),
-    message,
-  );
-}
+export type HoursMessageKey =
+  | 'salon.hours.unknownDay'
+  | 'salon.hours.closed'
+  | 'salon.hours.openUntil'
+  | 'salon.hours.closedOpensAt'
+  | 'salon.hours.closedOpensTomorrow'
+  | 'salon.hours.closedOpensOnDay';
+
+/**
+ * Le traducteur du namespace `booking`, réduit à ce que ce module demande.
+ *
+ * Il accepte aussi bien celui de `useTranslations('booking')` que celui d'un
+ * `await getTranslations('booking')` : un traducteur qui connaît **plus** de clés
+ * se passe pour un traducteur qui en demande moins.
+ */
+export type HoursTranslator = (
+  key: HoursMessageKey,
+  values?: Readonly<Record<string, string>>,
+) => string;
 
 /** Les sept jours, en numérotation ISO — l'ordre de la carte « Horaires ». */
 const ISO_WEEK = [1, 2, 3, 4, 5, 6, 7] as const;
@@ -139,12 +154,15 @@ function weekdayName(weekday: number, display: DisplayLocale): string | null {
  */
 export function weekdayLabel(
   weekday: number,
-  display: DisplayLocale = FALLBACK_DISPLAY,
+  display: DisplayLocale,
+  t: HoursTranslator,
 ): string {
   const name = weekdayName(weekday, display);
 
   if (name === null) {
-    return fill(words(display).unknownDay, { weekday: String(weekday) });
+    // `String(weekday)` et non le nombre : un paramètre numérique serait mis en
+    // forme par la locale du message, et « Jour 1 000 » n'est pas un jour.
+    return t('salon.hours.unknownDay', { weekday: String(weekday) });
   }
 
   const tag = formattingLocale(display.locale, display.countryCode);
@@ -170,10 +188,18 @@ export const SCHEMA_ORG_WEEKDAYS: Readonly<Record<number, string>> = {
   7: 'https://schema.org/Sunday',
 };
 
-/** Une journée d'ouverture, telle que la section « informations pratiques » la rend. */
+/**
+ * Une journée d'ouverture publiée, telle que la carte du salon la rend.
+ *
+ * **Aucun libellé** (#1142) : le seul appelant — la carte du salon de l'espace
+ * client — ne cherche ici que les plages du jour courant, et n'a jamais rendu de
+ * nom de jour. Le lui faire porter l'obligeait à réclamer le traducteur du
+ * namespace `booking` pour un mot qu'il jette, alors qu'il lit le namespace
+ * `account`. Le nom d'un jour s'obtient par {@link weekdayLabel}, qui reste le
+ * point d'écriture unique.
+ */
 export interface OpeningDay {
   readonly weekday: number;
-  readonly label: string;
   /** Les plages du jour, dans l'ordre où l'API les a rendues. */
   readonly ranges: readonly OpeningHoursEntry[];
 }
@@ -185,10 +211,12 @@ export interface OpeningDay {
  * Afficher « Lundi : fermé » demanderait de savoir que le salon a bien voulu
  * dire « fermé » et non « pas encore saisi », et l'API ne distingue pas les
  * deux — elle omet les horaires plutôt que de rendre une semaine vide.
+ *
+ * Aucun mot ici, et donc ni langue ni traducteur à passer : ce que rend cette
+ * fonction est une journée et ses plages, que l'appelant nomme s'il le veut.
  */
 export function groupOpeningHoursByDay(
   entries: readonly OpeningHoursEntry[],
-  display: DisplayLocale = FALLBACK_DISPLAY,
 ): readonly OpeningDay[] {
   const days: OpeningDay[] = [];
   const byWeekday = new Map<number, OpeningHoursEntry[]>();
@@ -199,11 +227,7 @@ export function groupOpeningHoursByDay(
     if (existing === undefined) {
       const ranges: OpeningHoursEntry[] = [entry];
       byWeekday.set(entry.weekday, ranges);
-      days.push({
-        weekday: entry.weekday,
-        label: weekdayLabel(entry.weekday, display),
-        ranges,
-      });
+      days.push({ weekday: entry.weekday, ranges });
       continue;
     }
 
@@ -278,8 +302,11 @@ export interface ScheduledDay {
  *
  * `groupOpeningHoursByDay` ci-dessus n'affiche que les jours reçus, au motif —
  * exact — que l'API ne distingue pas « le salon ferme le lundi » de « le salon
- * n'a pas encore saisi ses horaires ». Elle reste employée par les données
- * structurées, qui ne doivent affirmer que ce qui a été publié.
+ * n'a pas encore saisi ses horaires ». Elle reste employée par la carte du salon
+ * de l'espace client (`components/account/salon-aside.tsx`), qui n'y cherche que
+ * les plages du jour courant et ne doit affirmer que ce qui a été publié. Les
+ * données structurées, elles, ne passent pas par ici : `structured-data.tsx`
+ * compose son `openingHoursSpecification` directement sur `tenant.openingHours`.
  *
  * Pour un lecteur humain, la distinction se tranche un cran plus haut : dès que
  * le salon a publié **une** plage, sa semaine est saisie, et un jour qui n'y
@@ -296,7 +323,8 @@ export interface ScheduledDay {
  */
 export function weekSchedule(
   entries: readonly OpeningHoursEntry[],
-  display: DisplayLocale = FALLBACK_DISPLAY,
+  display: DisplayLocale,
+  t: HoursTranslator,
 ): readonly ScheduledDay[] {
   if (entries.length === 0) {
     return [];
@@ -304,7 +332,7 @@ export function weekSchedule(
 
   return ISO_WEEK.map((weekday) => ({
     weekday,
-    label: weekdayLabel(weekday, display),
+    label: weekdayLabel(weekday, display, t),
     ranges: entries.filter((entry) => entry.weekday === weekday),
   }));
 }
@@ -393,9 +421,9 @@ export interface OpeningStatus {
  * fonction testable sans geler l'horloge du processus, et c'est la page qui
  * décide de l'instant — elle est rendue à chaque requête (`force-dynamic`).
  *
- * `display` est le dernier paramètre, et il est facultatif : les phrases
- * viennent du catalogue (#846), et le défaut français garde le comportement
- * d'avant le ticket pour les appelants hors empreinte — voir l'en-tête.
+ * `display` et `t` sont les deux derniers paramètres, et tous deux obligatoires :
+ * les phrases viennent du catalogue (#846) et c'est l'appelant qui l'ouvre
+ * (#1142) — voir l'en-tête.
  *
  * `null` quand le salon n'a publié aucun horaire, ou quand son fuseau est
  * illisible : on ne dit rien plutôt que de dire faux. Un salon annoncé « fermé »
@@ -405,7 +433,8 @@ export function openingStatus(
   entries: readonly OpeningHoursEntry[],
   timezone: string,
   now: Date,
-  display: DisplayLocale = FALLBACK_DISPLAY,
+  display: DisplayLocale,
+  t: HoursTranslator,
 ): OpeningStatus | null {
   if (entries.length === 0) {
     return null;
@@ -430,13 +459,13 @@ export function openingStatus(
     }
 
     if (clock.minutes >= opens && clock.minutes < closes) {
-      return { open: true, label: fill(words(display).openUntil, { time: entry.closesAt }) };
+      return { open: true, label: t('salon.hours.openUntil', { time: entry.closesAt }) };
     }
   }
 
-  const next = nextOpening(entries, clock, display);
+  const next = nextOpening(entries, clock, display, t);
 
-  return { open: false, label: next ?? words(display).closed };
+  return { open: false, label: next ?? t('salon.hours.closed') };
 }
 
 /**
@@ -459,6 +488,7 @@ function nextOpening(
   entries: readonly OpeningHoursEntry[],
   clock: SalonClock,
   display: DisplayLocale,
+  t: HoursTranslator,
 ): string | null {
   for (let offset = 0; offset <= ISO_WEEK.length; offset += 1) {
     const weekday = ((clock.weekday - 1 + offset) % ISO_WEEK.length) + 1;
@@ -480,15 +510,15 @@ function nextOpening(
     const time = formatWallMinutes(earliest);
 
     if (offset === 0) {
-      return fill(words(display).closedOpensAt, { time });
+      return t('salon.hours.closedOpensAt', { time });
     }
 
     if (offset === 1) {
-      return fill(words(display).closedOpensTomorrow, { time });
+      return t('salon.hours.closedOpensTomorrow', { time });
     }
 
-    return fill(words(display).closedOpensOnDay, {
-      day: weekdayName(weekday, display) ?? weekdayLabel(weekday, display),
+    return t('salon.hours.closedOpensOnDay', {
+      day: weekdayName(weekday, display) ?? weekdayLabel(weekday, display, t),
       time,
     });
   }

@@ -4,7 +4,7 @@ import { useTranslations } from 'next-intl';
 import { formatAmountMachine } from '@/lib/format';
 import fr from '@/messages/fr/booking.json';
 
-import { groupServicesByCategory, UNCLASSIFIED_TITLE } from './group-services';
+import { groupServicesByCategory } from './group-services';
 import { SCHEMA_ORG_WEEKDAYS } from './opening-hours';
 
 /**
@@ -145,11 +145,19 @@ export interface SalonGraphLabels {
  *
  * Lus dans le catalogue et non réécrits : c'est ce qui garantit que le graphe et
  * la page annoncent le même nom de rubrique.
+ *
+ * L'import du catalogue reste ici, et nulle part en amont (#1142) : ce fichier
+ * est un **Server Component** — la liste fermée des îlots clients de
+ * `components/salon/` est vérifiée par `tests/unit/salon-structured-data.test.tsx`
+ * —, webpack n'en suit donc l'import pour aucun bundle de navigateur. C'est
+ * précisément ce qui n'était pas vrai de `group-services.ts`, où ce même repli
+ * vivait : atteignable depuis l'étape « prestation » du tunnel, il y embarquait
+ * `booking.json` entier.
  */
 function fallbackLabels(tenantName: string): SalonGraphLabels {
   return {
     catalogName: fr.salon.structuredData.catalogName.replace('{name}', tenantName),
-    unclassified: UNCLASSIFIED_TITLE,
+    unclassified: fr.salon.catalog.unclassified,
   };
 }
 

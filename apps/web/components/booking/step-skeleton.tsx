@@ -206,9 +206,16 @@ interface ServiceListSkeletonProps {
  * Le découpage vient de `groupServicesByCategory`, consommé ici comme
  * `ServiceChoice` le consomme : deux lectures du même catalogue donneraient deux
  * hauteurs, et la seconde ferait sauter la page.
+ *
+ * Le titre de la rubrique fictive est demandé au catalogue comme partout ailleurs
+ * (#1142), bien que ce dessin n'en rende aucun : c'est le prix d'un paramètre
+ * devenu obligatoire, et il est nul — le namespace est déjà servi à cette page,
+ * et passer une chaîne vide aurait été écrire un libellé faux dans l'espoir que
+ * personne ne le lise.
  */
 function ServiceListSkeleton({ services, selectedServiceId }: ServiceListSkeletonProps) {
-  const sections = groupServicesByCategory(services);
+  const t = useTranslations('booking');
+  const sections = groupServicesByCategory(services, t('salon.catalog.unclassified'));
   const open =
     sections.find((section) =>
       section.services.some((service) => service.id === selectedServiceId),

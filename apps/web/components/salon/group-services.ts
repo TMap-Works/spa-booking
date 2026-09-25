@@ -19,15 +19,20 @@
  * le salon a saisis, et ils ne se traduisent pas.
  *
  * Ce module est pur et sans React : il ne peut appeler aucun crochet. Le titre
- * traduit lui est donc **passé en dernier paramètre, facultatif** — c'est la
- * forme que le brief de l'épique #843 prescrit pour un helper — et le défaut
- * reste le français, pour le seul appelant qui ne le résout pas : le squelette
- * de l'étape « prestation », qui ne rend aucun titre.
+ * traduit lui est donc **passé en dernier paramètre** — c'est la forme que le
+ * brief de l'épique #843 prescrit pour un helper.
+ *
+ * ## Il n'importe plus le catalogue (#1142)
+ *
+ * Ce paramètre a été facultatif, avec un défaut français lu dans
+ * `messages/fr/booking.json`. Or ce module est atteignable depuis des Client
+ * Components — l'étape « prestation » du tunnel et son squelette : webpack
+ * suivait l'import et agrégeait le catalogue entier dans leur bundle, pour un
+ * seul mot. Le paramètre est donc **obligatoire**, et `tsc` nomme désormais
+ * l'appelant qui ne résout pas la langue.
  */
 
 import type { PublicService, ServiceCategorySummary } from '@spa/shared';
-
-import fr from '@/messages/fr/booking.json';
 
 /**
  * Clé de la rubrique fictive qui recueille les prestations non classées.
@@ -42,20 +47,6 @@ import fr from '@/messages/fr/booking.json';
  * la collision de clés est impossible.
  */
 export const UNCLASSIFIED_KEY = 'sans-rubrique';
-
-/**
- * Titre affiché pour ces prestations-là, en français.
- *
- * @deprecated Transitoire (#846). Lu dans le catalogue plutôt que réécrit ici,
- * pour qu'il n'y ait qu'une écriture de ce libellé ; les appelants qui résolvent
- * la langue passent le leur en paramètre de `groupServicesByCategory`. Le seul
- * à ne pas le faire est `components/booking/step-skeleton.tsx`, et c'est sans
- * conséquence : son dessin ne rend aucun titre — il ne se sert du groupement que
- * pour compter les lignes à réserver. Même arbitrage que `PUBLIC_EXIT_LABELS` :
- * garder le français évite de basculer en anglais des écrans dont la traduction
- * n'a pas encore été relue.
- */
-export const UNCLASSIFIED_TITLE: string = fr.salon.catalog.unclassified;
 
 /** Une rubrique du catalogue et les prestations qu'elle porte. */
 export interface CatalogSection {
@@ -80,12 +71,11 @@ export interface CatalogSection {
  *   catalogue se lit comme une rubrique du salon, ce qu'elle n'est pas.
  *
  * `unclassifiedTitle` est le seul mot que l'appelant a à fournir (#846) : les
- * autres titres sont ceux du salon. Facultatif, il retombe sur le français —
- * voir {@link UNCLASSIFIED_TITLE}.
+ * autres titres sont ceux du salon. Obligatoire depuis #1142 — voir l'en-tête.
  */
 export function groupServicesByCategory(
   services: readonly PublicService[],
-  unclassifiedTitle: string = UNCLASSIFIED_TITLE,
+  unclassifiedTitle: string,
 ): readonly CatalogSection[] {
   const sections = new Map<string, { category: ServiceCategorySummary | null; services: PublicService[] }>();
 
