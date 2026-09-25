@@ -1,4 +1,4 @@
-import { E164_PATTERN, normalizeToE164 } from '@spa/shared';
+import { DEFAULT_LOCALE, E164_PATTERN, isLocale, normalizeToE164, type Locale } from '@spa/shared';
 import {
   getCountryCallingCode,
   getExampleNumber,
@@ -23,8 +23,34 @@ import examples from 'libphonenumber-js/mobile/examples';
  * personnel) formatent avec les mêmes fonctions que le champ de saisie.
  */
 
-/** Les langues dans lesquelles le champ sait parler — l'anglais d'abord (#843). */
-export type PhoneLocale = 'en' | 'fr';
+/**
+ * Les langues dans lesquelles le champ sait parler — celles du contrat (#843).
+ *
+ * Un alias de `Locale` et non une union recopiée : les deux tables de ce module
+ * (`MESSAGES`) et celle du champ (`TEXTS`) sont indexées par cette clé, et une
+ * troisième langue ajoutée à `LOCALES` doit faire échouer la compilation ici
+ * plutôt que se traduire, à l'écran, par un repli silencieux.
+ */
+export type PhoneLocale = Locale;
+
+/**
+ * La langue du champ à partir de celle de la session (#1267).
+ *
+ * `useLocale()` de `next-intl` rend une `string` : la configuration garantit
+ * qu'elle est l'une des deux, le type ne le dit pas. Cette fonction le
+ * **vérifie** plutôt que de le supposer — un `as PhoneLocale` sur une valeur
+ * inconnue indexerait `MESSAGES` sur `undefined` et ferait lever le champ à
+ * l'affichage d'un refus.
+ *
+ * Le repli est `DEFAULT_LOCALE`, la dernière étape de `resolveLocale`
+ * (`i18n/resolve.ts`) : quand rien n'est exploitable, le produit sert l'anglais.
+ * Le repli `'fr'` que #845 avait posé sur la propriété de `PhoneField`, à titre
+ * transitoire, disparaît du même coup — c'est lui qui faisait parler français
+ * six écrans anglais sur sept.
+ */
+export function resolvePhoneLocale(locale: string | null | undefined): PhoneLocale {
+  return isLocale(locale) ? locale : DEFAULT_LOCALE;
+}
 
 /**
  * Le pays de repli quand l'établissement n'en a pas publié.

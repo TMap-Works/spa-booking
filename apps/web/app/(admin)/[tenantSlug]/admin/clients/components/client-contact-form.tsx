@@ -234,16 +234,13 @@ export function ClientContactForm({ tenantSlug, customer }: ClientContactFormPro
             autoComplete="off"
             hint={t('phoneHint')}
             /*
-             * La langue du sélecteur de pays (#852).
-             *
-             * `PhoneField` retombe sur `'fr'` à défaut — le repli transitoire de
-             * #845, que chaque ticket d'écran remplace par la langue résolue.
-             * Sans lui, le bouton du drapeau s'annonçait « Pays de l'indicatif :
-             * États-Unis (+1) » au milieu d'un formulaire anglais, et sa
-             * recherche de pays classait les noms français d'abord. Constat fait
-             * au navigateur pendant la recette.
+             * Plus de propriété `locale` (#1267) : `PhoneField` lit lui-même la
+             * langue de la session. #852 la passait ici parce que le champ
+             * retombait sinon sur `'fr'` — le repli transitoire de #845, qui
+             * annonçait « Pays de l'indicatif : États-Unis (+1) » au milieu d'un
+             * formulaire anglais. Ce repli n'existe plus, et les sept écrans qui
+             * montent ce champ en profitent, non plus le seul qui y pensait.
              */
-            locale={locale}
             invalid={fieldState.invalid}
             value={field.value}
             onChange={field.onChange}
