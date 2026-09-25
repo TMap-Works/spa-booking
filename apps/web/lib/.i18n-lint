@@ -1,0 +1,8 @@
+# Marqueur de lint i18n — voir eslint-rules/i18n-markers.mjs.
+# Marqueur **énumérant** et non vide : `lib/` porte encore des modules dont les
+# libellés attendent leur ticket de l'épique #843, et un marqueur vide aurait
+# allumé la règle sur tout le sous-arbre, `lib/admin/` compris.
+#
+# Le registre des photographies, dont les huit textes alternatifs sont passés au
+# catalogue par #1233 : il n'en garde que la clé.
+photos.ts
