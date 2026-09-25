@@ -30,9 +30,34 @@
  * lui interdit déjà toute donnée d'établissement ou de cliente
  * (tenant-isolation §4) : le traverser jusqu'à l'écran n'ouvre donc aucune
  * fuite que le corps d'erreur n'ouvrait pas.
+ *
+ * ## Et `message` se dit dans la langue de la session — #1234
+ *
+ * Il venait du corps d'erreur de l'API, c'est-à-dire **en français** : l'API n'a
+ * pas de langue de requête, ses `DomainError` sont écrites une fois pour le
+ * journal et pour le diagnostic. Une quinzaine d'écrans du back-office affichent
+ * ce `message` tel quel — `staff-profile-panel.tsx`, `service-form.tsx`,
+ * `client-picker.tsx`… — et redevenaient donc bilingues au premier refus.
+ *
+ * La phrase vient désormais de `errorMessage(code, locale)` du contrat partagé,
+ * comme l'espace client le fait depuis #847 : une table bilingue adossée à
+ * `ERROR_CODES`, où un code inconnu — les `HTTP_<statut>` que le filtre
+ * d'exception de l'API fabrique — retombe sur la phrase générique
+ * d'`INTERNAL_ERROR`. C'est ce qui rend vrai *« aucun écran ne retombe sur un
+ * message brut de l'API »* en **un seul point** plutôt qu'en quinze.
+ *
+ * Le prix est assumé : un refus que l'API détaillait dans son message se dit
+ * maintenant par la phrase de son code. Ce qui distinguait deux refus d'un même
+ * code n'a jamais tenu dans cette phrase — c'est `details` qui le porte (#1210),
+ * et c'est lui que l'écran lit pour conduire vers le geste qui débloque.
+ *
+ * D'où des fonctions **asynchrones** : la langue se lit sur la requête. Leurs
+ * appelants sont tous des actions serveur qui font `return failure(error)` — une
+ * fonction `async` déballe la promesse qu'on lui rend, et aucun d'eux n'a changé.
  */
 
-import { ERROR_CODES } from '@spa/shared';
+import { ERROR_CODES, errorMessage } from '@spa/shared';
+import { getLocale } from 'next-intl/server';
 
 import { ApiClientError } from '@/lib/api-client';
 
@@ -56,17 +81,22 @@ export type AdminActionResult<TData> =
   | { readonly ok: true; readonly data: TData }
   | AdminActionFailure;
 
-/** Traduit une erreur remontée de l'API — ou n'importe quelle autre — en refus. */
-export function failure(error: unknown): AdminActionFailure {
+/**
+ * Traduit une erreur remontée de l'API — ou n'importe quelle autre — en refus.
+ *
+ * Ce qui n'est pas une `ApiClientError` n'a pas de code : une panne du rendu,
+ * une action serveur qui lève. `INTERNAL_ERROR` est ce que l'écran doit en
+ * comprendre, et sa phrase générique est ce qu'il affiche.
+ */
+export async function failure(error: unknown): Promise<AdminActionFailure> {
+  const code = error instanceof ApiClientError ? error.code : ERROR_CODES.INTERNAL_ERROR;
+  const message = errorMessage(code, await getLocale());
+
   if (error instanceof ApiClientError) {
-    return { ok: false, code: error.code, message: error.message, details: error.details };
+    return { ok: false, code, message, details: error.details };
   }
 
-  return {
-    ok: false,
-    code: ERROR_CODES.INTERNAL_ERROR,
-    message: 'Une erreur inattendue est survenue. Merci de réessayer.',
-  };
+  return { ok: false, code, message };
 }
 
 /** Refus de validation : l'appel n'a même pas atteint l'API. */
@@ -89,11 +119,16 @@ export function invalid(message: string): AdminActionFailure {
  * (#48, #458). Elle retombe d'elle-même sur l'écran de connexion quand le jeton
  * de rafraîchissement manque ou que l'API le refuse : c'est là que s'arrête le
  * chemin, et il ne boucle pas (voir `session/refresh/route.ts`).
+ *
+ * Sa phrase est celle d'`UNAUTHORIZED` dans le contrat partagé (#1234) : elle
+ * n'est affichée que si un écran ne sait pas renouveler, et il n'y a aucune
+ * raison qu'elle diffère alors de celle que tous les autres refus de session
+ * emploient.
  */
-export function expired(): AdminActionFailure {
+export async function expired(): Promise<AdminActionFailure> {
   return {
     ok: false,
     code: ERROR_CODES.UNAUTHORIZED,
-    message: 'Votre session a expiré. Reconnectez-vous pour continuer.',
+    message: errorMessage(ERROR_CODES.UNAUTHORIZED, await getLocale()),
   };
 }

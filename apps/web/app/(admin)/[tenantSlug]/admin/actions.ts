@@ -13,10 +13,28 @@
  *   vienne du formulaire ; l'API revalidera de son côté (web-frontend §4). Les
  *   schémas sont ceux de `@spa/shared` — la même règle des deux côtés, écrite
  *   une fois.
+ *
+ * ## Les refus se disent par leur code — #1234
+ *
+ * Ces actions rendaient des phrases françaises en dur — « Établissement
+ * inconnu. », « Langue inconnue. », « Renseignez votre adresse e-mail et votre
+ * mot de passe. ». Aucune n'est affichée aujourd'hui, les écrans de connexion et
+ * d'invitation triant sur le `code` (`admin-login-form.tsx`,
+ * `admin-invitation-form.tsx`) — mais une phrase en dur finit toujours par
+ * s'afficher, et celle-ci l'aurait fait en français sur un back-office anglais.
+ *
+ * Elles passent donc par `errorMessage(code, locale)` du contrat partagé, comme
+ * `reglages/actions.ts` et comme `action-result.ts` pour tout le reste du
+ * back-office. Toujours `VALIDATION_ERROR`, et jamais un code choisi pour la
+ * phrase qu'il porte : c'est le code qu'`invalid()` pose, et une phrase qui
+ * dirait autre chose que son code rendrait le refus illisible pour l'écran, qui
+ * trie sur le code.
  */
 
 import {
+  ERROR_CODES,
   acceptInvitationRequestSchema,
+  errorMessage,
   loginRequestSchema,
   slugSchema,
   submittedLocaleSchema,
@@ -25,6 +43,7 @@ import {
   type SessionUser,
   type Tenant,
 } from '@spa/shared';
+import { getLocale } from 'next-intl/server';
 import { cookies } from 'next/headers';
 
 import {
@@ -62,7 +81,7 @@ export async function adminLoginAction(
   const parsed = loginRequestSchema.safeParse(credentials);
 
   if (!slug.success || !parsed.success) {
-    return invalid('Renseignez votre adresse e-mail et votre mot de passe.');
+    return invalid(errorMessage(ERROR_CODES.VALIDATION_ERROR, await getLocale()));
   }
 
   try {
@@ -89,11 +108,12 @@ export async function adminAcceptInvitationAction(
   const parsed = acceptInvitationRequestSchema.safeParse(values);
 
   if (!slug.success || !parsed.success) {
-    return invalid(
-      parsed.success
-        ? 'Établissement inconnu.'
-        : (parsed.error.issues[0]?.message ?? 'Le mot de passe choisi est invalide.'),
-    );
+    const generique = errorMessage(ERROR_CODES.VALIDATION_ERROR, await getLocale());
+
+    // Le premier refus du schéma quand il en nomme un — c'est ce qui distingue
+    // « douze caractères au minimum » d'un mot de passe absent. À défaut, la
+    // phrase du code, et non un littéral : voir l'en-tête de ce module.
+    return invalid(parsed.success ? generique : (parsed.error.issues[0]?.message ?? generique));
   }
 
   try {
@@ -116,7 +136,7 @@ export async function adminLogoutAction(tenantSlug: string): Promise<AdminAction
   const slug = slugSchema.safeParse(tenantSlug);
 
   if (!slug.success) {
-    return invalid('Établissement inconnu.');
+    return invalid(errorMessage(ERROR_CODES.VALIDATION_ERROR, await getLocale()));
   }
 
   const refreshToken = await readAdminRefreshToken();
@@ -150,13 +170,16 @@ export async function updateTenantSettingsAction(
   const parsed = updateTenantRequestSchema.safeParse(changes);
 
   if (!slug.success) {
-    return invalid('Établissement inconnu.');
+    return invalid(errorMessage(ERROR_CODES.VALIDATION_ERROR, await getLocale()));
   }
   if (!parsed.success) {
     // Le message du premier refus, et non un « formulaire invalide » générique :
     // c'est ce qui distingue « code pays attendu » de « deux plages du même jour
     // se recouvrent », et l'écran n'a pas d'autre source pour le dire.
-    return invalid(parsed.error.issues[0]?.message ?? 'Les réglages saisis sont invalides.');
+    return invalid(
+      parsed.error.issues[0]?.message ??
+        errorMessage(ERROR_CODES.VALIDATION_ERROR, await getLocale()),
+    );
   }
 
   const access = await adminActionAccess(slug.data);
@@ -215,11 +238,11 @@ async function billingRedirect(
   const slug = slugSchema.safeParse(tenantSlug);
   const submitted = submittedLocaleSchema.safeParse(locale);
 
-  if (!slug.success) {
-    return invalid('Établissement inconnu.');
-  }
-  if (!submitted.success) {
-    return invalid('Langue inconnue.');
+  if (!slug.success || !submitted.success) {
+    // Le slug et la langue sont deux entrées de cette action : un slug illisible
+    // est un refus de validation au même titre qu'une langue hors contrat, et
+    // c'est le code qu'`invalid` pose de toute façon.
+    return invalid(errorMessage(ERROR_CODES.VALIDATION_ERROR, await getLocale()));
   }
 
   const access = await adminActionAccess(slug.data);

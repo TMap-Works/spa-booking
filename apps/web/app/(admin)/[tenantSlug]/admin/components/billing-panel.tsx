@@ -1,6 +1,12 @@
 'use client';
 
-import { ERROR_CODES, SUBSCRIPTION_PLAN, type Locale, type TenantBilling } from '@spa/shared';
+import {
+  ERROR_CODES,
+  SUBSCRIPTION_PLAN,
+  errorMessage,
+  type Locale,
+  type TenantBilling,
+} from '@spa/shared';
 import { useLocale, useTranslations } from 'next-intl';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
@@ -90,11 +96,15 @@ type RedirectErrorKey =
 /**
  * Ce que devient à l'écran un refus d'ouvrir Stripe, dans la langue lue.
  *
- * Le front trie sur le **code** et non sur le message (web-frontend §2) : le
- * message d'un refus est écrit côté serveur, donc en français, et l'afficher tel
- * quel rendrait un back-office anglais bilingue à la première panne. Il reste le
- * repli d'un code que cette table ne connaît pas — mieux vaut un message dans la
- * mauvaise langue qu'un encart vide.
+ * Le front trie sur le **code** et non sur le message (web-frontend §2) : cette
+ * table porte les phrases que l'abonnement écrit pour lui-même, là où le geste
+ * refusé mérite d'être nommé.
+ *
+ * Un code qu'elle ne connaît pas ne retombe plus sur `result.message` (#1234) :
+ * c'était le message du serveur, donc écrit en français, et il rendait l'encart
+ * bilingue au premier refus inattendu. Le repli est `errorMessage(code, locale)`
+ * du contrat partagé — la phrase de ce code dans la langue lue, et la phrase
+ * générique d'`INTERNAL_ERROR` pour un code que le contrat ne nomme pas non plus.
  */
 const REDIRECT_ERROR_KEYS: Readonly<Record<string, RedirectErrorKey>> = {
   [ERROR_CODES.BILLING_NOT_APPLICABLE]: 'redirect.errors.notApplicable',
@@ -200,7 +210,7 @@ export function BillingPanel({
     if (!result.ok) {
       const key = REDIRECT_ERROR_KEYS[result.code];
 
-      setFailure(key === undefined ? result.message : t(key));
+      setFailure(key === undefined ? errorMessage(result.code, locale) : t(key));
       setPending(false);
       return;
     }

@@ -29,9 +29,11 @@
  */
 
 import {
+  DEFAULT_LOCALE,
   ERROR_CODES,
   apiErrorSchema,
   authenticatedAccountSchema,
+  errorMessage,
   billingRedirectSchema,
   tenantBillingSchema,
   platformOverviewSchema,
@@ -136,7 +138,11 @@ import {
   type UpdateStaffMemberRequest,
   type UpdateTenantRequest,
 } from '@spa/shared';
+import { cookies, headers } from 'next/headers';
 import { z } from 'zod';
+
+import { ACCOUNT_LOCALE_COOKIE, LOCALE_COOKIE } from '@/i18n/cookies';
+import { resolveLocale } from '@/i18n/resolve';
 
 // Les formes d'encaissement, désormais **étendues du contrat partagé** : #554 y
 // a porté les `nullable` de l'encaissement, et il ne reste ici que la
@@ -209,6 +215,16 @@ import {
  * `details.cause`, jamais sur cette phrase — c'est ce qui rend le choix sans
  * conséquence hors de l'écran.
  *
+ * ## Et cette phrase suit la langue de la requête — #1234
+ *
+ * Les quatre refus que ce module **écrit lui-même** — API injoignable, corps
+ * d'erreur hors contrat, réponse hors contrat — la lisent désormais dans
+ * `errorMessage(code, locale)` du contrat partagé, et non dans un littéral
+ * français. Voir {@link refusal}. Le refus que l'**API** nomme, lui, garde le
+ * message de son corps : le traduire est l'affaire de l'écran, qui dispose du
+ * `code` et de la même table (`action-result.ts` le fait pour tout le
+ * back-office).
+ *
  * ## Pourquoi `code` est un `string` et non un `ErrorCode` — tranché, #546
  *
  * La question s'est posée une fois le contrat assaini : `ERROR_CODES` ne déclare
@@ -248,6 +264,63 @@ export class ApiClientError extends Error {
     this.status = status;
     this.details = details;
   }
+}
+
+/**
+ * La langue dans laquelle ce client dit ce qu'il n'a pas pu faire — #1234.
+ *
+ * ## Pourquoi une résolution à part, et non `getLocale()` de `next-intl`
+ *
+ * Parce que ce module est **sur le chemin de la résolution de la langue**.
+ * `i18n/request.ts` appelle `requestLocale()`, qui appelle `fetchPublicTenant`
+ * d'ici quand les trois signaux qui précèdent l'établissement sont muets
+ * (`i18n/server.ts`). Un `getLocale()` posé dans le `catch` de ce fichier
+ * attendrait donc la configuration de requête **qui l'attend lui-même** : un
+ * interblocage, sur une branche rare et donc découverte tard.
+ *
+ * L'ordre de `i18n/resolve.ts` est rejoué ici **sans son quatrième signal** :
+ * choix explicite, compte, `Accept-Language`, puis `en`. C'est exactement ce que
+ * `requestLocale()` consulte avant de songer à l'établissement — la seule étape
+ * qui coûte un appel réseau, et la seule qui reboucle. Un salon dont le visiteur
+ * n'a ni cookie ni `Accept-Language` exploitable lira donc ce refus-ci en
+ * anglais plutôt que dans la langue du salon ; tout navigateur envoie un
+ * `Accept-Language`, et le cas ne se rencontre qu'avec un client fabriqué.
+ *
+ * Hors requête — un script, une suite de tests, une tâche de fond — il n'y a
+ * aucun signal à lire : `next/headers` lève, et `DEFAULT_LOCALE` tranche. Une
+ * phrase dans la langue par défaut vaut mieux qu'une panne de plus par-dessus
+ * celle qu'on est en train de rapporter.
+ */
+async function refusalLocale(): Promise<Locale> {
+  try {
+    const [cookieStore, headerList] = await Promise.all([cookies(), headers()]);
+
+    return resolveLocale({
+      explicit: cookieStore.get(LOCALE_COOKIE)?.value ?? null,
+      account: cookieStore.get(ACCOUNT_LOCALE_COOKIE)?.value ?? null,
+      acceptLanguage: headerList.get('accept-language'),
+    });
+  } catch {
+    return DEFAULT_LOCALE;
+  }
+}
+
+/**
+ * Le refus à lever, dit dans la langue de la requête.
+ *
+ * La phrase vient de `errorMessage` du contrat partagé — la table bilingue
+ * adossée à `ERROR_CODES` — et jamais d'un littéral écrit ici : c'est ce qui
+ * faisait lire « Le service de réservation est momentanément injoignable » au
+ * milieu d'un back-office anglais. Un code que la table ne connaît pas — les
+ * `HTTP_<statut>` que le filtre d'exception de l'API fabrique — y retombe sur la
+ * phrase générique d'`INTERNAL_ERROR`, ce qui est précisément le repli attendu.
+ */
+async function refusal(
+  code: string,
+  status: number,
+  details: Record<string, unknown> = {},
+): Promise<ApiClientError> {
+  return new ApiClientError(code, errorMessage(code, await refusalLocale()), status, details);
 }
 
 /**
@@ -306,12 +379,9 @@ async function request<TSchema extends z.ZodTypeAny>(
   } catch (cause) {
     // L'API injoignable n'est pas une erreur d'API : elle n'a pas de code, et un
     // écran qui l'afficherait comme un refus métier tromperait le visiteur.
-    throw new ApiClientError(
-      ERROR_CODES.SERVICE_UNAVAILABLE,
-      "Le service de réservation est momentanément injoignable. Merci de réessayer dans un instant.",
-      503,
-      { cause: cause instanceof Error ? cause.message : String(cause) },
-    );
+    throw await refusal(ERROR_CODES.SERVICE_UNAVAILABLE, 503, {
+      cause: cause instanceof Error ? cause.message : String(cause),
+    });
   }
 
   const payload: unknown = response.status === 204 ? null : await response.json().catch(() => null);
@@ -321,11 +391,7 @@ async function request<TSchema extends z.ZodTypeAny>(
 
     throw parsed.success
       ? new ApiClientError(parsed.data.code, parsed.data.message, response.status, parsed.data.details)
-      : new ApiClientError(
-          `HTTP_${String(response.status)}`,
-          'Une erreur inattendue est survenue. Merci de réessayer dans un instant.',
-          response.status,
-        );
+      : await refusal(`HTTP_${String(response.status)}`, response.status);
   }
 
   const parsed = options.schema.safeParse(payload);
@@ -334,15 +400,10 @@ async function request<TSchema extends z.ZodTypeAny>(
     // Le message est celui que lit le visiteur — la règle #601 veut qu'il
     // s'affiche tel quel. Le chemin fautif et les violations n'ont donc pas leur
     // place dedans : ils partent dans `details`, que la journalisation lit.
-    throw new ApiClientError(
-      ERROR_CODES.INTERNAL_ERROR,
-      'Une erreur inattendue est survenue. Merci de réessayer dans un instant.',
-      response.status,
-      {
-        path,
-        issues: parsed.error.issues.map((issue) => `${issue.path.join('.')}: ${issue.message}`),
-      },
-    );
+    throw await refusal(ERROR_CODES.INTERNAL_ERROR, response.status, {
+      path,
+      issues: parsed.error.issues.map((issue) => `${issue.path.join('.')}: ${issue.message}`),
+    });
   }
 
   return parsed.data as z.infer<TSchema>;
@@ -622,12 +683,9 @@ async function authorizedRequest<TSchema extends z.ZodTypeAny | null>(
   try {
     response = await fetch(`${apiBaseUrl()}${options.path}`, init);
   } catch (cause) {
-    throw new ApiClientError(
-      ERROR_CODES.SERVICE_UNAVAILABLE,
-      'Le service est momentanément injoignable. Merci de réessayer dans un instant.',
-      503,
-      { cause: cause instanceof Error ? cause.message : String(cause) },
-    );
+    throw await refusal(ERROR_CODES.SERVICE_UNAVAILABLE, 503, {
+      cause: cause instanceof Error ? cause.message : String(cause),
+    });
   }
 
   const payload: unknown = response.status === 204 ? null : await response.json().catch(() => null);
@@ -642,11 +700,7 @@ async function authorizedRequest<TSchema extends z.ZodTypeAny | null>(
           response.status,
           failure.data.details,
         )
-      : new ApiClientError(
-          `HTTP_${String(response.status)}`,
-          'Une erreur inattendue est survenue. Merci de réessayer dans un instant.',
-          response.status,
-        );
+      : await refusal(`HTTP_${String(response.status)}`, response.status);
   }
 
   if (options.schema === null) {
@@ -658,15 +712,10 @@ async function authorizedRequest<TSchema extends z.ZodTypeAny | null>(
   if (!parsed.success) {
     // Même règle qu'au-dessus : la phrase est pour l'écran, le chemin fautif
     // pour `details` et la journalisation.
-    throw new ApiClientError(
-      ERROR_CODES.INTERNAL_ERROR,
-      'Une erreur inattendue est survenue. Merci de réessayer dans un instant.',
-      response.status,
-      {
-        path: options.path,
-        issues: parsed.error.issues.map((issue) => `${issue.path.join('.')}: ${issue.message}`),
-      },
-    );
+    throw await refusal(ERROR_CODES.INTERNAL_ERROR, response.status, {
+      path: options.path,
+      issues: parsed.error.issues.map((issue) => `${issue.path.join('.')}: ${issue.message}`),
+    });
   }
 
   return { payload: parsed.data as never, response };
@@ -1415,12 +1464,9 @@ export async function fetchSaleReceiptPdf(
       },
     );
   } catch (cause) {
-    throw new ApiClientError(
-      ERROR_CODES.SERVICE_UNAVAILABLE,
-      'Le service est momentanément injoignable. Merci de réessayer dans un instant.',
-      503,
-      { cause: cause instanceof Error ? cause.message : String(cause) },
-    );
+    throw await refusal(ERROR_CODES.SERVICE_UNAVAILABLE, 503, {
+      cause: cause instanceof Error ? cause.message : String(cause),
+    });
   }
 
   if (!response.ok) {
@@ -1433,11 +1479,7 @@ export async function fetchSaleReceiptPdf(
           response.status,
           failure.data.details,
         )
-      : new ApiClientError(
-          `HTTP_${String(response.status)}`,
-          'Une erreur inattendue est survenue. Merci de réessayer dans un instant.',
-          response.status,
-        );
+      : await refusal(`HTTP_${String(response.status)}`, response.status);
   }
 
   return {
@@ -2499,12 +2541,9 @@ export async function openAppointmentFeed(
       signal,
     });
   } catch (cause) {
-    throw new ApiClientError(
-      ERROR_CODES.SERVICE_UNAVAILABLE,
-      'Le service est momentanément injoignable. Merci de réessayer dans un instant.',
-      503,
-      { cause: cause instanceof Error ? cause.message : String(cause) },
-    );
+    throw await refusal(ERROR_CODES.SERVICE_UNAVAILABLE, 503, {
+      cause: cause instanceof Error ? cause.message : String(cause),
+    });
   }
 
   if (!response.ok) {
@@ -2517,11 +2556,7 @@ export async function openAppointmentFeed(
           response.status,
           failure.data.details,
         )
-      : new ApiClientError(
-          `HTTP_${String(response.status)}`,
-          'Une erreur inattendue est survenue. Merci de réessayer dans un instant.',
-          response.status,
-        );
+      : await refusal(`HTTP_${String(response.status)}`, response.status);
   }
 
   return response;
