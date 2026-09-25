@@ -95,6 +95,34 @@ describe('export des données personnelles', () => {
     });
   });
 
+  it('restitue la langue préférée de la personne, sans la confondre avec celle du document (#1255)', async () => {
+    const { dataExport, repository } = build();
+    const fiche = repository.addCustomer({ tenantId: TENANT, locale: 'en' });
+
+    // Le dossier est produit en français — la langue du comptoir qui l'imprime —
+    // alors que la personne a demandé l'anglais. Les deux champs sont donc
+    // différents dans le même document, ce qui est exactement la situation où
+    // une confusion entre eux se verrait.
+    const dossier = await chez(TENANT, () => dataExport.byCustomerId(fiche.id, 'fr'));
+
+    expect({ document: dossier.locale, personne: dossier.identity.preferredLocale }).toEqual({
+      document: 'fr',
+      personne: 'en',
+    });
+  });
+
+  it('rend `null` la langue d’une personne qui n’en a jamais exprimé, sans replier sur celle du document (#1255)', async () => {
+    const { dataExport, repository } = build();
+    const fiche = repository.addCustomer({ tenantId: TENANT });
+
+    const dossier = await chez(TENANT, () => dataExport.byCustomerId(fiche.id, 'fr'));
+
+    // Recopier `fr` ici aurait fait dire au dossier que la personne a choisi une
+    // langue qu'elle n'a jamais choisie — c'est-à-dire l'inexactitude que
+    // l'art. 16 donne le droit de faire corriger.
+    expect(dossier.identity.preferredLocale).toBeNull();
+  });
+
   it('date les rendez-vous à l’heure du soin, comme l’espace client', async () => {
     const { dataExport, repository } = build();
     const fiche = repository.addCustomer({ tenantId: TENANT });

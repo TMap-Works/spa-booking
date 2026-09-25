@@ -310,6 +310,28 @@ export interface CustomerDataExport {
     lastName: string;
     email: string;
     phone: string | null;
+    /**
+     * La langue de contact enregistrée sur le compte de cette personne, ou
+     * `null` — #1255.
+     *
+     * À ne pas confondre avec le `locale` du dossier ci-dessus : celui-là dit
+     * dans quelle langue le **document** a été produit, celui-ci est une
+     * **donnée détenue sur la personne**. Le salon l'a enregistrée, il s'en sert
+     * pour choisir la langue de ses notifications, et l'art. 15 ne fait pas
+     * d'exception pour les préférences : une colonne détenue, lue et agissante
+     * est une donnée du dossier.
+     *
+     * Elle est **constatée** à l'inscription — la langue de la page d'où le
+     * compte part (#844) — ou **choisie** depuis l'espace client
+     * (`PATCH /users/me`). Le dossier ne distingue pas les deux, et c'est une
+     * raison de plus de la restituer : une langue posée par la page se relit et
+     * se rectifie (art. 16) seulement si la personne la voit.
+     *
+     * `null` se lit « aucune langue enregistrée », jamais « français » — c'est
+     * alors `tenants.default_locale` qui tranche. Restituer un `fr` par défaut
+     * aurait fait dire au dossier un choix que la personne n'a pas fait.
+     */
+    preferredLocale: Locale | null;
     isActive: boolean;
     createdAt: Date;
     anonymizedAt: Date | null;

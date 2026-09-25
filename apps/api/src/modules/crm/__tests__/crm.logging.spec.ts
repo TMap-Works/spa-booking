@@ -110,6 +110,7 @@ describe('la rédaction couvrirait les champs du module', () => {
         lastName: 'Durand',
         email: 'alice@example.test',
         phone: '+261341234567',
+        preferredLocale: 'en',
         isActive: true,
         createdAt: new Date('2026-09-01T08:00:00.000Z'),
         anonymizedAt: null,
