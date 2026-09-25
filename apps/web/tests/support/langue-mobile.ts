@@ -1,5 +1,6 @@
 import type { Locale } from '@spa/shared';
-import { vi } from 'vitest';
+
+import { doublureCrochets, doublureServeur } from './traducteur';
 
 /**
  * Une langue **mobile** pour les suites qui rendent la même brique dans les deux
@@ -33,6 +34,13 @@ import { vi } from 'vitest';
  * seraient passés en anglais pendant que le Server Component serait resté en
  * français. Un seul `fixerLangue()` déplace désormais les deux.
  *
+ * Ni ce formateur ni le corps de ces deux doublures ne sont plus écrits ici
+ * (#1283) : ils sont ceux de `tests/support/traducteur.ts`, que l'amorce et la
+ * langue figée emploient à l'identique. Ce fichier n'a plus qu'une chose à lui :
+ * la variable `langue`, et le fait qu'elle bouge — les doublures partagées
+ * relisent `lireLangue` à chaque appel, c'est ce qui la laisse bouger entre deux
+ * `render()`.
+ *
  * ## L'emploi
  *
  * ```ts
@@ -63,103 +71,16 @@ export function fixerLangue(prochaine: Locale): void {
   langue = prochaine;
 }
 
-/** Le traducteur d'un namespace, dans la langue posée à l'appel. */
-type Traduire = (namespace?: string) => unknown;
-
-/**
- * Le formateur, monté **une seule fois** et partagé par les deux doublures.
- *
- * Il reprend celui de l'amorce — le **vrai** formateur ICU de la bibliothèque
- * (`createTranslator`) sur les **vrais** catalogues du dépôt —, au détail près
- * qu'il lit sa langue dans `langue` et mémoïse par langue **et** par namespace.
- * Sans ce cache, `createTranslator` serait rappelé à chaque rendu de chaque
- * composant, et la suite mesurerait le coût de la doublure.
- *
- * Partagé et non dupliqué par point d'entrée : une suite qui monte un Server
- * Component rendant des Client Components lit le même namespace des deux côtés,
- * et rien ne justifierait de le formater deux fois.
- */
-let formateur: Promise<Traduire> | undefined;
-
-function traducteur(): Promise<Traduire> {
-  formateur ??= (async (): Promise<Traduire> => {
-    const actual = await vi.importActual<typeof import('next-intl')>('next-intl');
-    const { loadMessages } = await import('../../i18n/messages');
-    /**
-     * `createTranslator` est typé sur le catalogue complet ; l'appeler avec un
-     * namespace dont le nom n'est connu qu'à l'exécution demande de relâcher la
-     * contrainte, une fois, ici — comme dans l'amorce.
-     */
-    const translator = actual.createTranslator as unknown as (options: {
-      locale: string;
-      messages: unknown;
-      namespace?: string;
-    }) => unknown;
-    const cache = new Map<string, unknown>();
-
-    return (namespace?: string) => {
-      const key = `${langue}:${namespace ?? ''}`;
-      const cached = cache.get(key);
-
-      if (cached !== undefined) {
-        return cached;
-      }
-
-      const messages = loadMessages(langue);
-      const made = translator(
-        namespace === undefined
-          ? { locale: langue, messages }
-          : { locale: langue, messages, namespace },
-      );
-
-      cache.set(key, made);
-
-      return made;
-    };
-  })();
-
-  return formateur;
-}
-
-/**
- * La doublure de `next-intl` — les **crochets** —, à rendre depuis la fabrique
- * de `vi.mock`.
- *
- * Le reste du module est celui de la bibliothèque : seuls `useLocale` et
- * `useTranslations` dépendent du contexte de la requête, que jsdom n'a pas.
- */
-export async function nextIntlMobile(): Promise<Record<string, unknown>> {
-  const actual = await vi.importActual<typeof import('next-intl')>('next-intl');
-  const traduire = await traducteur();
-
-  return {
-    ...actual,
-    useLocale: () => langue,
-    useTranslations: (namespace?: string) => traduire(namespace),
-  };
+/** La doublure de `next-intl` — les **crochets** —, sur la langue mobile. */
+export function nextIntlMobile(): Promise<Record<string, unknown>> {
+  return doublureCrochets(() => langue);
 }
 
 /**
  * La doublure de `next-intl/server` — ce que lisent les Server Components
- * asynchrones et les actions serveur (#1277).
- *
- * Rien n'est repris du module réel : sous jsdom, `next-intl/server` résout vers
- * la variante client de la bibliothèque, qui lève *« `getTranslations` is not
- * supported in Client Components »* faute de requête pour porter la langue —
- * même raison que dans l'amorce (`tests/support/next-intl.ts`).
+ * asynchrones et les actions serveur (#1277) —, sur la **même** langue mobile
+ * que les crochets : un seul `fixerLangue()` déplace les deux.
  */
-export async function nextIntlServerMobile(): Promise<Record<string, unknown>> {
-  const traduire = await traducteur();
-
-  return {
-    getLocale: () => Promise.resolve(langue),
-    /**
-     * `getTranslations('ns')` et `getTranslations({ namespace })` — les deux
-     * formes de la bibliothèque. La langue passée en option est ignorée : c'est
-     * `fixerLangue()` qui la pose, et elle doit rester la même que celle des
-     * crochets.
-     */
-    getTranslations: (options?: string | { readonly namespace?: string }) =>
-      Promise.resolve(traduire(typeof options === 'string' ? options : options?.namespace)),
-  };
+export function nextIntlServerMobile(): Promise<Record<string, unknown>> {
+  return doublureServeur(() => langue);
 }

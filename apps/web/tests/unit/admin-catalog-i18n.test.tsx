@@ -6,6 +6,8 @@ import { cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { nextIntlFixe, nextIntlServerFixe } from '../support/langue-figee';
+
 /** Ce fichier, d'où part la racine d'`apps/web` lue par la garde de lint. */
 const here = path.dirname(fileURLToPath(import.meta.url));
 
@@ -31,82 +33,15 @@ const here = path.dirname(fileURLToPath(import.meta.url));
  * Le rendu d'un écran en anglais demande de remplacer l'amorce de langue des
  * suites, qui les fixe toutes en français (`tests/support/next-intl.ts`) : les
  * deux doublures ci-dessous lisent le **vrai** catalogue anglais, côté crochet
- * comme côté serveur.
+ * comme côté serveur. Elles viennent de `tests/support/langue-figee.ts` (#1283),
+ * où elles sont écrites une fois pour les trois suites anglaises — et sur le
+ * formateur ICU que l'amorce elle-même emploie, mémoïsé par langue et par
+ * namespace.
  */
 
-/** Le traducteur anglais, fabriqué une fois par namespace — comme l'amorce. */
-async function englishTranslator(namespace?: string): Promise<unknown> {
-  const actual = await vi.importActual<typeof import('next-intl')>('next-intl');
-  const { loadMessages } = await import('../../i18n/messages');
-  const messages = loadMessages('en');
-  const translator = actual.createTranslator as unknown as (options: {
-    locale: string;
-    messages: unknown;
-    namespace?: string;
-  }) => unknown;
+vi.mock('next-intl', () => nextIntlFixe('en'));
 
-  return translator(
-    namespace === undefined ? { locale: 'en', messages } : { locale: 'en', messages, namespace },
-  );
-}
-
-vi.mock('next-intl', async () => {
-  const actual = await vi.importActual<typeof import('next-intl')>('next-intl');
-  const { loadMessages } = await import('../../i18n/messages');
-  const messages = loadMessages('en');
-  const translator = actual.createTranslator as unknown as (options: {
-    locale: string;
-    messages: unknown;
-    namespace?: string;
-  }) => unknown;
-  const cache = new Map<string, unknown>();
-
-  return {
-    ...actual,
-    useLocale: () => 'en',
-    useTranslations: (namespace?: string) => {
-      const key = namespace ?? '';
-      const cached = cache.get(key);
-
-      if (cached !== undefined) {
-        return cached;
-      }
-
-      const made = translator(
-        namespace === undefined
-          ? { locale: 'en', messages }
-          : { locale: 'en', messages, namespace },
-      );
-
-      cache.set(key, made);
-
-      return made;
-    },
-  };
-});
-
-vi.mock('next-intl/server', () => {
-  const cache = new Map<string, Promise<unknown>>();
-
-  return {
-    getLocale: () => Promise.resolve('en'),
-    getTranslations: (options?: string | { readonly namespace?: string }) => {
-      const namespace = typeof options === 'string' ? options : options?.namespace;
-      const key = namespace ?? '';
-      const cached = cache.get(key);
-
-      if (cached !== undefined) {
-        return cached;
-      }
-
-      const made = englishTranslator(namespace);
-
-      cache.set(key, made);
-
-      return made;
-    },
-  };
-});
+vi.mock('next-intl/server', () => nextIntlServerFixe('en'));
 
 const fetchServices = vi.fn();
 const fetchOwnProfile = vi.fn();
