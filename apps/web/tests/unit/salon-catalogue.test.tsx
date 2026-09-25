@@ -12,12 +12,10 @@ import { cleanup, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it } from 'vitest';
 
-import {
-  UNCLASSIFIED_TITLE,
-  groupServicesByCategory,
-} from '@/components/salon/group-services';
+import { groupServicesByCategory } from '@/components/salon/group-services';
 import { SalonInfo } from '@/components/salon/salon-info';
 import { ServiceCatalog, UNSTAFFED_SERVICE_LABEL } from '@/components/salon/service-catalog';
+import fr from '@/messages/fr/booking.json';
 
 import { service, tenant } from './fixtures';
 
@@ -60,9 +58,27 @@ const forfait: PublicService = {
   price: { amountMinor: 7000, currency: 'EUR' },
 };
 
+/**
+ * Le titre de la rubrique fictive, passé explicitement (#1142).
+ *
+ * `groupServicesByCategory` ne lit plus le catalogue elle-même — elle est
+ * atteignable depuis le tunnel, côté client, et en embarquait les deux langues
+ * entières dans le bundle. C'est donc l'appelant qui le fournit, et cette suite
+ * le lit là où les écrans le lisent plutôt que de le recopier : le mot changerait
+ * dans le catalogue que le cas continuerait de dire ce qu'il vérifie — le
+ * **classement** des sections, et non la traduction.
+ *
+ * Un test n'est pas empaqueté pour le navigateur : l'import direct du catalogue
+ * n'a ici aucun des inconvénients qui l'ont fait retirer des modules.
+ */
+const UNCLASSIFIED_TITLE = fr.salon.catalog.unclassified;
+
 describe('groupement par rubrique', () => {
   it('range les prestations d’une même rubrique sous une seule section', () => {
-    const sections = groupServicesByCategory([service, soinVisage, massageAssis]);
+    const sections = groupServicesByCategory(
+      [service, soinVisage, massageAssis],
+      UNCLASSIFIED_TITLE,
+    );
 
     expect(sections.map((section) => section.title)).toEqual(['Massages', 'Soins du visage']);
     expect(sections[0]?.services.map((item) => item.name)).toEqual([
@@ -72,20 +88,20 @@ describe('groupement par rubrique', () => {
   });
 
   it('suit l’ordre de l’API, et non l’alphabet', () => {
-    const sections = groupServicesByCategory([soinVisage, service]);
+    const sections = groupServicesByCategory([soinVisage, service], UNCLASSIFIED_TITLE);
 
     expect(sections.map((section) => section.title)).toEqual(['Soins du visage', 'Massages']);
   });
 
   it('renvoie les prestations non classées en dernière section', () => {
-    const sections = groupServicesByCategory([forfait, service]);
+    const sections = groupServicesByCategory([forfait, service], UNCLASSIFIED_TITLE);
 
     expect(sections.map((section) => section.title)).toEqual(['Massages', UNCLASSIFIED_TITLE]);
     expect(sections.at(-1)?.category).toBeNull();
   });
 
   it('ne fabrique aucune section pour un catalogue vide', () => {
-    expect(groupServicesByCategory([])).toEqual([]);
+    expect(groupServicesByCategory([], UNCLASSIFIED_TITLE)).toEqual([]);
   });
 });
 

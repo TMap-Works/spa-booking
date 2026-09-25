@@ -3,8 +3,6 @@ import { useTranslations } from 'next-intl';
 
 import { Avatar } from '@/components/ui/avatar';
 
-import { UNCLASSIFIED_TITLE } from './group-services';
-
 /** Identifiant du titre de section, repris par `aria-labelledby`. */
 export const TEAM_HEADING_ID = 'equipe';
 
@@ -41,13 +39,14 @@ export interface TeamMember {
  * ici remonterait un praticien devant un autre sans qu'il l'ait demandé.
  *
  * `unclassifiedTitle` est, ici aussi, le seul mot que l'appelant fournit (#846) :
- * les rubriques qualifiant un praticien sont celles du salon. Facultatif, il
- * retombe sur le français — voir {@link UNCLASSIFIED_TITLE}. Cette fonction est
- * pure et exportée pour être testée seule : elle n'appelle aucun crochet.
+ * les rubriques qualifiant un praticien sont celles du salon. **Obligatoire**
+ * depuis #1142, en même temps que le repli français de `group-services.ts` dont
+ * il tenait le défaut — voir l'en-tête de ce module-là. Cette fonction est pure
+ * et exportée pour être testée seule : elle n'appelle aucun crochet.
  */
 export function teamFromServices(
   services: readonly PublicService[],
-  unclassifiedTitle: string = UNCLASSIFIED_TITLE,
+  unclassifiedTitle: string,
 ): readonly TeamMember[] {
   const members = new Map<string, { displayName: string; practices: string[] }>();
 

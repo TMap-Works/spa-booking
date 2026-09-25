@@ -96,7 +96,9 @@ export function SalonInfo({ tenant, bookable, now = new Date() }: SalonInfoProps
   const t = useTranslations('booking');
   const locale = useLocale();
   const display: DisplayLocale = { locale, countryCode: tenant.address?.country ?? null };
-  const week = weekSchedule(tenant.openingHours ?? [], display);
+  // Le traducteur est passé au module des horaires : il est pur et n'appelle
+  // aucun crochet, et il n'importe plus le catalogue depuis #1142.
+  const week = weekSchedule(tenant.openingHours ?? [], display, t);
   const today = salonClock(tenant.timezone, now)?.weekday ?? null;
   const hasPlace =
     tenant.address !== undefined ||
