@@ -9,11 +9,15 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
  * dernière visite, et ne jamais lister d'établissements (place de marché, hors
  * périmètre CDC §1.4).
  *
- * Les libellés des portes sont lus dans `SALON_DOOR_LABELS` plutôt que réécrits
- * ici : ils viennent du registre des sorties du parcours client, et une page qui
- * les recopierait laisserait ce test vert pendant que l'accueil nommerait la
- * même destination autrement que la vitrine — l'écart même que le registre
- * existe pour empêcher (#749).
+ * Les libellés des portes sont lus **à leur source** plutôt que réécrits ici :
+ * les deux premiers dans le registre des sorties du parcours client, le
+ * troisième dans le catalogue de l'écran. Une page qui les recopierait
+ * laisserait ce test vert pendant que l'accueil nommerait la même destination
+ * autrement que la vitrine — l'écart même que le registre existe pour empêcher
+ * (#749).
+ *
+ * `SALON_DOOR_LABELS` les tenait jusqu'à #1233, figés en français ; la table est
+ * désormais composée ici des deux mêmes sources que l'écran emploie.
  */
 
 const readSalonIdentity = vi.fn();
@@ -40,8 +44,19 @@ vi.mock('next/headers', () => ({
 }));
 
 import HomePage from '@/app/page';
-import { SALON_DOOR_LABELS } from '@/app/salon-doors';
+import type { SalonDoor } from '@/app/salon-doors';
 import { SalonFinder } from '@/components/home/salon-finder';
+import { publicExitLabels } from '@/components/salon/public-exits';
+import booking from '@/messages/fr/booking.json';
+
+import { TEST_LOCALE } from '../support/next-intl';
+
+/** Le nom des trois portes, composé comme l'écran le compose — voir l'en-tête. */
+const PORTES: Readonly<Record<SalonDoor, string>> = {
+  reservation: publicExitLabels(TEST_LOCALE).reservation,
+  compte: publicExitLabels(TEST_LOCALE).compte,
+  'back-office': booking.home.common.doorBackOffice,
+};
 
 async function rendreLAccueil(): Promise<HTMLElement> {
   const { container } = render(await HomePage());
@@ -64,7 +79,7 @@ describe('une première visite', () => {
     const champ = within(acces).getByLabelText(/nom ou adresse du salon/i) as HTMLInputElement;
     expect(champ.value).toBe('');
 
-    for (const porte of Object.values(SALON_DOOR_LABELS)) {
+    for (const porte of Object.values(PORTES)) {
       expect(within(acces).getByRole('button', { name: porte })).toBeDefined();
     }
     expect(readSalonIdentity).not.toHaveBeenCalled();
@@ -122,14 +137,14 @@ describe('le salon de la dernière visite', () => {
       '/maison-lotus',
     );
     expect(
-      within(salon).getByRole('link', { name: SALON_DOOR_LABELS.reservation }).getAttribute('href'),
+      within(salon).getByRole('link', { name: PORTES.reservation }).getAttribute('href'),
     ).toBe('/maison-lotus/reservation');
     expect(
-      within(salon).getByRole('link', { name: SALON_DOOR_LABELS.compte }).getAttribute('href'),
+      within(salon).getByRole('link', { name: PORTES.compte }).getAttribute('href'),
     ).toBe('/maison-lotus/compte');
     expect(
       within(salon)
-        .getByRole('link', { name: SALON_DOOR_LABELS['back-office'] })
+        .getByRole('link', { name: PORTES['back-office'] })
         .getAttribute('href'),
     ).toBe('/maison-lotus/admin/connexion');
 
@@ -177,7 +192,7 @@ describe('le formulaire d’accès', () => {
     render(<SalonFinder initialAddress="" title="Accéder à mon salon" />);
 
     await userEvent.type(screen.getByRole('textbox'), 'Salon Fantôme');
-    await userEvent.click(screen.getByRole('button', { name: SALON_DOOR_LABELS.compte }));
+    await userEvent.click(screen.getByRole('button', { name: PORTES.compte }));
 
     const champ = await screen.findByRole('textbox', { description: /aucun salon ne répond/i });
     expect(champ.getAttribute('aria-invalid')).toBe('true');

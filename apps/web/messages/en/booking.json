@@ -39,7 +39,22 @@
         "reservation": "Looking up the salon, then opening booking…",
         "account": "Looking up the salon, then opening your appointments…",
         "backOffice": "Looking up the salon, then opening the back office…"
+      },
+      "errors": {
+        "empty": "Enter your salon’s name, or the link it sent you.",
+        "unknown": "No salon matches “{address}”. Check the link in your confirmation email, or ask the salon for it.",
+        "unavailable": "The service is briefly unreachable. Please try again in a moment."
       }
+    },
+    "photos": {
+      "spaInterieur": "The inside of a spa, opening onto a pool and plants",
+      "soinPierresChaudes": "A hot stone treatment, the stones laid along the back",
+      "massageDos": "A therapist’s hands during a back massage",
+      "coiffureBrushing": "A hairdresser finishing a blow-dry in a bright salon",
+      "salonInterieur": "Styling stations lined up in a hair salon",
+      "soinVisage": "A facial treatment applied with a brush, at a beauty institute",
+      "natureMorteSpa": "A rolled towel, a bottle of treatment oil and flowers",
+      "barbier": "A shave under way at the barber’s"
     },
     "trust": {
       "label": "Our commitments",

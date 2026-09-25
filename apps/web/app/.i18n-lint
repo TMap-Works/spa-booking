@@ -6,3 +6,8 @@ not-found.tsx
 # L'accueil de la plateforme — le premier écran du parcours public, traduit par
 # #846. Les écrans de salon, eux, portent leur marqueur dans `app/(booking)/`.
 page.tsx
+# Les deux modules de l'accueil que #846 avait laissés de côté, traduits par
+# #1233 : l'action serveur de la recherche de salon, et le registre des portes
+# — qui ne porte plus aucun libellé.
+actions.ts
+salon-doors.ts
