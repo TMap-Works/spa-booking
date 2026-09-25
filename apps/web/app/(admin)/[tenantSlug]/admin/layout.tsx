@@ -391,6 +391,7 @@ export default async function AdminLayout({ children, params }: AdminLayoutProps
         */}
         <AppointmentFeedProvider feedPath={adminFeedPath(tenantSlug)}>
           <AdminLiveAnnouncements
+            countryCode={shell.countryCode}
             readsEstablishmentAgenda={shell.permissions?.includes('agenda:read:all') ?? false}
             tenantSlug={tenantSlug}
             timeZone={shell.timeZone}
