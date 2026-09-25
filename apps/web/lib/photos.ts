@@ -13,6 +13,26 @@
  * page, il aurait divergé d'un écran à l'autre pour la même photo ; écrit ici,
  * il est décidé une fois, avec l'image sous les yeux.
  *
+ * ## La langue (#1233) : une clé, jamais une phrase
+ *
+ * Les huit descriptions étaient écrites ici, en français. Elles vivent
+ * désormais dans le catalogue, et le registre n'en garde que la **clé**
+ * (`altKey`) — la clé reste décidée une fois, avec l'image sous les yeux, et
+ * c'est l'écran qui la traduit.
+ *
+ * Ce module n'importe donc **aucun catalogue**, et c'est délibéré : c'est la
+ * doctrine posée par #1142: un module pur atteignable depuis un Client
+ * Component qui importe `messages/<langue>/<ns>.json` fait agréger le catalogue
+ * entier, dans les deux langues, par webpack — pour huit chaînes. Trois écrans
+ * d'identification et le cadre client (`components/auth/*`) importent ce
+ * registre ; le faire lire un catalogue aurait alourdi leurs bundles sans rien
+ * apporter, `NextIntlClientProvider` portant déjà ces messages.
+ *
+ * Le namespace n'est pas nommé ici non plus : la clé est relative, et l'écran
+ * qui pose la photo la résout dans **son** catalogue. Aujourd'hui, seul
+ * l'accueil de la plateforme rend ces photos en `<img>` — il les lit sous
+ * `home.photos` du namespace `booking`.
+ *
  * ## Décoratives, et déclarées comme telles
  *
  * Aucune de ces photos ne porte d'information : elles donnent le registre du
@@ -39,25 +59,62 @@
  * back-office dépende d'un CDN public.
  */
 
+/**
+ * Le nom d'une photographie du catalogue.
+ *
+ * Énuméré plutôt que dérivé de `PHOTOS` : `altKey` en dépend, et un
+ * `keyof typeof PHOTOS` aurait rendu le type circulaire. Le `satisfies` posé
+ * sur le registre garde les deux listes alignées — une photo ajoutée sans son
+ * nom, un nom sans sa photo, ou une entrée qui porterait la clé d'une autre, ne
+ * compile pas.
+ */
+export type PhotoName =
+  | 'spaInterieur'
+  | 'soinPierresChaudes'
+  | 'massageDos'
+  | 'coiffureBrushing'
+  | 'salonInterieur'
+  | 'soinVisage'
+  | 'natureMorteSpa'
+  | 'barbier';
+
 /** Une photographie du catalogue — son fichier et ce qu'elle montre. */
 export interface Photo {
   /** Le chemin servi, depuis `apps/web/public`. */
   readonly src: string;
   /**
-   * Ce que montre la scène.
+   * La clé du catalogue qui décrit la scène — voir l'en-tête (#1233).
    *
-   * Employé quand la photo est posée en `<img>`. En fond décoratif, l'élément
-   * est masqué aux lecteurs d'écran et ce texte n'est pas rendu.
+   * Employée quand la photo est posée en `<img>` : l'écran la résout dans son
+   * propre namespace. En fond décoratif, l'élément est masqué aux lecteurs
+   * d'écran et aucun texte n'est rendu.
+   *
+   * C'est le nom de la photo elle-même : une entrée du registre et sa
+   * description portent la même clé, et il n'y a donc qu'un mot à retrouver
+   * dans les catalogues.
    */
-  readonly alt: string;
+  readonly altKey: PhotoName;
   /** La largeur du fichier, en pixels — telle qu'il a été téléchargé. */
   readonly width: number;
   /** La hauteur du fichier, en pixels. */
   readonly height: number;
 }
 
-function photo(file: string, alt: string, width: number, height: number): Photo {
-  return { src: `/photos/${file}`, alt, width, height };
+/**
+ * Générique sur le nom, et ce n'est pas une coquetterie : c'est ce qui fait
+ * dire au compilateur qu'une entrée porte **sa** clé. Le type de retour se
+ * souvient du nom passé, et le `satisfies` du registre ci-dessous exige que
+ * chaque `altKey` soit celle de la propriété qui la porte — `barbier:
+ * photo('soinVisage', …)` ne compile pas, là où un `PhotoName` nu l'aurait
+ * laissé passer et fait annoncer la mauvaise scène au lecteur d'écran.
+ */
+function photo<N extends PhotoName>(
+  name: N,
+  file: string,
+  width: number,
+  height: number,
+): Photo & { readonly altKey: N } {
+  return { src: `/photos/${file}`, altKey: name, width, height };
 }
 
 /**
@@ -69,57 +126,19 @@ function photo(file: string, alt: string, width: number, height: number): Photo 
  */
 export const PHOTOS = {
   /** L'intérieur d'un spa ouvert sur un bassin et de la verdure. */
-  spaInterieur: photo(
-    'spa-interieur.jpg',
-    'L’intérieur d’un spa, ouvert sur un bassin et des plantes',
-    1600,
-    1281,
-  ),
+  spaInterieur: photo('spaInterieur', 'spa-interieur.jpg', 1600, 1281),
   /** Un soin aux pierres chaudes, fleurs posées sur le dos. */
-  soinPierresChaudes: photo(
-    'soin-pierres-chaudes.jpg',
-    'Un soin aux pierres chaudes posées le long du dos',
-    1400,
-    933,
-  ),
+  soinPierresChaudes: photo('soinPierresChaudes', 'soin-pierres-chaudes.jpg', 1400, 933),
   /** Les mains d'un praticien sur un dos, en massage. */
-  massageDos: photo(
-    'massage-dos.jpg',
-    'Les mains d’une praticienne pendant un massage du dos',
-    1100,
-    1650,
-  ),
+  massageDos: photo('massageDos', 'massage-dos.jpg', 1100, 1650),
   /** Une coiffeuse au brushing, dans un salon lumineux. */
-  coiffureBrushing: photo(
-    'coiffure-brushing.jpg',
-    'Une coiffeuse termine un brushing dans un salon lumineux',
-    1100,
-    734,
-  ),
+  coiffureBrushing: photo('coiffureBrushing', 'coiffure-brushing.jpg', 1100, 734),
   /** L'intérieur d'un salon de coiffure, postes alignés. */
-  salonInterieur: photo(
-    'salon-interieur.jpg',
-    'Les postes de coiffage alignés dans un salon',
-    1200,
-    800,
-  ),
+  salonInterieur: photo('salonInterieur', 'salon-interieur.jpg', 1200, 800),
   /** Un soin du visage appliqué au pinceau. */
-  soinVisage: photo(
-    'soin-visage.jpg',
-    'Un soin du visage appliqué au pinceau, en institut',
-    1000,
-    667,
-  ),
+  soinVisage: photo('soinVisage', 'soin-visage.jpg', 1000, 667),
   /** Serviette roulée, flacon et fleurs — la table d'un soin. */
-  natureMorteSpa: photo(
-    'nature-morte-spa.jpg',
-    'Une serviette roulée, un flacon de soin et des fleurs',
-    1000,
-    667,
-  ),
+  natureMorteSpa: photo('natureMorteSpa', 'nature-morte-spa.jpg', 1000, 667),
   /** Un rasage chez le barbier. */
-  barbier: photo('barbier.jpg', 'Un rasage en cours chez le barbier', 1000, 667),
-} as const satisfies Readonly<Record<string, Photo>>;
-
-/** Le nom d'une photographie du catalogue. */
-export type PhotoName = keyof typeof PHOTOS;
+  barbier: photo('barbier', 'barbier.jpg', 1000, 667),
+} as const satisfies { readonly [K in PhotoName]: Photo & { readonly altKey: K } };

@@ -65,10 +65,8 @@ import { SALON_DOORS, salonDoorPath, type SalonDoor } from './salon-doors';
  * Deux choses n'en viennent pas :
  *
  * - le **nom des deux premières portes**, qui vient de `publicExitLabels` — la
- *   source unique des destinations du parcours public (#749). Le registre
- *   `SALON_DOOR_LABELS` de `salon-doors.ts` reste figé en français le temps de
- *   l'épique #843 : cet écran lit donc la source directement, comme le fait le
- *   formulaire pour ses trois boutons ;
+ *   source unique des destinations du parcours public (#749). Cet écran lit la
+ *   source directement, comme le fait le formulaire pour ses trois boutons ;
  * - le **prix de l'offre**, mis en forme par `lib/format.ts` dans la langue
  *   résolue. `PLAN_PRICE_LABEL` (`lib/plan.ts`) est une constante de module,
  *   évaluée à l'importation : elle ne peut pas connaître la langue de la
@@ -124,8 +122,8 @@ type TradeKey = 'spa' | 'beauty' | 'hair' | 'barber';
  *
  * Les photographies sont **informatives** ici, et non décoratives comme dans
  * les volets d'identification : elles sont le contenu de la section. Elles
- * portent donc l'`alt` du registre (`lib/photos.ts`) plutôt qu'un
- * `aria-hidden`.
+ * portent donc un `alt` plutôt qu'un `aria-hidden` — le registre
+ * (`lib/photos.ts`) en désigne la clé, cet écran la traduit (#1233).
  */
 const TRADES: readonly { readonly key: TradeKey; readonly photo: Photo }[] = [
   { key: 'spa', photo: PHOTOS.spaInterieur },
@@ -180,12 +178,12 @@ async function rememberedSalon(): Promise<{
 /**
  * Le nom des trois portes, dans la langue résolue.
  *
- * Composé ici plutôt que lu dans `SALON_DOOR_LABELS` : ce registre est figé en
- * français le temps de l'épique #843 et n'est pas dans l'empreinte de #846. Les
- * deux premières destinations gardent leur **source unique** — le registre des
- * sorties du parcours public, pour que la même page ne s'appelle pas autrement
- * ici que sur la vitrine (#749) — et seul le back-office, que rien d'autre ne
- * nomme, vient du catalogue de cet écran.
+ * Composé ici, et non dans `salon-doors.ts` : ce module est pur et sans React —
+ * il ne peut résoudre aucune langue, et son registre de libellés figés en
+ * français est tombé avec #1233. Les deux premières destinations gardent leur
+ * **source unique** — le registre des sorties du parcours public, pour que la
+ * même page ne s'appelle pas autrement ici que sur la vitrine (#749) — et seul
+ * le back-office, que rien d'autre ne nomme, vient du catalogue de cet écran.
  *
  * `SalonFinder` compose la même table pour ses trois boutons, depuis les mêmes
  * deux sources : la descendre en propriété aurait changé le contrat du
@@ -376,11 +374,16 @@ export default async function HomePage() {
                     l'image pleine largeur de l'écran pour une vignette de
                     quatre colonnes. Les paliers suivent ceux de la grille
                     ci-contre, dans `home.css`.
+
+                    La clé de l'`alt` est construite puis fixée par un `as`,
+                    comme les autres de cet écran : elle vient de l'union fermée
+                    `PhotoName`, dont les huit valeurs sont présentes dans les
+                    deux catalogues.
                   */}
                   <Image
                     className="spa-home-trades__photo"
                     src={trade.photo.src}
-                    alt={trade.photo.alt}
+                    alt={t(`home.photos.${trade.photo.altKey}` as 'home.photos.spaInterieur')}
                     width={trade.photo.width}
                     height={trade.photo.height}
                     sizes="(min-width: 60rem) 25vw, (min-width: 40rem) 50vw, 100vw"
@@ -450,7 +453,7 @@ export default async function HomePage() {
                 <Image
                   className="spa-home-audience__photo"
                   src={PHOTOS.natureMorteSpa.src}
-                  alt={PHOTOS.natureMorteSpa.alt}
+                  alt={t('home.photos.natureMorteSpa')}
                   width={PHOTOS.natureMorteSpa.width}
                   height={PHOTOS.natureMorteSpa.height}
                   sizes="(min-width: 48rem) 50vw, 100vw"
@@ -481,7 +484,7 @@ export default async function HomePage() {
                 <Image
                   className="spa-home-audience__photo"
                   src={PHOTOS.coiffureBrushing.src}
-                  alt={PHOTOS.coiffureBrushing.alt}
+                  alt={t('home.photos.coiffureBrushing')}
                   width={PHOTOS.coiffureBrushing.width}
                   height={PHOTOS.coiffureBrushing.height}
                   sizes="(min-width: 48rem) 50vw, 100vw"
