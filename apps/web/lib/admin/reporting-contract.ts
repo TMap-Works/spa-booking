@@ -52,7 +52,6 @@ import {
   timeZoneSchema,
   utcInstantSchema,
   type AppointmentStatus,
-  type PaymentMethod,
 } from '@spa/shared';
 import { z } from 'zod';
 
@@ -228,8 +227,8 @@ export type NoShowReport = z.infer<typeof noShowReportSchema>;
 // `lib/appointment-status.ts` — les mêmes mots, accordés au pluriel, parce qu'un
 // rapport compte des rendez-vous.
 
-/** Le moyen d'encaissement, tel que l'écran l'écrit. */
-export const PAYMENT_METHOD_LABELS: Readonly<Record<PaymentMethod, string>> = {
-  card: 'Carte',
-  cash: 'Espèces',
-};
+// Le moyen d'encaissement ne s'écrit plus ici non plus (#1300). `card` → « Carte »
+// et `cash` → « Espèces » : deux mots français figés dans un contrat de schémas,
+// que plus aucun écran ne lisait depuis que le reporting est passé au catalogue
+// de messages. Un libellé traduit se demande à `useTranslations`, pas à une table
+// de validation de réponses d'API.

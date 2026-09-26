@@ -103,64 +103,47 @@ describe('BookingErrorNotice', () => {
   });
 });
 
+/**
+ * La phrase affichée se déduit du **code** de l'erreur et non de son message —
+ * c'est ce que #846 a posé, et c'est désormais le seul régime : la copie est
+ * exigée depuis #1300, faute d'un appelant qui n'en ait pas. Les deux cas qui
+ * éprouvaient l'appel sans copie sont partis avec la branche qu'ils tenaient.
+ *
+ * Réagir sur le code est la convention du dépôt (skill web-frontend §2), et
+ * c'est ce qui permet à l'écran de parler la langue du visiteur là où l'API
+ * répond dans la sienne.
+ *
+ * Éprouvé avec des messages d'API **volontairement distincts** des phrases
+ * attendues : sans cela, les assertions passeraient par coïncidence de
+ * rédaction plutôt que parce que la substitution a eu lieu.
+ */
 describe('visitorErrorMessage', () => {
-  it("rend le message de l'API tel quel, sans rien y ajouter", () => {
-    const message = 'Le service de réservation est momentanément injoignable.';
+  const copy = {
+    serviceUnavailable: 'Le service de réservation est momentanément injoignable.',
+    unexpected: 'Une erreur inattendue est survenue.',
+    locale: 'fr' as const,
+  };
 
-    expect(visitorErrorMessage(new ApiClientError('SERVICE_UNAVAILABLE', message, 503))).toBe(
-      message,
-    );
+  it('nomme lui-même l’API injoignable, plutôt que de recopier son message', () => {
+    const message = 'upstream 503 from gateway';
+
+    expect(
+      visitorErrorMessage(new ApiClientError(ERROR_CODES.SERVICE_UNAVAILABLE, message, 503), copy),
+    ).toBe(copy.serviceUnavailable);
   });
 
-  it('substitue une phrase complète à ce qui n’est pas une erreur d’API', () => {
-    expect(visitorErrorMessage('une chaîne jetée telle quelle')).toBe(
-      `Une erreur inattendue est survenue. ${INVITATION}`,
+  it('traduit tout autre refus par son code, sans lire le message de l’API', () => {
+    const message = 'slot 2026-09-01T09:00:00Z already taken';
+    const rendu = visitorErrorMessage(
+      new ApiClientError(ERROR_CODES.SLOT_NO_LONGER_AVAILABLE, message, 409),
+      copy,
     );
+
+    expect(rendu).toBe(errorMessage(ERROR_CODES.SLOT_NO_LONGER_AVAILABLE, copy.locale));
+    expect(rendu).not.toContain(message);
   });
 
-  /**
-   * Ce que #846 a changé, et que les deux cas ci-dessus ne voient pas : dès que
-   * l'appelant fournit une copie — ce que l'encart fait **toujours** —, la
-   * phrase affichée se déduit du **code** de l'erreur et non de son message.
-   * C'est la convention du dépôt (skill web-frontend §2), et c'est ce qui
-   * permet à l'écran de parler la langue du visiteur là où l'API répond dans la
-   * sienne.
-   *
-   * Éprouvé avec des messages d'API **volontairement distincts** des phrases
-   * attendues : sans cela, les assertions passeraient par coïncidence de
-   * rédaction plutôt que parce que la substitution a eu lieu.
-   */
-  describe('quand l’écran fournit sa copie (#846)', () => {
-    const copy = {
-      serviceUnavailable: 'Le service de réservation est momentanément injoignable.',
-      unexpected: 'Une erreur inattendue est survenue.',
-      locale: 'fr' as const,
-    };
-
-    it('nomme lui-même l’API injoignable, plutôt que de recopier son message', () => {
-      const message = 'upstream 503 from gateway';
-
-      expect(
-        visitorErrorMessage(
-          new ApiClientError(ERROR_CODES.SERVICE_UNAVAILABLE, message, 503),
-          copy,
-        ),
-      ).toBe(copy.serviceUnavailable);
-    });
-
-    it('traduit tout autre refus par son code, sans lire le message de l’API', () => {
-      const message = 'slot 2026-09-01T09:00:00Z already taken';
-      const rendu = visitorErrorMessage(
-        new ApiClientError(ERROR_CODES.SLOT_NO_LONGER_AVAILABLE, message, 409),
-        copy,
-      );
-
-      expect(rendu).toBe(errorMessage(ERROR_CODES.SLOT_NO_LONGER_AVAILABLE, copy.locale));
-      expect(rendu).not.toContain(message);
-    });
-
-    it('retombe sur la phrase de l’écran pour ce qui n’est pas une erreur d’API', () => {
-      expect(visitorErrorMessage(new TypeError('fetch failed'), copy)).toBe(copy.unexpected);
-    });
+  it('retombe sur la phrase de l’écran pour ce qui n’est pas une erreur d’API', () => {
+    expect(visitorErrorMessage(new TypeError('fetch failed'), copy)).toBe(copy.unexpected);
   });
 });

@@ -70,17 +70,6 @@ import { ApiClientError } from '@/lib/api-client';
  */
 
 /**
- * Repli quand l'erreur n'est pas une `ApiClientError` — une panne du rendu, un
- * `TypeError`, tout ce dont on ne sait rien. Phrase complète, invitation
- * comprise, comme n'importe quel message d'erreur du dépôt.
- *
- * Reste écrite ici, en français, pour l'appel sans `copy` ci-dessous : c'est le
- * régime d'avant #846, et il n'a pas de catalogue sous la main.
- */
-const UNEXPECTED_ERROR_MESSAGE =
-  'Une erreur inattendue est survenue. Merci de réessayer dans un instant.';
-
-/**
  * Ce que la règle ci-dessous a besoin de savoir de la langue du visiteur.
  *
  * Deux phrases et une langue, et non un traducteur : `visitorErrorMessage` est
@@ -103,19 +92,17 @@ export interface VisitorErrorCopy {
  * Exportée pour être éprouvée seule, et pour qu'un écran à venir trouve la règle
  * plutôt que de la réinventer.
  *
- * `copy` est **facultatif**, et son absence a un sens précis : sans catalogue
- * sous la main, la fonction rend la phrase telle que la frontière d'API l'a
- * écrite — le régime d'avant #846, celui qu'éprouvent les suites unitaires et
- * celui de tout appelant qui n'a pas de contexte de requête. L'encart, lui, la
- * passe toujours : c'est ce qui fait que l'écran parle la langue du visiteur.
+ * `copy` est **exigée** (#1300). Elle a été facultative le temps de #846 : le
+ * repli rendait alors la phrase française que la frontière d'API avait écrite,
+ * pour les appelants qui n'avaient pas encore de catalogue sous la main. Il n'en
+ * reste aucun — l'encart ci-dessous est le seul appelant du dépôt, et il la
+ * passe toujours. Garder la branche revenait à garder deux phrases françaises en
+ * dur dans un fichier que l'épique #843 a précisément fini de traduire, sans
+ * qu'aucun chemin d'exécution ne puisse plus les atteindre.
  */
-export function visitorErrorMessage(error: unknown, copy?: VisitorErrorCopy): string {
+export function visitorErrorMessage(error: unknown, copy: VisitorErrorCopy): string {
   if (!(error instanceof ApiClientError)) {
-    return copy === undefined ? UNEXPECTED_ERROR_MESSAGE : copy.unexpected;
-  }
-
-  if (copy === undefined) {
-    return error.message;
+    return copy.unexpected;
   }
 
   // `ERROR_CODES.SERVICE_UNAVAILABLE` et non le littéral : le garde de
