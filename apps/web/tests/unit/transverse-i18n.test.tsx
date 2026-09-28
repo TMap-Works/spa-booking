@@ -351,19 +351,39 @@ describe('les refus du back-office ne réémettent plus le message de l’API', 
   });
 });
 
-describe('la règle de lint anti-texte-en-dur couvre les deux briques d’affichage', () => {
+describe('la règle de lint anti-texte-en-dur couvre les briques d’affichage', () => {
   /**
    * Sans cette garde, retirer la ligne d'un marqueur ne ferait échouer aucun
    * test : `eslint` passerait sans rien regarder, et le premier « Chargement de
    * l'écran… » réécrit en dur reviendrait sans un mot.
    */
-  it('vise le squelette du back-office et les onglets du design system', async () => {
+  it('vise le squelette du back-office et tout le design system', async () => {
     const { i18nLintedGlobs } = await import('../../eslint-rules/i18n-markers.mjs');
     const globs: readonly string[] = i18nLintedGlobs(path.join(here, '..', '..'));
 
     expect(globs).toContain(
       'app/\\(admin\\)/\\[tenantSlug\\]/admin/components/admin-screen-skeleton.tsx',
     );
-    expect(globs).toContain('components/ui/tabs.tsx');
+    // `components/ui/tabs.tsx` jusqu'à #1300, où le marqueur du design system a
+    // cessé d'énumérer ses briques : il est vide, et couvre donc le sous-arbre
+    // entier — les quinze briques qui ne portaient encore aucun texte comprises,
+    // et celles qui naîtront après.
+    expect(globs).toContain('components/ui/**/*.{ts,tsx}');
+  });
+
+  /**
+   * Les deux derniers répertoires que l'audit de couverture de #1300 avait
+   * trouvés hors de portée de la règle. Ils n'écrivent aucune phrase aujourd'hui,
+   * et c'est justement pourquoi ils ont besoin d'une garde : rien d'autre ne
+   * dirait qu'on vient de les découvrir.
+   */
+  it('vise le temps réel et le brancheur d’annonces du back-office', async () => {
+    const { i18nLintedGlobs } = await import('../../eslint-rules/i18n-markers.mjs');
+    const globs: readonly string[] = i18nLintedGlobs(path.join(here, '..', '..'));
+
+    expect(globs).toContain('components/live/**/*.{ts,tsx}');
+    expect(globs).toContain(
+      'app/\\(admin\\)/\\[tenantSlug\\]/admin/components/admin-live-announcements.tsx',
+    );
   });
 });

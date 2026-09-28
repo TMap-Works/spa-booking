@@ -60,3 +60,10 @@ admin-logout-button.tsx
 # phrase est celle que le lecteur d'écran entend, et elle vient désormais de
 # `shell.admin.loading`.
 admin-screen-skeleton.tsx
+#
+# Le brancheur des annonces temps réel du back-office — #1300. Il n'écrit aucune
+# phrase : il traduit un message du flux en `kind` d'annonce, et c'est
+# `admin-announcement.tsx` — couvert plus haut par #1192 — qui en tire les mots.
+# Couvert quand même, parce que rien n'empêcherait d'y écrire un bandeau en dur
+# le jour où un troisième fait mériterait d'être annoncé.
+admin-live-announcements.tsx

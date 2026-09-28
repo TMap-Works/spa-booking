@@ -32,7 +32,8 @@ import { formatMoney, formatTimeInTimeZone, type DisplayLocale } from '@/lib/for
  * pas d'exception décorative — une heure écrite à la main annoncerait « 14:00 »
  * à qui lit « 2:00 PM » :
  *
- * - le **prix**, un entier et une devise, mis en forme par `formatMoney` ;
+ * - le **prix**, un entier et une devise, mis en forme par `formatMoney`. La
+ *   devise suit la langue lue — voir {@link PREVIEW_PRICE} ;
  * - les **créneaux**, six instants d'un jeudi fictif lus dans le référentiel
  *   UTC. Le fuseau n'est pas celui d'un établissement — il n'y en a aucun ici —
  *   mais celui dans lequel ces instants ont été écrits, pour que l'illustration
@@ -46,8 +47,29 @@ import { formatMoney, formatTimeInTimeZone, type DisplayLocale } from '@/lib/for
  * et rien ici n'a d'état à hydrater.
  */
 
-/** Le prix de la prestation illustrée — entier et devise, jamais un flottant. */
-const PREVIEW_PRICE: Money = { amountMinor: 7500, currency: 'EUR' };
+/**
+ * Le prix de la prestation illustrée — entier et devise, jamais un flottant.
+ *
+ * **Une devise par langue**, et non une seule pour les deux (#1300). L'accueil
+ * anglais affichait « €75.00 » : la mise en forme suivait bien la langue, mais
+ * la devise, elle, était figée en euros, alors que la clientèle du produit est
+ * nord-américaine — c'est la décision du PO du 2026-09-19 dont
+ * `lib/salon-presets.ts` tire son pays par défaut, les États-Unis. Un prix
+ * d'illustration en monnaie étrangère fait douter du produit avant même qu'on
+ * l'essaie.
+ *
+ * Les devises sont écrites ici plutôt que déduites du pays de repli de
+ * `lib/format.ts` : la racine du domaine ne sert aucun établissement, il n'y a
+ * donc pas de pays à lire, et l'accord tient à ce que les deux tables nomment
+ * les mêmes régions — `en` → `en-US` → dollar, `fr` → `fr-FR` → euro.
+ *
+ * `Record<Locale, …>` et non un objet libre : une troisième langue ne peut pas
+ * s'ajouter au produit sans que `tsc` réclame son prix.
+ */
+const PREVIEW_PRICE: Readonly<Record<Locale, Money>> = {
+  en: { amountMinor: 7500, currency: 'USD' },
+  fr: { amountMinor: 7500, currency: 'EUR' },
+};
 
 /**
  * Le jeudi fictif des créneaux.
@@ -81,7 +103,7 @@ export function BookingPreview() {
         </span>
         <p className="spa-home-preview__title">{t('home.preview.service')}</p>
         <p className="spa-home-preview__meta">{t('home.preview.meta')}</p>
-        <p className="spa-home-preview__price">{formatMoney(PREVIEW_PRICE, display)}</p>
+        <p className="spa-home-preview__price">{formatMoney(PREVIEW_PRICE[locale], display)}</p>
       </div>
 
       <div className="spa-home-preview__card spa-home-preview__card--slots">

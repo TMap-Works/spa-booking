@@ -1,10 +1,16 @@
 # Marqueur de lint i18n — voir eslint-rules/i18n-markers.mjs.
-# Les briques du design system qui portent du texte, traduites par #845. Les
-# autres n'en portent pas : elles s'ajoutent ici le jour où elles en portent.
-button.tsx
-locale-switcher.tsx
-password-field.tsx
-route-error.tsx
-sheet.tsx
-tabs.tsx
-theme-toggle.tsx
+#
+# Tout le design system, et non plus les sept briques qui portaient du texte le
+# jour de #845 — #1300.
+#
+# L'énumération d'origine se défendait tant que l'épique #843 traduisait écran
+# par écran : lister une brique, c'était dire qu'elle venait d'être traduite.
+# L'épique close, elle ne dit plus que l'état du dépôt à un instant donné, et
+# elle laissait quinze briques — `date-block`, `empty-state`, `field`, `select`,
+# `notification`, `phone-field`… — libres d'accueillir un littéral sans que rien
+# ne le signale. Un design system est précisément l'endroit où un texte en dur
+# se répand le plus vite : il est réutilisé partout.
+#
+# Aucune ligne, donc : le marqueur couvre `components/ui/**`, y compris les
+# briques à venir. Une brique qui a besoin d'un mot le prend de ses propriétés
+# ou du catalogue, comme `button.tsx` et `route-error.tsx` le font déjà.

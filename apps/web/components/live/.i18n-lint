@@ -1,0 +1,7 @@
+# Marqueur de lint i18n — voir eslint-rules/i18n-markers.mjs.
+#
+# Le temps réel des rendez-vous — #1300. Laissé au sous-arbre et non énuméré :
+# ce répertoire n'affiche rien par lui-même. `appointment-feed.tsx` ne rend
+# qu'un fournisseur de contexte autour de ses enfants, et les bandeaux qu'il
+# déclenche sont écrits ailleurs, par les composants d'annonce de chaque espace.
+# Le jour où une brique de flux portera du texte, elle naîtra couverte.
