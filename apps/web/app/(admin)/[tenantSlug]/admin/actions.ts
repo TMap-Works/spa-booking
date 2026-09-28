@@ -29,6 +29,17 @@
  * phrase qu'il porte : c'est le code qu'`invalid()` pose, et une phrase qui
  * dirait autre chose que son code rendrait le refus illisible pour l'écran, qui
  * trie sur le code.
+ *
+ * ## Et le message que le schéma nomme lui-même — #1299
+ *
+ * Deux refus rendent mieux que la phrase générique : celui de l'acceptation
+ * d'invitation et celui des réglages du salon rendent `issues[0].message`, qui
+ * nomme le champ fautif. Il venait de la carte **globale** de zod, posée par le
+ * contrat partagé en `DIAGNOSTIC_LOCALE = 'fr'` pour ses journaux (#1232) —
+ * c'est-à-dire du français sur un back-office anglais, au moment précis où la
+ * validation client a laissé passer quelque chose. Leur `safeParse` reçoit
+ * désormais `zodErrorMap(locale)` : une carte contextuelle l'emporte sur la
+ * globale, par conception de zod.
  */
 
 import {
@@ -39,6 +50,7 @@ import {
   slugSchema,
   submittedLocaleSchema,
   updateTenantRequestSchema,
+  zodErrorMap,
   type Locale,
   type SessionUser,
   type Tenant,
@@ -104,11 +116,12 @@ export async function adminAcceptInvitationAction(
   tenantSlug: string,
   values: unknown,
 ): Promise<AdminActionResult<SessionUser>> {
+  const locale = await getLocale();
   const slug = slugSchema.safeParse(tenantSlug);
-  const parsed = acceptInvitationRequestSchema.safeParse(values);
+  const parsed = acceptInvitationRequestSchema.safeParse(values, { errorMap: zodErrorMap(locale) });
 
   if (!slug.success || !parsed.success) {
-    const generique = errorMessage(ERROR_CODES.VALIDATION_ERROR, await getLocale());
+    const generique = errorMessage(ERROR_CODES.VALIDATION_ERROR, locale);
 
     // Le premier refus du schéma quand il en nomme un — c'est ce qui distingue
     // « douze caractères au minimum » d'un mot de passe absent. À défaut, la
@@ -166,19 +179,21 @@ export async function updateTenantSettingsAction(
   tenantSlug: string,
   changes: unknown,
 ): Promise<AdminActionResult<Tenant>> {
+  const locale = await getLocale();
   const slug = slugSchema.safeParse(tenantSlug);
-  const parsed = updateTenantRequestSchema.safeParse(changes);
+  const parsed = updateTenantRequestSchema.safeParse(changes, { errorMap: zodErrorMap(locale) });
 
   if (!slug.success) {
-    return invalid(errorMessage(ERROR_CODES.VALIDATION_ERROR, await getLocale()));
+    return invalid(errorMessage(ERROR_CODES.VALIDATION_ERROR, locale));
   }
   if (!parsed.success) {
     // Le message du premier refus, et non un « formulaire invalide » générique :
     // c'est ce qui distingue « code pays attendu » de « deux plages du même jour
-    // se recouvrent », et l'écran n'a pas d'autre source pour le dire.
+    // se recouvrent », et l'écran n'a pas d'autre source pour le dire. Il est dit
+    // dans la langue de la requête depuis #1299 — la carte contextuelle
+    // ci-dessus l'emporte sur la carte globale du contrat, en français.
     return invalid(
-      parsed.error.issues[0]?.message ??
-        errorMessage(ERROR_CODES.VALIDATION_ERROR, await getLocale()),
+      parsed.error.issues[0]?.message ?? errorMessage(ERROR_CODES.VALIDATION_ERROR, locale),
     );
   }
 
