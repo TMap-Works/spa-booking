@@ -14,6 +14,7 @@ import { join } from 'node:path';
 import { z } from 'zod';
 
 import {
+  DIAGNOSTIC_LOCALE,
   VALIDATION_MESSAGES,
   messageKey,
   validationMessage,
@@ -71,6 +72,44 @@ describe('zodErrorMap', () => {
     expect(refuse(z.string(), undefined, 'fr')).not.toBe(refuse(z.string(), undefined, 'en'));
   });
 
+  it.each([...LOCALES])('refuse une clé que le schéma ne déclare pas, en « %s »', (locale) => {
+    // Les schémas d'entrée du contrat sont `.strict()`, et l'API l'exige de
+    // chacun au montage (`assertRefusesUnknownKeys`). Le refus correspondant
+    // s'affichait « Unrecognized key(s) in object: 'tenantId' » — le message
+    // natif de zod, en anglais sur les deux consoles (#1309).
+    const schema = z.object({ name: z.string() }).strict();
+    const message = refuse(schema, { name: 'Zen Spa', tenantId: 'tnt_voisin' }, locale);
+
+    expect(message).toBe(validationPhrases(locale).unexpected);
+  });
+
+  it.each([...LOCALES])('ne recopie pas la clé refusée dans le message, en « %s »', (locale) => {
+    // La clé vient de la charge utile reçue, pas du schéma : la renvoyer ferait
+    // du message d'erreur l'écho d'une entrée jamais validée.
+    const schema = z.object({ name: z.string() }).strict();
+    const message = refuse(schema, { name: 'Zen Spa', tenantId: 'tnt_voisin' }, locale);
+
+    expect(message).not.toContain('tenantId');
+    expect(message).not.toContain('Unrecognized');
+  });
+
+  it('refuse la clé surnuméraire dans deux phrases distinctes', () => {
+    const schema = z.object({ name: z.string() }).strict();
+    const charge = { name: 'Zen Spa', tenantId: 'tnt_voisin' };
+
+    expect(refuse(schema, charge, 'fr')).not.toBe(refuse(schema, charge, 'en'));
+  });
+
+  it.each([...LOCALES])('reste sur la phrase générique face à une union, en « %s »', (locale) => {
+    // Arbitrage écrit à côté du cas (#1309) : une union ne surface que son
+    // propre code, les refus de ses branches restant dans `unionErrors`. Ce qui
+    // est gardé ici, c'est que le message soit une **phrase traduite** et non le
+    // « Invalid input » de zod.
+    const schema = z.union([z.string(), z.number()]);
+
+    expect(refuse(schema, true, locale)).toBe(validationPhrases(locale).invalid);
+  });
+
   it('laisse au schéma son propre message', () => {
     // Un message posé sur un check court-circuite toutes les cartes d'erreurs,
     // par conception de zod. C'est précisément ce qui rendait les phrases des
@@ -87,6 +126,71 @@ describe('zodErrorMap', () => {
     const schema = z.string().refine(() => false);
 
     expect(refuse(schema, 'valeur', 'fr')).toBe('Invalid input');
+  });
+});
+
+/**
+ * Le repli de diagnostic — troisième critère de #1309.
+ *
+ * Ce que cette suite garde : la langue de `details.violations` est un choix, et
+ * elle ne dérive pas au gré des tickets. Le corps d'erreur de l'API est servi
+ * sans carte contextuelle (`ZodValidationPipe` appelle `safeParse(value)` tout
+ * court) : c'est la carte globale de ce module qui répond, et c'est ce que ces
+ * tests exercent.
+ */
+describe('repli de diagnostic', () => {
+  /** Le premier message rendu **sans** carte contextuelle — ce que l'API sert. */
+  function refuseSansCarte(schema: z.ZodTypeAny, value: unknown): string {
+    const result = schema.safeParse(value);
+
+    if (result.success) {
+      throw new Error('la valeur a été acceptée, le test n’a rien à lire');
+    }
+
+    return result.error.issues[0]?.message ?? '';
+  }
+
+  it('reste en français, et c’est une décision', () => {
+    // #1232 l'a gelé, #1309 l'a reconduit : `violations` est lu par un journal
+    // et par qui intègre l'API, pas rendu à un client — le passer à l'anglais
+    // traduirait un journal sans internationaliser quoi que ce soit, et
+    // laisserait un `details` anglais sous un `message` français.
+    expect(DIAGNOSTIC_LOCALE).toBe('fr');
+  });
+
+  it('sert les clés du catalogue dans cette langue', () => {
+    const schema = z.string().refine(() => false, messageKey('identifier.phone'));
+
+    expect(refuseSansCarte(schema, 'zéro six')).toBe(
+      validationMessage('identifier.phone', DIAGNOSTIC_LOCALE),
+    );
+  });
+
+  it('garde le nom du champ refusé, là où un écran ne le garde pas', () => {
+    // Le second volet de l'arbitrage de #1309. La phrase du catalogue est muette
+    // sur la clé, exprès — et cette discrétion qui protège un écran aveuglerait
+    // un journal. `violationsOf` (API) énonce que ses messages citent des noms
+    // de champs, et `appointments-desk.integration-spec.ts` en fait une
+    // assertion : un `client` glissé au comptoir doit se retrouver nommé.
+    const schema = z.object({ name: z.string() }).strict();
+    const message = refuseSansCarte(schema, { name: 'Zen Spa', client: { firstName: 'Camille' } });
+
+    expect(message).toContain('client');
+    expect(message).not.toBe(validationPhrases(DIAGNOSTIC_LOCALE).unexpected);
+  });
+
+  it('cède toujours le pas à la langue de l’écran', () => {
+    // La propriété qui rend le repli inoffensif : une carte passée à
+    // `safeParse` est contextuelle, et la contextuelle gagne sur la globale.
+    // Elle vaut aussi en français, où les deux cartes ne divergent que sur ce
+    // code-ci : l'écran a sa phrase, le journal garde son nom de champ.
+    const schema = z.object({ name: z.string() }).strict();
+    const charge = { name: 'Zen Spa', client: { firstName: 'Camille' } };
+
+    for (const locale of LOCALES) {
+      expect(refuse(schema, charge, locale)).toBe(validationPhrases(locale).unexpected);
+      expect(refuse(schema, charge, locale)).not.toBe(refuseSansCarte(schema, charge));
+    }
   });
 });
 
