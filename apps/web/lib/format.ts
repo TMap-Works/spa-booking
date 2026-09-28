@@ -14,6 +14,7 @@
 
 import {
   AMOUNT_MINOR_MAX,
+  DEFAULT_LOCALE,
   type CalendarDate,
   type Locale,
   type Money,
@@ -53,18 +54,26 @@ import fr from '@/messages/fr/format.json';
  * sévérité haute (`CLAUDE.md`). Les **montants** restent des entiers accompagnés
  * d'un code devise ; seule leur mise en forme suit la langue.
  *
- * ### Pourquoi un paramètre facultatif
+ * ### Pourquoi un paramètre facultatif, et pourquoi son repli a changé
  *
- * Les quarante et quelques appelants de ce module sont hors de l'empreinte de
- * #845 : chacun passera la langue résolue dans son propre ticket de l'épique
- * #843. D'ici là, le défaut garde le comportement d'avant le ticket — le
- * français — plutôt que de faire basculer en anglais des écrans dont personne
- * n'a encore relu la traduction. Le défaut tombe avec le dernier ticket
- * d'écran, et `tsc` nommera alors ce qui reste à brancher.
+ * Les quarante et quelques appelants de ce module étaient hors de l'empreinte de
+ * #845 : chacun a passé la langue résolue dans son propre ticket de l'épique
+ * #843. Le défaut servait à garder, d'ici là, le comportement d'avant le
+ * ticket — le français — plutôt que de faire basculer en anglais des écrans dont
+ * personne n'avait encore relu la traduction.
+ *
+ * Cette raison est éteinte, et #1297 en tire la conséquence : le repli vaut
+ * `DEFAULT_LOCALE`, la langue par défaut du produit. Le paramètre reste
+ * facultatif — le rendre obligatoire ici ferait porter à un ticket de correction
+ * la réécriture de la quarantaine d'appelants du monolithe front —, mais il ne
+ * promet plus du français à qui l'oublie. Là où l'oubli était **visible sur le
+ * parcours de réservation**, le type l'interdit désormais pour de bon :
+ * `DateBlock`, `addressLines`, `formatMonth` et les trois fonctions du fichier
+ * d'agenda exigent leur langue.
  */
 
-/** La langue employée quand l'appelant n'en passe pas encore — voir ci-dessus. */
-const FALLBACK_LOCALE: Locale = 'fr';
+/** La langue employée quand l'appelant n'en passe pas — voir ci-dessus. */
+const FALLBACK_LOCALE: Locale = DEFAULT_LOCALE;
 
 /**
  * Ce qui décide de la mise en forme : une langue, et le pays de
@@ -81,7 +90,7 @@ export interface DisplayLocale {
   readonly countryCode?: string | null | undefined;
 }
 
-/** Le repli transitoire de l'épique #843 — voir l'en-tête. */
+/** Le même repli, sous la forme que les fonctions du module attendent. */
 const FALLBACK_DISPLAY: DisplayLocale = { locale: FALLBACK_LOCALE };
 
 /** Les mots que `Intl` ne sait pas dire, dans les deux langues. */

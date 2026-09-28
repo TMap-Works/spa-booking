@@ -1,4 +1,9 @@
-import type { AppointmentStatus, Locale, TimeZone } from '@spa/shared';
+import {
+  DEFAULT_LOCALE,
+  type AppointmentStatus,
+  type Locale,
+  type TimeZone,
+} from '@spa/shared';
 
 import { formattingLocale, type DisplayLocale } from '@/lib/format';
 import en from '@/messages/en/account.json';
@@ -71,7 +76,7 @@ export const HISTORY_FILTER_IDS: readonly HistoryFilter[] = ['tous', 'honores', 
 const CATALOG = { fr, en } as const;
 
 /** La langue employée quand l'appelant n'en passe pas — voir `appointment-brief.ts`. */
-const FALLBACK_LOCALE: Locale = 'fr';
+const FALLBACK_LOCALE: Locale = DEFAULT_LOCALE;
 
 /** Les trois filtres, mots compris, dans l'ordre où la rangée les présente. */
 export function historyFilters(locale: Locale = FALLBACK_LOCALE): readonly HistoryFilterItem[] {

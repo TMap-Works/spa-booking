@@ -228,15 +228,30 @@ interface Announcement {
  *
  * ### Une phrase reste écrite deux fois, et il faut le dire
  *
- * `PENDING_HOLD_NOTE` (`components/account/appointment-brief.ts`) porte la
- * **même** phrase, figée en français, pour les deux cartes de l'espace client.
- * Les deux écritures sont identiques au caractère près aujourd'hui, mais rien ne
- * les y tient : c'est exactement le doublon que #743 et #917 ont dû recoller
- * ailleurs. Il n'est pas résorbé ici parce que `components/account/` est
- * l'empreinte du ticket voisin de l'épique #843 — ce sera à lui de faire lire
- * cette clé à `PENDING_HOLD_NOTE` quand il traduira l'espace client, et la
- * constante disparaîtra alors, comme `UNCLASSIFIED_TITLE` et
- * `PUBLIC_EXIT_LABELS` avant elle.
+ * `pendingHoldNote` (`components/account/appointment-brief.ts`) rend la même
+ * phrase pour les deux cartes de l'espace client, et rien dans le code ne tient
+ * les deux écritures ensemble : c'est exactement le doublon que #743 et #917 ont
+ * dû recoller ailleurs. `tests/unit/confirmation-step.test.tsx` en tient la
+ * couture — elle tombe à la première divergence et nomme celle qui a bougé.
+ *
+ * **La couture ne couvre que le français, et c'est un constat, pas un oubli** :
+ * les deux catalogues anglais divergent déjà — « Your slot is on hold; there is
+ * nothing else for you to do. » (`messages/en/booking.json`) contre « Your slot
+ * is held; there is nothing for you to do. » (`messages/en/account.json`). Le
+ * cas anglais est donc écrit, sauté, et rattaché à **#1304**, qui tranchera
+ * laquelle des deux phrases fait foi ; `messages/` est hors de l'empreinte d'un
+ * ticket de correction i18n.
+ *
+ * La constante française qui portait cette phrase (`PENDING_HOLD_NOTE`) est
+ * tombée avec #1297, comme `UNCLASSIFIED_TITLE` et `PUBLIC_EXIT_LABELS`.
+ *
+ * ### Le fichier d'agenda suit la langue de l'écran (#1297)
+ *
+ * `appointmentIcsHref` et `appointmentIcsFilename` reçoivent `locale` : sans
+ * elle, un visiteur anglais téléchargeait un « rendez-vous-RDV-8F3K-27.ics »
+ * intitulé « Rendez-vous ». Leur langue est désormais exigée par le type — un
+ * fichier téléchargé ne se relit pas à l'écran, et l'oubli ne se voyait que dans
+ * l'agenda de la cliente.
  */
 export function ConfirmationStep({
   tenant,
@@ -279,9 +294,9 @@ export function ConfirmationStep({
               line: t('tunnel.confirmationStep.pendingLine', {
                 confirmation: pendingConfirmationLabel(locale),
                 // La phrase de la retenue vient du catalogue, dans la langue du
-                // visiteur. `PENDING_HOLD_NOTE` porte la même, figée en
-                // français, pour les cartes de l'espace client : un doublon
-                // assumé le temps de l'épique #843 — voir l'en-tête (#846).
+                // visiteur. `pendingHoldNote` rend la même pour les cartes de
+                // l'espace client : un doublon dont la couture est un test —
+                // voir l'en-tête (#846).
                 hold: t('tunnel.confirmationStep.pendingHold'),
               }),
             }
@@ -481,8 +496,8 @@ export function ConfirmationStep({
                  bouton lui vient des classes du socle. */
               <a
                 className="spa-button spa-button--accent"
-                href={appointmentIcsHref({ brief, tenant })}
-                download={appointmentIcsFilename(appointment)}
+                href={appointmentIcsHref({ brief, tenant, locale })}
+                download={appointmentIcsFilename(appointment, locale)}
               >
                 <span className="spa-button__label">
                   {t('tunnel.confirmationStep.addToCalendar')}

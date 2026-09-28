@@ -131,8 +131,12 @@ export function dayOfMonth(date: CalendarDate): number {
  * Un mince relais sur `formatCalendarMonth`, qui met en forme une **date** :
  * l'année y est portée parce qu'un calendrier ouvert en décembre navigue vers
  * janvier, et que « janvier » seul ne dirait pas lequel.
+ *
+ * Le contexte d'affichage est **obligatoire** depuis #1297 : l'état vide du
+ * formulaire de report annonçait « Aucune disponibilité en septembre » sur un
+ * écran anglais, faute de l'avoir passé.
  */
-export function formatMonth(month: CalendarMonth, display?: DisplayLocale): string {
+export function formatMonth(month: CalendarMonth, display: DisplayLocale): string {
   return formatCalendarMonth(firstDayOfMonth(month), display);
 }
 

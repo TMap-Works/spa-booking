@@ -15,13 +15,15 @@ type DateBlockProps = DateBlockValue & {
    * La langue et la région de la mise en forme (#847) — « LUN · 21 · SEPT »
    * d'un côté, « MON · 21 · SEP » de l'autre.
    *
-   * Facultative : sans elle, le bloc retombe sur le repli documenté de
-   * `lib/format.ts` (`fr-FR`), c'est-à-dire exactement ce qu'il écrivait avant
-   * que la langue n'existe. Les surfaces qui ont déjà la langue résolue sous la
-   * main la passent ; les autres la passeront dans leur propre ticket de
-   * l'épique #843.
+   * **Obligatoire depuis #1297.** Elle était facultative le temps que les
+   * écrans de l'épique #843 se branchent un à un, et le repli valait `fr-FR` :
+   * trois surfaces du parcours de réservation — la bande de jours, la barre
+   * récapitulative, la carte de confirmation — l'ont omise jusqu'au bout, et un
+   * visiteur anglais lisait « lun. 1 sept. » au milieu d'un écran anglais. Un
+   * repli sur `DEFAULT_LOCALE` aurait déplacé la faute sans la rendre visible ;
+   * le type, lui, la nomme à la compilation.
    */
-  readonly display?: DisplayLocale;
+  readonly display: DisplayLocale;
 };
 
 interface DateParts {
@@ -42,16 +44,16 @@ function bare(text: string): string {
  * d'écran. Une date civile se lit à midi UTC **dans** UTC — comme
  * `formatCalendarDate` : aucun fuseau ne peut la faire glisser d'un jour.
  */
-export function dateBlockParts(value: DateBlockValue, display?: DisplayLocale): DateParts {
+export function dateBlockParts(value: DateBlockValue, display: DisplayLocale): DateParts {
   const [date, timeZone, machine] =
     'date' in value
       ? [new Date(`${value.date}T12:00:00Z`), 'UTC', value.date]
       : [new Date(value.instant), value.timeZone, value.instant];
 
-  // `formattingLocale` sans argument rend `fr-FR` : le repli de l'épique #843,
-  // et donc le comportement d'avant la langue pour les appelants qui n'en
-  // passent pas encore.
-  const tag = formattingLocale(display?.locale, display?.countryCode);
+  // La langue vient de l'appelant, sans repli : c'est le type qui l'exige, et
+  // c'est ce qui garantit qu'aucun bloc de date ne se remet à écrire dans une
+  // langue que l'écran qui le porte n'emploie pas (#1297).
+  const tag = formattingLocale(display.locale, display.countryCode);
   const parts = new Intl.DateTimeFormat(tag, {
     timeZone,
     weekday: 'short',

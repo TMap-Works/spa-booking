@@ -49,7 +49,7 @@
  * dans un tableur.
  */
 
-import type { Locale, PaymentMethod } from '@spa/shared';
+import { DEFAULT_LOCALE, type Locale, type PaymentMethod } from '@spa/shared';
 
 import en from '@/messages/en/admin-reporting.json';
 import fr from '@/messages/fr/admin-reporting.json';
@@ -67,8 +67,13 @@ import type {
 /** Les catalogues, dans les deux langues — la même source que les composants. */
 const CATALOG = { fr, en } as const;
 
-/** La langue employée quand l'appelant n'en passe pas — le comportement d'avant #851. */
-const FALLBACK_LOCALE: Locale = 'fr';
+/**
+ * La langue employée quand l'appelant n'en passe pas.
+ *
+ * `DEFAULT_LOCALE` depuis #1297 : le repli français reproduisait le
+ * comportement d'avant #851, quand le fichier n'avait qu'une langue.
+ */
+const FALLBACK_LOCALE: Locale = DEFAULT_LOCALE;
 
 /**
  * Les signes de ponctuation du fichier, par langue.

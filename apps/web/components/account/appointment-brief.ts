@@ -1,11 +1,12 @@
-import type {
-  BookedAppointment,
-  Locale,
-  PostalAddress,
-  PublicService,
-  PublicTenant,
-  TimeZone,
-  UtcInstant,
+import {
+  DEFAULT_LOCALE,
+  type BookedAppointment,
+  type Locale,
+  type PostalAddress,
+  type PublicService,
+  type PublicTenant,
+  type TimeZone,
+  type UtcInstant,
 } from '@spa/shared';
 
 import { addressLines } from '@/components/salon/salon-address';
@@ -47,12 +48,17 @@ const CATALOG = { fr, en } as const;
 /**
  * La langue employée quand l'appelant n'en passe pas.
  *
- * `'fr'`, comme `lib/format.ts` et `lib/appointment-status.ts` : les suites
- * unitaires de cet espace sont écrites en français (`tests/support/next-intl.ts`),
- * et un défaut anglais les aurait fait basculer sans qu'aucun écran ne change.
- * Les écrans, eux, passent tous la langue résolue.
+ * `DEFAULT_LOCALE` — l'anglais — depuis #1297, et non plus `'fr'`. Le défaut
+ * français datait du temps où aucun écran ne passait la langue : il gardait le
+ * comportement d'avant l'épique #843. Tous les écrans de cet espace la passent
+ * désormais, et garder « fr » revenait à promettre du français au premier
+ * appelant qui l'oublierait — c'est-à-dire l'inverse de la langue par défaut du
+ * produit.
+ *
+ * Les fonctions du fichier d'agenda et de l'adresse, elles, n'ont plus de
+ * défaut du tout : voir {@link appointmentIcs} et {@link addressOneLine}.
  */
-const FALLBACK_LOCALE: Locale = 'fr';
+const FALLBACK_LOCALE: Locale = DEFAULT_LOCALE;
 
 /** Le remplacement des paramètres d'un message lu hors de React — voir `lib/format.ts`. */
 function fill(message: string, values: Readonly<Record<string, string>>): string {
@@ -83,21 +89,6 @@ export interface AppointmentBrief {
 export function pendingHoldNote(locale: Locale = FALLBACK_LOCALE): string {
   return CATALOG[locale].appointments.pendingHold;
 }
-
-/**
- * La même phrase, figée en français.
- *
- * @deprecated Transitoire (#847), même régime que les constantes de
- * `lib/appointment-status.ts`. Elle n'a plus qu'un lecteur, et il est **hors de
- * l'empreinte de ce ticket** : l'écran terminal du tunnel de réservation
- * (`(booking)/…/steps/confirmation-step.tsx`), que #846 traduit dans le
- * namespace `booking`. Ce ticket-là lui passera la langue résolue, et cette
- * constante disparaîtra avec son dernier appelant. La garder évite de faire
- * basculer en anglais un écran dont la traduction n'a pas encore été relue — et
- * surtout d'aller réécrire un fichier qui appartient à un autre ticket de la
- * même vague.
- */
-export const PENDING_HOLD_NOTE: string = CATALOG[FALLBACK_LOCALE].appointments.pendingHold;
 
 /**
  * La phrase qui suit la pastille « Déplacé ».
@@ -201,9 +192,18 @@ export function appointmentTimeRange(
  * `destination` d'un itinéraire. « 12 rue des Lilas, Paris » sans pays se
  * géocode dans le pays du téléphone qui l'ouvre, et une cliente à Antananarivo
  * partirait vers une rue française homonyme.
+ *
+ * Le contexte d'affichage est **obligatoire** (#1297), comme celui
+ * d'`addressLines` dont cette fonction n'est qu'un aplatissement : le pays est
+ * le seul élément traduit de l'adresse, et le `LOCATION` du fichier d'agenda
+ * annonçait « États-Unis » à une cliente anglophone.
  */
-export function addressOneLine(name: string, address: PostalAddress): string {
-  return [name, ...addressLines(address)]
+export function addressOneLine(
+  name: string,
+  address: PostalAddress,
+  display: DisplayLocale,
+): string {
+  return [name, ...addressLines(address, display)]
     .map((part) => part.trim())
     .filter((part) => part !== '')
     .join(', ');
@@ -221,12 +221,12 @@ export function addressOneLine(name: string, address: PostalAddress): string {
  * Rendu `null` quand le salon n'a pas publié d'adresse : une action qu'on ne
  * peut pas exercer n'est pas une action (même règle que `salonContactAction`).
  */
-export function directionsUrl(tenant: PublicTenant): string | null {
+export function directionsUrl(tenant: PublicTenant, display: DisplayLocale): string | null {
   if (tenant.address === undefined) {
     return null;
   }
 
-  const destination = encodeURIComponent(addressOneLine(tenant.name, tenant.address));
+  const destination = encodeURIComponent(addressOneLine(tenant.name, tenant.address, display));
 
   return `https://www.google.com/maps/dir/?api=1&destination=${destination}`;
 }
@@ -298,8 +298,15 @@ interface IcsInput {
    * des mois après : ce sont des textes d'interface comme les autres. Le reste du
    * fichier — `PRODID`, `DTSTART`, la structure — est le protocole de la RFC 5545
    * et ne se traduit pas.
+   *
+   * **Obligatoire depuis #1297.** Facultative, elle a laissé l'écran de
+   * confirmation du tunnel télécharger un « rendez-vous-RDV-8F3K-27.ics »
+   * intitulé « Rendez-vous » à un visiteur anglais. Un fichier téléchargé ne se
+   * relit pas : la faute n'apparaît qu'une fois le fichier dans l'agenda de la
+   * cliente, et aucun écran ne la montre. C'est exactement le genre d'oubli qu'un
+   * type doit refuser plutôt qu'un repli masquer.
    */
-  readonly locale?: Locale;
+  readonly locale: Locale;
 }
 
 /**
@@ -315,7 +322,7 @@ interface IcsInput {
  * aussi la seule écriture qui n'oblige pas à embarquer la définition du fuseau
  * du salon dans le fichier. L'agenda de la cliente le reprojettera dans le sien.
  */
-export function appointmentIcs({ brief, tenant, locale = FALLBACK_LOCALE }: IcsInput): string {
+export function appointmentIcs({ brief, tenant, locale }: IcsInput): string {
   const { appointment, serviceName, practitioner } = brief;
   const words = CATALOG[locale].ics;
   const summary = fill(words.summary, {
@@ -324,7 +331,16 @@ export function appointmentIcs({ brief, tenant, locale = FALLBACK_LOCALE }: IcsI
   });
   const description =
     practitioner === null ? null : fill(words.description, { practitioner });
-  const location = tenant.address === undefined ? null : addressOneLine(tenant.name, tenant.address);
+  // La région vient du pays de l'établissement, comme partout ailleurs
+  // (`formattingLocale`) : c'est elle qui décide, par exemple, si un anglophone
+  // lit « United States » ou « US ».
+  const location =
+    tenant.address === undefined
+      ? null
+      : addressOneLine(tenant.name, tenant.address, {
+          locale,
+          countryCode: tenant.address.country,
+        });
 
   const lines = [
     'BEGIN:VCALENDAR',
@@ -353,10 +369,17 @@ export function appointmentIcs({ brief, tenant, locale = FALLBACK_LOCALE }: IcsI
   return `${lines.map(foldIcsLine).join('\r\n')}\r\n`;
 }
 
-/** Le nom du fichier téléchargé — la référence citable, jamais un UUID. */
+/**
+ * Le nom du fichier téléchargé — la référence citable, jamais un UUID.
+ *
+ * La langue est **obligatoire**, comme celle du contenu (#1297) : le nom et
+ * l'intitulé du fichier sont lus ensemble, et un
+ * « rendez-vous-RDV-8F3K-27.ics » nommant un événement « Appointment » serait
+ * la pire des deux moitiés.
+ */
 export function appointmentIcsFilename(
   appointment: Pick<BookedAppointment, 'reference'>,
-  locale: Locale = FALLBACK_LOCALE,
+  locale: Locale,
 ): string {
   return fill(CATALOG[locale].ics.filename, { reference: appointment.reference });
 }

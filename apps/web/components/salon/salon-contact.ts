@@ -1,4 +1,4 @@
-import type { Locale, PublicTenant } from '@spa/shared';
+import { DEFAULT_LOCALE, type Locale, type PublicTenant } from '@spa/shared';
 
 import en from '@/messages/en/booking.json';
 import fr from '@/messages/fr/booking.json';
@@ -40,15 +40,15 @@ import fr from '@/messages/fr/booking.json';
 const CATALOG = { fr, en } as const;
 
 /**
- * La langue employée quand l'appelant n'en passe pas encore.
+ * La langue employée quand l'appelant n'en passe pas.
  *
- * `'fr'`, et c'est **transitoire** : même arbitrage que `FALLBACK_LOCALE` de
- * `public-exits.tsx` et de `lib/format.ts`. Le défaut garde le comportement
- * d'avant le ticket plutôt que de basculer en anglais un écran dont personne n'a
- * encore relu la traduction, et il tombera avec le dernier ticket d'écran de
- * l'épique #843.
+ * `DEFAULT_LOCALE` depuis #1297 : même arbitrage que `FALLBACK_LOCALE` de
+ * `public-exits.tsx` et de `lib/format.ts`. Le défaut français gardait le
+ * comportement d'avant l'épique #843 pour les écrans dont la traduction n'avait
+ * pas été relue ; ils l'ont tous été, et promettre du français à un appelant qui
+ * oublie sa langue est devenu l'inverse de ce que le produit rend par défaut.
  */
-const FALLBACK_LOCALE: Locale = 'fr';
+const FALLBACK_LOCALE: Locale = DEFAULT_LOCALE;
 
 export interface SalonContactAction {
   /** `tel:` ou `mailto:` — prêt à poser dans un `href`, sans retouche. */

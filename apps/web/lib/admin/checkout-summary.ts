@@ -51,6 +51,7 @@ import type {
 } from '@spa/shared';
 import {
   CAPTURED_PAYMENT_STATUSES,
+  DEFAULT_LOCALE,
   ERROR_CODES,
   PAYMENT_ERROR_CODES,
   terminalReferenceSchema,
@@ -69,8 +70,13 @@ import fr from '@/messages/fr/admin-checkout.json';
 /** Les deux catalogues du comptoir — la même source que les composants. */
 const CATALOG = { fr, en } as const;
 
-/** La langue employée quand l'appelant n'en passe pas — voir l'en-tête. */
-export const CHECKOUT_FALLBACK_LOCALE: Locale = 'fr';
+/**
+ * La langue employée quand l'appelant n'en passe pas — voir l'en-tête.
+ *
+ * `DEFAULT_LOCALE` depuis #1297 : le repli français gardait le comportement
+ * d'avant la traduction de l'encaissement, et cette raison est éteinte.
+ */
+export const CHECKOUT_FALLBACK_LOCALE: Locale = DEFAULT_LOCALE;
 
 /** Le catalogue de l'encaissement, dans la langue demandée. */
 export function checkoutWords(locale: Locale = CHECKOUT_FALLBACK_LOCALE): typeof en {

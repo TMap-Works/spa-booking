@@ -182,7 +182,7 @@ export function BookingAppointmentCard({
   return (
     <article className="spa-booking__rdv">
       <div className="spa-booking__rdv-head">
-        <DateBlock size="lg" instant={startsAt} timeZone={tenant.timezone} />
+        <DateBlock size="lg" instant={startsAt} timeZone={tenant.timezone} display={display} />
 
         <div className="spa-booking__rdv-when">
           <p className="spa-booking__rdv-hours">
@@ -267,7 +267,7 @@ export function BookingAppointmentCard({
               <span className="spa-booking__rdv-salon">{tenant.name}</span>
               {tenant.address === undefined
                 ? null
-                : addressLines(tenant.address).map((line, index) => (
+                : addressLines(tenant.address, display).map((line, index) => (
                     <span key={index}>{line}</span>
                   ))}
             </address>

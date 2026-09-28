@@ -42,7 +42,7 @@
  * un sous-ensemble.
  */
 
-import type { CalendarDate, Locale } from '@spa/shared';
+import { DEFAULT_LOCALE, type CalendarDate, type Locale } from '@spa/shared';
 
 import en from '@/messages/en/admin-reporting.json';
 import fr from '@/messages/fr/admin-reporting.json';
@@ -86,8 +86,13 @@ import type { ReportRange } from './reporting-window';
 /** Les catalogues, dans les deux langues — la même source que les composants. */
 const CATALOG = { fr, en } as const;
 
-/** La langue employée quand l'appelant n'en passe pas encore — voir ci-dessus. */
-const FALLBACK_LOCALE: Locale = 'fr';
+/**
+ * La langue employée quand l'appelant n'en passe pas — voir ci-dessus.
+ *
+ * `DEFAULT_LOCALE` depuis #1297 : le repli français gardait le comportement
+ * d'avant la traduction du reporting, et cette raison est éteinte.
+ */
+const FALLBACK_LOCALE: Locale = DEFAULT_LOCALE;
 
 /**
  * Le même repli, sous la forme que `lib/format.ts` attend.

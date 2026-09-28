@@ -114,9 +114,10 @@ import { adminCalendarPath } from '../paths';
  * ## Les mots viennent du catalogue `admin-auth` (#853)
  *
  * La page est asynchrone : c'est `getTranslations` de `next-intl/server`, et non
- * `useTranslations`. Les sorties publiques passent de `PUBLIC_EXIT_LABELS` —
- * la table figée en français, dépréciée par #845 — à `publicExitLabels(locale)`,
- * exactement comme ce registre l'annonçait pour les six surfaces qui le lisent.
+ * `useTranslations`. Les sorties publiques sont passées de `PUBLIC_EXIT_LABELS` —
+ * la table figée en français, dépréciée par #845 et supprimée par #1297 — à
+ * `publicExitLabels(locale)`, exactement comme ce registre l'annonçait pour les
+ * six surfaces qui le lisent.
  */
 
 export const dynamic = 'force-dynamic';

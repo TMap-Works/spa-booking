@@ -79,8 +79,8 @@ interface SalonHeaderProps {
  * cet appel à l'action et les barres de sorties nomment la même page, et deux
  * chaînes écrites à deux endroits finissent par diverger. Depuis #846, il est
  * demandé dans la **langue résolue** — `publicExitLabels(locale)` et non la
- * table figée en français, qui n'existe plus que pour les surfaces que l'épique
- * #843 n'a pas encore atteintes.
+ * table figée en français, que #1297 a supprimée une fois sa dernière surface
+ * branchée.
  *
  * ## La langue (#846)
  *

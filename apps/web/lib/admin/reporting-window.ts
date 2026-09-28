@@ -25,7 +25,7 @@
  * afficher « au 1er octobre » à qui a demandé septembre.
  */
 
-import type { CalendarDate, Locale, TimeZone } from '@spa/shared';
+import { DEFAULT_LOCALE, type CalendarDate, type Locale, type TimeZone } from '@spa/shared';
 
 import en from '@/messages/en/admin-reporting.json';
 import fr from '@/messages/fr/admin-reporting.json';
@@ -64,10 +64,15 @@ import { formattingLocale, type DisplayLocale } from '../format';
 /** Les catalogues, dans les deux langues — la même source que les composants. */
 const CATALOG = { fr, en } as const;
 
-/** La langue employée quand l'appelant n'en passe pas encore — voir ci-dessus. */
-const FALLBACK_LOCALE: Locale = 'fr';
+/**
+ * La langue employée quand l'appelant n'en passe pas — voir ci-dessus.
+ *
+ * `DEFAULT_LOCALE` depuis #1297 : le repli français gardait le comportement
+ * d'avant la traduction du reporting, et cette raison est éteinte.
+ */
+const FALLBACK_LOCALE: Locale = DEFAULT_LOCALE;
 
-/** Le repli transitoire de l'épique #843 — voir ci-dessus. */
+/** Le même repli, sous la forme que `lib/format.ts` attend. */
 const FALLBACK_DISPLAY: DisplayLocale = { locale: FALLBACK_LOCALE };
 
 /**

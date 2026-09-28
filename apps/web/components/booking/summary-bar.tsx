@@ -110,7 +110,7 @@ function SummaryFacts({ summary }: SummaryFactsProps) {
         <div className="spa-booking__fact">
           <dt className="spa-booking__fact-term">{t('tunnel.summaryBar.dateTime')}</dt>
           <dd className="spa-booking__fact-value spa-booking__fact-value--figure">
-            <DateBlock instant={summary.startsAt} timeZone={summary.timeZone} />
+            <DateBlock instant={summary.startsAt} timeZone={summary.timeZone} display={display} />
             <span>{formatTimeInTimeZone(summary.startsAt, summary.timeZone, display)}</span>
           </dd>
         </div>

@@ -9,6 +9,7 @@ import { Icon } from '@/components/ui/icon';
 import { LocaleSwitcher } from '@/components/ui/locale-switcher';
 import { ThemeToggle } from '@/components/ui/theme-toggle';
 import type { AccountName, AccountPresence } from '@/lib/account-presence';
+import type { DisplayLocale } from '@/lib/format';
 import { formatPhoneForDisplay } from '@/lib/phone';
 import { PLATFORM_HOME_PATH, PLATFORM_NAME } from '@/lib/platform';
 
@@ -182,8 +183,17 @@ interface SalonFooterProps {
 
 function SalonFooter({ tenantSlug, tenant, bookingHref }: SalonFooterProps) {
   const t = useTranslations('shell');
+  const locale = useLocale();
   // Même registre que l'en-tête, et pour la même raison (#749, #846).
-  const exits = publicExitLabels(useLocale());
+  const exits = publicExitLabels(locale);
+  /**
+   * La langue et la région du pied de page (#1297).
+   *
+   * Le pays de l'adresse n'est **pas** décoratif ici : c'est le seul élément
+   * traduit de l'adresse, et ce pied figure sur toutes les pages publiques — un
+   * visiteur anglais y lisait « États-Unis ».
+   */
+  const display: DisplayLocale = { locale, countryCode: tenant?.address?.country ?? null };
   const phone = tenant?.contactPhone;
   const email = tenant?.contactEmail;
 
@@ -198,7 +208,7 @@ function SalonFooter({ tenantSlug, tenant, bookingHref }: SalonFooterProps) {
             </p>
             {tenant.address === undefined ? null : (
               <address className="spa-shell__footer-address">
-                {addressLines(tenant.address).map((line, index) => (
+                {addressLines(tenant.address, display).map((line, index) => (
                   <span key={index}>{line}</span>
                 ))}
               </address>

@@ -369,7 +369,7 @@ export function RescheduleForm({
         onChoose={setChosen}
         emptyState={
           <div className="spa-empty-state">
-            <p className="spa-empty-state__title">{t('emptyTitle', { month: formatMonth(month) })}</p>
+            <p className="spa-empty-state__title">{t('emptyTitle', { month: formatMonth(month, display) })}</p>
             <p className="spa-empty-state__description">{t('emptyBody')}</p>
             {/*
               La sortie est **aussi** ici, et pas seulement sur les chevrons du

@@ -1,5 +1,5 @@
 import type { PublicTenant } from '@spa/shared';
-import { useTranslations } from 'next-intl';
+import { useLocale, useTranslations } from 'next-intl';
 
 import { directionsUrl } from '@/components/account/appointment-brief';
 import { formatOpeningRange, groupOpeningHoursByDay } from '@/components/salon/opening-hours';
@@ -7,6 +7,7 @@ import { addressLines } from '@/components/salon/salon-address';
 import { telUri } from '@/components/salon/salon-contact';
 import { Avatar } from '@/components/ui/avatar';
 import { Icon } from '@/components/ui/icon';
+import type { DisplayLocale } from '@/lib/format';
 import { formatPhoneForDisplay } from '@/lib/phone';
 
 /**
@@ -66,7 +67,19 @@ export function todayWeekday(timeZone: string, now: Date = new Date()): number |
 
 export function SalonAside({ tenant }: SalonAsideProps) {
   const t = useTranslations('account');
-  const directions = directionsUrl(tenant);
+  /**
+   * La langue et la région de la mise en forme (#1297).
+   *
+   * Résolue ici et non reçue en propriété : cette carte est montée par le
+   * gabarit de l'espace, hors du fournisseur de `useAccountDisplay` — lequel est
+   * un Client Component. `useLocale` se lit des deux côtés, et la région vient du
+   * pays de l'établissement, comme partout ailleurs (`formattingLocale`).
+   */
+  const display: DisplayLocale = {
+    locale: useLocale(),
+    countryCode: tenant.address?.country ?? null,
+  };
+  const directions = directionsUrl(tenant, display);
   const phone = tenant.contactPhone;
   const weekday = todayWeekday(tenant.timezone);
   /**
@@ -106,7 +119,7 @@ export function SalonAside({ tenant }: SalonAsideProps) {
             <Icon name="pin" className="spa-account__card-icon" />
             <div>
               <address className="spa-account__card-address">
-                {addressLines(tenant.address).map((line, index) => (
+                {addressLines(tenant.address, display).map((line, index) => (
                   <span key={index}>{line}</span>
                 ))}
               </address>

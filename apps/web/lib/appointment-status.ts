@@ -1,9 +1,10 @@
-import type {
-  AppointmentScope,
-  AppointmentStatus,
-  BookedAppointment,
-  CancellationActor,
-  Locale,
+import {
+  DEFAULT_LOCALE,
+  type AppointmentScope,
+  type AppointmentStatus,
+  type BookedAppointment,
+  type CancellationActor,
+  type Locale,
 } from '@spa/shared';
 
 import en from '@/messages/en/appointment-status.json';
@@ -63,13 +64,13 @@ import fr from '@/messages/fr/appointment-status.json';
  *
  * ## Pourquoi `locale` a une valeur par défaut, et laquelle
  *
- * `'fr'`, et c'est **transitoire**. Les six surfaces qui appellent ces fonctions
- * sont hors de l'empreinte de #845 : chacune passera la langue résolue dans son
- * propre ticket de l'épique #843. D'ici là, le défaut garde le comportement
+ * `DEFAULT_LOCALE` depuis #1297. Le défaut a valu `'fr'`, et c'était
+ * **transitoire** : les six surfaces qui appellent ces fonctions étaient hors de
+ * l'empreinte de #845, et chacune devait passer la langue résolue dans son
+ * propre ticket de l'épique #843. D'ici là, le défaut gardait le comportement
  * d'avant le ticket — les libellés français — plutôt que de faire basculer en
- * anglais six écrans dont personne n'a encore relu la traduction. Le jour où le
- * onzième ticket d'écran est livré, le défaut tombe et le paramètre devient
- * obligatoire ; `tsc` nommera alors ce qui reste à brancher.
+ * anglais six écrans dont personne n'avait relu la traduction. Elles le passent
+ * toutes à présent, et le repli suit désormais la langue par défaut du produit.
  */
 
 /** Les catalogues, dans les deux langues — la même source que les composants. */
@@ -78,13 +79,14 @@ const CATALOG = { fr, en } as const;
 /**
  * La langue employée quand l'appelant n'en passe pas — voir l'en-tête.
  *
- * Ce n'est **pas** `DEFAULT_LOCALE` du contrat, et c'est délibéré : celui-ci dit
- * la langue par défaut du *système* (`en`), celui-là dit ce que ce module rend à
- * un appelant qui n'a pas encore été branché sur la langue résolue. Les
- * confondre ferait basculer en anglais, du jour au lendemain, six écrans dont
- * aucun ticket n'a encore relu la traduction.
+ * C'est `DEFAULT_LOCALE` du contrat depuis #1297. Ce ne l'était pas, et pour une
+ * raison qui a cessé de valoir : tant que les six écrans lecteurs n'avaient pas
+ * été branchés sur la langue résolue, un repli anglais les aurait fait basculer
+ * du jour au lendemain, traduction non relue. Ils la passent tous à présent, et
+ * un repli français ne garde plus rien — il promet du français à l'appelant qui
+ * l'oublierait, c'est-à-dire l'inverse de la langue par défaut du produit.
  */
-const FALLBACK_LOCALE: Locale = 'fr';
+const FALLBACK_LOCALE: Locale = DEFAULT_LOCALE;
 
 /**
  * À qui le libellé s'adresse.
@@ -115,12 +117,14 @@ export function appointmentStatusLabels(
 }
 
 /**
- * La même table, figée en français.
+ * La même table, dans la langue de repli du module.
  *
- * @deprecated Transitoire (#845). Les six surfaces qui la lisent passeront à
- * `appointmentStatusLabels(locale)` dans leur propre ticket de l'épique #843 ;
- * elle disparaît avec la dernière. La garder évite de basculer en anglais des
- * écrans dont la traduction n'a pas encore été relue.
+ * @deprecated Transitoire (#845), et **vidée de sa raison d'être depuis #1297**.
+ * Elle était figée en français le temps que les six surfaces lectrices passent à
+ * `appointmentStatusLabels(locale)` ; elles l'ont toutes fait, et le repli vaut
+ * désormais `DEFAULT_LOCALE` — cette constante rend donc de l'**anglais**. Ne
+ * plus la lire : elle ne survit qu'à ses dernières assertions unitaires et
+ * disparaîtra avec elles, comme `PENDING_HOLD_NOTE` et `PUBLIC_EXIT_LABELS`.
  */
 export const APPOINTMENT_STATUS_LABELS: Readonly<Record<AppointmentStatus, string>> =
   CATALOG[FALLBACK_LOCALE].singular;
@@ -141,9 +145,10 @@ export function appointmentStatusPluralLabels(
 }
 
 /**
- * La même table, figée en français.
+ * La même table, dans la langue de repli du module.
  *
- * @deprecated Transitoire (#845) — voir {@link APPOINTMENT_STATUS_LABELS}.
+ * @deprecated Transitoire (#845) — voir {@link APPOINTMENT_STATUS_LABELS} : le
+ * repli n'est plus le français depuis #1297.
  */
 export const APPOINTMENT_STATUS_PLURAL_LABELS: Readonly<Record<AppointmentStatus, string>> =
   CATALOG[FALLBACK_LOCALE].plural;
@@ -159,7 +164,10 @@ export function rescheduledLabel(locale: Locale = FALLBACK_LOCALE): string {
   return CATALOG[locale].rescheduled;
 }
 
-/** @deprecated Transitoire (#845) — voir {@link APPOINTMENT_STATUS_LABELS}. */
+/**
+ * @deprecated Transitoire (#845) — voir {@link APPOINTMENT_STATUS_LABELS} : le
+ * repli n'est plus le français depuis #1297.
+ */
 export const RESCHEDULED_LABEL: string = CATALOG[FALLBACK_LOCALE].rescheduled;
 
 /**
@@ -190,7 +198,10 @@ export function pendingConfirmationLabel(locale: Locale = FALLBACK_LOCALE): stri
   return CATALOG[locale].pendingConfirmation;
 }
 
-/** @deprecated Transitoire (#845) — voir {@link APPOINTMENT_STATUS_LABELS}. */
+/**
+ * @deprecated Transitoire (#845) — voir {@link APPOINTMENT_STATUS_LABELS} : le
+ * repli n'est plus le français depuis #1297.
+ */
 export const PENDING_CONFIRMATION_LABEL: string = CATALOG[FALLBACK_LOCALE].pendingConfirmation;
 
 /**
@@ -203,7 +214,10 @@ export function unconfirmedPastLabel(locale: Locale = FALLBACK_LOCALE): string {
   return CATALOG[locale].unconfirmedPast;
 }
 
-/** @deprecated Transitoire (#845) — voir {@link APPOINTMENT_STATUS_LABELS}. */
+/**
+ * @deprecated Transitoire (#845) — voir {@link APPOINTMENT_STATUS_LABELS} : le
+ * repli n'est plus le français depuis #1297.
+ */
 export const UNCONFIRMED_PAST_LABEL: string = CATALOG[FALLBACK_LOCALE].unconfirmedPast;
 
 /** Le ton d'une pastille, tel que les feuilles de style le nomment. */

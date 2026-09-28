@@ -25,7 +25,7 @@
  * de la grille — une vue semaine en peint plusieurs centaines.
  */
 
-import type { Locale } from '@spa/shared';
+import { DEFAULT_LOCALE, type Locale } from '@spa/shared';
 
 import en from '@/messages/en/admin-planning.json';
 import fr from '@/messages/fr/admin-planning.json';
@@ -36,12 +36,13 @@ const CATALOG = { fr, en } as const;
 /**
  * La langue employée quand l'appelant n'en passe pas.
  *
- * `fr` et non `DEFAULT_LOCALE` : les rares appelants de ces modules qui sont
- * hors du périmètre de ce ticket — le tableau de bord, l'encaissement — lisent
- * des fonctions de calcul qui ne rendent aucun mot, et ce défaut garde le
- * comportement d'avant le ticket pour tout ce qui en rendrait un.
+ * `DEFAULT_LOCALE` depuis #1297, et non plus `'fr'`. Le défaut français gardait
+ * le comportement d'avant l'épique #843 pour les rares appelants hors du
+ * périmètre du ticket d'alors — le tableau de bord, l'encaissement. Ils passent
+ * tous leur langue résolue désormais, et un repli qui promet du français est
+ * devenu l'inverse de ce que le produit rend par défaut.
  */
-export const CALENDAR_FALLBACK_LOCALE: Locale = 'fr';
+export const CALENDAR_FALLBACK_LOCALE: Locale = DEFAULT_LOCALE;
 
 /** Le catalogue du planning, dans la langue demandée. */
 export function planningWords(locale: Locale = CALENDAR_FALLBACK_LOCALE): typeof en {
