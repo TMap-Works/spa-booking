@@ -519,7 +519,7 @@
       "cancelledLine": "It is no longer in the salon's diary. You can book a new one whenever you like.",
       "pendingTitle": "Request sent",
       "pendingLine": "{confirmation}. {hold}",
-      "pendingHold": "Your slot is on hold; there is nothing else for you to do.",
+      "pendingHold": "Your slot is held; there is nothing for you to do.",
       "bookedTitle": "You're booked!",
       "bookedLine": "The salon has confirmed your appointment.",
       "reference": "Ref.",
