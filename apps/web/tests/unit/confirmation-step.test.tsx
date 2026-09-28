@@ -423,7 +423,7 @@ describe('la carte du rendez-vous', () => {
 });
 
 describe('la phrase de la retenue, écrite des deux côtés du parcours (#846)', () => {
-  it('dit exactement la même chose au tunnel et à l’espace client', () => {
+  it('dit exactement la même chose en français au tunnel et à l’espace client', () => {
     // Le tunnel lit `tunnel.confirmationStep.pendingHold` dans le catalogue et
     // le rend dans la langue du visiteur ; l'espace client rend la même phrase
     // par `pendingHoldNote(locale)`. Rien dans le code ne tient les deux
@@ -437,22 +437,24 @@ describe('la phrase de la retenue, écrite des deux côtés du parcours (#846)',
     expect(pendingHoldNote('fr')).toBe(fr.tunnel.confirmationStep.pendingHold);
   });
 
-  it.skip('dirait la même chose en anglais, si les deux catalogues concordaient — #1304', () => {
-    // La couture ne tient que le français, et ce n'est pas un oubli : les deux
-    // catalogues anglais **divergent déjà**, et #1297 l'a découvert en tentant
-    // d'étendre le cas ci-dessus.
+  it('dit exactement la même chose en anglais, depuis #1304', () => {
+    // La couture ne tenait que le français, et ce n'était pas un oubli : les
+    // deux catalogues anglais divergeaient, #1297 l'a découvert en tentant
+    // d'étendre le cas ci-dessus, et le cas anglais est resté sauté le temps
+    // qu'un ticket puisse trancher le libellé.
     //
     //   messages/en/booking.json:522  « Your slot is on hold; there is nothing
     //                                   else for you to do. »
     //   messages/en/account.json:20   « Your slot is held; there is nothing for
     //                                   you to do. »
     //
-    // Les deux phrases sont correctes ; choisir laquelle fait foi est un
-    // arbitrage de libellé produit, et `messages/` est hors de l'empreinte d'un
-    // ticket de correction i18n. Le cas est donc gardé, sauté, et rattaché à
-    // #1304 qui le rétablira une fois les catalogues alignés — le laisser vivant
-    // rougirait la barrière sur un écart déjà tracé, le supprimer ferait perdre
-    // la trace de ce qu'il y a à recoudre.
+    // #1304 a tranché pour la seconde, et aligné `booking.json` dessus. Deux
+    // raisons, dans cet ordre : cette phrase se lit sur **deux** surfaces — la
+    // sortie du tunnel, juste après la réservation, et la carte de l'espace
+    // client, rouverte des jours plus tard —, or « nothing *else* » présuppose
+    // un geste qu'on vient de faire, ce qui n'est vrai que de la première ; et
+    // elle est l'équivalent exact du français canonique, « rien à faire de
+    // votre côté », qui ne porte pas non plus de « de plus ».
     expect(pendingHoldNote('en')).toBe(en.tunnel.confirmationStep.pendingHold);
   });
 });
