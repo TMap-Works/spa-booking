@@ -85,25 +85,59 @@ describe('Avatar', () => {
 });
 
 describe('DateBlock', () => {
+  /** Les deux écrans possibles, écrits en clair : la langue est exigée (#1297). */
+  const FR = { locale: 'fr' } as const;
+  const EN = { locale: 'en' } as const;
+
   it('lit un instant dans le fuseau du salon, pas dans celui du navigateur', () => {
     // 22:30 UTC le 18 est déjà le samedi 19 à Paris (UTC+2).
-    const parts = dateBlockParts({ instant: '2026-09-18T22:30:00.000Z', timeZone: 'Europe/Paris' });
+    const parts = dateBlockParts(
+      { instant: '2026-09-18T22:30:00.000Z', timeZone: 'Europe/Paris' },
+      FR,
+    );
     expect(parts).toMatchObject({ weekday: 'sam', day: '19', month: 'sept' });
     expect(parts.full).toBe('samedi 19 septembre 2026');
   });
 
   it('ne fait glisser aucune date civile', () => {
-    const parts = dateBlockParts({ date: '2026-09-21' });
+    const parts = dateBlockParts({ date: '2026-09-21' }, FR);
     expect(parts).toMatchObject({ weekday: 'lun', day: '21', month: 'sept', machine: '2026-09-21' });
   });
 
   it('se lit en toutes lettres, les morceaux masqués', () => {
-    const { container } = render(<DateBlock date="2026-09-21" size="lg" />);
+    const { container } = render(<DateBlock date="2026-09-21" size="lg" display={FR} />);
     const time = container.querySelector('time');
     expect(time?.getAttribute('datetime')).toBe('2026-09-21');
     expect(time?.className).toContain('spa-date-block--lg');
     expect(screen.getByText('lundi 21 septembre 2026').className).toBe('spa-visually-hidden');
     expect(screen.getByText('21').getAttribute('aria-hidden')).toBe('true');
+  });
+
+  it('suit la langue de l’écran, en `en` comme en `fr` (#1297)', () => {
+    // La bande de jours, la barre récapitulative et la carte de confirmation du
+    // tunnel écrivaient « LUN · 21 · SEPT » sur un écran anglais : le bloc ne
+    // recevait pas de langue, et le repli valait `fr-FR`. La date machine, elle,
+    // ne bouge pas — c'est une donnée, pas un texte.
+    const value = { date: '2026-09-21' } as const;
+
+    expect(dateBlockParts(value, EN)).toMatchObject({
+      weekday: 'Mon',
+      day: '21',
+      month: 'Sep',
+      machine: '2026-09-21',
+    });
+    expect(dateBlockParts(value, EN).full).toBe('Monday, September 21, 2026');
+    expect(dateBlockParts(value, FR).full).toBe('lundi 21 septembre 2026');
+  });
+
+  it('refuse à la compilation l’appel qui omet la langue (#1297)', () => {
+    // Voir `appointment-brief.test.ts` : c'est la directive qui garde. Rendre
+    // `display` facultatif à nouveau ferait échouer `npm run typecheck` ici,
+    // avant qu'aucun écran ne se remette à écrire du français en anglais.
+    // @ts-expect-error — `display` est obligatoire depuis #1297.
+    expect(() => dateBlockParts({ date: '2026-09-21' })).toBeDefined();
+    // @ts-expect-error — `display` est obligatoire depuis #1297.
+    expect(<DateBlock date="2026-09-21" />).toBeDefined();
   });
 });
 

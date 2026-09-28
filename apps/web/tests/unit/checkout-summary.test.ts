@@ -37,6 +37,9 @@ import type { PaymentTransaction, SaleSummary } from '@/lib/admin/payment-contra
  * lequel des deux reçus peut affirmer qu'un encaissement est inscrit.
  */
 
+/** La langue dans laquelle cette suite a été écrite — explicite depuis #1297. */
+const FR = 'fr' as const;
+
 describe('quel moyen de paiement est ouvert', () => {
   it('n’offre que les deux moyens que le comptoir sait produire', () => {
     // Ce sont les combinaisons du fil, celles que
@@ -52,7 +55,7 @@ describe('quel moyen de paiement est ouvert', () => {
   });
 
   it('refuse tout encaissement sur un rendez-vous annulé', () => {
-    expect(checkoutBlocker('cancelled')).toMatch(/annulé/i);
+    expect(checkoutBlocker('cancelled', { kind: 'du' }, FR)).toMatch(/annulé/i);
     expect(isSettleable('cancelled')).toBe(false);
   });
 
@@ -126,7 +129,7 @@ describe('l’état de règlement, lu avant le clic', () => {
   it('ferme le comptoir sur un rendez-vous déjà réglé', () => {
     const settlement = settlementOf([payment('succeeded')], APPOINTMENT);
 
-    expect(checkoutBlocker('completed', settlement)).toMatch(/déjà été encaissé/i);
+    expect(checkoutBlocker('completed', settlement, FR)).toMatch(/déjà été encaissé/i);
   });
 
   it('ferme les **deux** moyens tant qu’une intention en ligne n’est pas conclue', () => {
@@ -137,14 +140,14 @@ describe('l’état de règlement, lu avant le clic', () => {
     for (const status of ['pending', 'failed'] satisfies PaymentStatus[]) {
       const settlement = settlementOf([payment(status)], APPOINTMENT);
 
-      expect(checkoutBlocker('confirmed', settlement)).toMatch(/en ligne/i);
+      expect(checkoutBlocker('confirmed', settlement, FR)).toMatch(/en ligne/i);
     }
   });
 
   it('laisse l’annulation expliquer le reste — elle passe avant le règlement', () => {
     const settlement = settlementOf([payment('succeeded')], APPOINTMENT);
 
-    expect(checkoutBlocker('cancelled', settlement)).toMatch(/annulé/i);
+    expect(checkoutBlocker('cancelled', settlement, FR)).toMatch(/annulé/i);
   });
 
   it('écrit toujours le libellé de la pastille — la couleur ne porte rien seule', () => {
@@ -157,7 +160,7 @@ describe('l’état de règlement, lu avant le clic', () => {
         [[payment('pending')], 'ouvert'],
         [[payment('failed')], 'echoue'],
       ] as const
-    ).map(([payments]) => settlementBadge(settlementOf(payments, APPOINTMENT)));
+    ).map(([payments]) => settlementBadge(settlementOf(payments, APPOINTMENT), FR));
 
     expect(labels.map((badge) => badge.label)).toEqual([
       'à encaisser',
@@ -171,7 +174,7 @@ describe('l’état de règlement, lu avant le clic', () => {
 
   it('nomme le remboursement partiel pour ce qu’il est', () => {
     expect(
-      settlementBadge(settlementOf([payment('partially_refunded', 'card', 2000)], APPOINTMENT))
+      settlementBadge(settlementOf([payment('partially_refunded', 'card', 2000)], APPOINTMENT), FR)
         .label,
     ).toMatch(/partiellement/i);
   });
@@ -236,7 +239,7 @@ describe('l’état de règlement, lu avant le clic', () => {
 
       expect(settlement.kind).toBe('partiel');
       expect(isSettled(settlement)).toBe(false);
-      expect(settlementBadge(settlement).label).toBe('partiellement réglé');
+      expect(settlementBadge(settlement, FR).label).toBe('partiellement réglé');
     });
 
     it('dit « réglé » dès que le ticket est soldé, et lui seul en décide', () => {
@@ -247,7 +250,7 @@ describe('l’état de règlement, lu avant le clic', () => {
       );
 
       expect(settlement.kind).toBe('regle');
-      expect(settlementBadge(settlement).label).toBe('réglé');
+      expect(settlementBadge(settlement, FR).label).toBe('réglé');
     });
 
     it('laisse prendre le reste — un ticket partiel ne ferme aucun moyen', () => {
@@ -444,8 +447,8 @@ describe('ce que l’écran dit du moyen choisi', () => {
   it('dit que la carte passe par le terminal du salon, et qu’aucun numéro n’est saisi', () => {
     // La mention n'est pas décorative : le prochain contributeur doit trouver la
     // raison avant d'ajouter le champ qui semblerait manquer.
-    expect(meanHint('CARD_TERMINAL')).toMatch(/terminal/i);
-    expect(meanHint('CARD_TERMINAL')).toMatch(/aucun numéro/i);
+    expect(meanHint('CARD_TERMINAL', FR)).toMatch(/terminal/i);
+    expect(meanHint('CARD_TERMINAL', FR)).toMatch(/aucun numéro/i);
   });
 
   it('ne promet plus que la carte se saisit dans des champs servis par Stripe', () => {
@@ -455,7 +458,7 @@ describe('ce que l’écran dit du moyen choisi', () => {
   });
 
   it('dit que les espèces n’appellent aucun prestataire', () => {
-    expect(meanHint('CASH')).toMatch(/caisse fait foi/i);
+    expect(meanHint('CASH', FR)).toMatch(/caisse fait foi/i);
   });
 });
 
@@ -501,7 +504,7 @@ describe('le refus que l’API oppose à la référence — #1025, critère 3', 
   };
 
   it('reconnaît le 400 qui nomme le champ, et rend la phrase du catalogue', () => {
-    const refused = terminalReferenceRefusal(ERROR_CODES.VALIDATION_ERROR, violations);
+    const refused = terminalReferenceRefusal(ERROR_CODES.VALIDATION_ERROR, violations, FR);
 
     expect(refused).not.toBeNull();
     expect(refused).toMatch(/numéro de ticket TPE a été refusé/i);
@@ -558,15 +561,15 @@ describe('ce qu’un reçu peut affirmer', () => {
   it('rend le reçu du comptoir définitif — plus aucun tiers à attendre', () => {
     // Espèces comme TPE, l'API inscrit le règlement `SUCCEEDED` quand elle
     // répond : il n'y a plus de webhook dont le reçu dépendrait (ADR 0015).
-    expect(receiptDisclaimer()).toMatch(/caisse/i);
-    expect(receiptDisclaimer()).not.toMatch(/webhook/i);
+    expect(receiptDisclaimer(FR)).toMatch(/caisse/i);
+    expect(receiptDisclaimer(FR)).not.toMatch(/webhook/i);
   });
 
   it('accorde le moyen de paiement à la phrase qui le porte', () => {
-    expect(methodPhrase({ method: 'card', cardChannel: 'TERMINAL' })).toBe(
+    expect(methodPhrase({ method: 'card', cardChannel: 'TERMINAL' }, FR)).toBe(
       'par carte bancaire (TPE)',
     );
-    expect(methodPhrase({ method: 'cash', cardChannel: null })).toBe('en espèces');
+    expect(methodPhrase({ method: 'cash', cardChannel: null }, FR)).toBe('en espèces');
   });
 
   it('nomme le canal de la carte, et non son seul moyen — #1245', () => {
@@ -574,7 +577,7 @@ describe('ce qu’un reçu peut affirmer', () => {
     // public compris : « TPE » sur une carte Stripe envoyait le rapprochement
     // chercher sur le relevé du terminal une opération qui n'y est pas. Même
     // règle que le ticket et le PDF depuis #1217 (`receipt-ticket.ts`).
-    expect(methodPhrase({ method: 'card', cardChannel: 'STRIPE' })).toBe(
+    expect(methodPhrase({ method: 'card', cardChannel: 'STRIPE' }, FR)).toBe(
       'par carte bancaire (en ligne)',
     );
   });
@@ -583,10 +586,10 @@ describe('ce qu’un reçu peut affirmer', () => {
     // `null` ou absent ne peut désigner qu'un règlement antérieur à #834, que la
     // migration n'a pas repris : le TPE n'existait pas alors. L'énoncer « TPE »
     // inventerait un passage au terminal qui n'a jamais eu lieu.
-    expect(methodPhrase({ method: 'card', cardChannel: null })).toBe(
+    expect(methodPhrase({ method: 'card', cardChannel: null }, FR)).toBe(
       'par carte bancaire (en ligne)',
     );
-    expect(methodPhrase({ method: 'card' })).toBe('par carte bancaire (en ligne)');
+    expect(methodPhrase({ method: 'card' }, FR)).toBe('par carte bancaire (en ligne)');
   });
 });
 
@@ -594,7 +597,7 @@ describe('la lecture d’un refus de l’API', () => {
   it('réagit sur le code et non sur le message', () => {
     // Le message de l'API est destiné à un humain et peut changer sans préavis ;
     // c'est le code qui est le contrat (web-frontend §2).
-    const shown = checkoutFailureMessage('PAYMENT_ALREADY_SETTLED', 'Already settled.');
+    const shown = checkoutFailureMessage('PAYMENT_ALREADY_SETTLED', 'Already settled.', FR);
 
     expect(shown).not.toBe('Already settled.');
     expect(shown).toMatch(/déjà été encaissé/i);
@@ -602,7 +605,7 @@ describe('la lecture d’un refus de l’API', () => {
 
   it('distingue la caisse injoignable d’un refus métier, et rassure sur le débit', () => {
     for (const code of ['PAYMENT_PROVIDER_UNAVAILABLE', ERROR_CODES.SERVICE_UNAVAILABLE]) {
-      expect(checkoutFailureMessage(code, 'x')).toMatch(/rien n’a été encaissé/i);
+      expect(checkoutFailureMessage(code, 'x', FR)).toMatch(/rien n’a été encaissé/i);
     }
   });
 
@@ -629,9 +632,9 @@ describe('la lecture d’un refus de l’API', () => {
     // Le code manquait des deux listes du front : l'écran ne basculait pas, et
     // affichait « Ce ticket a déjà été réglé. » — le message brut de l'API.
     expect(isAlreadySettledRefusal('SALE_ALREADY_SETTLED')).toBe(true);
-    expect(checkoutFailureMessage('SALE_ALREADY_SETTLED', 'Ce ticket a déjà été réglé.')).toMatch(
-      /déjà été encaissé/i,
-    );
+    expect(
+      checkoutFailureMessage('SALE_ALREADY_SETTLED', 'Ce ticket a déjà été réglé.', FR),
+    ).toMatch(/déjà été encaissé/i);
   });
 
   it('ne laisse aucun code « … déjà réglé » du contrat hors de la bascule', () => {
@@ -669,7 +672,7 @@ describe('la lecture d’un refus de l’API', () => {
     // Il ne rattrape pas pour autant un 409 **conforme** dont le code est inconnu
     // de la liste : c'est ce qui a laissé passer `SALE_ALREADY_SETTLED`.
     expect(isAlreadySettledRefusal('HTTP_409')).toBe(true);
-    expect(checkoutFailureMessage('HTTP_409', 'Conflict.')).toMatch(/déjà été encaissé/i);
+    expect(checkoutFailureMessage('HTTP_409', 'Conflict.', FR)).toMatch(/déjà été encaissé/i);
   });
 
   it('laisse passer le message de l’API sur un code qu’il ne connaît pas', () => {

@@ -26,6 +26,9 @@ import { formatMoney, formatMoneyCompact } from '@/lib/format';
 
 afterEach(cleanup);
 
+/** La langue dans laquelle cette suite a été écrite — explicite depuis #1297. */
+const FR = { locale: 'fr' } as const;
+
 const BARS = [
   { key: '2026-09-01', label: '1 sept.', value: 12, valueLabel: '12 rendez-vous', inner: 1, innerLabel: '1' },
   { key: '2026-09-02', label: '2 sept.', value: 0, valueLabel: '0 rendez-vous', inner: 0, innerLabel: '0' },
@@ -92,9 +95,9 @@ describe('l’échelle dit la même chose que le tableau de sa figure', () => {
     const amount = { amountMinor: 8_500, currency: 'EUR' } as const;
     const { container } = render(
       <ReportChart
-        bars={[{ key: '2026-09-11', label: '11 sept.', value: amount.amountMinor, valueLabel: formatMoney(amount) }]}
+        bars={[{ key: '2026-09-11', label: '11 sept.', value: amount.amountMinor, valueLabel: formatMoney(amount, FR) }]}
         emptyLabel="Aucun encaissement sur la période."
-        formatScaleValue={(value) => formatMoneyCompact({ amountMinor: value, currency: amount.currency })}
+        formatScaleValue={(value) => formatMoneyCompact({ amountMinor: value, currency: amount.currency }, FR)}
         labelHeader="Période"
         layout="colonnes"
         seriesLabel="Revenu net (EUR)"
@@ -110,7 +113,7 @@ describe('l’échelle dit la même chose que le tableau de sa figure', () => {
     expect(scale).not.toContain('8,5 k');
     // Le plafond de l'échelle et la ligne du tableau annoncent le même montant.
     expect([...container.querySelectorAll('td')].map((cell) => cell.textContent)).toContain(
-      formatMoney(amount),
+      formatMoney(amount, FR),
     );
   });
 
@@ -122,9 +125,9 @@ describe('l’échelle dit la même chose que le tableau de sa figure', () => {
     const amount = { amountMinor: 2, currency: 'EUR' } as const;
     const { container } = render(
       <ReportChart
-        bars={[{ key: '2026-09-11', label: '11 sept.', value: amount.amountMinor, valueLabel: formatMoney(amount) }]}
+        bars={[{ key: '2026-09-11', label: '11 sept.', value: amount.amountMinor, valueLabel: formatMoney(amount, FR) }]}
         emptyLabel="Aucun encaissement sur la période."
-        formatScaleValue={(value) => formatMoneyCompact({ amountMinor: value, currency: amount.currency })}
+        formatScaleValue={(value) => formatMoneyCompact({ amountMinor: value, currency: amount.currency }, FR)}
         labelHeader="Période"
         layout="colonnes"
         seriesLabel="Revenu net (EUR)"

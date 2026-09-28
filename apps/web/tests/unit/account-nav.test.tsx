@@ -3,9 +3,21 @@ import type { ReactNode } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import AccountLayout from '@/app/(account)/[tenantSlug]/compte/layout';
-import { PUBLIC_EXIT_LABELS } from '@/components/salon/public-exits';
+import { publicExitLabels } from '@/components/salon/public-exits';
+
+import { TEST_LOCALE } from '../support/next-intl';
 
 import { tenant } from './fixtures';
+
+/**
+ * Les libellés des sorties publiques, dans la langue de l'amorce (#1297).
+ *
+ * `publicExitLabels(TEST_LOCALE)` et non la constante française qui portait
+ * cette table : elle est tombée avec #1297, son dernier lecteur de production
+ * ayant disparu depuis longtemps. Même forme que `home-page.test.tsx`, qui l'a
+ * fait le premier.
+ */
+const EXITS = publicExitLabels(TEST_LOCALE);
 
 /*
  * Le gabarit de l'espace client — navigation, en-tête et pied (#747, #749, #1045).
@@ -237,7 +249,7 @@ describe('le pied de page du salon', () => {
 
     expect(
       within(pied(container))
-        .getByRole('link', { name: PUBLIC_EXIT_LABELS.reservation })
+        .getByRole('link', { name: EXITS.reservation })
         .getAttribute('href'),
     ).toBe(`/${tenant.slug}/reservation`);
   });
@@ -248,7 +260,7 @@ describe('le pied de page du salon', () => {
     // Depuis la connexion, un lien « Mon compte » ramenait à l'écran qu'on lisait :
     // `/compte` redirige vers la connexion quand aucune session n'est ouverte.
     expect(
-      within(pied(container)).queryByRole('link', { name: PUBLIC_EXIT_LABELS.compte }),
+      within(pied(container)).queryByRole('link', { name: EXITS.compte }),
     ).toBeNull();
     expect(screen.queryByRole('link', { name: 'Se connecter' })).toBeNull();
   });

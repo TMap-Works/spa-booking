@@ -30,6 +30,9 @@ import {
  * l'établissement.
  */
 
+/** La langue dans laquelle cette suite a été écrite — explicite depuis #1297. */
+const FR = 'fr' as const;
+
 const WINDOW = { from: '2026-08-31T21:00:00.000Z', to: '2026-09-04T21:00:00.000Z' };
 const RANGE = { from: '2026-09-01', to: '2026-09-04' };
 const TIME_ZONE = 'Indian/Antananarivo';
@@ -102,17 +105,17 @@ describe('le filtre lu de l’URL', () => {
     // Un praticien qui n'a vu personne en septembre n'a pas de ligne : afficher
     // son nom au-dessus de zéros pris ailleurs serait un mensonge. Le lien reste
     // valide, il montre simplement l'établissement.
-    expect(parseReportScope('praticien:inconnu', staff, services)).toEqual(wholeTenant('fr'));
-    expect(parseReportScope('quelquechose:a', staff, services)).toEqual(wholeTenant('fr'));
-    expect(parseReportScope('praticien', staff, services)).toEqual(wholeTenant('fr'));
-    expect(parseReportScope(undefined, staff, services)).toEqual(wholeTenant('fr'));
+    expect(parseReportScope('praticien:inconnu', staff, services, FR)).toEqual(wholeTenant(FR));
+    expect(parseReportScope('quelquechose:a', staff, services, FR)).toEqual(wholeTenant(FR));
+    expect(parseReportScope('praticien', staff, services, FR)).toEqual(wholeTenant(FR));
+    expect(parseReportScope(undefined, staff, services, FR)).toEqual(wholeTenant(FR));
   });
 
   it('fait l’aller-retour avec ce que l’URL porte', () => {
     const scope = parseReportScope('prestation:s1', staff, services);
 
     expect(formatReportScope(scope)).toBe('prestation:s1');
-    expect(formatReportScope(wholeTenant('fr'))).toBeNull();
+    expect(formatReportScope(wholeTenant(FR))).toBeNull();
   });
 });
 
@@ -261,7 +264,7 @@ describe('l’activité du périmètre', () => {
   ]);
 
   it('sans filtre, prend les no-shows du rapport dédié', () => {
-    const activity = scopedActivity(wholeTenant('fr'), byDay, NO_SHOW_REPORT, byDay);
+    const activity = scopedActivity(wholeTenant(FR), byDay, NO_SHOW_REPORT, byDay);
 
     expect(activity.appointments).toBe(164);
     expect(activity.noShows.rate).toBe(0.0328);
@@ -313,7 +316,7 @@ describe('ce que la tuile du volume dit de son compte', () => {
 
   function activityOf(report: NoShowReport) {
     return scopedActivity(
-      wholeTenant('fr'),
+      wholeTenant(FR),
       volumeReport('day', []),
       report,
       volumeReport('day', [
@@ -323,23 +326,27 @@ describe('ce que la tuile du volume dit de son compte', () => {
   }
 
   it('nomme ce que le taux de no-show met de côté', () => {
-    expect(volumeQualification(activityOf(AUDIT_CASE))).toBe('dont 8 annulés · 7 à venir');
+    expect(volumeQualification(activityOf(AUDIT_CASE), { locale: FR })).toBe(
+      'dont 8 annulés · 7 à venir',
+    );
   });
 
   it('tait un compte nul plutôt que d’écrire « dont 0 annulés »', () => {
-    expect(volumeQualification(activityOf({ ...AUDIT_CASE, cancelled: 0, total: 9 }))).toBe(
-      'dont 7 à venir',
-    );
-    expect(volumeQualification(activityOf({ ...AUDIT_CASE, pending: 0, total: 10 }))).toBe(
-      'dont 8 annulés',
-    );
+    expect(
+      volumeQualification(activityOf({ ...AUDIT_CASE, cancelled: 0, total: 9 }), { locale: FR }),
+    ).toBe('dont 7 à venir');
+    expect(
+      volumeQualification(activityOf({ ...AUDIT_CASE, pending: 0, total: 10 }), { locale: FR }),
+    ).toBe('dont 8 annulés');
   });
 
   it('dit avec les mots de sa voisine qu’il n’y a rien à retrancher', () => {
     // Les deux tuiles portent alors le même ensemble : c'est ce qu'il faut
     // pouvoir lire, et le silence ne le dirait pas.
     expect(
-      volumeQualification(activityOf({ ...AUDIT_CASE, cancelled: 0, pending: 0, total: 2 })),
+      volumeQualification(activityOf({ ...AUDIT_CASE, cancelled: 0, pending: 0, total: 2 }), {
+        locale: FR,
+      }),
     ).toBe('tous arrivés à échéance');
   });
 
@@ -347,11 +354,14 @@ describe('ce que la tuile du volume dit de son compte', () => {
     // « dont 1 annulés » est la faute que la table des statuts ne pouvait pas
     // commettre — elle titre une colonne, la tuile écrit une phrase.
     expect(
-      volumeQualification(activityOf({ ...AUDIT_CASE, cancelled: 1, pending: 0, total: 3 })),
+      volumeQualification(activityOf({ ...AUDIT_CASE, cancelled: 1, pending: 0, total: 3 }), {
+        locale: FR,
+      }),
     ).toBe('dont 1 annulé');
     expect(
       volumeQualification(
         activityOf({ ...AUDIT_CASE, noShows: 0, honored: 1, cancelled: 0, pending: 0, total: 1 }),
+        { locale: FR },
       ),
     ).toBe('arrivé à échéance');
   });
@@ -360,6 +370,7 @@ describe('ce que la tuile du volume dit de son compte', () => {
     expect(
       volumeQualification(
         activityOf({ ...AUDIT_CASE, noShows: 0, honored: 0, cancelled: 0, pending: 0, total: 0 }),
+        { locale: FR },
       ),
     ).toBeNull();
   });
@@ -376,14 +387,15 @@ describe('ce que la tuile du volume dit de son compte', () => {
     ]);
     const scope = parseReportScope('praticien:a', filterOptions(byStaff), []);
 
-    expect(volumeQualification(scopedActivity(scope, byStaff, AUDIT_CASE, byStaff))).toBe(
-      'dont 2 annulés · 3 à venir',
-    );
+    expect(
+      volumeQualification(scopedActivity(scope, byStaff, AUDIT_CASE, byStaff), { locale: FR }),
+    ).toBe('dont 2 annulés · 3 à venir');
   });
 
   it('sépare les milliers comme le chiffre qu’elle qualifie', () => {
     const qualification = volumeQualification(
       activityOf({ ...AUDIT_CASE, cancelled: 1200, total: 1209 }),
+      { locale: FR },
     );
 
     // `formatCount` et non `String` : la tuile et sa qualification écrivent le
@@ -405,7 +417,7 @@ describe('les barres du graphique de volume', () => {
   ]);
 
   it('couvre toute la période sur l’axe temporel, journées vides comprises', () => {
-    const points = volumePoints(wholeTenant('fr'), byDay, RANGE, (date) => date);
+    const points = volumePoints(wholeTenant(FR), byDay, RANGE, (date) => date);
 
     expect(points.map((point) => point.key)).toEqual([
       '2026-09-01',
@@ -433,8 +445,8 @@ describe('les barres du graphique de volume', () => {
       { key: 'x', label: null, total: 5, byStatus: counts({ completed: 5 }) },
     ]);
 
-    expect(volumePoints(wholeTenant('fr'), orphan, RANGE, (date) => date)[0]?.label).toBe(
-      'Non attribué',
-    );
+    expect(
+      volumePoints(wholeTenant(FR), orphan, RANGE, (date) => date, { locale: FR })[0]?.label,
+    ).toBe('Non attribué');
   });
 });

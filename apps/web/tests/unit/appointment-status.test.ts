@@ -1,4 +1,4 @@
-import type { BookedAppointment } from '@spa/shared';
+import { DEFAULT_LOCALE, type BookedAppointment } from '@spa/shared';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -7,9 +7,12 @@ import {
   appointmentBadge,
   appointmentOutcomeLabel,
   appointmentStatusLabelInSentence,
+  appointmentStatusLabels,
+  appointmentStatusPluralLabels,
   appointmentTone,
   isStillActionable,
   PENDING_CONFIRMATION_LABEL,
+  pendingConfirmationLabel,
 } from '@/lib/appointment-status';
 
 /**
@@ -19,6 +22,9 @@ import {
  * la distinction entre une **annulation** et un **report**, que l'API n'exprime
  * que par l'absence d'auteur sur la ligne d'origine.
  */
+
+/** La langue dans laquelle cette suite a été écrite — explicite depuis #1297. */
+const FR = 'fr' as const;
 
 function appointment(overrides: Partial<BookedAppointment> = {}): BookedAppointment {
   return {
@@ -47,6 +53,7 @@ describe('pastille de statut', () => {
     const deplace = appointmentBadge(
       appointment({ status: 'cancelled', cancelledAt: '2026-08-30T09:00:00.000Z' }),
       'past',
+      FR,
     );
     const annuleParElle = appointmentBadge(
       appointment({
@@ -55,6 +62,7 @@ describe('pastille de statut', () => {
         cancelledBy: 'client',
       }),
       'past',
+      FR,
     );
     const annuleParLeSalon = appointmentBadge(
       appointment({
@@ -63,6 +71,7 @@ describe('pastille de statut', () => {
         cancelledBy: 'staff',
       }),
       'past',
+      FR,
     );
 
     expect(deplace.label).toBe('Déplacé');
@@ -83,7 +92,7 @@ describe('pastille de statut', () => {
     ['completed', 'Honoré'],
     ['no_show', 'Non honoré'],
   ] as const)('nomme le statut %s en clair', (status, label) => {
-    expect(appointmentBadge(appointment({ status }), 'upcoming').label).toBe(label);
+    expect(appointmentBadge(appointment({ status }), 'upcoming', FR).label).toBe(label);
   });
 
   /**
@@ -95,9 +104,12 @@ describe('pastille de statut', () => {
    * confirmation » de l'autre, sur le même rendez-vous.
    */
   it('nomme l’acteur attendu plutôt qu’une attente sans sujet', () => {
-    expect(PENDING_CONFIRMATION_LABEL).toBe('À confirmer par le salon');
-    expect(appointmentBadge(appointment({ status: 'pending' }), 'upcoming').label).toBe(
-      PENDING_CONFIRMATION_LABEL,
+    expect(pendingConfirmationLabel(FR)).toBe('À confirmer par le salon');
+    // La constante que reprend l'écran terminal du tunnel dit le même mot, dans
+    // la langue par défaut du produit — `DEFAULT_LOCALE` et non plus `'fr'` (#1297).
+    expect(PENDING_CONFIRMATION_LABEL).toBe(pendingConfirmationLabel(DEFAULT_LOCALE));
+    expect(appointmentBadge(appointment({ status: 'pending' }), 'upcoming', FR).label).toBe(
+      pendingConfirmationLabel(FR),
     );
   });
 
@@ -107,7 +119,7 @@ describe('pastille de statut', () => {
     // l'historique. Lui laisser « À confirmer par le salon » lui promettrait une
     // suite qui ne viendra pas — c'est le rendez-vous de la veille que l'audit a
     // relevé, pastille intacte.
-    const badge = appointmentBadge(appointment({ status: 'pending' }), 'past');
+    const badge = appointmentBadge(appointment({ status: 'pending' }), 'past', FR);
 
     expect(badge.label).toBe('Non confirmé');
     // Le ton ne bouge pas : c'est bien le même statut, et la couleur ne porte
@@ -130,35 +142,41 @@ describe('le mot du comptoir', () => {
     // `appointmentSchema` omet la clé, `bookedAppointmentSchema` et
     // `customerVisitSchema` la posent à `null`. Les deux disent « personne à
     // nommer », c'est-à-dire l'origine d'un report.
-    expect(appointmentOutcomeLabel({ status: 'cancelled' })).toBe('Déplacé');
-    expect(appointmentOutcomeLabel({ status: 'cancelled', cancelledBy: null })).toBe('Déplacé');
-    expect(appointmentOutcomeLabel({ status: 'cancelled', cancelledBy: undefined })).toBe(
+    // L'audience est nommée pour atteindre la langue, qui la suit dans la
+    // signature — c'est bien le comptoir qui parle dans tout ce bloc.
+    expect(appointmentOutcomeLabel({ status: 'cancelled' }, 'desk', FR)).toBe('Déplacé');
+    expect(appointmentOutcomeLabel({ status: 'cancelled', cancelledBy: null }, 'desk', FR)).toBe(
       'Déplacé',
     );
+    expect(
+      appointmentOutcomeLabel({ status: 'cancelled', cancelledBy: undefined }, 'desk', FR),
+    ).toBe('Déplacé');
   });
 
   it('nomme l’auteur d’une vraie annulation, à la personne de son audience', () => {
     const parLaCliente = { status: 'cancelled', cancelledBy: 'client' } as const;
 
-    expect(appointmentOutcomeLabel(parLaCliente)).toBe('Annulé par la cliente');
+    expect(appointmentOutcomeLabel(parLaCliente, 'desk', FR)).toBe('Annulé par la cliente');
     // Le comptoir parle du salon à la troisième personne, l'espace client à la
     // deuxième. Même fait, même table, deux interlocuteurs.
-    expect(appointmentOutcomeLabel(parLaCliente, 'client')).toBe('Annulé par vous');
-    expect(appointmentOutcomeLabel({ status: 'cancelled', cancelledBy: 'staff' })).toBe(
+    expect(appointmentOutcomeLabel(parLaCliente, 'client', FR)).toBe('Annulé par vous');
+    expect(appointmentOutcomeLabel({ status: 'cancelled', cancelledBy: 'staff' }, 'desk', FR)).toBe(
       'Annulé par le salon',
     );
     // `system` — une annulation automatique — reste du côté du salon : c'est sa
     // décision, prise par son outil.
-    expect(appointmentOutcomeLabel({ status: 'cancelled', cancelledBy: 'system' })).toBe(
-      'Annulé par le salon',
-    );
+    expect(
+      appointmentOutcomeLabel({ status: 'cancelled', cancelledBy: 'system' }, 'desk', FR),
+    ).toBe('Annulé par le salon');
   });
 
   it('ignore l’auteur sur tout statut qui n’est pas une annulation', () => {
     // Une donnée résiduelle sur une ligne rouverte ne doit pas faire dire
     // « Déplacé » à un rendez-vous honoré.
-    expect(appointmentOutcomeLabel({ status: 'completed', cancelledBy: null })).toBe('Honoré');
-    expect(appointmentOutcomeLabel({ status: 'no_show' })).toBe('Non honoré');
+    expect(appointmentOutcomeLabel({ status: 'completed', cancelledBy: null }, 'desk', FR)).toBe(
+      'Honoré',
+    );
+    expect(appointmentOutcomeLabel({ status: 'no_show' }, 'desk', FR)).toBe('Non honoré');
   });
 });
 
@@ -172,8 +190,8 @@ describe('le mot du comptoir', () => {
  */
 describe('table de vocabulaire', () => {
   it('dit « Non honoré » du no-show, au singulier comme au pluriel', () => {
-    expect(APPOINTMENT_STATUS_LABELS.no_show).toBe('Non honoré');
-    expect(APPOINTMENT_STATUS_PLURAL_LABELS.no_show).toBe('Non honorés');
+    expect(appointmentStatusLabels(FR).no_show).toBe('Non honoré');
+    expect(appointmentStatusPluralLabels(FR).no_show).toBe('Non honorés');
   });
 
   it('accorde chaque statut sans jamais changer de mot', () => {
@@ -190,8 +208,8 @@ describe('table de vocabulaire', () => {
   it('descend l’initiale pour les libellés insérés au fil d’une phrase', () => {
     // « Marquer non honoré », et non « Marquer Non honoré » : une capitale au
     // milieu d'une phrase se lit comme un nom propre.
-    expect(appointmentStatusLabelInSentence('no_show')).toBe('non honoré');
-    expect(appointmentStatusLabelInSentence('completed')).toBe('honoré');
+    expect(appointmentStatusLabelInSentence('no_show', FR)).toBe('non honoré');
+    expect(appointmentStatusLabelInSentence('completed', FR)).toBe('honoré');
   });
 
   it('dérive le ton d’un statut vers le vocabulaire des feuilles de style', () => {

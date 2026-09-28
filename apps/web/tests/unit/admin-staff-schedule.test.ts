@@ -18,6 +18,9 @@ import {
  * passer jusqu'à la contrainte d'exclusion de la base.
  */
 
+/** La langue dans laquelle cette suite écrit ses libellés — explicite depuis #1297. */
+const FR = 'fr' as const;
+
 const MONDAY_MORNING: StaffScheduleEntry = { weekday: 1, startsAt: '09:00', endsAt: '12:30' };
 const MONDAY_AFTERNOON: StaffScheduleEntry = { weekday: 1, startsAt: '13:30', endsAt: '18:00' };
 const SUNDAY: StaffScheduleEntry = { weekday: 7, startsAt: '10:00', endsAt: '14:00' };
@@ -30,14 +33,14 @@ describe('les jours de la grille', () => {
   it('nomme le dimanche 7, jamais 0', () => {
     // `0` est *falsy* : un `weekday ?? défaut` ferait disparaître l'horaire du
     // dimanche sans qu'aucun test de forme ne rougisse.
-    expect(weekdayLabel(7)).toBe('Dimanche');
-    expect(weekdayLabel(1)).toBe('Lundi');
+    expect(weekdayLabel(7, FR)).toBe('Dimanche');
+    expect(weekdayLabel(1, FR)).toBe('Lundi');
   });
 
   it('ne rend jamais un jour sans nom, même sur une valeur hors bornes', () => {
     // La case 0 du tableau de libellés porte une chaîne vide : un `?? défaut`
     // seul la laisserait passer, et la grille afficherait un jour anonyme.
-    expect(weekdayLabel(0 as unknown as (typeof ISO_WEEKDAYS)[number])).toBe('Jour 0');
+    expect(weekdayLabel(0 as unknown as (typeof ISO_WEEKDAYS)[number], FR)).toBe('Jour 0');
   });
 });
 
@@ -78,6 +81,7 @@ describe('le verdict rendu avant l’appel', () => {
         { weekday: 1, startsAt: '09:00', endsAt: '13:00' },
         { weekday: 1, startsAt: '12:00', endsAt: '18:00' },
       ),
+      FR,
     );
 
     expect(verdict.ok).toBe(false);
@@ -121,7 +125,7 @@ describe('le verdict rendu avant l’appel', () => {
   it('refuse une ligne à demi remplie en la désignant', () => {
     // Zod ne saurait la rattacher à personne : `''` échoue au motif `HH:MM` sans
     // dire qu'il s'agit d'un champ resté vide.
-    const verdict = validateScheduleRows(rows({ weekday: 4, startsAt: '09:00', endsAt: '' }));
+    const verdict = validateScheduleRows(rows({ weekday: 4, startsAt: '09:00', endsAt: '' }), FR);
 
     expect(verdict.ok).toBe(false);
     if (!verdict.ok) {

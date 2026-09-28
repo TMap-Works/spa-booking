@@ -347,7 +347,11 @@ describe('l’instant d’un rendez-vous, dit à l’opérateur', () => {
   };
 
   it('dit l’heure d’origine à l’heure du salon', () => {
-    expect(deskMoment(previous.startsAt, ANTANANARIVO)).toBe('mercredi 26 août à 09:00');
+    // La langue est dite à l'appel depuis #1297 : le repli du front est passé au
+    // `DEFAULT_LOCALE` anglais, et ce libellé-ci est celui du français.
+    expect(deskMoment(previous.startsAt, ANTANANARIVO, { locale: 'fr' })).toBe(
+      'mercredi 26 août à 09:00',
+    );
   });
 
   it('suit la langue de la session pour le jour et le joint', () => {

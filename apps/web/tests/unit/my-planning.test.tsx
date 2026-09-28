@@ -236,7 +236,9 @@ describe('le retour au jour courant', () => {
 describe('la journée de travail', () => {
   it('dit ses plages dans l’ordre, et ses absences bornées à la journée', () => {
     const bounds = dayBoundsInTimeZone('2026-09-18', TZ);
-    const day = workingDay(SCHEDULE, '2026-09-18', bounds.start, bounds.end);
+    // La langue est dite à l'appel — « Toute la journée » est un libellé, pas une
+    // donnée, et le repli vaut l'anglais depuis #1297.
+    const day = workingDay(SCHEDULE, '2026-09-18', bounds.start, bounds.end, { locale: 'fr' });
 
     expect(day.closed).toBe(false);
     expect(day.hours).toEqual(['09:00 – 12:00', '14:00 – 19:00']);

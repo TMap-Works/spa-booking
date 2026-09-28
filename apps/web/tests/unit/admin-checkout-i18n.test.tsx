@@ -234,9 +234,15 @@ describe('les moyens de paiement et leurs états', () => {
     }
   });
 
-  it('garde le français par défaut, pour les appelants pas encore branchés', () => {
-    expect(methodLabel('cash')).toBe('Espèces');
-    expect(meanHint('CARD_TERMINAL')).toContain('terminal');
+  /*
+   * Le repli du comptoir n'est plus le français mais `DEFAULT_LOCALE` (#1297) :
+   * le paramètre reste facultatif — les quelques dizaines d'appelants du front
+   * ne sont pas tous branchés —, mais il ne promet plus du français à qui
+   * l'oublie. Ce qu'on attend en français se demande donc en français.
+   */
+  it('sert le français aux appelants qui nomment leur langue', () => {
+    expect(methodLabel('cash', 'fr')).toBe('Espèces');
+    expect(meanHint('CARD_TERMINAL', 'fr')).toContain('terminal');
   });
 
   it('dit dans les deux langues qu’aucun numéro de carte n’est saisi au salon', () => {

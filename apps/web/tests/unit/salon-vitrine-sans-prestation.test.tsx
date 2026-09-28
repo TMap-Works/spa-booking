@@ -33,6 +33,9 @@ vi.mock('next/link', async (importOriginal) => ({
 
 afterEach(cleanup);
 
+/** La langue dans laquelle cette suite écrit ses libellés — explicite depuis #1297. */
+const FR = 'fr' as const;
+
 const RESERVATION_HREF = `/${tenant.slug}/reservation`;
 
 describe('accroche et appel à l’action de l’en-tête', () => {
@@ -66,7 +69,7 @@ describe('accroche et appel à l’action de l’en-tête', () => {
 
 describe('état vide du catalogue', () => {
   it('propose d’appeler le salon quand il a publié un numéro', () => {
-    const contact = salonContactAction({ ...tenant, contactPhone: '+261341234567' });
+    const contact = salonContactAction({ ...tenant, contactPhone: '+261341234567' }, FR);
 
     render(<ServiceCatalog services={[]} contact={contact} />);
 
@@ -77,7 +80,7 @@ describe('état vide du catalogue', () => {
   });
 
   it('se rabat sur l’e-mail quand le salon n’a pas publié de numéro', () => {
-    const contact = salonContactAction({ ...tenant, contactEmail: 'contact@lotus.test' });
+    const contact = salonContactAction({ ...tenant, contactEmail: 'contact@lotus.test' }, FR);
 
     render(<ServiceCatalog services={[]} contact={contact} />);
 
@@ -109,7 +112,7 @@ describe('état vide du catalogue', () => {
     render(
       <ServiceCatalog
         services={[service]}
-        contact={salonContactAction({ ...tenant, contactPhone: '+261341234567' })}
+        contact={salonContactAction({ ...tenant, contactPhone: '+261341234567' }, FR)}
       />,
     );
 
@@ -137,11 +140,14 @@ describe('moyen de joindre le salon', () => {
   it('préfère le téléphone à l’e-mail, comme le prescrit la référence', () => {
     // `states.md`, étape 1 : « proposer de contacter le salon (téléphone) ».
     expect(
-      salonContactAction({
-        ...tenant,
-        contactEmail: 'contact@lotus.test',
-        contactPhone: '+261341234567',
-      }),
+      salonContactAction(
+        {
+          ...tenant,
+          contactEmail: 'contact@lotus.test',
+          contactPhone: '+261341234567',
+        },
+        FR,
+      ),
     ).toEqual({ href: 'tel:+261341234567', label: 'Appeler le salon' });
   });
 

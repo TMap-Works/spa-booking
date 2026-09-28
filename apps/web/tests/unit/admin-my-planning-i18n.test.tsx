@@ -1,4 +1,4 @@
-import type { Locale, MyStaffSchedule } from '@spa/shared';
+import { DEFAULT_LOCALE, type Locale, type MyStaffSchedule } from '@spa/shared';
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -128,8 +128,12 @@ describe('les onglets de vue', () => {
     });
   });
 
-  it('retombe sur le français quand l’appelant ne dit pas sa langue', () => {
-    expect(myPlanningViewLabels().jour).toBe('Jour');
+  it('retombe sur DEFAULT_LOCALE, et non sur le français (#1297)', () => {
+    // Le repli transitoire de l'épique #843 est éteint : un appelant muet reçoit
+    // la langue par défaut du produit, et non plus du français. Le cas se compare
+    // au repli plutôt qu'à « Jour », pour qu'il dise la règle et non sa valeur du
+    // jour.
+    expect(myPlanningViewLabels().jour).toBe(myPlanningViewLabels(DEFAULT_LOCALE).jour);
   });
 
   it('garde la clé de vue française, parce que c’est une adresse et non un mot', () => {
@@ -223,11 +227,13 @@ describe('la journée de travail, écrite hors de React', () => {
     );
   });
 
-  it('garde le français par défaut, pour les appelants pas encore branchés', () => {
+  it('retombe sur DEFAULT_LOCALE pour les appelants pas encore branchés (#1297)', () => {
+    // Le paramètre reste facultatif — tous les appelants du front ne passent pas
+    // encore leur langue —, mais il ne promet plus du français à qui l'oublie.
     const bounds = dayBoundsInTimeZone('2026-09-18', TZ);
 
-    expect(workingDay(SCHEDULE, '2026-09-18', bounds.start, bounds.end).absences).toContain(
-      'Toute la journée',
+    expect(workingDay(SCHEDULE, '2026-09-18', bounds.start, bounds.end).absences).toEqual(
+      friday({ locale: DEFAULT_LOCALE }).absences,
     );
   });
 });

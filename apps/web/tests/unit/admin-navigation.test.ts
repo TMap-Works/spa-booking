@@ -35,8 +35,11 @@ import {
 
 const SLUG = 'maison-lotus';
 
+/** La langue dans laquelle cette suite écrit ses libellés — explicite depuis #1297. */
+const FR = 'fr' as const;
+
 const labels = (role: UserRole): readonly string[] =>
-  adminNavigation(SLUG, role).map((entry) => entry.label);
+  adminNavigation(SLUG, role, FR).map((entry) => entry.label);
 
 /** L'entrée d'une clé, ou l'échec du test — jamais un `undefined` silencieux. */
 const navEntry = (key: string, role: UserRole = 'admin') => {
@@ -354,9 +357,9 @@ describe('le chemin des indicateurs', () => {
 describe('libellés de rôle', () => {
   it('écrit chacun des quatre rangs', () => {
     for (const role of ['client', 'staff', 'manager', 'admin'] as const) {
-      expect(roleLabel(role)).toMatch(/\S/);
+      expect(roleLabel(role, FR)).toMatch(/\S/);
     }
-    expect(roleLabel('manager')).toBe('gérant·e');
+    expect(roleLabel('manager', FR)).toBe('gérant·e');
   });
 });
 

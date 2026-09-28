@@ -1,4 +1,4 @@
-import type { BookedAppointment, PublicTenant } from '@spa/shared';
+import { DEFAULT_LOCALE, type BookedAppointment, type PublicTenant } from '@spa/shared';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -55,6 +55,16 @@ const SALON: PublicTenant = {
   address: ADDRESS,
 };
 
+/**
+ * Les deux contextes d'affichage de cette suite.
+ *
+ * Écrits en clair à chaque appel depuis #1297 : la langue n'a plus de valeur par
+ * défaut dans ce module, et c'est ce qui garantit qu'aucun écran ne retombe sur
+ * une langue que personne n'a demandée.
+ */
+const FR = { locale: 'fr' } as const;
+const EN = { locale: 'en' } as const;
+
 describe('appointmentBrief — les noms que le contrat public ne sert pas', () => {
   it('résout la prestation et le praticien à partir des identifiants', () => {
     const brief = appointmentBrief(APPOINTMENT, [service]);
@@ -92,19 +102,19 @@ describe('appointmentTimeRange — l’heure de fin, que la ligne d’historique
   it('écrit les deux bornes dans le fuseau du salon', () => {
     // `Indian/Antananarivo` est en UTC+3 et ne pratique pas l'heure d'été : un
     // affichage qui aurait oublié le fuseau du salon rendrait « 08:00 ».
-    expect(appointmentTimeRange(APPOINTMENT, 'Indian/Antananarivo')).toBe('11:00 – 12:10');
+    expect(appointmentTimeRange(APPOINTMENT, 'Indian/Antananarivo', FR)).toBe('11:00 – 12:10');
   });
 
   it('encadre le tiret d’espaces insécables', () => {
     // Sans elles, un retour à la ligne tombe entre l'heure et le tiret, et la
     // plage se lit comme deux heures sans rapport.
-    expect(appointmentTimeRange(APPOINTMENT, 'UTC')).toContain(' – ');
+    expect(appointmentTimeRange(APPOINTMENT, 'UTC', FR)).toContain(' – ');
   });
 });
 
 describe('directionsUrl — l’itinéraire de BM-RDV-04', () => {
   it('vise l’adresse du salon, nom et pays compris', () => {
-    const url = directionsUrl(SALON);
+    const url = directionsUrl(SALON, FR);
 
     expect(url).toContain('destination=');
     expect(decodeURIComponent(url ?? '')).toContain(
@@ -114,21 +124,36 @@ describe('directionsUrl — l’itinéraire de BM-RDV-04', () => {
 
   it('ne promet rien quand le salon n’a pas publié d’adresse', () => {
     // Une action qu'on ne peut pas exercer n'est pas une action.
-    expect(directionsUrl(tenant)).toBeNull();
+    expect(directionsUrl(tenant, FR)).toBeNull();
   });
 
   it('garde le pays, sans quoi la destination se géocode ailleurs', () => {
     // Le nom du salon ouvre la ligne, l'adresse la termine par son pays en
     // toutes lettres : « 12 rue des Lilas, Paris » existe aussi en France, et
     // c'est là qu'un itinéraire sans pays enverrait la cliente.
-    expect(addressOneLine(SALON.name, ADDRESS)).toBe(
+    expect(addressOneLine(SALON.name, ADDRESS, FR)).toBe(
       'Maison Lotus, 12 rue des Lilas, 101 Antananarivo, Madagascar',
     );
+  });
+
+  it('nomme le pays dans la langue de l’écran, jamais dans celle du salon (#1297)', () => {
+    // « Madagascar » s'écrit de la même façon dans les deux langues : la fixture
+    // d'adresse ne prouverait donc rien. Ce pays-ci, si — et c'est exactement
+    // l'écart que l'audit i18n a relevé sur le `LOCATION` du fichier d'agenda et
+    // sur le pied de page public.
+    const usa = { ...ADDRESS, country: 'US' };
+
+    expect(addressOneLine(SALON.name, usa, FR)).toContain('États-Unis');
+    expect(addressOneLine(SALON.name, usa, EN)).toContain('United States');
   });
 });
 
 describe('appointmentIcs — le rendez-vous dans l’agenda du téléphone (BM-RDV-03)', () => {
-  const ics = appointmentIcs({ brief: appointmentBrief(APPOINTMENT, [service]), tenant: SALON });
+  const ics = appointmentIcs({
+    brief: appointmentBrief(APPOINTMENT, [service]),
+    tenant: SALON,
+    locale: 'fr',
+  });
 
   it('est un VEVENT complet, en UTC', () => {
     expect(ics).toContain('BEGIN:VCALENDAR');
@@ -165,6 +190,7 @@ describe('appointmentIcs — le rendez-vous dans l’agenda du téléphone (BM-R
         durationMinutes: 70,
       },
       tenant: SALON,
+      locale: 'fr',
     });
 
     for (const line of long.split('\r\n')) {
@@ -176,13 +202,14 @@ describe('appointmentIcs — le rendez-vous dans l’agenda du téléphone (BM-R
   });
 
   it('se télécharge sous la référence citable, jamais sous un UUID', () => {
-    expect(appointmentIcsFilename(APPOINTMENT)).toBe('rendez-vous-RDV-8F3K-27.ics');
+    expect(appointmentIcsFilename(APPOINTMENT, 'fr')).toBe('rendez-vous-RDV-8F3K-27.ics');
   });
 
   it('s’écrit en URL de données, posable telle quelle sur un lien', () => {
     const href = appointmentIcsHref({
       brief: appointmentBrief(APPOINTMENT, [service]),
       tenant: SALON,
+      locale: 'fr',
     });
 
     expect(href.startsWith('data:text/calendar;charset=utf-8,')).toBe(true);
@@ -204,14 +231,53 @@ describe('appointmentIcs — le rendez-vous dans l’agenda du téléphone (BM-R
     expect(english).toContain('DTSTART:20260921T080000Z');
     expect(appointmentIcsFilename(APPOINTMENT, 'en')).toBe('appointment-RDV-8F3K-27.ics');
   });
+
+  it('descend sa langue jusqu’au lien de téléchargement, en `en` comme en `fr` (#1297)', () => {
+    // C'est ce lien-là que l'écran de confirmation du tunnel pose, et il
+    // n'annonçait aucune langue : le visiteur anglais repartait avec un fichier
+    // intitulé « Rendez-vous ». Le `href` porte le contenu, le `download` porte
+    // le nom — les deux doivent suivre le même écran.
+    const of = (locale: 'fr' | 'en'): string =>
+      decodeURIComponent(
+        appointmentIcsHref({ brief: appointmentBrief(APPOINTMENT, [service]), tenant: SALON, locale }),
+      );
+
+    expect(of('fr')).toContain('SUMMARY:Massage suédois — Maison Lotus');
+    expect(of('en')).toContain('DESCRIPTION:With Hery');
+    expect(appointmentIcsFilename(APPOINTMENT, 'fr')).toBe('rendez-vous-RDV-8F3K-27.ics');
+    expect(appointmentIcsFilename(APPOINTMENT, 'en')).toBe('appointment-RDV-8F3K-27.ics');
+  });
+
+  it('refuse à la compilation l’appel qui omet la langue (#1297)', () => {
+    // La garde n'est pas l'assertion, c'est la **directive** : si le paramètre
+    // redevenait facultatif, `@ts-expect-error` n'aurait plus d'erreur à
+    // couvrir et `npm run typecheck` échouerait sur cette ligne. C'est ce que le
+    // troisième critère de #1297 demande — un test qui tombe quand un appel
+    // omet la langue —, et un type tient cette promesse mieux qu'un `expect`.
+    const brief = appointmentBrief(APPOINTMENT, [service]);
+
+    // @ts-expect-error — `locale` est obligatoire depuis #1297.
+    expect(() => appointmentIcs({ brief, tenant: SALON })).toBeDefined();
+    // @ts-expect-error — `locale` est obligatoire depuis #1297.
+    expect(() => appointmentIcsHref({ brief, tenant: SALON })).toBeDefined();
+    // @ts-expect-error — `locale` est obligatoire depuis #1297.
+    expect(() => appointmentIcsFilename(APPOINTMENT)).toBeDefined();
+    // @ts-expect-error — le contexte d'affichage est obligatoire depuis #1297.
+    expect(() => addressOneLine(SALON.name, ADDRESS)).toBeDefined();
+    // @ts-expect-error — le contexte d'affichage est obligatoire depuis #1297.
+    expect(() => directionsUrl(SALON)).toBeDefined();
+  });
 });
 
 describe('les phrases de statut de l’espace client (#847)', () => {
-  it('se disent dans les deux langues, et le français reste le défaut', () => {
-    // Le défaut est français parce que les suites de ce dépôt sont écrites en
-    // français (`tests/support/next-intl.ts`) — pas parce que le produit l'est :
-    // `DEFAULT_LOCALE` du contrat vaut `en`.
-    expect(pendingHoldNote()).toBe('Votre créneau est retenu ; rien à faire de votre côté.');
+  it('se disent dans les deux langues, et le défaut est celui du produit', () => {
+    // Le défaut était le français, pour garder le comportement d'avant l'épique
+    // #843 tant que les écrans n'étaient pas branchés. Ils le sont, et #1297 l'a
+    // ramené à `DEFAULT_LOCALE` : le repli ne promet plus l'inverse de la langue
+    // par défaut du produit.
+    expect(DEFAULT_LOCALE).toBe('en');
+    expect(pendingHoldNote()).toBe(pendingHoldNote(DEFAULT_LOCALE));
+    expect(pendingHoldNote('fr')).toBe('Votre créneau est retenu ; rien à faire de votre côté.');
     expect(pendingHoldNote('en')).toBe('Your slot is held; there is nothing for you to do.');
     expect(rescheduledNote('fr')).toBe('Ce créneau a été libéré au profit d’un autre rendez-vous.');
     expect(rescheduledNote('en')).toBe(
