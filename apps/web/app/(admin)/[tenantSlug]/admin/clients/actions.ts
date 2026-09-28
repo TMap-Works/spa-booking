@@ -33,8 +33,14 @@
  *   jusqu'à l'API : `updateCustomer` n'a aucun paramètre pour l'accepter.
  */
 
-import { slugSchema, updateCustomerRequestSchema, uuidSchema, type Customer } from '@spa/shared';
-import { getTranslations } from 'next-intl/server';
+import {
+  slugSchema,
+  updateCustomerRequestSchema,
+  uuidSchema,
+  zodErrorMap,
+  type Customer,
+} from '@spa/shared';
+import { getLocale, getTranslations } from 'next-intl/server';
 import { revalidatePath } from 'next/cache';
 
 import { updateCustomer } from '@/lib/api-client';
@@ -101,8 +107,9 @@ export async function updateCustomerAction(
   }
 
   const t = await getTranslations('admin-clients.actions');
+  const locale = await getLocale();
   const id = uuidSchema.safeParse(customerId);
-  const parsed = updateCustomerRequestSchema.safeParse(input);
+  const parsed = updateCustomerRequestSchema.safeParse(input, { errorMap: zodErrorMap(locale) });
 
   if (!id.success) {
     return invalid(t('unknownCustomer'));
@@ -110,8 +117,11 @@ export async function updateCustomerAction(
   if (!parsed.success) {
     // Le message de zod passe d'abord : il nomme le champ fautif, là où le
     // repli ne dit que « invalides ». Il vient du contrat partagé, dont les
-    // bornes sont dites par `zodErrorMap(locale)` côté formulaire ; ce chemin-ci
-    // n'est atteint que par un appel qui n'est pas venu du formulaire.
+    // bornes sont dites par `zodErrorMap(locale)` — la même carte qu'emploie le
+    // formulaire, passée ici aussi depuis #1299 : sans elle ce chemin retombait
+    // sur la carte globale du contrat, en français quelle que soit la langue de
+    // l'écran. Il n'est atteint que par un appel qui n'est pas venu du
+    // formulaire, mais c'est exactement là que le filet doit tenir.
     return invalid(parsed.error.issues[0]?.message ?? t('invalidInput'));
   }
 

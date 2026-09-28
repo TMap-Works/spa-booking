@@ -19,9 +19,32 @@
  * n'a encore exprimé aucune préférence, et laisser l'API choisir seule ferait
  * basculer en anglais, par `tenants.default_locale`, une inscription entièrement
  * suivie en français.
+ *
+ * ## Et la langue du refus de validation (#1299)
+ *
+ * La même. Le `safeParse` ci-dessous ne recevait aucune carte d'erreurs : il
+ * retombait donc sur la carte **globale** du contrat partagé, posée en
+ * `DIAGNOSTIC_LOCALE = 'fr'` pour les journaux de l'API (#1232). Le premier refus
+ * du schéma — c'est lui que l'action rend, parce qu'il nomme le champ fautif —
+ * arrivait en français sur un formulaire anglais, et le repli était une phrase
+ * française écrite en dur. La carte est désormais celle de la requête, et le
+ * repli la phrase de `VALIDATION_ERROR` dans cette langue.
+ *
+ * L'inscription est vue par un gérant qui n'a encore aucun compte : c'est
+ * exactement l'écran où une phrase française sur une page anglaise se paie.
+ *
+ * ## La langue se lit **avant** que la session soit posée, et c'est voulu
+ *
+ * Une seule lecture, en tête d'action, sert les deux emplois — la carte de zod
+ * et la page de paiement. Elle ne peut donc plus avoir lieu après
+ * `writeAdminSession`, qui pose au passage le miroir de la langue du **compte**
+ * (`setAccountLocaleMirror`, #853) : ce cookie est relu par la résolution, et il
+ * porte `tenants.default_locale` — la langue du salon qu'on vient d'ouvrir, non
+ * celle du formulaire. Lire avant, c'est précisément ce que la section #1261
+ * ci-dessus demande, et le code ne le tenait que par l'ordre des lignes.
  */
 
-import { salonSignupRequestSchema } from '@spa/shared';
+import { ERROR_CODES, errorMessage, salonSignupRequestSchema, zodErrorMap } from '@spa/shared';
 import { getLocale } from 'next-intl/server';
 
 import { failure, invalid, type AdminActionResult } from '@/app/(admin)/[tenantSlug]/admin/action-result';
@@ -35,10 +58,13 @@ export interface SignupOutcome {
 }
 
 export async function signupSalonAction(values: unknown): Promise<AdminActionResult<SignupOutcome>> {
-  const parsed = salonSignupRequestSchema.safeParse(values);
+  const locale = await getLocale();
+  const parsed = salonSignupRequestSchema.safeParse(values, { errorMap: zodErrorMap(locale) });
 
   if (!parsed.success) {
-    return invalid(parsed.error.issues[0]?.message ?? 'Le formulaire contient une erreur.');
+    return invalid(
+      parsed.error.issues[0]?.message ?? errorMessage(ERROR_CODES.VALIDATION_ERROR, locale),
+    );
   }
 
   let opened;
@@ -51,7 +77,7 @@ export async function signupSalonAction(values: unknown): Promise<AdminActionRes
   await writeAdminSession(parsed.data.slug, opened);
 
   try {
-    const checkout = await startBillingCheckout(opened.session.accessToken, await getLocale());
+    const checkout = await startBillingCheckout(opened.session.accessToken, locale);
     return { ok: true, data: { next: checkout.url } };
   } catch {
     return { ok: true, data: { next: adminBillingPath(parsed.data.slug) } };

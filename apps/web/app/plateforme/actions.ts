@@ -11,28 +11,52 @@
  * d'invitation : c'est leur raison d'être — l'opérateur les remet au gérant — et
  * ils ne sont affichés qu'à lui.
  *
- * ## Les `message` de ce module sont des diagnostics, jamais de l'affichage (#1106)
+ * ## Les refus se disent dans la langue de la requête — #1299
  *
- * Ils restent en français, et aucun écran ne les montre : chaque composant de la
- * console lit le **code** du refus et écrit sa propre phrase dans la langue de la
- * session (web-frontend §2). Les traduire ici aurait demandé à chaque action de
- * résoudre la langue de la requête pour produire un texte que personne ne lit —
- * et aurait laissé deux écritures du même message, celle de l'action et celle de
- * l'écran, libres de diverger.
+ * Ce module rendait des phrases françaises écrites en dur — « Établissement
+ * inconnu. », « Indiquez le motif… », « Le formulaire contient une erreur. » —
+ * au motif qu'aucun écran ne les montre : chaque composant de la console lit le
+ * **code** du refus et écrit sa propre phrase dans la langue de la session
+ * (web-frontend §2). L'argument tenait tant que le tri sur le code restait
+ * exhaustif ; il ne tient plus le jour où un écran retombe sur `result.message`,
+ * et la phrase s'affiche alors en français sur une console anglaise.
+ *
+ * Deux corrections, celles qu'a prises le back-office en #1234 :
+ *
+ * - **plus aucun littéral.** La phrase du refus vient d'`errorMessage(code,
+ *   locale)` du contrat partagé — toujours `VALIDATION_ERROR`, jamais un code
+ *   choisi pour la phrase qu'il porte : c'est le code qu'`invalid()` pose, et un
+ *   refus dont la phrase dirait autre chose que son code serait illisible pour
+ *   l'écran, qui trie sur le code ;
+ * - **la carte de zod est celle de la requête.** Là où le message du premier
+ *   refus du schéma est rendu tel quel — il nomme le champ fautif, là où le
+ *   repli ne dit que « incomplètes ou mal formées » —, le `safeParse` reçoit
+ *   `zodErrorMap(locale)`. Sans elle il retombait sur la carte globale du
+ *   contrat, posée en `DIAGNOSTIC_LOCALE = 'fr'` pour les journaux de l'API
+ *   (#1232) : du français, quelle que soit la langue de l'écran.
+ *
+ * Les `safeParse` dont le message ne remonte jamais — `uuidSchema` sur un
+ * identifiant d'URL — n'en reçoivent pas : leur refus se dit par la phrase du
+ * code, et leur passer une carte n'ajouterait qu'un paramètre sans lecteur.
  */
 
 import {
+  ERROR_CODES,
   createPlatformNoteRequestSchema,
   createTenantRequestSchema,
+  errorMessage,
   platformLoginRequestSchema,
   updateTenantStatusRequestSchema,
   uuidSchema,
+  zodErrorMap,
+  type Locale,
   type PlatformOperator,
   type PlatformTenant,
   type PlatformTenantEvent,
   type ProvisionedTenant,
   type ReissuedTenantInvitation,
 } from '@spa/shared';
+import { getLocale } from 'next-intl/server';
 import { revalidatePath } from 'next/cache';
 
 import {
@@ -49,13 +73,26 @@ import { clearPlatformSession, readPlatformAccessToken, writePlatformSession } f
 
 export type PlatformActionResult<TData> = AdminActionResult<TData>;
 
+/**
+ * La phrase de `VALIDATION_ERROR`, dans la langue donnée.
+ *
+ * Synchrone et non exportée : `'use server'` n'admet que des exports
+ * asynchrones, chacun devenant un point d'entrée appelable depuis le navigateur.
+ * La langue est un paramètre plutôt qu'une lecture interne pour qu'une action
+ * qui la lit déjà — parce qu'elle en fait aussi une carte de zod — n'interroge
+ * pas la requête deux fois.
+ */
+function refusDeValidation(locale: Locale): string {
+  return errorMessage(ERROR_CODES.VALIDATION_ERROR, locale);
+}
+
 export async function platformLoginAction(
   credentials: unknown,
 ): Promise<PlatformActionResult<PlatformOperator>> {
   const parsed = platformLoginRequestSchema.safeParse(credentials);
 
   if (!parsed.success) {
-    return invalid('Renseignez votre adresse e-mail, votre mot de passe et le code à six chiffres.');
+    return invalid(refusDeValidation(await getLocale()));
   }
 
   try {
@@ -81,13 +118,14 @@ export async function provisionTenantAction(
   idempotencyKey: string,
   values: unknown,
 ): Promise<PlatformActionResult<ProvisionedTenant>> {
-  const parsed = createTenantRequestSchema.safeParse(values);
+  const locale = await getLocale();
+  const parsed = createTenantRequestSchema.safeParse(values, { errorMap: zodErrorMap(locale) });
 
   if (!parsed.success) {
-    return invalid(parsed.error.issues[0]?.message ?? 'Le formulaire contient une erreur.');
+    return invalid(parsed.error.issues[0]?.message ?? refusDeValidation(locale));
   }
   if (!/^[A-Za-z0-9-]{8,128}$/.test(idempotencyKey)) {
-    return invalid('Clé de soumission invalide — rechargez la page.');
+    return invalid(refusDeValidation(locale));
   }
 
   const accessToken = await readPlatformAccessToken();
@@ -110,7 +148,7 @@ export async function reissueTenantInvitationAction(
   const id = uuidSchema.safeParse(tenantId);
 
   if (!id.success) {
-    return invalid('Établissement inconnu.');
+    return invalid(refusDeValidation(await getLocale()));
   }
 
   const accessToken = await readPlatformAccessToken();
@@ -137,14 +175,17 @@ export async function addTenantNoteAction(
   tenantId: string,
   values: unknown,
 ): Promise<PlatformActionResult<PlatformTenantEvent>> {
+  const locale = await getLocale();
   const id = uuidSchema.safeParse(tenantId);
-  const parsed = createPlatformNoteRequestSchema.safeParse(values);
+  const parsed = createPlatformNoteRequestSchema.safeParse(values, {
+    errorMap: zodErrorMap(locale),
+  });
 
   if (!id.success) {
-    return invalid('Établissement inconnu.');
+    return invalid(refusDeValidation(locale));
   }
   if (!parsed.success) {
-    return invalid(parsed.error.issues[0]?.message ?? 'La note est invalide.');
+    return invalid(parsed.error.issues[0]?.message ?? refusDeValidation(locale));
   }
 
   const accessToken = await readPlatformAccessToken();
@@ -167,14 +208,17 @@ export async function updateTenantStatusAction(
   tenantId: string,
   values: unknown,
 ): Promise<PlatformActionResult<PlatformTenant>> {
+  const locale = await getLocale();
   const id = uuidSchema.safeParse(tenantId);
-  const parsed = updateTenantStatusRequestSchema.safeParse(values);
+  const parsed = updateTenantStatusRequestSchema.safeParse(values, {
+    errorMap: zodErrorMap(locale),
+  });
 
   if (!id.success) {
-    return invalid('Établissement inconnu.');
+    return invalid(refusDeValidation(locale));
   }
   if (!parsed.success) {
-    return invalid('Indiquez le motif — il est gardé dans l’historique du salon.');
+    return invalid(parsed.error.issues[0]?.message ?? refusDeValidation(locale));
   }
 
   const accessToken = await readPlatformAccessToken();
