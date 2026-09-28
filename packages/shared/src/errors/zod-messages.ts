@@ -1,6 +1,6 @@
 /**
  * Les messages de validation des formulaires, dans les deux langues — #845,
- * complété par #1232.
+ * complété par #1232 puis par #1309.
  *
  * ## Le problème que cela résout
  *
@@ -69,6 +69,26 @@
  * `safeParse` ou à `zodResolver` est **contextuelle**, et la contextuelle gagne
  * sur la globale (`addIssueToContext`, zod). Le repli ne se voit donc que là où
  * personne n'a de langue à demander — un service, un journal, un test.
+ *
+ * ## Ce que #1309 ajoute : le refus d'une clé que le schéma ne déclare pas
+ *
+ * Les schémas d'entrée du contrat sont `.strict()` — l'API le vérifie même à
+ * l'amorçage (`assertRefusesUnknownKeys`), parce qu'un `tenantId` glissé dans un
+ * corps JSON doit être **refusé** et non ignoré (tenant-isolation §2). Le refus
+ * correspondant, `unrecognized_keys`, n'était pas traité ici : il retombait sur
+ * `ctx.defaultError`, c'est-à-dire sur la phrase native de zod — « Unrecognized
+ * key(s) in object: 'xyz' » —, en anglais sur les deux consoles.
+ *
+ * Il a désormais sa phrase, `unexpected`, et cette phrase **ne nomme aucune
+ * clé**. C'est un arbitrage, pas un oubli : la personne qui lit ce message n'a
+ * pas composé la charge utile à la main — elle a soumis un formulaire dont un
+ * appelant intermédiaire a ajouté un champ —, et lui réciter un nom de clé ne
+ * lui dit rien qu'elle puisse corriger.
+ *
+ * Un journal, lui, ne demande pas la même chose qu'un écran : c'est le nom du
+ * champ refusé qui y a toute la valeur. Les deux cartes se séparent donc ici, et
+ * seulement sur ce code — `zodErrorMap` sert la phrase, `diagnosticErrorMap`
+ * garde le texte de zod. Le pourquoi est écrit à `DIAGNOSTIC_LOCALE`.
  */
 
 import { z } from 'zod';
@@ -86,6 +106,14 @@ interface Phrases {
   readonly number: string;
   readonly integer: string;
   readonly choice: string;
+  /**
+   * Le refus d'un `.strict()` — une clé que le schéma ne déclare pas (#1309).
+   *
+   * Une phrase fixe, et non une fonction prenant les clés en cause : le nom de
+   * la clé refusée n'a pas d'emploi pour qui lit le message, et le lui servir
+   * ferait du corps d'erreur l'écho d'une entrée non validée.
+   */
+  readonly unexpected: string;
   readonly tooShort: (min: number) => string;
   readonly tooLong: (max: number) => string;
   readonly tooSmall: (min: number) => string;
@@ -105,6 +133,7 @@ const PHRASES: Readonly<Record<Locale, Phrases>> = {
     number: 'Saisissez un nombre.',
     integer: 'Saisissez un nombre entier.',
     choice: 'Choisissez une des options proposées.',
+    unexpected: 'Cette demande contient des informations qui ne sont pas attendues.',
     tooShort: (min) => `Saisissez au moins ${String(min)} caractère${min > 1 ? 's' : ''}.`,
     tooLong: (max) => `Ne dépassez pas ${String(max)} caractère${max > 1 ? 's' : ''}.`,
     tooSmall: (min) => `La valeur minimale est ${String(min)}.`,
@@ -122,6 +151,7 @@ const PHRASES: Readonly<Record<Locale, Phrases>> = {
     number: 'Enter a number.',
     integer: 'Enter a whole number.',
     choice: 'Choose one of the available options.',
+    unexpected: 'This request contains information that is not expected.',
     tooShort: (min) => `Enter at least ${String(min)} character${min > 1 ? 's' : ''}.`,
     tooLong: (max) => `Use at most ${String(max)} character${max > 1 ? 's' : ''}.`,
     tooSmall: (min) => `The smallest allowed value is ${String(min)}.`,
@@ -535,7 +565,30 @@ export function zodErrorMap(locale: Locale): z.ZodErrorMap {
       case z.ZodIssueCode.not_finite:
         return { message: phrases.number };
 
+      case z.ZodIssueCode.unrecognized_keys:
+        // Le refus d'un `.strict()` — #1309. La phrase ne reprend pas
+        // `issue.keys` : une liste de noms de champs ne dit rien à qui vient de
+        // soumettre un formulaire, et c'est elle qui rendait le message
+        // intraduisible. Ce que le **journal** de l'API y perd lui est rendu par
+        // `diagnosticErrorMap`, plus bas — voir `DIAGNOSTIC_LOCALE`.
+        return { message: phrases.unexpected };
+
       case z.ZodIssueCode.invalid_union:
+        // Arbitré en même temps que le cas ci-dessus (#1309, deuxième critère) :
+        // la phrase reste la générique, et elle reste **une phrase traduite**
+        // plutôt qu'un repli sur `ctx.defaultError` — lequel se lirait « Invalid
+        // input », en anglais et sans rien apprendre.
+        //
+        // Générique parce qu'une union n'a rien de commun à dire : zod n'expose
+        // au niveau de l'union que ce code, les refus de chaque branche restant
+        // dans `unionErrors`, et ces branches sont par construction
+        // hétérogènes — il n'existe donc pas de phrase plus précise qui soit
+        // vraie pour toutes. Une union est d'ailleurs un choix de schéma que
+        // personne ne voit à l'écran : la décrire n'aiderait pas à corriger la
+        // saisie. Un refus qui mérite mieux que cette phrase-ci ne se dit donc
+        // pas par une union mais par un `superRefine` qui pose sa clé — ce que
+        // fait `identifier.phoneNational` (`common/identifiers.ts`), là où une
+        // union « national | international » n'aurait rien su nommer.
         return { message: phrases.invalid };
 
       default:
@@ -552,8 +605,66 @@ export function zodErrorMap(locale: Locale): z.ZodErrorMap {
  * diagnostics du dépôt, et c'est le texte que l'API servait déjà. Ce n'est pas
  * la langue par défaut du **produit**, qui est l'anglais (`DEFAULT_LOCALE`) et
  * qui se choisit écran par écran, carte contextuelle à l'appui.
+ *
+ * ## #1309 a rouvert la question, et la réponse ne bouge pas
+ *
+ * Traduire `unrecognized_keys` touche à ce que cette constante gouverne : la
+ * phrase servie dans `details.violations`. Le troisième critère de #1309
+ * demandait donc que son sort soit tranché sciemment plutôt que subi. Il l'est :
+ * **elle reste `'fr'`**, pour trois raisons.
+ *
+ * 1. Ce n'est pas une langue d'affichage. `DomainExceptionFilter` sert un
+ *    `{ code, message, details }` dont le front choisit le texte sur la foi du
+ *    `code` (`error-codes.ts`) ; `violations` est lu par un journal et par qui
+ *    intègre l'API, jamais rendu tel quel à un client. Le passer à l'anglais
+ *    n'internationaliserait rien — cela traduirait un journal.
+ * 2. Le reste du diagnostic est français et le resterait. Les messages de
+ *    `DomainError`, les phrases de `FR_VALIDATION` reprises de #1232, les
+ *    `TypeError` d'amorçage : basculer cette seule constante donnerait un
+ *    `details` anglais sous un `message` français, ce qui est moins lisible que
+ *    l'état actuel, pas plus.
+ * 3. C'est ce que #1232 a gelé pour que « aucune route ne change de
+ *    comportement observable », et la remettre en cause ferait basculer d'un
+ *    coup la cinquantaine de phrases de `VALIDATION_MESSAGES` sur **toutes** les
+ *    routes — un changement de contrat qui n'a rien à faire dans un correctif de
+ *    trois lignes, et qui demanderait son propre ticket.
  */
 export const DIAGNOSTIC_LOCALE: Locale = 'fr';
+
+/**
+ * La carte du **diagnostic** : celle des écrans, sauf là où un journal demande
+ * autre chose qu'une phrase.
+ *
+ * Elle ne diffère de `zodErrorMap(DIAGNOSTIC_LOCALE)` que sur
+ * `unrecognized_keys`, où elle rend le texte de zod — « Unrecognized key(s) in
+ * object: 'client' ». C'est le second volet de l'arbitrage de #1309, et il
+ * découle du premier : la phrase du catalogue est muette sur la clé refusée,
+ * exprès, et cette discrétion qui protège un écran aveugle un journal.
+ *
+ * Or c'est justement là que le nom sert. `violationsOf` (API) énonce que ses
+ * messages « citent des **noms de champs** », et le corps d'erreur est ce qui
+ * dit à qui intègre l'API *lequel* de ses champs a été refusé ; sans le nom, un
+ * `VALIDATION_ERROR` sur un corps de vingt champs n'est plus instruisible.
+ * `appointments-desk.integration-spec.ts` en fait d'ailleurs une assertion : un
+ * `client` glissé dans une création au comptoir doit se retrouver nommé dans le
+ * refus, faute de quoi rien ne distingue ce 400-là d'un autre.
+ *
+ * Le partage tient donc en une phrase : **la langue de l'écran porte une phrase,
+ * le journal porte un nom de champ.** Aucune route ne change de comportement
+ * observable — ce que #1232 exigeait —, et aucun écran ne reçoit plus d'anglais
+ * brut — ce que #1309 corrige.
+ *
+ * Elle n'est pas exportée : personne n'a à la poser à la main, c'est la ligne
+ * ci-dessous qui l'installe, et une carte contextuelle l'emporte toujours.
+ */
+function diagnosticErrorMap(): z.ZodErrorMap {
+  const parDefaut = zodErrorMap(DIAGNOSTIC_LOCALE);
+
+  return (issue, ctx) =>
+    issue.code === z.ZodIssueCode.unrecognized_keys
+      ? { message: ctx.defaultError }
+      : parDefaut(issue, ctx);
+}
 
 /*
  * La carte globale, posée au chargement de ce module.
@@ -570,4 +681,4 @@ export const DIAGNOSTIC_LOCALE: Locale = 'fr';
  * main aurait été oublié dans exactement le cas où il manque le plus — un test
  * unitaire qui importe un schéma sans passer par le baril.
  */
-z.setErrorMap(zodErrorMap(DIAGNOSTIC_LOCALE));
+z.setErrorMap(diagnosticErrorMap());
