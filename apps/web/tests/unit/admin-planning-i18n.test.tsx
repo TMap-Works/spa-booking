@@ -1,4 +1,4 @@
-import type { Appointment, OpeningHoursEntry } from '@spa/shared';
+import { errorMessage, type Appointment, type OpeningHoursEntry } from '@spa/shared';
 import { cleanup, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -45,7 +45,10 @@ import {
   weekdayLabel,
 } from '@/lib/admin/calendar-range';
 import { calendarPeriodEmptyState, calendarStartState } from '@/lib/admin/calendar-start';
-import { calendarFailureMessage } from '@/lib/admin/calendar-failure';
+import {
+  calendarApiFailureMessage,
+  calendarFailureMessage,
+} from '@/lib/admin/calendar-failure';
 
 /** Le fuseau du salon de référence : UTC+3, celui d'Antananarivo. */
 const TIME_ZONE = 'Indian/Antananarivo';
@@ -224,14 +227,22 @@ describe('les états vides et les refus parlent la langue de la session', () => 
     expect(calendarPeriodEmptyState('en').title).toBe('No appointments in this period');
   });
 
-  it('dit l’agenda non servi dans la langue, et laisse passer le message de l’API', () => {
+  it('dit l’agenda non servi dans la langue, et laisse passer une phrase déjà traduite', () => {
     expect(calendarFailureMessage('NOT_FOUND', 'Cannot GET /api/v1/appointments', 'en')).toMatch(
       /not served by the API yet/,
     );
-    // Tout autre code garde le message que l'API a rendu : c'est elle qui nomme
-    // le refus, et le traduire ici reviendrait à le réécrire.
-    expect(calendarFailureMessage('SLOT_NO_LONGER_AVAILABLE', 'Déjà pris', 'en')).toBe(
-      'Déjà pris',
+    // Tout autre code garde la phrase que l'appelant a rendue — c'est celle de
+    // l'action serveur, déjà dans la langue de la session, et la réécrire ici
+    // l'écraserait sous une phrase générique.
+    expect(calendarFailureMessage('SLOT_NO_LONGER_AVAILABLE', 'Already booked', 'en')).toBe(
+      'Already booked',
+    );
+    // Le chemin qui n'a que le code — le premier rendu, côté serveur — le
+    // traduit par la table du contrat partagé (#1298). La phrase attendue est
+    // **lue** dans cette table, jamais recopiée : un littéral resterait vert le
+    // jour où ce module cesserait de la lire.
+    expect(calendarApiFailureMessage('SLOT_NO_LONGER_AVAILABLE', 'en')).toBe(
+      errorMessage('SLOT_NO_LONGER_AVAILABLE', 'en'),
     );
   });
 });
