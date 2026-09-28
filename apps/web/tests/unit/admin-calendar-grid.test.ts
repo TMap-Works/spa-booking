@@ -33,6 +33,12 @@ import { rangeOf } from '@/lib/admin/calendar-range';
 
 const TIMEZONE = 'Indian/Antananarivo';
 
+/**
+ * La langue dans laquelle cette suite affirme ses libellés — dite à l'appel
+ * depuis #1297, où le repli du front est passé au `DEFAULT_LOCALE` anglais.
+ */
+const FR = { locale: 'fr' } as const;
+
 let sequence = 0;
 
 function appointment(
@@ -168,6 +174,7 @@ describe('vue jour — une colonne par praticien', () => {
     range: rangeOf('jour', '2026-08-26'),
     appointments: [tiana, hasinaMidi, hasinaMatin],
     timeZone: TIMEZONE,
+    display: FR,
   });
 
   it('cadre la journée de 08 h à 20 h par défaut', () => {
@@ -232,6 +239,7 @@ describe('vue jour — une colonne par praticien', () => {
         appointment({ startsAt: '2026-08-26T04:00:00.000Z', endsAt: '2026-08-26T05:00:00.000Z' }),
       ],
       timeZone: TIMEZONE,
+      display: FR,
     });
 
     expect(early.firstSlot).toBe(14);
@@ -250,6 +258,7 @@ describe('vue jour — une colonne par praticien', () => {
         appointment({ startsAt: '2026-08-25T18:00:00.000Z', endsAt: '2026-08-25T19:00:00.000Z' }),
       ],
       timeZone: TIMEZONE,
+      display: FR,
     });
 
     expect(board.columns).toHaveLength(0);
@@ -264,6 +273,7 @@ describe('vue jour — une colonne par praticien', () => {
       range: rangeOf('jour', '2026-08-26'),
       appointments: [],
       timeZone: TIMEZONE,
+      display: FR,
     });
 
     expect(empty.columns).toHaveLength(0);
@@ -291,6 +301,7 @@ describe('vue jour — le répertoire des praticiens fait les colonnes', () => {
       appointments: [],
       staff: REPERTOIRE,
       timeZone: TIMEZONE,
+      display: FR,
     });
 
     // Alphabétique, comme les colonnes déduites des rendez-vous : la place d'une
@@ -310,6 +321,7 @@ describe('vue jour — le répertoire des praticiens fait les colonnes', () => {
       appointments: [],
       staff: REPERTOIRE,
       timeZone: TIMEZONE,
+      display: FR,
     });
     const hasina = board.columns[0];
 
@@ -332,6 +344,7 @@ describe('vue jour — le répertoire des praticiens fait les colonnes', () => {
       ],
       staff: REPERTOIRE,
       timeZone: TIMEZONE,
+      display: FR,
     });
 
     expect(board.columns.map((column) => column.meta)).toEqual(['1 RDV', 'Aucun rendez-vous']);
@@ -355,6 +368,7 @@ describe('vue jour — le répertoire des praticiens fait les colonnes', () => {
       ],
       staff: [{ id: 'staff-hasina', displayName: 'Hasina' }],
       timeZone: TIMEZONE,
+      display: FR,
     });
 
     expect(board.columns.map((column) => column.name)).toEqual(['Hasina', 'Zo']);
@@ -371,6 +385,7 @@ describe('vue jour — le répertoire des praticiens fait les colonnes', () => {
       ],
       staff: [{ id: 'staff-hasina', displayName: 'Hasina' }],
       timeZone: TIMEZONE,
+      display: FR,
     });
 
     expect(board.columns).toHaveLength(1);
@@ -384,6 +399,7 @@ describe('vue jour — le répertoire des praticiens fait les colonnes', () => {
       appointments: [],
       staff: REPERTOIRE,
       timeZone: TIMEZONE,
+      display: FR,
     });
 
     // Une colonne de la vue semaine est une journée de toute l'équipe : le
@@ -407,6 +423,7 @@ describe('vue semaine — une colonne par journée', () => {
       }),
     ],
     timeZone: TIMEZONE,
+    display: FR,
   });
 
   it('ouvre les sept journées, même celles sans rendez-vous', () => {
@@ -455,6 +472,7 @@ describe('vue semaine — une colonne par journée', () => {
         }),
       ],
       timeZone: TIMEZONE,
+      display: FR,
     });
     const mercredi = simultanes.columns[2];
 
@@ -476,6 +494,7 @@ describe('heure courante', () => {
         appointment({ startsAt: '2026-08-26T06:00:00.000Z', endsAt: '2026-08-26T07:00:00.000Z' }),
       ],
       timeZone: TIMEZONE,
+      display: FR,
       // 07:40 UTC = 10:40 au salon : rangée 21, à 33 % de sa hauteur.
       now: new Date('2026-08-26T07:40:00.000Z'),
     });
@@ -495,6 +514,7 @@ describe('heure courante', () => {
         appointment({ startsAt: '2026-08-26T06:00:00.000Z', endsAt: '2026-08-26T07:00:00.000Z' }),
       ],
       timeZone: TIMEZONE,
+      display: FR,
       now: new Date('2026-09-02T07:40:00.000Z'),
     });
 
@@ -596,6 +616,7 @@ describe('un rendez-vous hors grille dit son heure, pas celle de sa rangée (#53
       range: rangeOf('jour', '2026-08-26'),
       appointments: [horsGrille],
       timeZone: TIMEZONE,
+      display: FR,
     });
     const event = eventsOf(board.columns[0]?.cells ?? [])[0];
 
@@ -611,6 +632,7 @@ describe('un rendez-vous hors grille dit son heure, pas celle de sa rangée (#53
       range: rangeOf('jour', '2026-08-26'),
       appointments: [horsGrille],
       timeZone: TIMEZONE,
+      display: FR,
     });
     const event = eventsOf(board.columns[0]?.cells ?? [])[0];
 
@@ -623,6 +645,7 @@ describe('un rendez-vous hors grille dit son heure, pas celle de sa rangée (#53
       range: rangeOf('semaine', '2026-08-26'),
       appointments: [horsGrille],
       timeZone: TIMEZONE,
+      display: FR,
     });
     const event = eventsOf(board.columns[2]?.cells ?? [])[0];
 
@@ -664,6 +687,7 @@ describe('la vue semaine dit le praticien et la prestation qu’elle ne montre p
       range: rangeOf('semaine', '2026-08-26'),
       appointments,
       timeZone: TIMEZONE,
+      display: FR,
     });
 
     return board.columns[2]?.cells ?? [];
@@ -726,6 +750,7 @@ describe('la vue semaine dit le praticien et la prestation qu’elle ne montre p
       range: rangeOf('jour', '2026-08-26'),
       appointments: [mercredi({ staff: HASINA })],
       timeZone: TIMEZONE,
+      display: FR,
     });
     const event = eventsOf(board.columns[0]?.cells ?? [])[0];
 
@@ -779,6 +804,7 @@ describe('les horaires d’ouverture ferment les rangées qu’ils ne couvrent p
     openingHours: SEMAINE,
     staff: REPERTOIRE,
     timeZone: TIMEZONE,
+    display: FR,
   });
 
   it('fusionne les rangées fermées en trois blocs nommés', () => {
@@ -834,6 +860,7 @@ describe('les horaires d’ouverture ferment les rangées qu’ils ne couvrent p
       openingHours: SEMAINE,
       staff: REPERTOIRE,
       timeZone: TIMEZONE,
+      display: FR,
     });
     const colonne = dimanche.columns[0];
 
@@ -860,6 +887,7 @@ describe('les horaires d’ouverture ferment les rangées qu’ils ne couvrent p
       openingHours: [],
       staff: REPERTOIRE,
       timeZone: TIMEZONE,
+      display: FR,
     });
 
     expect(closedOf(board.columns[0]?.cells ?? [])).toHaveLength(0);
@@ -874,6 +902,7 @@ describe('les horaires d’ouverture ferment les rangées qu’ils ne couvrent p
       openingHours: [{ weekday: 3, opensAt: '07:00', closesAt: '21:00' }],
       staff: REPERTOIRE,
       timeZone: TIMEZONE,
+      display: FR,
     });
 
     expect(board.firstSlot).toBe(14);
@@ -896,6 +925,7 @@ describe('les horaires d’ouverture ferment les rangées qu’ils ne couvrent p
       openingHours: SEMAINE,
       staff: REPERTOIRE,
       timeZone: TIMEZONE,
+      display: FR,
     });
     const cells = board.columns[0]?.cells ?? [];
 
@@ -920,6 +950,7 @@ describe('les horaires d’ouverture ferment les rangées qu’ils ne couvrent p
       ],
       staff: REPERTOIRE,
       timeZone: TIMEZONE,
+      display: FR,
     });
 
     expect(closedOf(board.columns[0]?.cells ?? []).map((cell) => cell.label)).toEqual([
@@ -938,6 +969,7 @@ describe('les horaires d’ouverture ferment les rangées qu’ils ne couvrent p
       openingHours: [{ weekday: 3, opensAt: '18:00', closesAt: '24:00' }],
       staff: REPERTOIRE,
       timeZone: TIMEZONE,
+      display: FR,
     });
 
     expect(board.lastSlot).toBe(48);
@@ -965,6 +997,7 @@ describe('les horaires d’ouverture ferment les rangées qu’ils ne couvrent p
       openingHours: SEMAINE,
       staff: REPERTOIRE,
       timeZone: TIMEZONE,
+      display: FR,
       // 07:40 UTC = 10:40 au salon. Le bloc va de 08 h à 20 h : 160 minutes
       // écoulées sur 720, soit 22 %.
       now: new Date('2026-08-30T07:40:00.000Z'),
@@ -987,6 +1020,7 @@ describe('les horaires d’ouverture ferment les rangées qu’ils ne couvrent p
       openingHours: [{ weekday: 3, opensAt: '10:00', closesAt: '09:00' }],
       staff: REPERTOIRE,
       timeZone: TIMEZONE,
+      display: FR,
     });
 
     expect(closedOf(board.columns[0]?.cells ?? [])).toHaveLength(0);
@@ -1000,6 +1034,7 @@ describe('les horaires d’ouverture ferment les rangées qu’ils ne couvrent p
       appointments: [],
       openingHours: SEMAINE,
       timeZone: TIMEZONE,
+      display: FR,
     });
 
     // Sept colonnes, du lundi 24 au dimanche 30.
@@ -1057,6 +1092,7 @@ describe('les statuts terminaux ne prennent plus la place (#753)', () => {
       range: rangeOf('jour', '2026-09-16'),
       appointments,
       timeZone: TIMEZONE,
+      display: FR,
       ...(openingHours === undefined ? {} : { openingHours }),
     });
   }
@@ -1278,6 +1314,7 @@ describe('les horaires et les congés des praticiens peignent la colonne (#1158)
       openingHours: OUVERTURE,
       staff: options.staff,
       timeZone: TIMEZONE,
+      display: FR,
       ...(options.staffSchedules === undefined ? {} : { staffSchedules: options.staffSchedules }),
       ...(options.timeOff === undefined ? {} : { timeOff: options.timeOff }),
     });
@@ -1404,6 +1441,7 @@ describe('les horaires et les congés des praticiens peignent la colonne (#1158)
       staffSchedules: [SEMAINE_DE_SAM, SEMAINE_DE_MARC],
       timeOff: [CONGE_DE_SAM],
       timeZone: TIMEZONE,
+      display: FR,
     });
     // Lundi 28 septembre ouvre la semaine ; le mercredi est la troisième colonne.
     const mercredi = semaine.columns[2];
@@ -1431,6 +1469,7 @@ describe('les horaires et les congés des praticiens peignent la colonne (#1158)
         { ...SEMAINE_DE_MARC, entries: [] },
       ],
       timeZone: TIMEZONE,
+      display: FR,
     });
 
     expect(freeOf(semaine.columns[0]?.cells ?? [])).toHaveLength(0);

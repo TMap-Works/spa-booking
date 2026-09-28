@@ -168,9 +168,12 @@ export default async function ServicePage({ params }: ServicePageProps) {
   // une prestation qui existe et que l'écran affiche parfaitement.
   //
   // L'ordre de l'API (`orderBy: displayName`) est celui de la collation de la
-  // base, et non celui du français : « Émilie » s'y range après « Zoé ». C'est
+  // base, et non celui d'une langue : « Émilie » s'y range après « Zoé ». C'est
   // `sortStaffMembers` qui donne l'ordre d'affichage — le même que sur l'écran
-  // Personnel —, actives d'abord puis `localeCompare` en `fr-FR`.
+  // Personnel —, actives d'abord puis `localeCompare` dans la **langue résolue**
+  // de la session. Elle lui est passée explicitement : s'en remettre au repli du
+  // module reviendrait à trier cette liste-ci dans une autre langue que sa
+  // voisine, depuis que ce repli vaut `DEFAULT_LOCALE` (#1297).
   const affected = new Set(assigned.map((member) => member.id));
 
   /*
@@ -194,12 +197,14 @@ export default async function ServicePage({ params }: ServicePageProps) {
     }
   }
 
-  const roster: ServiceStaffChoice[] = sortStaffMembers([...directory.values()]).map((member) => ({
-    id: member.id,
-    displayName: member.displayName,
-    isActive: member.isActive,
-    assigned: affected.has(member.id),
-  }));
+  const roster: ServiceStaffChoice[] = sortStaffMembers([...directory.values()], { locale }).map(
+    (member) => ({
+      id: member.id,
+      displayName: member.displayName,
+      isActive: member.isActive,
+      assigned: affected.has(member.id),
+    }),
+  );
   const canManage = hasAtLeastRole(profile.role, 'manager');
 
   return (

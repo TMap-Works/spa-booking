@@ -1,3 +1,4 @@
+import { DEFAULT_LOCALE } from '@spa/shared';
 import type { ReactElement } from 'react';
 
 import { formattingLocale, type DisplayLocale } from '@/lib/format';
@@ -578,8 +579,8 @@ function HatchPattern({ id }: { readonly id: string }): ReactElement {
   );
 }
 
-/** Le repli transitoire de l'épique #843 — voir l'en-tête du module. */
-const FALLBACK_DISPLAY: DisplayLocale = { locale: 'fr' };
+/** Le repli de langue — `DEFAULT_LOCALE` depuis #1297, voir `lib/format.ts`. */
+const FALLBACK_DISPLAY: DisplayLocale = { locale: DEFAULT_LOCALE };
 
 /** « 1,4 k » plutôt que « 1400 » sur une échelle étroite. */
 function compactNumber(value: number, display: DisplayLocale): string {

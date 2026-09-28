@@ -17,9 +17,9 @@
  * `DisplayLocale`. L'étiquette BCP 47 est demandée à `formattingLocale`
  * (`lib/format.ts`) plutôt que composée ici : c'est là que vit la règle de repli
  * quand l'établissement n'a pas publié son pays, et deux façons de la calculer
- * finiraient par diverger. Le paramètre reste facultatif, comme dans
- * `lib/format.ts` et pour la même raison : les appelants hors de l'empreinte de
- * ce ticket gardent le comportement d'avant.
+ * finiraient par diverger. Le paramètre y est **obligatoire** depuis #1297 : il
+ * était facultatif le temps que les écrans se branchent, et c'est précisément
+ * par cette porte qu'un nom de mois français est resté sur un écran anglais.
  */
 
 import type { CalendarDate, TimeZone } from '@spa/shared';
@@ -80,8 +80,8 @@ export function addCalendarDays(date: CalendarDate, days: number): CalendarDate 
  * « September » sont des mots que la bibliothèque standard sait déjà dire, et
  * les recopier dans deux JSON ferait douze libellés à tenir par langue.
  */
-export function formatCalendarMonth(date: CalendarDate, display?: DisplayLocale): string {
-  return new Intl.DateTimeFormat(formattingLocale(display?.locale, display?.countryCode), {
+export function formatCalendarMonth(date: CalendarDate, display: DisplayLocale): string {
+  return new Intl.DateTimeFormat(formattingLocale(display.locale, display.countryCode), {
     timeZone: 'UTC',
     month: 'long',
     year: 'numeric',

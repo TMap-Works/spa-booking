@@ -28,9 +28,10 @@ import { cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { PENDING_CONFIRMATION_LABEL } from '@/lib/appointment-status';
-import { PENDING_HOLD_NOTE } from '@/components/account/appointment-brief';
+import { pendingConfirmationLabel } from '@/lib/appointment-status';
+import { pendingHoldNote } from '@/components/account/appointment-brief';
 import { ConfirmationStep } from '@/app/(booking)/[tenantSlug]/reservation/steps/confirmation-step';
+import en from '@/messages/en/booking.json';
 import fr from '@/messages/fr/booking.json';
 
 import { contact, service, tenant } from './fixtures';
@@ -247,7 +248,10 @@ describe('ce que l’écran a le droit d’affirmer', () => {
     expect(screen.getByRole('heading', { name: 'Demande envoyée' })).toBeDefined();
     expect(screen.queryByRole('heading', { name: 'C’est réservé !' })).toBeNull();
 
-    const ligne = screen.getByText(new RegExp(PENDING_CONFIRMATION_LABEL));
+    // La langue est dite à l'appel : la constante `PENDING_CONFIRMATION_LABEL`
+    // se calcule sur le repli, qui vaut `DEFAULT_LOCALE` depuis #1297, et cet
+    // écran-ci est rendu en français par l'amorce des suites.
+    const ligne = screen.getByText(new RegExp(pendingConfirmationLabel('fr')));
 
     // Ce que l'attente attend, et ce qu'elle ne coûte pas : le créneau est déjà
     // retenu — `pending` bloque le créneau côté API — et rien n'est demandé à la
@@ -420,19 +424,35 @@ describe('la carte du rendez-vous', () => {
 
 describe('la phrase de la retenue, écrite des deux côtés du parcours (#846)', () => {
   it('dit exactement la même chose au tunnel et à l’espace client', () => {
-    // Le tunnel lit `tunnel.confirmationStep.pendingHold` dans le catalogue, et
-    // le rend donc dans la langue du visiteur. L'espace client, lui, n'est pas
-    // encore traduit : ses deux cartes affichent `PENDING_HOLD_NOTE`, un
-    // littéral français de `components/account/appointment-brief.ts`, qui
-    // relève de l'empreinte du ticket voisin de l'épique #843.
+    // Le tunnel lit `tunnel.confirmationStep.pendingHold` dans le catalogue et
+    // le rend dans la langue du visiteur ; l'espace client rend la même phrase
+    // par `pendingHoldNote(locale)`. Rien dans le code ne tient les deux
+    // ensemble : c'est précisément le doublon que #743 et #917 ont dû recoller
+    // ailleurs, après qu'un même statut eut fini par se dire de deux façons.
+    // Ce test est la couture — il tombe à la première divergence, et nomme
+    // celle qui aura bougé.
     //
-    // Les deux écritures coexistent donc le temps de l'épique, et rien dans le
-    // code ne les tient ensemble : c'est précisément le doublon que #743 et
-    // #917 ont dû recoller ailleurs, après qu'un même statut eut fini par se
-    // dire de deux façons. Ce test est la couture provisoire — il tombe à la
-    // première divergence, et nomme celle qui aura bougé.
+    // La constante française qui portait cette phrase (`PENDING_HOLD_NOTE`) est
+    // tombée avec son dernier lecteur en #1297 ; la couture, elle, reste.
+    expect(pendingHoldNote('fr')).toBe(fr.tunnel.confirmationStep.pendingHold);
+  });
+
+  it.skip('dirait la même chose en anglais, si les deux catalogues concordaient — #1304', () => {
+    // La couture ne tient que le français, et ce n'est pas un oubli : les deux
+    // catalogues anglais **divergent déjà**, et #1297 l'a découvert en tentant
+    // d'étendre le cas ci-dessus.
     //
-    // Il disparaîtra avec la constante, quand l'espace client lira cette clé.
-    expect(PENDING_HOLD_NOTE).toBe(fr.tunnel.confirmationStep.pendingHold);
+    //   messages/en/booking.json:522  « Your slot is on hold; there is nothing
+    //                                   else for you to do. »
+    //   messages/en/account.json:20   « Your slot is held; there is nothing for
+    //                                   you to do. »
+    //
+    // Les deux phrases sont correctes ; choisir laquelle fait foi est un
+    // arbitrage de libellé produit, et `messages/` est hors de l'empreinte d'un
+    // ticket de correction i18n. Le cas est donc gardé, sauté, et rattaché à
+    // #1304 qui le rétablira une fois les catalogues alignés — le laisser vivant
+    // rougirait la barrière sur un écart déjà tracé, le supprimer ferait perdre
+    // la trace de ce qu'il y a à recoudre.
+    expect(pendingHoldNote('en')).toBe(en.tunnel.confirmationStep.pendingHold);
   });
 });

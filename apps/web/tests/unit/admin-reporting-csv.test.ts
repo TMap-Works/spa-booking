@@ -1,3 +1,4 @@
+import { DEFAULT_LOCALE } from '@spa/shared';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -20,12 +21,16 @@ import { wholeTenant } from '@/lib/admin/reporting-view';
  * recouvriraient dans le dossier de téléchargements.
  */
 
+/** La langue dans laquelle cette suite a été écrite — explicite depuis #1297. */
+const FR = 'fr' as const;
+
 const RANGE = { from: '2026-09-01', to: '2026-09-30' };
 
 const INPUT: ReportCsvInput = {
   range: RANGE,
   timeZone: 'Indian/Antananarivo',
-  scope: wholeTenant('fr'),
+  locale: FR,
+  scope: wholeTenant(FR),
   revenueTotals: [
     {
       currency: 'MGA',
@@ -284,10 +289,15 @@ describe('la langue du fichier — #851', () => {
     expect(rateLine(csv)).toBe('indicateurs,,,taux_no_show,0.0328,');
   });
 
-  it('écrit en français quand la langue n’est pas demandée', () => {
-    // Le repli est celui d'avant #851 : un appelant qui ne demande rien continue
-    // de recevoir le fichier qu'il recevait.
-    expect(buildReportCsv(INPUT)).toBe(buildReportCsv({ ...INPUT, locale: 'fr' }));
+  it('retombe sur DEFAULT_LOCALE quand la langue n’est pas demandée (#1297)', () => {
+    // Le repli reproduisait le fichier d'avant #851, quand il n'avait qu'une
+    // langue ; il suit la langue par défaut du produit depuis #1297. Un export
+    // déclenché sans langue n'a donc plus de séparateur français figé.
+    const { locale: _langueTue, ...sansLangue } = INPUT;
+
+    expect(buildReportCsv(sansLangue)).toBe(
+      buildReportCsv({ ...sansLangue, locale: DEFAULT_LOCALE }),
+    );
   });
 
   it('encadre le champ qui contient le séparateur **de sa langue**', () => {

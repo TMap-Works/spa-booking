@@ -457,6 +457,7 @@ export function DateBand({
               selected={date === selectedDate}
               selectable={canSelect(date)}
               tabbable={date === tabbableDate}
+              display={display}
               onChoose={choose}
             />
           ))}
@@ -474,6 +475,14 @@ interface BandDayProps {
   readonly selected: boolean;
   readonly selectable: boolean;
   readonly tabbable: boolean;
+  /**
+   * La langue et la région du bloc de date (#1297).
+   *
+   * Descendue de `DateBand`, qui la résout une fois pour la bande entière : le
+   * bloc l'exige désormais, et la bande écrivait « lun. 1 sept. » sous un
+   * en-tête « September » faute de la lui passer.
+   */
+  readonly display: DisplayLocale;
   readonly onChoose: (date: CalendarDate) => void;
 }
 
@@ -510,6 +519,7 @@ function BandDay({
   selected,
   selectable,
   tabbable,
+  display,
   onChoose,
 }: BandDayProps) {
   return (
@@ -529,7 +539,7 @@ function BandDay({
           onChoose(date);
         }}
       >
-        <DateBlock date={date} />
+        <DateBlock date={date} display={display} />
         {state === 'libre' ? <span aria-hidden="true" className="spa-date-band__mark" /> : null}
       </Button>
     </span>

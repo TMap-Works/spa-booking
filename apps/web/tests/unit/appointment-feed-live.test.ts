@@ -23,7 +23,17 @@ afterEach(() => {
 });
 
 const PARIS = 'Europe/Paris';
-const CONTEXT = { timeZone: PARIS, currentPath: '/spa/compte/historique', listPath: '/spa/compte' };
+/**
+ * La langue dans laquelle cette suite a été écrite — explicite depuis #1297 :
+ * l'heure annoncée est affirmée au format français (« 14:10 » et non « 2:10 PM »).
+ */
+const FR = { locale: 'fr' } as const;
+const CONTEXT = {
+  timeZone: PARIS,
+  display: FR,
+  currentPath: '/spa/compte/historique',
+  listPath: '/spa/compte',
+};
 
 function change(overrides: Partial<AppointmentFeedEvent>): AppointmentFeedEvent {
   return {

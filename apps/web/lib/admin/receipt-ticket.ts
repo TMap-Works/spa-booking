@@ -111,9 +111,11 @@ export function issuerAddressLines(issuer: ReceiptIssuer): readonly string[] {
  * la langue en veut une — un taux ne doit pas se couper en fin de ligne sur un
  * rouleau de 80 mm.
  *
- * `display` est facultatif pour la raison qui vaut dans tout `lib/format.ts` :
- * les appelants pas encore branchés sur la langue résolue gardent le français
- * d'avant.
+ * `display` est facultatif pour la raison qui vaut dans tout `lib/format.ts` —
+ * la quarantaine d'appelants du front n'a pas à changer de signature d'un bloc.
+ * Son repli ne garde plus le français d'avant depuis #1297 : il suit
+ * `DEFAULT_LOCALE`, comme partout ailleurs. Les deux appelants du rouleau
+ * (`taxTableRows`, puis l'écran du reçu) passent tous deux la langue résolue.
  */
 export function formatTaxRate(rateBps: number, display?: DisplayLocale): string {
   const intlTag = formattingLocale(display?.locale, display?.countryCode);

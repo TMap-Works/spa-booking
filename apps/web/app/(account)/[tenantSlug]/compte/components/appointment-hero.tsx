@@ -83,7 +83,7 @@ export function AppointmentHero({ tenantSlug, brief, tenant, timeZone }: Appoint
   const badge = appointmentBadge(appointment, 'upcoming', display.locale);
   const actionable = isStillActionable(appointment);
   const mention = mounted ? timeZoneMention(timeZone, display) : null;
-  const directions = directionsUrl(tenant);
+  const directions = directionsUrl(tenant, display);
   const phone = tenant.contactPhone;
 
   return (
@@ -145,7 +145,7 @@ export function AppointmentHero({ tenantSlug, brief, tenant, timeZone }: Appoint
             <div>
               <address className="spa-rdv-hero__address">
                 <span className="spa-rdv-hero__salon">{tenant.name}</span>
-                {addressLines(tenant.address).map((line, index) => (
+                {addressLines(tenant.address, display).map((line, index) => (
                   <span key={index}>{line}</span>
                 ))}
               </address>

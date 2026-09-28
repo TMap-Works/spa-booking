@@ -11,6 +11,12 @@ import {
 } from '@/lib/admin/receipt-ticket';
 import { formatTicketDateTime } from '@/lib/format';
 
+/** La langue dans laquelle cette suite a été écrite — explicite depuis #1297. */
+const FR = 'fr' as const;
+
+/** La même langue, sous la forme qu'attendent les fonctions de `lib/format.ts`. */
+const FR_DISPLAY = { locale: FR } as const;
+
 /**
  * La mise en forme du ticket de caisse — ce qui se décide sans DOM.
  */
@@ -18,10 +24,10 @@ describe('le ticket de caisse', () => {
   // L'espace du « % » français est **insécable** (U+00A0) : c'est `Intl` qui la
   // pose, et un taux ne se coupe pas en fin de ligne sur un rouleau de 80 mm.
   it('écrit un taux en points de base comme un pourcentage français', () => {
-    expect(formatTaxRate(2000)).toBe('20 %');
-    expect(formatTaxRate(550)).toBe('5,5 %');
-    expect(formatTaxRate(210)).toBe('2,1 %');
-    expect(formatTaxRate(0)).toBe('0 %');
+    expect(formatTaxRate(2000, FR_DISPLAY)).toBe('20 %');
+    expect(formatTaxRate(550, FR_DISPLAY)).toBe('5,5 %');
+    expect(formatTaxRate(210, FR_DISPLAY)).toBe('2,1 %');
+    expect(formatTaxRate(0, FR_DISPLAY)).toBe('0 %');
   });
 
   // …et l'anglais n'en met pas du tout : « 20% », collé.
@@ -31,13 +37,16 @@ describe('le ticket de caisse', () => {
   });
 
   it('présente la TVA comme une grande surface : taux, HT, TVA, TTC', () => {
-    const [row] = taxTableRows([
-      {
-        rateBps: 2000,
-        base: { amountMinor: 5417, currency: 'EUR' },
-        tax: { amountMinor: 1083, currency: 'EUR' },
-      },
-    ]);
+    const [row] = taxTableRows(
+      [
+        {
+          rateBps: 2000,
+          base: { amountMinor: 5417, currency: 'EUR' },
+          tax: { amountMinor: 1083, currency: 'EUR' },
+        },
+      ],
+      FR_DISPLAY,
+    );
 
     expect(row?.rate).toBe('20 %');
     expect(row?.total).toEqual({ amountMinor: 6500, currency: 'EUR' });
@@ -74,9 +83,9 @@ describe('le ticket de caisse', () => {
   });
 
   it('horodate dans le fuseau du salon, au format court d’un rouleau', () => {
-    expect(formatTicketDateTime('2026-09-05T07:05:00.000Z', 'Indian/Antananarivo')).toBe(
-      '05/09/2026 10:05',
-    );
+    expect(
+      formatTicketDateTime('2026-09-05T07:05:00.000Z', 'Indian/Antananarivo', FR_DISPLAY),
+    ).toBe('05/09/2026 10:05');
   });
 
   it('écrit le téléphone comme dans le pays, pas en E.164', () => {
@@ -96,13 +105,13 @@ describe('le ticket de caisse', () => {
    */
   describe('le libellé d’un règlement', () => {
     it('nomme le tuyau de la carte, et non le seul moyen', () => {
-      expect(settlementLabel({ method: 'CARD', cardChannel: 'TERMINAL' })).toBe(
+      expect(settlementLabel({ method: 'CARD', cardChannel: 'TERMINAL' }, FR)).toBe(
         'Carte bancaire (TPE)',
       );
-      expect(settlementLabel({ method: 'CARD', cardChannel: 'STRIPE' })).toBe(
+      expect(settlementLabel({ method: 'CARD', cardChannel: 'STRIPE' }, FR)).toBe(
         'Carte bancaire (en ligne)',
       );
-      expect(settlementLabel({ method: 'CASH', cardChannel: null })).toBe('Espèces');
+      expect(settlementLabel({ method: 'CASH', cardChannel: null }, FR)).toBe('Espèces');
     });
 
     /*
@@ -111,18 +120,21 @@ describe('le ticket de caisse', () => {
      * terminal, et enverrait le rapprochement sur le mauvais relevé.
      */
     it('imprime une carte sans canal comme une carte en ligne, jamais comme un TPE', () => {
-      expect(settlementLabel({ method: 'CARD', cardChannel: null })).toBe(
+      expect(settlementLabel({ method: 'CARD', cardChannel: null }, FR)).toBe(
         'Carte bancaire (en ligne)',
       );
-      expect(settlementLabel({ method: 'CARD' })).toBe('Carte bancaire (en ligne)');
+      expect(settlementLabel({ method: 'CARD' }, FR)).toBe('Carte bancaire (en ligne)');
     });
 
     it('n’accole la référence qu’au canal TERMINAL', () => {
       expect(
-        settlementLabel({ method: 'CARD', cardChannel: 'TERMINAL', terminalReference: 'A1B2C3' }),
+        settlementLabel(
+          { method: 'CARD', cardChannel: 'TERMINAL', terminalReference: 'A1B2C3' },
+          FR,
+        ),
       ).toBe('Carte bancaire (TPE) — réf. A1B2C3');
       expect(
-        settlementLabel({ method: 'CARD', cardChannel: 'STRIPE', terminalReference: 'A1B2C3' }),
+        settlementLabel({ method: 'CARD', cardChannel: 'STRIPE', terminalReference: 'A1B2C3' }, FR),
       ).toBe('Carte bancaire (en ligne)');
     });
 
@@ -132,11 +144,11 @@ describe('le ticket de caisse', () => {
      * référence blanche, n'ont rien à accoler.
      */
     it('ne laisse pas un tiret orphelin quand la référence manque ou est blanche', () => {
-      expect(settlementLabel({ method: 'CARD', cardChannel: 'TERMINAL' })).toBe(
+      expect(settlementLabel({ method: 'CARD', cardChannel: 'TERMINAL' }, FR)).toBe(
         'Carte bancaire (TPE)',
       );
       expect(
-        settlementLabel({ method: 'CARD', cardChannel: 'TERMINAL', terminalReference: '   ' }),
+        settlementLabel({ method: 'CARD', cardChannel: 'TERMINAL', terminalReference: '   ' }, FR),
       ).toBe('Carte bancaire (TPE)');
     });
 
@@ -168,11 +180,10 @@ describe('le ticket de caisse', () => {
      */
     it('ne compose jamais autre chose que le canal et la référence d’opération', () => {
       expect(
-        settlementLabel({
-          method: 'CARD',
-          cardChannel: 'TERMINAL',
-          terminalReference: 'A0000123',
-        }),
+        settlementLabel(
+          { method: 'CARD', cardChannel: 'TERMINAL', terminalReference: 'A0000123' },
+          FR,
+        ),
       ).toBe('Carte bancaire (TPE) — réf. A0000123');
     });
 
@@ -185,7 +196,10 @@ describe('le ticket de caisse', () => {
      */
     it('recopie la référence telle quelle, ponctuation comprise', () => {
       expect(
-        settlementLabel({ method: 'CARD', cardChannel: 'TERMINAL', terminalReference: "A$&B$'C" }),
+        settlementLabel(
+          { method: 'CARD', cardChannel: 'TERMINAL', terminalReference: "A$&B$'C" },
+          FR,
+        ),
       ).toBe("Carte bancaire (TPE) — réf. A$&B$'C");
     });
   });

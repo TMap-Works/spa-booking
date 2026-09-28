@@ -54,6 +54,9 @@ vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: vi.fn(), refresh: vi.fn(), replace: vi.fn() }),
 }));
 
+/** La langue dans laquelle cette suite écrit ses libellés — explicite depuis #1297. */
+const FR = 'fr' as const;
+
 const SLUG = 'maison-lotus';
 const TIMEZONE = 'Indian/Antananarivo';
 const CATALOGUE_HREF = '/maison-lotus/admin/catalogue';
@@ -120,7 +123,7 @@ function renderBoard(options: {
 
 describe('ce qui manque, et ce qu’on en dit', () => {
   it('nomme l’établissement neuf et propose les deux amorces, catalogue d’abord', () => {
-    const etat = calendarStartState({ serviceCount: 0, staffCount: 0 }, CHEMINS);
+    const etat = calendarStartState({ serviceCount: 0, staffCount: 0 }, CHEMINS, FR);
 
     expect(etat.title).toBe('Ce salon n’est pas encore installé');
     // Le catalogue en premier : une prestation existe avant l'agenda qui la vend.
@@ -129,14 +132,14 @@ describe('ce qui manque, et ce qu’on en dit', () => {
   });
 
   it('ne propose que le personnel quand le catalogue est déjà garni', () => {
-    const etat = calendarStartState({ serviceCount: 3, staffCount: 0 }, CHEMINS);
+    const etat = calendarStartState({ serviceCount: 3, staffCount: 0 }, CHEMINS, FR);
 
     expect(etat.title).toBe('Aucune fiche praticien n’est ouverte');
     expect(etat.links.map((lien) => lien.key)).toEqual(['personnel']);
   });
 
   it('ne propose que le catalogue quand c’est lui qui manque', () => {
-    const etat = calendarStartState({ serviceCount: 0, staffCount: 2 }, CHEMINS);
+    const etat = calendarStartState({ serviceCount: 0, staffCount: 2 }, CHEMINS, FR);
 
     // Le même énoncé que le tiroir : une seule cause, une seule formulation.
     expect(etat.title).toBe('Le catalogue est vide');
@@ -146,7 +149,7 @@ describe('ce qui manque, et ce qu’on en dit', () => {
   it('rend la période creuse sans amorce quand rien ne manque au salon', () => {
     // C'est ce qui laisse au planning sa flèche « jour suivant » : le conseil de
     // changer de période n'est faux que pour un salon qui n'est pas installé.
-    const etat = calendarStartState({ serviceCount: 3, staffCount: 2 }, CHEMINS);
+    const etat = calendarStartState({ serviceCount: 3, staffCount: 2 }, CHEMINS, FR);
 
     expect(etat.title).toBe('Aucun rendez-vous sur cette période');
     expect(etat.links).toEqual([]);

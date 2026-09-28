@@ -108,6 +108,8 @@ describe('le filtre de l’historique (#1054)', () => {
 
 describe('le regroupement par mois (#1054)', () => {
   it('groupe les lignes du même mois, le mois le plus récent d’abord', () => {
+    // Les intertitres sont affirmés en français : la langue se dit donc à
+    // l'appel, le repli du module valant `DEFAULT_LOCALE` depuis #1297.
     const months = groupHistoryByMonth(
       [
         entry('2026-08-03T08:00:00.000Z'),
@@ -115,6 +117,7 @@ describe('le regroupement par mois (#1054)', () => {
         entry('2026-09-02T08:00:00.000Z'),
       ],
       'Europe/Paris',
+      { locale: 'fr' },
     );
 
     expect(months.map((month) => month.key)).toEqual(['2026-09', '2026-08']);

@@ -29,6 +29,9 @@ import type { SaleSummary } from '@/lib/admin/payment-contract';
  * dans aucune table à relire (payments-stripe §4 et §5).
  */
 
+/** La langue dans laquelle cette suite a été écrite — explicite depuis #1297. */
+const FR = 'fr' as const;
+
 const SHAMPOOING: PosCatalogItem = {
   kind: 'PRODUCT',
   id: 'aaaaaaaa-0000-4000-8000-000000000001',
@@ -311,18 +314,21 @@ describe('les totaux affichés', () => {
   });
 
   it('n’impriment ni taxe ni pourboire nuls — une ligne à zéro se lit comme une erreur', () => {
-    const rows = saleTotalRows({
-      ...SALE,
-      tax: { amountMinor: 0, currency: 'EUR' },
-      tip: { amountMinor: 0, currency: 'EUR' },
-    });
+    const rows = saleTotalRows(
+      {
+        ...SALE,
+        tax: { amountMinor: 0, currency: 'EUR' },
+        tip: { amountMinor: 0, currency: 'EUR' },
+      },
+      FR,
+    );
 
     expect(rows.map((row) => row.label)).toEqual(['Sous-total', 'Total']);
   });
 
   it('gardent une seule ligne mise en avant, celle qu’on annonce à voix haute', () => {
-    expect(saleTotalRows(SALE).filter((row) => row.isGrand)).toHaveLength(1);
-    expect(saleTotalRows(SALE).map((row) => row.label)).toEqual([
+    expect(saleTotalRows(SALE, FR).filter((row) => row.isGrand)).toHaveLength(1);
+    expect(saleTotalRows(SALE, FR).map((row) => row.label)).toEqual([
       'Sous-total',
       'Taxe',
       'Pourboire',
@@ -333,7 +339,7 @@ describe('les totaux affichés', () => {
 
 describe('les refus de la caisse', () => {
   it('dit quoi faire d’un article retiré du rayon', () => {
-    expect(saleFailureMessage('SALE_ITEM_UNAVAILABLE', 'brut')).toMatch(/retirez-le/i);
+    expect(saleFailureMessage('SALE_ITEM_UNAVAILABLE', 'brut', FR)).toMatch(/retirez-le/i);
   });
 
   it('traite les deux formes du refus de devise de la même façon', () => {
@@ -353,7 +359,7 @@ describe('les refus de la caisse', () => {
   });
 
   it('affirme qu’un ticket refusé n’a pas été enregistré', () => {
-    expect(saleFailureMessage(ERROR_CODES.SERVICE_UNAVAILABLE, 'brut')).toMatch(
+    expect(saleFailureMessage(ERROR_CODES.SERVICE_UNAVAILABLE, 'brut', FR)).toMatch(
       /n’a pas été enregistré/i,
     );
   });

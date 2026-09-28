@@ -10,15 +10,15 @@
  * que ceux qu'`useTranslations('admin-staff')` sert aux composants.
  */
 
-import type { Locale } from '@spa/shared';
+import { DEFAULT_LOCALE, type Locale } from '@spa/shared';
 
 import en from '@/messages/en/admin-staff.json';
 import fr from '@/messages/fr/admin-staff.json';
 
 const CATALOG = { fr, en } as const;
 
-/** Voir `CALENDAR_FALLBACK_LOCALE` — même arbitrage, même raison. */
-export const STAFF_FALLBACK_LOCALE: Locale = 'fr';
+/** Voir `CALENDAR_FALLBACK_LOCALE` — même arbitrage, même raison, #1297 compris. */
+export const STAFF_FALLBACK_LOCALE: Locale = DEFAULT_LOCALE;
 
 /** Le catalogue du personnel, dans la langue demandée. */
 export function staffWords(locale: Locale = STAFF_FALLBACK_LOCALE): typeof en {

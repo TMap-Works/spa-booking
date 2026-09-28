@@ -1,4 +1,4 @@
-import type { Locale } from '@spa/shared';
+import { DEFAULT_LOCALE, type Locale } from '@spa/shared';
 import { useTranslations } from 'next-intl';
 import Link from 'next/link';
 
@@ -71,17 +71,15 @@ const CATALOG = { fr, en } as const;
 /**
  * La langue employée quand l'appelant n'en passe pas.
  *
- * `'fr'`, et c'est **transitoire** — même arbitrage que `FALLBACK_LOCALE` de
- * `lib/appointment-status.ts`, et pour les mêmes raisons. Les six surfaces que
- * #845 avait laissées sans langue résolue (vitrine, tunnel, accueil de la
- * plateforme, connexion et invitation du back-office, page d'erreur de l'espace
- * client) sont toutes passées à `publicExitLabels(locale)` depuis : plus aucun
- * appelant de production ne s'en remet à ce défaut, qui ne sert plus qu'à
- * `PUBLIC_EXIT_LABELS` ci-dessous. Ce n'est pas `DEFAULT_LOCALE` du contrat, qui
- * vaut `en` : le défaut d'ici garde le comportement d'avant #845 plutôt que de
- * basculer en anglais des écrans dont personne n'a encore relu la traduction.
+ * `DEFAULT_LOCALE` depuis #1297. Le défaut valait `'fr'` — même arbitrage que
+ * `FALLBACK_LOCALE` de `lib/appointment-status.ts`, et pour les mêmes raisons :
+ * garder le comportement d'avant #845 le temps que les six surfaces laissées
+ * sans langue résolue (vitrine, tunnel, accueil de la plateforme, connexion et
+ * invitation du back-office, page d'erreur de l'espace client) se branchent.
+ * Elles sont toutes passées à `publicExitLabels(locale)` depuis, et
+ * `PUBLIC_EXIT_LABELS` — son dernier lecteur — est tombé avec elles.
  */
-const FALLBACK_LOCALE: Locale = 'fr';
+const FALLBACK_LOCALE: Locale = DEFAULT_LOCALE;
 
 /**
  * Le libellé de chaque destination — **source unique**.
@@ -116,22 +114,6 @@ export function publicExitLabels(
 ): Readonly<Record<PublicExitKey, string>> {
   return CATALOG[locale].exits;
 }
-
-/**
- * La même table, figée en français.
- *
- * @deprecated Transitoire (#845). **Le décompte des surfaces restantes est à
- * zéro** : les six que #845 annonçait — vitrine, tunnel, accueil de la
- * plateforme, connexion et invitation du back-office, page d'erreur de l'espace
- * client — sont toutes passées à `publicExitLabels(locale)` au fil de l'épique
- * #843. Ne la lisent plus que deux suites unitaires, qui s'en servent comme du
- * libellé français attendu : `tests/unit/account-nav.test.tsx` et
- * `tests/unit/auth-screens.test.tsx`, dont l'amorce fixe la langue à `fr`. Elle
- * disparaît quand ces deux-là liront `publicExitLabels(TEST_LOCALE)`, comme
- * `tests/unit/home-page.test.tsx` le fait déjà (#1277).
- */
-export const PUBLIC_EXIT_LABELS: Readonly<Record<PublicExitKey, string>> =
-  CATALOG[FALLBACK_LOCALE].exits;
 
 export interface PublicExit {
   readonly key: PublicExitKey;

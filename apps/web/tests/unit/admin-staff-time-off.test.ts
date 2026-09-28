@@ -21,6 +21,9 @@ import {
  * d'un changement d'heure, une borne haute affichée comme incluse.
  */
 
+/** La langue dans laquelle cette suite écrit ses libellés — explicite depuis #1297. */
+const FR = { locale: 'fr' } as const;
+
 /** Fuseau à décalage fixe — Madagascar ne change jamais d'heure. */
 const TANA = 'Indian/Antananarivo';
 
@@ -99,6 +102,7 @@ describe('l’absence, telle qu’elle s’écrit', () => {
     const label = formatTimeOff(
       timeOff('2026-08-02T21:00:00.000Z', '2026-08-16T21:00:00.000Z'),
       TANA,
+      FR,
     );
 
     expect(label).toMatch(/3 août 2026/);
@@ -110,6 +114,7 @@ describe('l’absence, telle qu’elle s’écrit', () => {
     const label = formatTimeOff(
       timeOff('2026-08-02T21:00:00.000Z', '2026-08-03T21:00:00.000Z'),
       TANA,
+      FR,
     );
 
     expect(label).toMatch(/^3 août 2026$/);
@@ -119,6 +124,7 @@ describe('l’absence, telle qu’elle s’écrit', () => {
     const label = formatTimeOff(
       timeOff('2026-10-03T06:00:00.000Z', '2026-10-03T09:00:00.000Z'),
       TANA,
+      FR,
     );
 
     expect(label).toMatch(/09:00 – 12:00/);

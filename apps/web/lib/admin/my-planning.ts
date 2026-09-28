@@ -1,4 +1,5 @@
 import {
+  DEFAULT_LOCALE,
   isoWeekdayOf,
   type AppointmentStatus,
   type CalendarDate,
@@ -45,11 +46,12 @@ const CATALOG = { fr, en } as const;
 /**
  * La langue employée quand l'appelant n'en passe pas.
  *
- * `fr` et non `DEFAULT_LOCALE` : ce défaut garde le comportement d'avant #1104
- * pour les tests qui éprouvent les libellés français de ce module, plutôt que de
- * les faire basculer en anglais. L'écran, lui, passe toujours sa langue résolue.
+ * `DEFAULT_LOCALE` depuis #1297. Le repli valait `fr` pour garder le
+ * comportement d'avant #1104 dans les suites qui éprouvent les libellés
+ * français ; celles-ci demandent leur langue explicitement à présent, et
+ * l'écran, lui, a toujours passé la sienne.
  */
-const FALLBACK_LOCALE: Locale = 'fr';
+const FALLBACK_LOCALE: Locale = DEFAULT_LOCALE;
 
 /** Les trois vues de l'écran — dans l'adresse (`?vue=`), en français. */
 export const MY_PLANNING_VIEWS = ['jour', 'semaine', 'a-venir'] as const;

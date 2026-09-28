@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { DEFAULT_LOCALE } from '@spa/shared';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -32,6 +33,9 @@ import {
 
 const TANA = 'Indian/Antananarivo';
 const PARIS = 'Europe/Paris';
+
+/** La langue dans laquelle cette suite a été écrite — explicite depuis #1297. */
+const FR = 'fr' as const;
 
 describe('la journée civile du salon, en instants', () => {
   it('commence à minuit local, pas à minuit UTC', () => {
@@ -134,7 +138,7 @@ describe('les périodes proposées', () => {
 
 describe('les refus que l’API opposerait', () => {
   it('refuse une fenêtre inversée', () => {
-    expect(rangeRefusal({ from: '2026-09-30', to: '2026-09-01' })).toMatch(/précède/);
+    expect(rangeRefusal({ from: '2026-09-30', to: '2026-09-01' }, FR)).toMatch(/précède/);
   });
 
   it('accepte exactement le plafond et refuse le jour de trop', () => {
@@ -154,9 +158,9 @@ describe('les refus que l’API opposerait', () => {
     // de journées n'en disent rien — `NaN > 366` est faux. Sans ce refus, la
     // saisie partait telle quelle et l'écran retombait en silence sur les trente
     // derniers jours, tout en affichant « Période personnalisée ».
-    expect(rangeRefusal({ from: '', to: '2026-09-30' })).toMatch(/bornes/);
-    expect(rangeRefusal({ from: '2026-09-01', to: '' })).toMatch(/bornes/);
-    expect(rangeRefusal({ from: '2026-02-31', to: '2026-03-05' })).toMatch(/bornes/);
+    expect(rangeRefusal({ from: '', to: '2026-09-30' }, FR)).toMatch(/bornes/);
+    expect(rangeRefusal({ from: '2026-09-01', to: '' }, FR)).toMatch(/bornes/);
+    expect(rangeRefusal({ from: '2026-02-31', to: '2026-03-05' }, FR)).toMatch(/bornes/);
   });
 });
 
@@ -177,21 +181,27 @@ describe('ce que l’URL porte', () => {
 
 describe('les libellés', () => {
   it('n’ajoute pas le mois deux fois quand la période n’en couvre qu’un', () => {
-    expect(rangeLabel({ from: '2026-09-01', to: '2026-09-30' })).toBe('1 – 30 septembre 2026');
+    expect(rangeLabel({ from: '2026-09-01', to: '2026-09-30' }, { locale: FR })).toBe(
+      '1 – 30 septembre 2026',
+    );
   });
 
   it('nomme les deux mois d’une période à cheval', () => {
-    expect(rangeLabel({ from: '2026-08-24', to: '2026-09-06' })).toBe('24 août – 6 septembre 2026');
+    expect(rangeLabel({ from: '2026-08-24', to: '2026-09-06' }, { locale: FR })).toBe(
+      '24 août – 6 septembre 2026',
+    );
   });
 
   it('écrit une journée seule en toutes lettres', () => {
-    expect(rangeLabel({ from: '2026-09-03', to: '2026-09-03' })).toBe('3 septembre 2026');
+    expect(rangeLabel({ from: '2026-09-03', to: '2026-09-03' }, { locale: FR })).toBe(
+      '3 septembre 2026',
+    );
   });
 
   it('met en forme les dates civiles hors de tout fuseau', () => {
     // Une date civile est **déjà** celle du salon : la reprojeter dans son fuseau
     // la décalerait d'un jour pour tout salon à l'est de Greenwich.
-    expect(shortDayLabel('2026-09-03')).toBe('3 sept.');
+    expect(shortDayLabel('2026-09-03', { locale: FR })).toBe('3 sept.');
   });
 });
 
@@ -224,14 +234,17 @@ describe('la langue des libellés', () => {
     expect(shortDayLabel('2026-09-03', { locale: 'en', countryCode: 'GB' })).toBe('3 Sept');
   });
 
-  it('garde le français par défaut — aucun appelant ne bascule sans le demander', () => {
-    // Le repli transitoire de l'épique #843 : les écrans qui lisent ce module
-    // sans lui demander un mot — `rangeOfPeriod`, `windowOfRange` — n'ont pas à
-    // changer de signature pour cela, et ne basculent pas de langue tout seuls.
-    expect(shortDayLabel('2026-09-03')).toBe(shortDayLabel('2026-09-03', { locale: 'fr' }));
-    expect(rangeLabel({ from: '2026-09-01', to: '2026-09-30' })).toBe(
-      rangeLabel({ from: '2026-09-01', to: '2026-09-30' }, { locale: 'fr' }),
+  it('retombe sur DEFAULT_LOCALE, et non sur le français (#1297)', () => {
+    // Ce cas gardait l'inverse — « garde le français par défaut » — le temps que
+    // l'épique #843 déroule ses écrans. Le repli transitoire est éteint : un
+    // appelant muet reçoit la langue par défaut du produit, et remettre `'fr'`
+    // en repli remettrait un axe français sous un tableau de bord anglais.
+    const mois = { from: '2026-09-01', to: '2026-09-30' } as const;
+
+    expect(shortDayLabel('2026-09-03')).toBe(
+      shortDayLabel('2026-09-03', { locale: DEFAULT_LOCALE }),
     );
+    expect(rangeLabel(mois)).toBe(rangeLabel(mois, { locale: DEFAULT_LOCALE }));
   });
 
   it('dit les refus de période dans la langue de l’écran', () => {

@@ -21,18 +21,21 @@ import { formattingLocale, type DisplayLocale } from '@/lib/format';
  * **Un seul élément se traduit** — le nom du pays, qu'`Intl.DisplayNames` sait
  * écrire dans n'importe quelle langue à partir du code ISO du contrat.
  *
- * Le contexte d'affichage arrive donc en dernier paramètre, facultatif, comme
- * dans `lib/format.ts`, dont `formattingLocale` construit l'étiquette : la
- * région vient du pays de l'établissement, et un repli figé quand il est vide.
- * Le défaut français garde le comportement d'avant le ticket pour les cinq
- * appelants qui vivent hors de l'empreinte de #846 — le pied du gabarit, la
- * carte du salon de l'espace client, la fiche d'un rendez-vous, le cadre
- * d'accueil de la connexion et le récapitulatif du tunnel — et tombera avec le
- * dernier ticket d'écran de l'épique #843.
+ * Le contexte d'affichage arrive donc en dernier paramètre, comme dans
+ * `lib/format.ts`, dont `formattingLocale` construit l'étiquette : la région
+ * vient du pays de l'établissement, et un repli figé quand il est vide.
+ *
+ * ## Le paramètre est obligatoire (#1297)
+ *
+ * Il était facultatif, avec un défaut français, le temps que les cinq appelants
+ * hors de l'empreinte de #846 se branchent — le pied du gabarit, la carte du
+ * salon de l'espace client, la fiche d'un rendez-vous, le cadre d'accueil de la
+ * connexion et le récapitulatif du tunnel. Aucun ne l'a fait, et un visiteur
+ * anglais lisait « États-Unis » dans le pied de **toutes** les pages publiques.
+ * Remplacer le défaut par `DEFAULT_LOCALE` aurait rendu la faute inverse — un
+ * écran français annonçant « United States » — aussi silencieuse. Le paramètre
+ * est donc exigé par le type : `tsc` nomme l'appelant qui l'oublie.
  */
-
-/** Le contexte d'affichage employé quand l'appelant n'en passe pas encore. */
-const FALLBACK_DISPLAY: DisplayLocale = { locale: 'fr' };
 
 /**
  * L'adresse en lignes d'affichage.
@@ -49,7 +52,7 @@ const FALLBACK_DISPLAY: DisplayLocale = { locale: 'fr' };
  */
 export function addressLines(
   address: PostalAddress,
-  display: DisplayLocale = FALLBACK_DISPLAY,
+  display: DisplayLocale,
 ): readonly string[] {
   const locality = [address.postalCode, address.city].filter((part) => part !== undefined);
 

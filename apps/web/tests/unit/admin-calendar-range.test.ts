@@ -22,6 +22,9 @@ import {
  * le dimanche décalerait les sept colonnes d'un jour.
  */
 
+/** La langue dans laquelle cette suite écrit ses libellés — explicite depuis #1297. */
+const FR = { locale: 'fr' } as const;
+
 describe('semaine — la borne est le lundi', () => {
   it('ramène n’importe quel jour au lundi de sa semaine', () => {
     expect(startOfWeek('2026-08-26')).toBe('2026-08-24');
@@ -99,21 +102,21 @@ describe('lecture de l’URL', () => {
 
 describe('libellés', () => {
   it('nomme la journée en toutes lettres, première lettre en capitale', () => {
-    expect(rangeLabel('jour', '2026-08-26')).toBe('Mercredi 26 août 2026');
+    expect(rangeLabel('jour', '2026-08-26', FR)).toBe('Mercredi 26 août 2026');
   });
 
   it('nomme la semaine par ses deux bornes', () => {
-    expect(rangeLabel('semaine', '2026-08-26')).toBe('24 – 30 août 2026');
+    expect(rangeLabel('semaine', '2026-08-26', FR)).toBe('24 – 30 août 2026');
   });
 
   it('répète le mois quand la semaine est à cheval sur deux', () => {
     // 28 septembre 2026 est un lundi ; la semaine finit le 4 octobre.
-    expect(rangeLabel('semaine', '2026-09-28')).toBe('28 septembre – 4 octobre 2026');
+    expect(rangeLabel('semaine', '2026-09-28', FR)).toBe('28 septembre – 4 octobre 2026');
   });
 
   it('nomme une colonne de la vue semaine par son jour', () => {
-    expect(weekdayLabel('2026-08-24')).toMatch(/^Lun/);
-    expect(weekdayLabel('2026-08-24')).toMatch(/24$/);
+    expect(weekdayLabel('2026-08-24', FR)).toMatch(/^Lun/);
+    expect(weekdayLabel('2026-08-24', FR)).toMatch(/24$/);
   });
 });
 

@@ -2,10 +2,15 @@ import { cleanup, render, screen, within } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { PUBLIC_EXIT_LABELS } from '@/components/salon/public-exits';
+import { publicExitLabels } from '@/components/salon/public-exits';
 import { PLATFORM_NAME } from '@/lib/platform';
 
+import { TEST_LOCALE } from '../support/next-intl';
+
 import { tenant } from './fixtures';
+
+/** Voir `account-nav.test.tsx` — la constante française est tombée avec #1297. */
+const EXITS = publicExitLabels(TEST_LOCALE);
 
 /**
  * #927 — le cadre d'accueil des écrans d'identification.
@@ -123,7 +128,7 @@ describe('espace client, sans session', () => {
     const sorties = screen.getByRole('navigation', { name: 'Pages du salon' });
     expect(
       within(sorties)
-        .getByRole('link', { name: PUBLIC_EXIT_LABELS.reservation })
+        .getByRole('link', { name: EXITS.reservation })
         .getAttribute('href'),
     ).toBe(`/${tenant.slug}/reservation`);
     expect(
@@ -134,7 +139,7 @@ describe('espace client, sans session', () => {
     // La sortie qu'on n'offre pas est celle de l'espace client lui-même, quel que
     // soit son nom — elle ramènerait à cet écran même (#749). L'en-tête efface
     // « Se connecter » sur la connexion, et le pied ne nomme pas l'espace.
-    expect(screen.queryByRole('link', { name: PUBLIC_EXIT_LABELS.compte })).toBeNull();
+    expect(screen.queryByRole('link', { name: EXITS.compte })).toBeNull();
     expect(screen.queryByRole('link', { name: 'Se connecter' })).toBeNull();
   });
 

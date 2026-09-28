@@ -1,3 +1,4 @@
+import { DEFAULT_LOCALE } from '@spa/shared';
 import { describe, expect, it } from 'vitest';
 
 import { addCalendarDays, calendarDateInTimeZone } from '@/lib/booking/calendar';
@@ -20,10 +21,36 @@ import {
  */
 const NO_BREAK_SPACES = /[\u202f\u00a0]/g;
 
+/**
+ * La langue dans laquelle cette suite a été écrite — explicite depuis #1297.
+ *
+ * Elle n'est passée que là où la langue décide du résultat attendu : une virgule
+ * décimale, un nom de mois, « 1 h 15 ». Ce qui ne dépend d'aucune langue — l'écart
+ * entre deux fuseaux, la forme machine d'un montant — s'en passe.
+ */
+const FR = { locale: 'fr' } as const;
+
+describe('le repli de langue (#1297)', () => {
+  it('formate dans la langue par défaut du produit, et non en français', () => {
+    // Le repli valait `'fr'` le temps que les écrans du parcours soient branchés
+    // sur la langue résolue ; il vaut `DEFAULT_LOCALE` depuis #1297. C'est
+    // l'égalité qui se vérifie ici et non un libellé : le jour où la langue par
+    // défaut du produit changerait, ce cas n'aurait pas à être réécrit.
+    const amount = { amountMinor: 3500, currency: 'EUR' } as const;
+    const fallback = { locale: DEFAULT_LOCALE } as const;
+
+    expect(formatMoney(amount)).toBe(formatMoney(amount, fallback));
+    expect(formatDuration(75)).toBe(formatDuration(75, fallback));
+    expect(formatCalendarDate('2026-09-01')).toBe(formatCalendarDate('2026-09-01', fallback));
+  });
+});
+
 describe('affichage des heures dans le fuseau du salon', () => {
   it('affiche un instant UTC à l’heure murale de l’établissement', () => {
     // 06:00 UTC vaut 09:00 à Antananarivo (UTC+3, sans heure d'été).
-    expect(formatTimeInTimeZone('2026-09-01T06:00:00.000Z', 'Indian/Antananarivo')).toBe('09:00');
+    expect(formatTimeInTimeZone('2026-09-01T06:00:00.000Z', 'Indian/Antananarivo', FR)).toBe(
+      '09:00',
+    );
   });
 
   it('ne rend pas la même heure dans deux fuseaux — c’est tout l’enjeu', () => {
@@ -38,14 +65,14 @@ describe('affichage des heures dans le fuseau du salon', () => {
     // La date vient déjà découpée dans le fuseau du salon : elle se met en forme
     // telle quelle. La reprojeter décalerait d'un jour au-delà d'UTC+12 —
     // `2026-09-01T12:00Z` est déjà le 2 septembre à Auckland.
-    expect(formatCalendarDate('2026-09-01')).toContain('1 septembre 2026');
-    expect(formatCalendarDate('2026-01-01')).toContain('1 janvier 2026');
+    expect(formatCalendarDate('2026-09-01', FR)).toContain('1 septembre 2026');
+    expect(formatCalendarDate('2026-01-01', FR)).toContain('1 janvier 2026');
   });
 });
 
 describe('formatMoney', () => {
   it('rend un montant entier dans la précision de sa devise', () => {
-    const formatted = formatMoney({ amountMinor: 3500, currency: 'EUR' }).replace(
+    const formatted = formatMoney({ amountMinor: 3500, currency: 'EUR' }, FR).replace(
       NO_BREAK_SPACES,
       ' ',
     );
@@ -56,7 +83,7 @@ describe('formatMoney', () => {
   it('ne divise pas par cent une devise sans décimale', () => {
     // 3500 ariary sont 3500 ariary, pas 35 : diviser par cent partout est le bug
     // classique d'un affichage qui suppose l'euro.
-    const formatted = formatMoney({ amountMinor: 3500, currency: 'MGA' });
+    const formatted = formatMoney({ amountMinor: 3500, currency: 'MGA' }, FR);
 
     expect(formatted).toContain('3');
     expect(formatted).not.toContain('35,00');
@@ -65,7 +92,7 @@ describe('formatMoney', () => {
 
 describe('formatMoneyCompact', () => {
   const compact = (amountMinor: number, currency: string): string =>
-    formatMoneyCompact({ amountMinor, currency }).replace(NO_BREAK_SPACES, ' ');
+    formatMoneyCompact({ amountMinor, currency }, FR).replace(NO_BREAK_SPACES, ' ');
 
   it('dit le même montant que l’affichage humain, en plus court', () => {
     // Le point dur de #614 : l'échelle d'un graphique et le tableau de la même
@@ -151,7 +178,7 @@ describe('forme machine d’un montant', () => {
       { amountMinor: 1, currency: 'MGA' },
       { amountMinor: 1200, currency: 'JPY' },
     ] as const) {
-      expect(humanDigitsOf(formatMoney(amount))).toBe(formatAmountMachine(amount));
+      expect(humanDigitsOf(formatMoney(amount, FR))).toBe(formatAmountMachine(amount));
     }
   });
 
@@ -207,13 +234,13 @@ describe('saisie d’un montant — jamais de flottant', () => {
 
   it('refuse plutôt que d’arrondir en silence', () => {
     // Arrondir déciderait à la place de la gérante du prix qu'elle vend.
-    expect(parseAmountInput('35,005', 'EUR')).toBeNull();
-    expect(parseAmountInput('3,5', 'MGA')).toBeNull();
-    expect(parseAmountInput('-1', 'EUR')).toBeNull();
-    expect(parseAmountInput('gratuit', 'EUR')).toBeNull();
-    expect(parseAmountInput('', 'EUR')).toBeNull();
+    expect(parseAmountInput('35,005', 'EUR', FR)).toBeNull();
+    expect(parseAmountInput('3,5', 'MGA', FR)).toBeNull();
+    expect(parseAmountInput('-1', 'EUR', FR)).toBeNull();
+    expect(parseAmountInput('gratuit', 'EUR', FR)).toBeNull();
+    expect(parseAmountInput('', 'EUR', FR)).toBeNull();
     // Au-delà de la largeur de la colonne `integer` qui l'accueille.
-    expect(parseAmountInput('99999999999', 'EUR')).toBeNull();
+    expect(parseAmountInput('99999999999', 'EUR', FR)).toBeNull();
   });
 
   it('fait l’aller-retour sans perte, pour que la modification ne change pas le prix', () => {
@@ -228,14 +255,14 @@ describe('saisie d’un montant — jamais de flottant', () => {
   });
 
   it('pré-remplit un champ sans symbole ni séparateur de milliers', () => {
-    expect(formatAmountInput({ amountMinor: 3500, currency: 'EUR' })).toBe('35,00');
-    expect(formatAmountInput({ amountMinor: 5, currency: 'EUR' })).toBe('0,05');
-    expect(formatAmountInput({ amountMinor: 3500, currency: 'MGA' })).toBe('3500');
+    expect(formatAmountInput({ amountMinor: 3500, currency: 'EUR' }, FR)).toBe('35,00');
+    expect(formatAmountInput({ amountMinor: 5, currency: 'EUR' }, FR)).toBe('0,05');
+    expect(formatAmountInput({ amountMinor: 3500, currency: 'MGA' }, FR)).toBe('3500');
   });
 });
 
 describe('saisie d’un montant — dans la langue de l’écran (#1123)', () => {
-  const FR = { locale: 'fr' } as const;
+  /** L'autre langue du produit — celle que ce bloc oppose à {@link FR}. */
   const EN = { locale: 'en' } as const;
 
   it('pré-remplit le champ avec le séparateur décimal de la langue', () => {
@@ -346,7 +373,7 @@ describe('formatDuration', () => {
     [75, '1 h 15'],
     [120, '2 h'],
   ])('rend %i minutes en « %s »', (minutes, expected) => {
-    expect(formatDuration(minutes)).toBe(expected);
+    expect(formatDuration(minutes, FR)).toBe(expected);
   });
 });
 

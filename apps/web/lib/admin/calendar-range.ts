@@ -20,7 +20,7 @@
  * c'est cet ancrage qui sert de clé.
  */
 
-import type { CalendarDate, TimeZone } from '@spa/shared';
+import { DEFAULT_LOCALE, type CalendarDate, type TimeZone } from '@spa/shared';
 
 import { addCalendarDays, calendarDateInTimeZone } from '../booking/calendar';
 import { formattingLocale, type DisplayLocale } from '../format';
@@ -225,13 +225,13 @@ export function parseCalendarDate(raw: string | undefined): CalendarDate | null 
 }
 
 /**
- * Le repli d'affichage, quand l'appelant n'a pas encore de langue à passer.
+ * Le repli d'affichage, quand l'appelant n'a pas de langue à passer.
  *
- * Même arbitrage que `lib/format.ts` : le français, c'est-à-dire le
- * comportement d'avant l'épique #843, plutôt qu'un basculement en anglais
- * d'écrans dont la traduction n'aurait pas été relue.
+ * Même arbitrage que `lib/format.ts`, #1297 compris : `DEFAULT_LOCALE`, et non
+ * plus le français d'avant l'épique #843 — les écrans passent tous leur langue
+ * résolue, et un repli français promettait l'inverse de la langue du produit.
  */
-const FALLBACK_DISPLAY: DisplayLocale = { locale: 'fr' };
+const FALLBACK_DISPLAY: DisplayLocale = { locale: DEFAULT_LOCALE };
 
 /** L'étiquette `Intl` d'un contexte d'affichage — langue **et** région du salon. */
 function tag(display: DisplayLocale): string {

@@ -134,7 +134,7 @@ function salonFacts(
     // Une ligne vide est possible — un salon sans code postal ni ville en
     // produit une —, et un `<span>` creux ouvrirait une ligne blanche dans
     // l'adresse.
-    const lines = addressLines(tenant.address).filter((line) => line !== '');
+    const lines = addressLines(tenant.address, display).filter((line) => line !== '');
 
     if (lines.length > 0) {
       facts.push({ icon: 'pin', lines });

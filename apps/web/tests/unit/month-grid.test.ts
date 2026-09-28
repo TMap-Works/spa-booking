@@ -263,7 +263,21 @@ describe('moveInMonth', () => {
 
 describe('formatMonth', () => {
   it('écrit le mois et son année, en français', () => {
-    expect(formatMonth('2026-09')).toBe('septembre 2026');
-    expect(formatMonth('2027-01')).toBe('janvier 2027');
+    expect(formatMonth('2026-09', { locale: 'fr' })).toBe('septembre 2026');
+    expect(formatMonth('2027-01', { locale: 'fr' })).toBe('janvier 2027');
+  });
+
+  it('écrit le même mois en anglais quand l’écran est en anglais (#1297)', () => {
+    // L'état vide du formulaire de report annonçait « Aucune disponibilité en
+    // septembre » sur un écran anglais, faute de recevoir la langue.
+    expect(formatMonth('2026-09', { locale: 'en' })).toBe('September 2026');
+    expect(formatMonth('2027-01', { locale: 'en' })).toBe('January 2027');
+  });
+
+  it('refuse à la compilation l’appel qui omet la langue (#1297)', () => {
+    // Voir `appointment-brief.test.ts` : c'est la directive qui garde, pas
+    // l'assertion. Le paramètre redevenu facultatif, `typecheck` échouerait ici.
+    // @ts-expect-error — le contexte d'affichage est obligatoire depuis #1297.
+    expect(() => formatMonth('2026-09')).toBeDefined();
   });
 });

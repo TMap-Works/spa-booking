@@ -1,4 +1,4 @@
-import type { Locale } from '@spa/shared';
+import { DEFAULT_LOCALE, type Locale } from '@spa/shared';
 import { createTranslator } from 'next-intl';
 import { describe, expect, it } from 'vitest';
 
@@ -192,10 +192,11 @@ describe('les chiffres suivent la langue et la région de l’établissement', (
     expect(formatRate(null, NEW_YORK)).toBe('—');
   });
 
-  it('retombe sur le français quand l’appelant ne dit pas encore sa langue', () => {
-    // Le défaut transitoire de l'épique #843 : l'écran de reporting (#851) n'a pas
-    // encore été branché, et son affichage ne doit pas basculer avant son ticket.
-    expect(formatCount(1200)).toMatch(/^1\s200$/u);
+  it('retombe sur DEFAULT_LOCALE, et non sur le français (#1297)', () => {
+    // Le défaut transitoire de l'épique #843 est éteint : l'écran de reporting a
+    // été branché depuis, et un appelant muet reçoit la langue par défaut du
+    // produit. Remettre `'fr'` en repli ferait échouer ce cas.
+    expect(formatCount(1200)).toBe(formatCount(1200, { locale: DEFAULT_LOCALE }));
   });
 
   it('écrit le montant dans la langue, sans jamais en changer la valeur', () => {

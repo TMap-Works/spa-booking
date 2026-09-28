@@ -1,4 +1,4 @@
-import { hasAtLeastRole, type Locale, type UserRole } from '@spa/shared';
+import { DEFAULT_LOCALE, hasAtLeastRole, type Locale, type UserRole } from '@spa/shared';
 
 import en from '@/messages/en/shell.json';
 import fr from '@/messages/fr/shell.json';
@@ -71,15 +71,15 @@ export interface AdminNavEntry {
  * tests sans DOM. Un crochet de React l'aurait rendu inappelable dans les deux
  * derniers. Même motif que `lib/appointment-status.ts`.
  *
- * `locale` a une valeur par défaut — `'fr'` —, et c'est **transitoire**, pour la
- * même raison qu'ailleurs dans l'épique #843 : les appelants hors de l'empreinte
- * de #845 gardent le comportement d'avant le ticket jusqu'à ce que leur propre
- * ticket leur passe la langue résolue.
+ * `locale` a une valeur par défaut, et elle vaut `DEFAULT_LOCALE` depuis #1297.
+ * Elle valait `'fr'` le temps que les appelants hors de l'empreinte de #845
+ * gardent le comportement d'avant l'épique #843 ; ils passent tous leur langue
+ * résolue à présent.
  */
 const CATALOG = { fr, en } as const;
 
-/** La langue employée quand l'appelant n'en passe pas encore. */
-const FALLBACK_LOCALE: Locale = 'fr';
+/** La langue employée quand l'appelant n'en passe pas. */
+const FALLBACK_LOCALE: Locale = DEFAULT_LOCALE;
 
 /**
  * Le rôle, tel qu'on l'écrit à l'écran.
