@@ -1,4 +1,4 @@
-import { ERROR_CODES, slugSchema, uuidSchema } from '@spa/shared';
+import { ERROR_CODES, errorMessage, slugSchema, uuidSchema } from '@spa/shared';
 import { getLocale, getTranslations } from 'next-intl/server';
 import { NextResponse, type NextRequest } from 'next/server';
 
@@ -28,8 +28,17 @@ import { adminActionAccess } from '../../../session';
  * dans le contexte de la requête, `getTranslations` y rend donc la langue
  * résolue comme ailleurs. Il n'est appelé que **sur les chemins de refus**,
  * comme dans `actions.ts` : ces deux phrases-là n'ont pas à être composées quand
- * le téléchargement aboutit. Les refus de l'API, eux, gardent le message que
- * l'API a rendu — c'est elle qui nomme son refus.
+ * le téléchargement aboutit.
+ *
+ * Les refus de l'API gardaient, eux, le message que l'API avait rendu — au motif
+ * que c'est elle qui nomme son refus. Sauf que l'API n'a pas de langue de
+ * requête : ses `DomainError` sont écrites **en français**, pour le journal et
+ * le diagnostic. Ce relais servait donc une phrase française nue dans l'onglet
+ * d'un poste anglais, et c'est le pire endroit pour ça — il n'y a aucun écran
+ * autour pour en rattraper le sens. La phrase vient de `errorMessage(code,
+ * locale)` depuis #1298, la table bilingue du contrat partagé, où un code
+ * inconnu retombe sur la phrase générique d'`INTERNAL_ERROR`. Le **statut**, lui,
+ * reste celui de l'API : c'est lui qui porte la nature du refus.
  *
  * ## Et le document lui-même la parle aussi (#1259)
  *
@@ -88,7 +97,7 @@ export async function GET(
     });
   } catch (error) {
     if (error instanceof ApiClientError) {
-      return new NextResponse(error.message, {
+      return new NextResponse(errorMessage(error.code, await getLocale()), {
         status: error.status >= 400 && error.status < 600 ? error.status : 502,
       });
     }

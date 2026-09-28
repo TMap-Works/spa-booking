@@ -8,9 +8,33 @@
  * recette a montré : la journée ouverte affichait un message écrit pour un
  * humain, la semaine suivante recrachait le « Cannot GET /api/v1/appointments »
  * d'Express.
+ *
+ * ## Plus aucun message de l'API n'arrive à l'écran — #1298
+ *
+ * Les deux chemins n'apportaient pas la même chose, et c'est ce qui a longtemps
+ * masqué l'écart :
+ *
+ * - l'action serveur rend un refus dont le `message` est **déjà** dans la langue
+ *   de la session — soit une phrase que le planning a lui-même écrite
+ *   (`invalid(t('actions.invalidDate'))`, dans `calendrier/actions.ts`), soit
+ *   celle que `errorMessage` a posée dans `action-result.ts` depuis #1234 ;
+ * - le premier rendu, lui, appelle l'API directement et n'a que le corps
+ *   d'erreur. Le `message` y est celui que l'API a écrit, c'est-à-dire **du
+ *   français** : l'API n'a pas de langue de requête, ses `DomainError` sont
+ *   rédigées une fois pour le journal et le diagnostic (voir l'en-tête de
+ *   `packages/shared/src/errors/error-messages.ts`). Un planning ouvert en
+ *   anglais repassait donc au français dès qu'un refus n'était pas le 404 — une
+ *   fenêtre trop large, une session refusée, une panne de l'API.
+ *
+ * La traduction se fait donc là où manque la phrase, et nulle part ailleurs :
+ * `calendarApiFailureMessage` la tire de `errorMessage(code, locale)` pour le
+ * chemin qui n'en a pas. La traduire aussi dans `calendarFailureMessage`
+ * écraserait les phrases du planning par la phrase générique de
+ * `VALIDATION_ERROR` — « Certaines informations sont incomplètes » là où le
+ * planning disait quelle date il n'avait pas su lire.
  */
 
-import { ERROR_CODES, type Locale } from '@spa/shared';
+import { ERROR_CODES, errorMessage, type Locale } from '@spa/shared';
 
 import { planningWords, CALENDAR_FALLBACK_LOCALE } from './calendar-messages';
 
@@ -41,11 +65,43 @@ export function calendarRouteMissingMessage(
  */
 const MISSING_ROUTE_CODES: readonly string[] = [ERROR_CODES.NOT_FOUND, 'HTTP_404'];
 
-/** Le message à afficher, à partir du code et du message rendus par l'API. */
+/**
+ * Le message à afficher pour ce refus.
+ *
+ * `displayMessage` est la phrase **déjà affichable** que l'appelant tient — dans
+ * la langue de la session, et non celle d'un corps d'erreur de l'API. C'est le
+ * contrat de ce paramètre depuis #1298, et c'est ce que rend un refus d'action
+ * serveur : `calendrier/actions.ts` écrit les siennes par `invalid(t(…))`, et
+ * `action-result.ts` tire les autres de `errorMessage`. Un appelant qui n'a
+ * qu'un corps d'erreur de l'API passe par `calendarApiFailureMessage`, juste
+ * en dessous, plutôt que de tendre ici le `message` qu'il a reçu.
+ */
 export function calendarFailureMessage(
   code: string,
-  message: string,
+  displayMessage: string,
   locale: Locale = CALENDAR_FALLBACK_LOCALE,
 ): string {
-  return MISSING_ROUTE_CODES.includes(code) ? calendarRouteMissingMessage(locale) : message;
+  return MISSING_ROUTE_CODES.includes(code) ? calendarRouteMissingMessage(locale) : displayMessage;
+}
+
+/**
+ * Le même message, pour un refus dont on n'a que le **code** de l'API.
+ *
+ * C'est le cas du premier rendu du planning : il appelle l'API directement, et
+ * le `message` de l'`ApiClientError` est celui que l'API a écrit — du français,
+ * pour le journal. La phrase affichable se tire donc du code, par la table
+ * bilingue du contrat partagé (#1298). Un code que cette table ne connaît pas —
+ * les `HTTP_<statut>` que le filtre d'exception de l'API fabrique — y retombe
+ * sur la phrase générique d'`INTERNAL_ERROR`, traduite elle aussi.
+ *
+ * Nommée ici plutôt qu'écrite au point d'appel : c'est la composition qui doit
+ * être éprouvée — le 404 garde son diagnostic propre, tout le reste se traduit —
+ * et une expression recopiée dans `page.tsx` ne se teste qu'en la recopiant une
+ * seconde fois dans la suite.
+ */
+export function calendarApiFailureMessage(
+  code: string,
+  locale: Locale = CALENDAR_FALLBACK_LOCALE,
+): string {
+  return calendarFailureMessage(code, errorMessage(code, locale), locale);
 }

@@ -19,7 +19,7 @@ import {
   fetchStaffSchedule,
   fetchStaffTimeOff,
 } from '@/lib/api-client';
-import { calendarFailureMessage } from '@/lib/admin/calendar-failure';
+import { calendarApiFailureMessage } from '@/lib/admin/calendar-failure';
 import { calendarTimeOffWindow } from '@/lib/admin/calendar-time-off';
 import {
   anchorOf,
@@ -369,6 +369,12 @@ export default async function CalendarPage({ params, searchParams }: CalendarPag
  * les navigations suivantes échouent par l'action serveur et doivent dire
  * exactement la même chose.
  *
+ * Ce chemin-ci n'a que le corps d'erreur de l'API, dont le `message` est écrit
+ * en français pour le journal : la phrase se tire donc du **code**, par
+ * `calendarApiFailureMessage` (#1298). Le `message` de l'API ne traverse plus
+ * cette frontière — c'est lui qui repassait un planning anglais au français au
+ * premier refus.
+ *
  * Ce qui n'est pas une erreur d'API est **relancé** : une panne de rendu n'est
  * pas un refus métier, et l'avaler la ferait passer pour un agenda vide.
  */
@@ -377,5 +383,5 @@ function describeLoadFailure(error: unknown, locale: Locale): string {
     throw error;
   }
 
-  return calendarFailureMessage(error.code, error.message, locale);
+  return calendarApiFailureMessage(error.code, locale);
 }
