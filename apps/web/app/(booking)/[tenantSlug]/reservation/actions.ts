@@ -28,19 +28,30 @@
  * transformée du schéma — instant ramené en UTC, adresse canonisée, téléphone
  * en E.164 — et non le corps reçu du navigateur.
  *
- * ## La langue (#846)
+ * ## La langue (#846, #1298)
  *
  * Les messages de refus **écrits ici** s'affichent tels quels dans le tunnel :
  * ils viennent donc du catalogue, par `getTranslations` — une action serveur
  * est asynchrone, et le crochet n'y a pas cours.
  *
- * Le message d'une `ApiClientError`, lui, reste celui de l'API : il traverse
- * cette frontière sans être réécrit, comme avant. Ce n'est pas un oubli mais la
- * frontière du ticket — la langue des réponses de l'API relève de l'API. Rien
- * de ce que le tunnel **décide** ne s'appuie dessus : le tri se fait sur le
- * `code`, et les deux codes qui deviennent une phrase à l'écran ont chacun la
- * leur (`SLOT_NO_LONGER_AVAILABLE`, `UNAUTHORIZED` — voir `booking-tunnel.tsx`
- * et `summary-step.tsx`). Il y en avait un troisième jusqu'à #1222 :
+ * Le message d'une `ApiClientError` était celui de l'API : il traversait cette
+ * frontière sans être réécrit. La frontière du ticket d'alors le justifiait — la
+ * langue des réponses de l'API relève de l'API —, mais l'API n'a pas de langue
+ * de requête : ses `DomainError` sont écrites **en français**, une fois, pour le
+ * journal et le diagnostic. Or ce message-là s'affiche : `slot-step.tsx` en fait
+ * l'encart rouge sous le calendrier au premier refus de chargement — une limite
+ * de débit, une fenêtre trop large. Un tunnel anglais y repassait au français,
+ * au pire moment.
+ *
+ * La phrase vient donc de `errorMessage(code, locale)` du contrat partagé, comme
+ * le back-office depuis #1234 et l'espace client depuis #847 : la table bilingue
+ * adossée à `ERROR_CODES`, où un code que la table ne connaît pas — les
+ * `HTTP_<statut>` que le filtre d'exception de l'API fabrique — retombe sur la
+ * phrase générique d'`INTERNAL_ERROR`. Rien de ce que le tunnel **décide** ne
+ * s'appuie dessus : le tri se fait sur le `code`, et les deux codes qui
+ * deviennent une phrase à l'écran ont chacun la leur
+ * (`SLOT_NO_LONGER_AVAILABLE`, `UNAUTHORIZED` — voir `booking-tunnel.tsx` et
+ * `summary-step.tsx`). Il y en avait un troisième jusqu'à #1222 :
  * `CLIENT_EMAIL_NOT_BOOKABLE` est parti avec le champ `client` de la demande,
  * qu'aucune route n'émet plus.
  *
@@ -64,10 +75,12 @@
 import {
   ERROR_CODES,
   availabilityQuerySchema,
+  errorMessage,
   slugSchema,
   type AvailabilityResponse,
+  type Locale,
 } from '@spa/shared';
-import { getTranslations } from 'next-intl/server';
+import { getLocale, getTranslations } from 'next-intl/server';
 
 import { ApiClientError, fetchAvailability } from '@/lib/api-client';
 
@@ -78,15 +91,25 @@ export type ActionResult<TData> =
 /**
  * Le refus, tel que l'écran le recevra.
  *
- * `fallback` est la phrase à servir quand l'erreur n'en porte pas d'affichable
- * — elle est traduite par l'appelant, qui a le traducteur de la requête sous la
- * main (#846). La passer plutôt que de la lire ici garde cette fonction
- * synchrone, et l'appel à `getTranslations` au seul endroit où la requête est
- * déjà attendue.
+ * `fallback` est la phrase à servir quand l'erreur n'a pas de code du tout — ce
+ * qui n'est pas une `ApiClientError` : une panne de rendu, un `TypeError`. Elle
+ * est traduite par l'appelant, qui a le traducteur de la requête sous la main
+ * (#846), et le tunnel la dit mieux que la phrase générique du contrat : elle
+ * nomme ce que la visiteuse cherchait.
+ *
+ * `locale` sert l'autre branche, celle d'un refus que l'API a nommé : sa phrase
+ * est celle de son `code` dans la table bilingue du contrat (#1298), jamais le
+ * `message` du corps d'erreur. Les deux sont passés plutôt que lus ici, ce qui
+ * garde cette fonction synchrone et les appels à `next-intl/server` au seul
+ * endroit où la requête est déjà attendue.
  */
-function failure(error: unknown, fallback: string): { ok: false; code: string; message: string } {
+function failure(
+  error: unknown,
+  fallback: string,
+  locale: Locale,
+): { ok: false; code: string; message: string } {
   if (error instanceof ApiClientError) {
-    return { ok: false, code: error.code, message: error.message };
+    return { ok: false, code: error.code, message: errorMessage(error.code, locale) };
   }
 
   return {
@@ -116,7 +139,7 @@ export async function loadAvailabilityAction(
   try {
     return { ok: true, data: await fetchAvailability(slug.data, parsed.data) };
   } catch (error) {
-    return failure(error, t('tunnel.actions.unexpectedError'));
+    return failure(error, t('tunnel.actions.unexpectedError'), await getLocale());
   }
 }
 
