@@ -18,6 +18,7 @@ import {
   phoneSchema,
   slugSchema,
   storedPhoneSchema,
+  submittedCountryCodeSchema,
   uuidSchema,
 } from '../common/identifiers';
 import { currencyCodeSchema } from '../common/money';
@@ -91,6 +92,27 @@ export const postalAddressSchema = z
   .strict();
 
 export type PostalAddress = z.infer<typeof postalAddressSchema>;
+
+/**
+ * La même adresse, **telle qu'un formulaire la soumet** — #1330.
+ *
+ * Un seul champ diffère, et c'est tout l'objet de ce schéma : le pays doit
+ * **exister** en ISO 3166-1 alpha-2, pas seulement en avoir la forme. Le détail de
+ * l'asymétrie est écrit sur `submittedCountryCodeSchema` ; ce qu'il faut savoir
+ * ici : « ZZ » est refusé à l'écriture et reste lisible à la lecture, parce qu'un
+ * salon dont la colonne le porte déjà doit pouvoir s'afficher — ne serait-ce que
+ * pour se corriger.
+ *
+ * `.extend()` et non une réécriture : ajouter un champ à l'adresse le propage aux
+ * deux formes, et deux objets recopiés auraient fini par ne plus décrire la même
+ * adresse — c'est le même arbitrage que `tenantSchema` sur `publicTenantSchema`.
+ * La strictesse est conservée par `.extend()`, la clé inconnue reste refusée.
+ */
+export const submittedPostalAddressSchema = postalAddressSchema.extend({
+  country: submittedCountryCodeSchema,
+});
+
+export type SubmittedPostalAddress = z.infer<typeof submittedPostalAddressSchema>;
 
 /**
  * Une plage d'ouverture hebdomadaire de l'**établissement** — « le mardi, de
@@ -426,7 +448,7 @@ export const updateTenantRequestSchema = z
      * l'autoriser rendrait représentable une adresse à moitié réécrite —
      * l'ancienne rue avec la nouvelle ville.
      */
-    address: postalAddressSchema.nullable(),
+    address: submittedPostalAddressSchema.nullable(),
     /**
      * Remplacement **intégral** de la semaine d'ouverture.
      *

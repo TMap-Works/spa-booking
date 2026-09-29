@@ -1,5 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
+  ISO_3166_1_ALPHA_2_CODES,
   LEGAL_ID_MAX_LENGTH,
   LEGAL_ID_TYPES,
   LEGAL_NAME_MAX_LENGTH,
@@ -282,7 +283,15 @@ export class UpdateTenantAddressDto {
     typeof value === 'string' ? value.trim().toUpperCase() : value,
   )
   @IsString()
-  @Matches(/^[A-Z]{2}$/, {
+  // `IsIn` sur la liste des pays **attribués** et non un `Matches(/^[A-Z]{2}$/)`
+  // (#1330) : le motif ne décrivait que la forme, et « ZZ » l'a — la recette de
+  // traduction a enregistré ce pays-là dans les réglages d'un salon. Or la
+  // colonne ne sert pas qu'à imprimer un nom : elle décide du pays par défaut
+  // d'un numéro national (`identity/phone.ts`) et de l'ordre d'affichage de
+  // l'adresse. Un pays inexistant ne se rattrape nulle part en aval, il se
+  // refuse ici. Même forme que le `defaultLocale` ci-dessus : une seule
+  // contrainte, un seul message de champ.
+  @IsIn(ISO_3166_1_ALPHA_2_CODES as readonly string[], {
     message: 'country : code pays ISO 3166-1 alpha-2 attendu (« FR »)',
   })
   public country!: string;

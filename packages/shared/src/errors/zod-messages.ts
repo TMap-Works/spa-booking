@@ -191,6 +191,7 @@ const VALIDATION_MESSAGE_KEY_LIST = [
   'identifier.slugReserved',
   'identifier.email',
   'identifier.countryCode',
+  'identifier.countryCodeUnknown',
   'identifier.phone',
   'identifier.phoneTooShort',
   'identifier.phoneInternational',
@@ -264,6 +265,8 @@ const FR_VALIDATION: Readonly<Record<ValidationMessageKey, ValidationPhrase>> = 
   'identifier.slugReserved': 'ce nom est réservé par la plateforme — choisissez-en un autre',
   'identifier.email': 'adresse e-mail invalide',
   'identifier.countryCode': 'code pays ISO 3166-1 alpha-2 attendu (« FR »)',
+  'identifier.countryCodeUnknown':
+    'ce pays n’existe pas en ISO 3166-1 alpha-2 — « FR », « US », « CA »',
   'identifier.phone': 'numéro de téléphone invalide',
   'identifier.phoneTooShort': (vars) =>
     `numéro de téléphone incomplet — au moins ${String(vars.min)} chiffres attendus`,
@@ -324,6 +327,8 @@ const EN_VALIDATION: Readonly<Record<ValidationMessageKey, ValidationPhrase>> = 
   'identifier.slugReserved': 'this name is reserved by the platform — please choose another',
   'identifier.email': 'invalid email address',
   'identifier.countryCode': 'ISO 3166-1 alpha-2 country code expected (“FR”)',
+  'identifier.countryCodeUnknown':
+    'no such country in ISO 3166-1 alpha-2 — “FR”, “US”, “CA”',
   'identifier.phone': 'invalid phone number',
   'identifier.phoneTooShort': (vars) =>
     `incomplete phone number — at least ${String(vars.min)} digits expected`,

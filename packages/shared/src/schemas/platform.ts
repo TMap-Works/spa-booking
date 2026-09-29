@@ -13,12 +13,12 @@
 import { z } from 'zod';
 
 import {
-  countryCodeSchema,
   displayNameSchema,
   emailSchema,
   nameSchema,
   opaqueTokenSchema,
   slugSchema,
+  submittedCountryCodeSchema,
   uuidSchema,
 } from '../common/identifiers';
 import { currencyCodeSchema, nonNegativeMoneySchema } from '../common/money';
@@ -101,7 +101,16 @@ export const createTenantRequestSchema = z
      * établissement doivent accepter la même chose.
      */
     defaultLocale: submittedLocaleSchema.optional(),
-    countryCode: countryCodeSchema,
+    /**
+     * Le pays du salon — **existant**, pas seulement bien formé (#1330).
+     *
+     * `submittedCountryCodeSchema` : c'est une saisie, et les deux portes
+     * d'ouverture d'un établissement — cette route et l'inscription en
+     * libre-service, qui étend ce schéma — doivent refuser la même chose. Un pays
+     * inventé décide ensuite du pays par défaut d'un numéro national et de l'ordre
+     * d'affichage de l'adresse : il ne se rattrape nulle part en aval.
+     */
+    countryCode: submittedCountryCodeSchema,
     addressLine1: z.string().trim().min(1).max(ADDRESS_LINE_MAX_LENGTH),
     addressLine2: optionalText(ADDRESS_LINE_MAX_LENGTH),
     postalCode: optionalText(POSTAL_CODE_MAX_LENGTH),

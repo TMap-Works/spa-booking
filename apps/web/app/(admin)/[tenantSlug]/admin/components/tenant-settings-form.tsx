@@ -8,6 +8,7 @@ import {
   displayNameSchema,
   emailSchema,
   e164PhoneSchema,
+  isCountryCodeAlpha2,
   localeSchema,
   openingHoursSchema,
   postalAddressSchema,
@@ -287,13 +288,23 @@ function settingsFormSchema(copy: SettingsCopy) {
         line2: z.string().trim().max(ADDRESS_LINE_MAX_LENGTH),
         postalCode: z.string().trim().max(POSTAL_CODE_MAX_LENGTH),
         city: z.string().trim().max(CITY_MAX_LENGTH),
+        // Le pays doit **exister** en ISO 3166-1 alpha-2, non seulement en avoir
+        // la forme (#1330) : « ZZ » a la forme, et c'est ce code-là qui s'est
+        // retrouvé en base par cet écran. Le contrôle est le même que celui du
+        // contrat (`submittedCountryCodeSchema`) et que celui du DTO de l'API —
+        // les deux frontières doivent refuser les mêmes valeurs, sinon la saisie
+        // passe ici pour échouer à l'envoi sur un champ que rien ne désigne. Le
+        // message reste le même : « code pays ISO 3166-1 alpha-2 attendu » est
+        // exact pour une forme fautive comme pour un pays inventé.
         country: z.union([
           z.literal(''),
           z
             .string()
             .trim()
             .toUpperCase()
-            .regex(/^[A-Z]{2}$/, { message: copy.countryFormat }),
+            .refine((value): boolean => isCountryCodeAlpha2(value), {
+              message: copy.countryFormat,
+            }),
         ]),
         days: z.array(daySchema),
       })

@@ -17,6 +17,7 @@ export {
   resourceSlugSchema,
   slugSchema,
   storedPhoneSchema,
+  submittedCountryCodeSchema,
   submittedPasswordSchema,
   uuidSchema,
 } from './identifiers';
