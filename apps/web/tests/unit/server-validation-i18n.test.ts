@@ -54,6 +54,7 @@ vi.mock('next/headers', () => ({
   cookies: () => Promise.resolve({ get: () => undefined, set: vi.fn() }),
 }));
 
+const { validationRefusal } = await import('@/app/(admin)/[tenantSlug]/admin/action-result');
 const { signupSalonAction } = await import('@/app/inscription/actions');
 const { updateTenantSettingsAction } = await import('@/app/(admin)/[tenantSlug]/admin/actions');
 const { provisionTenantAction, reissueTenantInvitationAction } = await import(
@@ -95,6 +96,42 @@ const SALON_VALABLE = {
   adminFirstName: 'Hanta',
   adminLastName: 'Rakoto',
 };
+
+/**
+ * Le repli lui-même, depuis qu'il n'est plus recopié — #1310.
+ *
+ * Les suites qui suivent éprouvent des **actions** ; celle-ci éprouve la
+ * fonction sur laquelle elles retombent toutes. Deux choses s'y jouent, et
+ * chacune est une décision du ticket : la phrase est bien celle de
+ * `VALIDATION_ERROR` — jamais celle d'un code choisi pour ce qu'il dit, puisque
+ * l'écran trie sur le code —, et la langue est celle du **paramètre**, non celle
+ * de la requête. Ce second point ne se mesure qu'à langue de requête **fixe** :
+ * elle reste `fr` — celui de l'`afterEach` pour le premier cas, un
+ * `fixerLangue('fr')` explicite pour le second —, si bien qu'une phrase anglaise
+ * ne peut venir que du paramètre. Un `validationRefusal` qui se remettrait à
+ * lire `getLocale()` lui-même tomberait donc sur le cas `en`. Le second cas
+ * l'énonce en une ligne, et pose en outre la garde qui rend l'égalité non
+ * vide : les deux langues ne partagent pas cette phrase.
+ */
+describe('le repli de validation — une seule phrase, tenue en un seul point', () => {
+  it.each(LANGUES)('rend la phrase de VALIDATION_ERROR, en %s', (locale) => {
+    // Aucune langue à fixer ici : la laisser sur le `fr` de l'`afterEach` est
+    // précisément ce qui prouve, au cas `en`, que la fonction ne lit pas la
+    // requête.
+    expect(validationRefusal(locale)).toBe(errorMessage(ERROR_CODES.VALIDATION_ERROR, locale));
+  });
+
+  it('rend la langue demandée, et non celle de la requête', () => {
+    fixerLangue('fr');
+
+    const anglais = validationRefusal('en');
+
+    expect(anglais).toBe(errorMessage(ERROR_CODES.VALIDATION_ERROR, 'en'));
+    // La garde qui rend les deux assertions ci-dessus non vides : si le contrat
+    // cessait de traduire ce code, elles passeraient sur la même phrase.
+    expect(anglais).not.toBe(errorMessage(ERROR_CODES.VALIDATION_ERROR, 'fr'));
+  });
+});
 
 describe('inscription d’un salon — le refus suit la langue de la requête', () => {
   it.each(LANGUES)('champ obligatoire vide, en %s', async (locale) => {
