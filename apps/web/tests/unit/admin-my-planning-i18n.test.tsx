@@ -207,9 +207,35 @@ describe('la journée de travail, écrite hors de React', () => {
       '14:00 – minuit',
     ]);
     expect(friday({ locale: 'en', countryCode: 'US' }).hours).toEqual([
-      '09:00 – 12:00',
-      '14:00 – midnight',
+      '9:00\u00a0AM – 12:00\u00a0PM',
+      '2:00\u00a0PM – midnight',
     ]);
+  });
+
+  /**
+   * Les plages de travail suivent la convention du pays du salon — #1345.
+   *
+   * Le constat se lisait dans cette suite même : la journée du salon américain
+   * annonçait « 09:00 – 12:00 » pour sa plage de travail et « 4:00 PM – 5:00 PM »
+   * pour l'absence juste en dessous, deux natures d'heure à trois centimètres
+   * l'une de l'autre. Les quatre combinaisons du troisième critère sont couvertes,
+   * et seule la dernière bascule.
+   */
+  it('n’écrit ses plages en 12 heures que pour un salon américain lu en anglais', () => {
+    expect(friday({ locale: 'fr', countryCode: 'FR' }).hours[0]).toBe('09:00 – 12:00');
+    expect(friday({ locale: 'en', countryCode: 'FR' }).hours[0]).toBe('09:00 – 12:00');
+    expect(friday({ locale: 'fr', countryCode: 'US' }).hours[0]).toBe('09:00 – 12:00');
+    expect(friday({ locale: 'en', countryCode: 'US' }).hours[0]).toBe('9:00\u00a0AM – 12:00\u00a0PM');
+  });
+
+  it('écrit ses plages et ses absences dans la même convention', () => {
+    // Ce que le ticket corrige, dit en une assertion : les deux lignes d'une même
+    // journée ne peuvent plus diverger, puisque les bornes murales passent par le
+    // même point d'écriture que les instants (`timeStyle: 'short'`).
+    const jour = friday({ locale: 'en', countryCode: 'US' });
+
+    expect(jour.hours[1]).toContain('2:00\u00a0PM');
+    expect(jour.absences[0]).toContain('4:00 PM');
   });
 
   it('dit une absence qui couvre le jour entier dans la langue', () => {

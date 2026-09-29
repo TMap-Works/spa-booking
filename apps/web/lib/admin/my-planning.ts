@@ -9,6 +9,7 @@ import {
   type TimeZone,
 } from '@spa/shared';
 
+import { formatWallTime } from '@/components/salon/opening-hours';
 import { addCalendarDays, calendarDateInTimeZone } from '@/lib/booking/calendar';
 import { formatTimeInTimeZone, formattingLocale, type DisplayLocale } from '@/lib/format';
 import en from '@/messages/en/admin-my-planning.json';
@@ -264,7 +265,10 @@ export function clientLabel(appointment: MyStaffAppointment): string {
 export interface WorkingDay {
   /** Le salon est fermé ce jour de la semaine. */
   readonly closed: boolean;
-  /** Ses plages de travail — « 09:00 – 12:00 ». Vide : il ne travaille pas. */
+  /**
+   * Ses plages de travail, dans la convention du pays du salon — « 09:00 – 12:00 »
+   * à Paris, « 9:00 AM – 12:00 PM » à New York (#1345). Vide : il ne travaille pas.
+   */
   readonly hours: readonly string[];
   /** Ses absences qui touchent la journée — « 14:00 – 16:00 · Formation ». */
   readonly absences: readonly string[];
@@ -281,9 +285,21 @@ export interface WorkingDay {
  * `display` porte la langue **et la région de l'établissement** (#1104) : les
  * deux mots composés ici viennent du catalogue, et les heures d'une absence sont
  * mises en forme par `lib/format.ts`, dans le fuseau du salon — qui ne bouge pas
- * avec la langue. Les bornes d'une plage de travail, elles, restent telles que le
- * contrat les porte (`09:00`) : ce sont des heures murales saisies par la
- * gérance, pas des instants à reprojeter.
+ * avec la langue.
+ *
+ * ## Les bornes d'une plage de travail suivent la même convention (#1345)
+ *
+ * Elles restaient telles que le contrat les porte (`09:00`), au motif — exact —
+ * que ce sont des heures murales saisies par la gérance et non des instants à
+ * reprojeter. Mais la journée affichait alors ses deux natures d'heure côte à
+ * côte : « 09:00 – 12:00 » pour la plage de travail, « 4:00 PM – 5:00 PM » pour
+ * l'absence juste en dessous, chez un salon américain lu en anglais.
+ *
+ * Elles passent donc par `formatWallTime` de `components/salon/opening-hours.ts`,
+ * le point d'écriture unique d'une heure murale du front : c'est la vitrine qui le
+ * tient, et l'import va du back-office vers elle — jamais l'inverse, qui ferait
+ * entrer le graphe du back-office dans le chemin de LCP de la page publique.
+ * `24:00` y garde son mot, comme avant.
  */
 export function workingDay(
   schedule: MyStaffSchedule,
@@ -298,7 +314,8 @@ export function workingDay(
     .filter((entry) => entry.weekday === weekday)
     .sort((left, right) => left.startsAt.localeCompare(right.startsAt))
     .map(
-      (entry) => `${entry.startsAt} – ${entry.endsAt === '24:00' ? words.midnight : entry.endsAt}`,
+      (entry) =>
+        `${formatWallTime(entry.startsAt, display, words.midnight)} – ${formatWallTime(entry.endsAt, display, words.midnight)}`,
     );
 
   const absences = schedule.timeOff

@@ -68,6 +68,18 @@ export function todayWeekday(timeZone: string, now: Date = new Date()): number |
 export function SalonAside({ tenant }: SalonAsideProps) {
   const t = useTranslations('account');
   /**
+   * Le traducteur du namespace de la **vitrine** (#1345).
+   *
+   * Les horaires du jour sont écrits par `components/salon/opening-hours.ts`, qui
+   * ne lit plus aucun catalogue (#1142) et réclame donc celui de son appelant. Le
+   * seul mot qu'il y prend est « minuit », sous `salon.hours` — là où la vitrine
+   * écrit déjà les siens, et non recopié dans `account.json` : deux écritures du
+   * même mot finiraient par diverger sur la même carte d'horaires.
+   *
+   * Même détour, et même raison, que `components/auth/salon-auth-screen.tsx`.
+   */
+  const hours = useTranslations('booking');
+  /**
    * La langue et la région de la mise en forme (#1297).
    *
    * Résolue ici et non reçue en propriété : cette carte est montée par le
@@ -156,7 +168,7 @@ export function SalonAside({ tenant }: SalonAsideProps) {
                 <span>{t('salonCard.closed')}</span>
               ) : (
                 today.ranges.map((range, index) => (
-                  <span key={index}>{formatOpeningRange(range)}</span>
+                  <span key={index}>{formatOpeningRange(range, display, hours)}</span>
                 ))
               )}
             </p>
