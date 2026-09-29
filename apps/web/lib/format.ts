@@ -15,6 +15,9 @@
 import {
   AMOUNT_MINOR_MAX,
   DEFAULT_LOCALE,
+  formattingLocale,
+  separatorsOf,
+  withPlainSeparators,
   type CalendarDate,
   type Locale,
   type Money,
@@ -41,11 +44,10 @@ import fr from '@/messages/fr/format.json';
  * la fiche publique) : un salon montréalais écrit ses dates comme le Québec, un
  * salon londonien comme le Royaume-Uni.
  *
- * Quand le champ est vide — un salon qui n'a pas publié d'adresse —, le repli
- * est **documenté et figé**, comme l'exige le dixième critère d'acceptation de
- * #845 : `en` → `en-US`, `fr` → `fr-FR`. Ce sont les régions des deux marchés du
- * produit ; deviner autre chose (la région du serveur, celle du navigateur)
- * ferait varier l'affichage d'une machine à l'autre pour un même salon.
+ * La règle qui en tire l'étiquette — et le repli documenté et figé quand le champ
+ * est vide, qu'exige le dixième critère d'acceptation de #845 — n'est plus écrite
+ * ici : c'est `formattingLocale` de `@spa/shared`, celle-là même que le PDF du
+ * reçu applique (#1343). Ce module en est un **point d'emploi**.
  *
  * ### Le cycle horaire n'est jamais forcé — 12 h pour un salon américain (#1325)
  *
@@ -133,28 +135,21 @@ function fill(message: string, values: Readonly<Record<string, string>>): string
   );
 }
 
-/** Les régions de repli, quand l'établissement n'a pas publié son pays. */
-const FALLBACK_REGION: Readonly<Record<Locale, string>> = { fr: 'FR', en: 'US' };
-
 /**
  * L'étiquette BCP 47 complète à passer à `Intl` — « fr-CA », « en-US ».
  *
- * `countryCode` est celui de l'établissement (ISO 3166-1 alpha-2). Une valeur
- * qui n'a pas cette forme est ignorée plutôt que recopiée : `Intl` lève un
- * `RangeError` sur une étiquette mal formée, et une adresse mal saisie ferait
- * alors tomber l'écran entier au lieu d'afficher une date.
+ * Réexportée telle quelle de `@spa/shared`, où la règle vit depuis #1343 : la
+ * table de repli par langue et le refus d'un code pays mal formé y sont décrits,
+ * et le PDF du reçu lit la même fonction — c'est ce que le premier critère de
+ * #1325 demandait, et qu'un doublon tenu par des tests miroir ne donnait qu'à
+ * moitié.
+ *
+ * Le réexport n'est pas une commodité d'import : il tient ce module pour le
+ * **point d'emploi unique** du front — « aucun composant n'appelle
+ * `toLocaleString` sans fuseau », dit l'en-tête, et une quarantaine d'appelants
+ * lisent déjà l'étiquette d'ici.
  */
-export function formattingLocale(
-  locale: Locale = FALLBACK_LOCALE,
-  countryCode?: string | null | undefined,
-): string {
-  const region =
-    typeof countryCode === 'string' && /^[A-Za-z]{2}$/.test(countryCode)
-      ? countryCode.toUpperCase()
-      : FALLBACK_REGION[locale];
-
-  return `${locale}-${region}`;
-}
+export { formattingLocale };
 
 /** « lundi 1 septembre 2026 à 11:00 », dans le fuseau de l'établissement. */
 export function formatDateTimeInTimeZone(
@@ -252,70 +247,6 @@ function fractionDigitsOf(currency: string, intlTag: string): number {
 }
 
 /**
- * Un nombre écrit avec les séparateurs **des autres nombres de l'écran** — et
- * non avec ceux qu'`Intl` réserve à la monnaie (#1325).
- *
- * ## Le fait, vérifiable en une ligne de Node
- *
- * ```
- * new Intl.NumberFormat('en-FR').format(1234.5)                            // 1 234,5
- * new Intl.NumberFormat('en-FR', { style: 'currency', currency: 'EUR' })
- *   .format(1234.5)                                                        // €1,234.50
- * ```
- *
- * Ce n'est pas un défaut d'ICU ni une étiquette mal formée : CLDR déclare pour
- * `en-FR` — comme pour `en-DE` — des symboles `currencyDecimal` et
- * `currencyGroup` **distincts** de ceux du nombre ordinaire. L'anglais de France
- * y écrit ses nombres à la française et sa monnaie à l'anglaise.
- *
- * ## Pourquoi le produit refuse cette distinction
- *
- * Parce qu'elle place les deux formes **côte à côte sur le même écran**. Le
- * tableau de bord du back-office écrivait « 50,0 % » et « 1 234 » à trois
- * centimètres de « €140.00 » : c'est le deuxième constat de #1325, et son
- * deuxième critère d'acceptation — *« sur un même écran, les dates, heures,
- * nombres, pourcentages et montants suivent la même convention »* — ne peut pas
- * être tenu en laissant `Intl` décider deux fois.
- *
- * Et l'écran n'était pas seul en cause : `formatAmountInput` pré-remplit un
- * champ avec le séparateur **ordinaire**, et {@link parseAmountInput} relit la
- * forme groupée **ordinaire**. Recopier dans le champ un total lu à l'écran
- * — « 1,234.50 » — se faisait donc refuser en `en-FR`, alors que c'est
- * exactement le geste que #1123 avait rendu possible.
- *
- * ## Ce qui est repris à `Intl`, et ce qui ne l'est pas
- *
- * Tout, sauf les deux séparateurs : le symbole de la devise, sa place, l'espace
- * qui l'accompagne, le nombre de chiffres, le signe, la notation compacte, le
- * groupement — tout cela reste rendu par CLDR, part par part. Seules les parts
- * `decimal` et `group` sont remplacées par celles du nombre ordinaire de la même
- * étiquette. Aucune table locale n'est écrite : les deux valeurs viennent
- * d'`Intl` (voir {@link separatorsOf}), et c'est la même source qui décide des
- * deux côtés.
- *
- * Le groupe n'est remplacé que s'il existe : une langue sans séparateur de
- * milliers ne doit pas voir disparaître celui de sa monnaie.
- */
-function withPlainSeparators(
-  value: number,
-  intlTag: string,
-  options: Intl.NumberFormatOptions,
-): string {
-  const plain = separatorsOf(intlTag);
-
-  return new Intl.NumberFormat(intlTag, options)
-    .formatToParts(value)
-    .map((part) => {
-      if (part.type === 'decimal') {
-        return plain.decimal;
-      }
-
-      return part.type === 'group' && plain.group !== '' ? plain.group : part.value;
-    })
-    .join('');
-}
-
-/**
  * « 35,00 € » à partir de `{ amountMinor: 3500, currency: 'EUR' }`.
  *
  * La division par la puissance de dix est le seul flottant du parcours, et il
@@ -392,50 +323,6 @@ export function formatMoneyCompact(
     minimumFractionDigits: 0,
     maximumFractionDigits: Math.abs(major) < 1 ? digits : 1,
   });
-}
-
-/**
- * Ce que la langue emploie pour séparer les décimales et les milliers —
- * « , » et l'espace fine insécable en français, « . » et « , » en anglais.
- *
- * Lu d'`Intl` plutôt que codé en dur, pour la même raison que
- * {@link fractionDigitsOf} : une table locale finirait par diverger de CLDR, et
- * c'est précisément ce que ce module refuse de faire pour l'affichage. Et la
- * région y change bel et bien quelque chose, contrairement à ce qu'on pourrait
- * supposer des deux seules langues du produit : `fr-FR` et `fr-CA` groupent tous
- * deux à l'espace fine, mais `en-CH` groupe à l'apostrophe typographique
- * (« 1’200.00 ») et `en-ZA` prend la virgule décimale du français.
- *
- * Le groupe est rendu tel quel, espace comprise : l'analyse s'en débarrasse de
- * toute façon avec les autres blancs, et c'est la forme textuelle — « , » ou
- * « . » — qui décide de la lecture groupée. Voir {@link splitAmountInput} pour
- * le sort des séparateurs qui ne sont ni l'un ni l'autre.
- *
- * Le résultat est **retenu par étiquette** : depuis #1325 chaque montant affiché
- * le demande, et une liste de cent lignes construisait cent `Intl.NumberFormat`
- * pour relire deux caractères qui ne changent pas.
- */
-const SEPARATORS = new Map<string, { readonly decimal: string; readonly group: string }>();
-
-function separatorsOf(intlTag: string): { readonly decimal: string; readonly group: string } {
-  const retained = SEPARATORS.get(intlTag);
-
-  if (retained !== undefined) {
-    return retained;
-  }
-
-  const parts = new Intl.NumberFormat(intlTag).formatToParts(12345.6);
-  const separators = {
-    // Les replis ne devraient jamais servir — toute locale a un séparateur
-    // décimal —, mais `formatToParts` les déclare optionnels et un `undefined`
-    // glissé dans une expression régulière refuserait tous les montants.
-    decimal: parts.find((part) => part.type === 'decimal')?.value ?? '.',
-    group: parts.find((part) => part.type === 'group')?.value ?? '',
-  };
-
-  SEPARATORS.set(intlTag, separators);
-
-  return separators;
 }
 
 /**
