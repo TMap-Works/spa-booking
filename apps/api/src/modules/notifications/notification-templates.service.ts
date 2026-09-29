@@ -5,6 +5,7 @@ import {
   measureSmsTemplate,
   renderNotification,
   smsReferenceVariables,
+  type NotificationDisplay,
 } from './notification-content';
 import { defaultTemplateFor } from './notification-default-templates';
 import {
@@ -78,26 +79,30 @@ export class NotificationTemplatesService {
    * fait bouger les lignes sous la souris.
    */
   public async list(locale?: Locale): Promise<readonly NotificationTemplateView[]> {
-    const stored = await this.repository.findAll();
+    const [stored, countryCode] = await Promise.all([
+      this.repository.findAll(),
+      this.repository.tenantCountryCode(),
+    ]);
     const views: NotificationTemplateView[] = [];
     const locales = locale === undefined ? LOCALES : [locale];
 
     for (const type of NOTIFICATION_TYPES) {
       for (const channel of NOTIFICATION_CHANNELS) {
         for (const wanted of locales) {
+          const display = { locale: wanted, countryCode };
           const custom = stored.find(
             (row) => row.type === type && row.channel === channel && row.locale === wanted,
           );
 
           if (custom !== undefined) {
-            views.push(view(type, channel, wanted, 'TENANT', custom.source, custom.updatedAt));
+            views.push(view(type, channel, display, 'TENANT', custom.source, custom.updatedAt));
             continue;
           }
 
           const fallback = defaultTemplateFor(type, channel, wanted);
 
           if (fallback !== null) {
-            views.push(view(type, channel, wanted, 'PLATFORM', fallback, null));
+            views.push(view(type, channel, display, 'PLATFORM', fallback, null));
           }
         }
       }
@@ -118,10 +123,14 @@ export class NotificationTemplatesService {
     channel: NotificationChannel,
     locale: Locale,
   ): Promise<NotificationTemplateView> {
-    const custom = await this.repository.find(type, channel, locale);
+    const [custom, countryCode] = await Promise.all([
+      this.repository.find(type, channel, locale),
+      this.repository.tenantCountryCode(),
+    ]);
+    const display = { locale, countryCode };
 
     if (custom !== null) {
-      return view(type, channel, locale, 'TENANT', custom.source, custom.updatedAt);
+      return view(type, channel, display, 'TENANT', custom.source, custom.updatedAt);
     }
 
     const fallback = defaultTemplateFor(type, channel, locale);
@@ -130,7 +139,7 @@ export class NotificationTemplatesService {
       throw new NotificationTemplateNotFoundError(type, channel, locale);
     }
 
-    return view(type, channel, locale, 'PLATFORM', fallback, null);
+    return view(type, channel, display, 'PLATFORM', fallback, null);
   }
 
   /**
@@ -157,14 +166,18 @@ export class NotificationTemplatesService {
     source: NotificationTemplateSource,
   ): Promise<NotificationTemplateView> {
     const normalized = normalize(channel, source);
+    // Le pays d'abord : c'est lui qui décide de la longueur du rendu de
+    // référence, donc de ce que la borne de segments refuse. Le lire après la
+    // validation aurait mesuré le modèle à la région d'un autre salon.
+    const display = { locale, countryCode: await this.repository.tenantCountryCode() };
 
     assertPlaceholdersAreKnown(normalized);
     assertChannelFieldsArePresent(channel, normalized);
-    assertSmsFitsBudget(channel, locale, normalized);
+    assertSmsFitsBudget(channel, display, normalized);
 
     const saved = await this.repository.save(type, channel, locale, normalized);
 
-    return view(type, channel, locale, 'TENANT', saved.source, saved.updatedAt);
+    return view(type, channel, display, 'TENANT', saved.source, saved.updatedAt);
   }
 
   /**
@@ -204,9 +217,21 @@ export class NotificationTemplatesService {
    * Le message tel qu'il partirait : balises substituées, dates et montants
    * formatés dans la langue demandée, corps du SMS écourté comme il le sera.
    * Lire un modèle rend `{{date}}` ; l'aperçu rend « Wednesday, September 16,
-   * 2026 at 2:30 PM ». C'est la seule façon de vérifier le troisième critère —
+   * 2026 at 02:30 PM ». C'est la seule façon de vérifier le troisième critère —
    * que le formatage suit la langue — sans envoyer un vrai message à une vraie
    * cliente.
+   *
+   * ## Le rendez-vous est fictif ; l'écriture est celle du salon — #1344
+   *
+   * L'enseigne, l'adresse, le fuseau et la devise de l'aperçu sont ceux d'un
+   * rendez-vous **plausible**, et non ceux de l'établissement : c'est ce qui
+   * permet à l'aperçu d'exister avant qu'aucun rendez-vous n'existe.
+   *
+   * La **locale de mise en forme**, elle, est bien celle du salon — sa langue et
+   * son pays. Un aperçu qui daterait « Wednesday, September 16, 2026 at 2:30 PM »
+   * pendant que les clientes du même salon reçoivent « Wednesday, 16 September
+   * 2026 at 14:30 » montrerait exactement le format que ce ticket retire, sur
+   * l'écran même qui existe pour donner à lire ce qui partira.
    *
    * ## Avec brouillon, ou sans
    *
@@ -232,17 +257,18 @@ export class NotificationTemplatesService {
     locale: Locale,
     draft?: NotificationTemplateSource,
   ): Promise<NotificationTemplatePreview> {
+    const display = { locale, countryCode: await this.repository.tenantCountryCode() };
     const effective =
       draft === undefined
         ? await this.get(type, channel, locale)
-        : validatedDraft(type, channel, locale, draft);
+        : validatedDraft(type, channel, display, draft);
 
     return {
       type,
       channel,
       locale,
       origin: effective.origin,
-      rendered: renderNotification(effective.source, smsReferenceVariables(locale), channel),
+      rendered: renderNotification(effective.source, smsReferenceVariables(display), channel),
       sms: effective.sms,
     };
   }
@@ -258,23 +284,29 @@ export class NotificationTemplatesService {
 function validatedDraft(
   type: NotificationType,
   channel: NotificationChannel,
-  locale: Locale,
+  display: NotificationDisplay,
   draft: NotificationTemplateSource,
 ): NotificationTemplateView {
   const normalized = normalize(channel, draft);
 
   assertPlaceholdersAreKnown(normalized);
   assertChannelFieldsArePresent(channel, normalized);
-  assertSmsFitsBudget(channel, locale, normalized);
+  assertSmsFitsBudget(channel, display, normalized);
 
-  return view(type, channel, locale, 'TENANT', normalized, null);
+  return view(type, channel, display, 'TENANT', normalized, null);
 }
 
-/** Un modèle effectif, sa provenance, et ce qu'il coûtera s'il part en SMS. */
+/**
+ * Un modèle effectif, sa provenance, et ce qu'il coûtera s'il part en SMS.
+ *
+ * Le contexte d'affichage a remplacé la langue seule (#1344) : la langue reste ce
+ * que la vue annonce, mais le **coût** se mesure sur l'écriture du salon, pays
+ * compris.
+ */
 function view(
   type: NotificationType,
   channel: NotificationChannel,
-  locale: Locale,
+  display: NotificationDisplay,
   origin: NotificationTemplateView['origin'],
   source: NotificationTemplateSource,
   updatedAt: Date | null,
@@ -282,11 +314,11 @@ function view(
   return {
     type,
     channel,
-    locale,
+    locale: display.locale,
     origin,
     source,
     updatedAt,
-    sms: smsCost(channel, locale, source),
+    sms: smsCost(channel, display, source),
   };
 }
 
@@ -298,10 +330,10 @@ function view(
  */
 function smsCost(
   channel: NotificationChannel,
-  locale: Locale,
+  display: NotificationDisplay,
   source: NotificationTemplateSource,
 ): SmsCost | null {
-  return channel === 'SMS' ? measureSmsTemplate(source.text, locale) : null;
+  return channel === 'SMS' ? measureSmsTemplate(source.text, display) : null;
 }
 
 /**
@@ -393,14 +425,14 @@ function assertChannelFieldsArePresent(
  */
 function assertSmsFitsBudget(
   channel: NotificationChannel,
-  locale: Locale,
+  display: NotificationDisplay,
   source: NotificationTemplateSource,
 ): void {
   if (channel !== 'SMS') {
     return;
   }
 
-  const cost = measureSmsTemplate(source.text, locale);
+  const cost = measureSmsTemplate(source.text, display);
 
   if (cost.segments > SMS_MAX_SEGMENTS) {
     throw new NotificationTemplateTooLongError({

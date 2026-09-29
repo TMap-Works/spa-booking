@@ -708,8 +708,10 @@ export class NotificationsRepository {
           // même salon, ce qui est l'écart entre surfaces que #1334 ferme.
           region: true,
           // Le pays décide de l'ordre de la localité — « New York 10118 » contre
-          // « 75011 Paris » (#1334). Il est lu et **jamais écrit** dans le
-          // message : c'est `addressLocalityLine` qui s'en sert, pas le modèle.
+          // « 75011 Paris » (#1334) — et, depuis #1344, de l'écriture des dates,
+          // des heures et des montants du message. Il est lu et **jamais écrit**
+          // dans le message : ce sont `addressLocalityLine` et `formattingLocale`
+          // qui s'en servent, pas le modèle.
           countryCode: true,
           contactPhone: true,
         },
@@ -728,6 +730,12 @@ export class NotificationsRepository {
       tenantName: tenant.name,
       tenantSlug: tenant.slug,
       tenantTimeZone: tenant.timezone,
+      // Le pays sert deux fois désormais, et sur la même colonne : l'ordre de la
+      // localité dans l'adresse (#1341), et la **locale de mise en forme** des
+      // dates, heures et montants du message (#1344). Il descend donc dans le
+      // contexte au lieu de rester local à `postalAddress` : une confirmation ne
+      // peut pas porter l'adresse d'un pays et les heures d'un autre.
+      tenantCountryCode: tenant.countryCode,
       tenantAddress: postalAddress(tenant),
       tenantPhone: tenant.contactPhone,
       appointmentReference: appointment.reference,

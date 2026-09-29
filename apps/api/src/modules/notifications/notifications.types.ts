@@ -639,6 +639,33 @@ export interface AppointmentMessageContext {
   readonly tenantSlug: string;
   /** Fuseau IANA de l'établissement — l'heure s'affiche dedans, jamais en UTC. */
   readonly tenantTimeZone: string;
+
+  /**
+   * Le pays de l'établissement — `tenants.country_code`, ISO 3166-1 alpha-2 —, ou
+   * `null` quand le salon n'a pas publié son adresse (#1344).
+   *
+   * ## Il ne s'écrit dans aucun message
+   *
+   * Il décide de l'**écriture** : l'ordre des composantes d'une date, le cycle
+   * horaire, les séparateurs d'un montant. C'est la région de l'étiquette BCP 47
+   * que `formattingLocale` compose, et c'est la même colonne qui décide déjà de
+   * l'ordre de la localité dans `{{adresse}}` (#1341) — un message ne peut donc pas
+   * porter l'adresse d'un pays et les heures d'un autre.
+   *
+   * ## Pourquoi le pays du salon, et non celui de la destinataire
+   *
+   * Parce que l'heure annoncée est celle du salon, dans le fuseau du salon : elle
+   * s'écrit comme le salon l'écrit, exactement comme sur sa grille de créneaux, son
+   * planning et le reçu de sa caisse. La **langue**, elle, est celle de la
+   * destinataire. Une cliente anglophone d'un salon parisien lit donc
+   * « Monday, 8 September 2026 at 14:30 ».
+   *
+   * `null` fait retomber la règle unique sur la région du marché de la langue,
+   * documentée et figée dans `@spa/shared` — jamais sur celle du serveur ni sur
+   * celle d'une variable d'environnement.
+   */
+  readonly tenantCountryCode: string | null;
+
   readonly tenantAddress: string | null;
   readonly tenantPhone: string | null;
 

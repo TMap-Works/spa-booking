@@ -654,9 +654,11 @@ const TEXT_SUMMARY_EN = [
  * confirmer par le salon » — un passif (« it is awaiting confirmation ») aurait
  * laissé la cliente se croire redevable d'un geste.
  *
- * L'heure est **toujours** suivie de son fuseau, ici aussi : « 2:30 PM » sans
+ * L'heure est **toujours** suivie de son fuseau, ici aussi : « 02:30 PM » sans
  * mention est tout aussi ambigu que « 14:30 » pour qui voyage, et ce produit
- * sert une clientèle qui traverse des fuseaux.
+ * sert une clientèle qui traverse des fuseaux. Et elle ne s'écrit pas sur douze
+ * heures parce que le message est anglais : elle s'écrit comme le pays du salon
+ * l'écrit (#1344), donc « 14:30 » dans l'anglais d'un salon parisien.
  */
 const BOOKING_CONFIRMATION_EMAIL_EN: NotificationTemplateSource = {
   subject: 'Awaiting confirmation: your appointment on {{date}} — {{salon}}',
