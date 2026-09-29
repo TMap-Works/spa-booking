@@ -75,6 +75,16 @@ export const PLACE_HEADING_ID = 'nous-trouver';
  * dans la langue résolue et avec la région de l'établissement : la carte écrit
  * « Lundi » ou « Monday » sans qu'aucune table de noms n'existe nulle part. Le
  * **fuseau** ne bouge pas — c'est toujours celui du salon.
+ *
+ * ## Les heures ne sont plus recopiées du contrat (#1345)
+ *
+ * Elles l'étaient, au motif qu'une heure murale saisie par la gérante n'est pas un
+ * mot à traduire — et c'est vrai. Mais ce n'est pas une **écriture** pour autant :
+ * la carte annonçait « 09:00 – 19:00 » au-dessus d'un catalogue dont les créneaux
+ * s'affichent « 9:00 AM » chez un salon américain lu en anglais. Le contexte
+ * d'affichage et le traducteur descendent donc jusqu'à `formatOpeningRange`, qui
+ * écrit les deux bornes comme le pays du salon les écrit et garde le mot
+ * « minuit » pour la borne `24:00`.
  */
 interface SalonInfoProps {
   readonly tenant: PublicTenant;
@@ -141,7 +151,7 @@ export function SalonInfo({ tenant, bookable, now = new Date() }: SalonInfoProps
                 <span className="spa-salon-hours__ranges">
                   {day.ranges.length === 0
                     ? t('salon.hours.closed')
-                    : day.ranges.map((range) => formatOpeningRange(range)).join(', ')}
+                    : day.ranges.map((range) => formatOpeningRange(range, display, t)).join(', ')}
                 </span>
               </li>
             ))}
