@@ -1,3 +1,4 @@
+import { ERROR_CODES, errorMessage } from '@spa/shared';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -41,6 +42,20 @@ const EXPORT_PRODUIT = {
   expiresAt: '2026-09-09T12:15:00.000Z',
   filename: 'maison-lotus-reporting-2026-09-01_2026-09-30.csv',
 };
+
+/**
+ * La zone d'état du bouton — la seule surface où le refus et le nom du fichier
+ * s'écrivent. Lue par sa classe : son contenu change, son rôle non.
+ */
+function statut(): HTMLElement {
+  const element = document.querySelector('.spa-admin-report-export__status');
+
+  if (element === null) {
+    throw new Error('la zone d’état du bouton d’export est absente du rendu');
+  }
+
+  return element as HTMLElement;
+}
 
 /** Les clics d'ancre sont neutralisés : jsdom n'a pas de gestionnaire de téléchargement. */
 let clickSpy: ReturnType<typeof vi.spyOn>;
@@ -110,19 +125,36 @@ describe('ReportExportButton', () => {
     });
   });
 
+  /**
+   * Le détail affiché est la phrase du **contrat**, pas celle du serveur (#1327).
+   *
+   * L'écran interpolait `result.message` dans son gabarit « L'export a échoué :
+   * … ». Ce message est écrit par l'action serveur, donc rangé dans l'état du
+   * bouton dans la langue de cet instant : il restait en français dès que la
+   * gérante basculait l'écran en anglais. Le bouton garde désormais le code, et
+   * en lit la phrase au rendu — celle-ci est donc **lue** dans `errorMessage` et
+   * jamais recopiée, pour qu'un littéral ne reste pas vert le jour où cet écran
+   * cesserait de consulter la table.
+   */
   it('dit le refus de l’API sans ouvrir quoi que ce soit', async () => {
     createReportExportAction.mockResolvedValue({
       ok: false,
-      code: 'REPORT_WINDOW_TOO_WIDE',
+      code: ERROR_CODES.REPORT_WINDOW_TOO_WIDE,
+      // Le message du serveur, que l'écran n'affiche plus : il est ici pour que
+      // la doublure ait la forme d'un vrai refus, et pour que l'assertion
+      // ci-dessous prouve qu'il ne traverse pas.
       message: 'Une fenêtre de rapport couvre au plus 366 jours.',
     });
 
     render(<ReportExportButton tenantSlug={SLUG} window={FENETRE} />);
     fireEvent.click(screen.getByRole('button', { name: /Exporter en CSV/i }));
 
+    const attendu = errorMessage(ERROR_CODES.REPORT_WINDOW_TOO_WIDE, 'fr');
+
     await waitFor(() => {
-      expect(screen.getByText(/couvre au plus 366 jours/)).toBeTruthy();
+      expect(statut().textContent ?? '').toContain(attendu);
     });
+    expect(statut().textContent ?? '').not.toContain('couvre au plus 366 jours');
     expect(clickSpy).not.toHaveBeenCalled();
   });
 

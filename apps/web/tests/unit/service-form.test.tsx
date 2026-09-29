@@ -1,4 +1,4 @@
-import type { Service, ServiceCategory } from '@spa/shared';
+import { ERROR_CODES, errorMessage, type Service, type ServiceCategory } from '@spa/shared';
 import { cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -254,10 +254,19 @@ describe('prestation — soumission', () => {
     );
   });
 
+  /**
+   * Le bandeau écrit la phrase du **contrat**, pas celle du serveur (#1327).
+   *
+   * Il rangeait `result.message` — un texte écrit par l'action serveur, figé dans
+   * la langue de la requête qui l'a obtenu. Le formulaire garde désormais le code
+   * et en lit la phrase au rendu ; elle est **lue** dans `errorMessage`, jamais
+   * recopiée.
+   */
   it('annonce l’échec sans effacer la saisie', async () => {
     updateServiceAction.mockResolvedValue({
       ok: false,
-      code: 'VALIDATION_ERROR',
+      code: ERROR_CODES.VALIDATION_ERROR,
+      // Le message du serveur, que le bandeau n'affiche plus.
       message: 'La prestation saisie est invalide.',
     });
     const user = userEvent.setup();
@@ -265,7 +274,10 @@ describe('prestation — soumission', () => {
 
     await user.click(screen.getByRole('button', { name: /Enregistrer/ }));
 
-    expect(await screen.findByText('La prestation saisie est invalide.')).toBeDefined();
+    expect(
+      await screen.findByText(errorMessage(ERROR_CODES.VALIDATION_ERROR, 'fr')),
+    ).toBeDefined();
+    expect(screen.queryByText('La prestation saisie est invalide.')).toBeNull();
     expect(valueOf(/Nom de la prestation/)).toBe('Massage suédois');
   });
 });
