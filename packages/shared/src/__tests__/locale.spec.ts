@@ -16,6 +16,7 @@ import {
   localeSchema,
   submittedLocaleSchema,
 } from '../locale/index';
+import { REPORT_EXPORT_FALLBACK_LOCALE } from '../schemas/reporting';
 
 describe('localeSchema', () => {
   it.each([...LOCALES])('accepte %s', (locale) => {
@@ -103,5 +104,15 @@ describe('DEFAULT_LOCALE', () => {
     // salon créé demain.
     expect(DEFAULT_LOCALE).toBe('en');
     expect(isLocale(DEFAULT_LOCALE)).toBe(true);
+  });
+
+  it('emporte le repli de l’export CSV avec lui — #1305', () => {
+    // Le dernier repli de langue du dépôt à être resté sur le français : il
+    // décide de l'en-tête, des libellés **et des deux séparateurs** du fichier
+    // que rend `POST /reports/export` quand la demande ne porte aucune langue.
+    // Épinglé ici plutôt que dans le module d'export parce que c'est l'égalité
+    // qui compte : une langue par défaut changée d'un côté sans l'autre ferait
+    // sortir un fichier dans une langue que le produit n'emploie plus.
+    expect(REPORT_EXPORT_FALLBACK_LOCALE).toBe(DEFAULT_LOCALE);
   });
 });

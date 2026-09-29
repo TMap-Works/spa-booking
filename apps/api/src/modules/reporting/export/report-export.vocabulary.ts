@@ -1,4 +1,4 @@
-import type { Locale } from '@spa/shared';
+import { DEFAULT_LOCALE, type Locale } from '@spa/shared';
 
 /**
  * Les mots et les signes du fichier d'export, dans les deux langues — #851,
@@ -125,15 +125,22 @@ const VOCABULARIES: Readonly<Record<Locale, ReportExportVocabulary>> = {
  * La langue est déjà validée par `reportExportLocaleSchema` du contrat partagé
  * avant d'arriver ici — la garde ci-dessous n'est donc pas une seconde
  * validation, mais ce qui rend la fonction totale : un `Locale` ajouté au
- * contrat sans sa traduction sortirait en français plutôt que de faire tomber
- * l'export, et la parité est de toute façon tenue par le typage de
- * {@link VOCABULARIES}, qui exige une entrée par langue de `LOCALES`.
+ * contrat sans sa traduction sortirait dans la langue par défaut du produit
+ * plutôt que de faire tomber l'export, et la parité est de toute façon tenue par
+ * le typage de {@link VOCABULARIES}, qui exige une entrée par langue de
+ * `LOCALES`.
  */
 export function reportExportVocabulary(locale: Locale): ReportExportVocabulary {
-  // `?? FRENCH` et non `LOCALES.includes(locale)` : l'appartenance à `LOCALES`
-  // est exactement ce que `VOCABULARIES` couvre, si bien qu'un test d'apparte-
-  // nance n'aurait rien attrapé de ce qu'il prétend attraper — une langue
-  // ajoutée au contrat sans sa traduction le franchit, et la lecture qui suit
-  // tombe sur `undefined`. La lecture indexée, elle, est totale.
-  return VOCABULARIES[locale] ?? FRENCH;
+  // Un repli et non `LOCALES.includes(locale)` : l'appartenance à `LOCALES` est
+  // exactement ce que `VOCABULARIES` couvre, si bien qu'un test d'appartenance
+  // n'aurait rien attrapé de ce qu'il prétend attraper — une langue ajoutée au
+  // contrat sans sa traduction le franchit, et la lecture qui suit tombe sur
+  // `undefined`. La lecture indexée, elle, est totale.
+  //
+  // `DEFAULT_LOCALE` et non `FRENCH` depuis #1305 : ce repli-là ne répond pas à
+  // la même question que `REPORT_EXPORT_FALLBACK_LOCALE` — il couvre une langue
+  // sans vocabulaire, pas une demande sans langue — mais les deux tombaient sur
+  // le français, et il n'y a plus de raison qu'un fichier sorte dans une langue
+  // que le produit n'a pas pour défaut.
+  return VOCABULARIES[locale] ?? VOCABULARIES[DEFAULT_LOCALE];
 }

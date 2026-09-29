@@ -237,14 +237,20 @@ devise dans la colonne prévue (`brut_minor`, `ht_minor`, `rembourse_minor`,
 introduit exactement le flottant que CLAUDE.md interdit. Le taux de no-show est la
 seule valeur non entière du fichier, et c'en est une par nature : c'est un ratio.
 
-#### La langue du fichier (#851)
+#### La langue du fichier (#851, #1305)
 
 `?locale=fr|en`, validée par `reportExportLocaleSchema` du contrat partagé. Elle
 vient de **l'interface au moment de l'export**, pas de `Accept-Language` — qui
 est la préférence du navigateur — ni de `tenants.default_locale` — qui est la
-langue des notifications envoyées aux clientes. Absente, elle vaut `fr` :
-c'est ce que le fichier contenait avant ce ticket, et un appelant qui ne demande
-rien doit continuer de recevoir ce qu'il recevait.
+langue des notifications envoyées aux clientes. Absente, elle vaut
+`REPORT_EXPORT_FALLBACK_LOCALE`, c'est-à-dire `DEFAULT_LOCALE` — l'anglais.
+
+Ce repli avait valu `fr` à #851, le temps de la transition : le fichier était
+français en dur avant ce ticket-là, et un appelant qui ne demandait rien devait
+continuer de recevoir ce qu'il recevait. #1305 l'a ramené à la langue par défaut
+du produit, comme tous les autres replis de l'épique #843. Il décide du **format**
+autant que des mots — un export non paramétré sort donc à la virgule, et non plus
+au point-virgule.
 
 Ce qui la suit, et ce qui ne la suit pas :
 
