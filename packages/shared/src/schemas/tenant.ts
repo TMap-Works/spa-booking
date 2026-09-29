@@ -33,6 +33,7 @@ import {
   MIN_BOOKING_NOTICE_MINUTES_FLOOR,
   MIN_SLOT_INTERVAL_MINUTES,
   POSTAL_CODE_MAX_LENGTH,
+  REGION_MAX_LENGTH,
 } from '../constants/limits';
 import {
   LEGAL_ID_MAX_LENGTH,
@@ -69,6 +70,7 @@ import { isoWeekdaySchema, scheduleEndTimeSchema, wallMinutesOrNull } from './av
  *
  * `postalCode` reste facultatif : tous les pays n'en ont pas, et l'exiger
  * refuserait des adresses réelles. `line2` l'est aussi — c'est un complément.
+ * `region` également, et pour la même raison, écrite ci-dessous.
  */
 export const postalAddressSchema = z
   .object({
@@ -78,6 +80,32 @@ export const postalAddressSchema = z
     line2: z.string().trim().min(1).max(ADDRESS_LINE_MAX_LENGTH).optional(),
     postalCode: z.string().trim().min(1).max(POSTAL_CODE_MAX_LENGTH).optional(),
     city: z.string().trim().min(1).max(CITY_MAX_LENGTH),
+    /**
+     * L'État, la province ou la subdivision équivalente — « NY », « QC » (#1335).
+     *
+     * **Facultative**, comme le code postal, et pour la même raison : la majorité
+     * des pays n'en ont pas, et l'exiger refuserait l'adresse d'un salon
+     * parisien. Le régime est celui de tout le contrat d'adresse — `.optional()`,
+     * jamais `.nullable()` : une adresse sans subdivision **omet** la clé.
+     *
+     * Elle n'entre pas dans le triplet minimal (`line1`, `city`, `country`) et
+     * n'est donc pas portée par `tenants_address_completeness_check`. L'y ajouter
+     * aurait rendu la contrainte fausse pour les neuf pays du produit qui
+     * n'écrivent pas de subdivision.
+     *
+     * ## Ce qu'elle ne fait pas : contraindre le pays
+     *
+     * Le schéma ne refuse pas une région sur un salon français, alors que les
+     * formulaires ne la proposent que pour US et CA (`countryUsesAddressRegion`).
+     * L'asymétrie est délibérée : la liste des pays à subdivision postale est une
+     * règle de **présentation**, qui s'étendra le jour où le produit ouvrira
+     * l'Australie ou le Brésil, là où un `refine` en aurait fait une règle de
+     * données — et aurait alors refusé en 400 l'enregistrement d'un salon dont la
+     * colonne porte déjà la valeur. C'est l'arbitrage déjà rendu entre
+     * `countryCodeSchema` et `submittedCountryCodeSchema` : on est strict sur ce
+     * qui ne se rattrape pas en aval, permissif sur ce qui se réaffiche.
+     */
+    region: z.string().trim().min(1).max(REGION_MAX_LENGTH).optional(),
     /**
      * Pays en ISO 3166-1 alpha-2, majuscules — « FR », « MG », « BE ».
      *
@@ -92,6 +120,53 @@ export const postalAddressSchema = z
   .strict();
 
 export type PostalAddress = z.infer<typeof postalAddressSchema>;
+
+/**
+ * Les pays dont l'adresse postale porte une subdivision — #1335.
+ *
+ * Les deux du périmètre nord-américain, et eux seuls. L'USPS écrit
+ * « CITY ST ZIP » et Postes Canada « CITY PR  A1A 1A1» : sans l'État, deux villes
+ * homonymes dans deux États — Springfield, Portland, Columbus — ne se distinguent
+ * pas. Les neuf autres pays ouverts par le produit (`lib/salon-presets.ts`, côté
+ * web) écrivent une adresse sans subdivision, et leur proposer le champ
+ * demanderait à une gérante parisienne de décider ce qu'elle met dans « État ».
+ *
+ * Ce n'est volontairement pas une table des subdivisions du monde : c'est un
+ * choix de formulaire et d'affichage, pas une donnée de référence. Un pays qu'on
+ * ajoute ici se voit sur une ligne de diff ; une table de deux cents entrées se
+ * relit une fois et se croit ensuite — c'est l'arbitrage déjà écrit sur
+ * `CITY_BEFORE_POSTAL_CODE` (`apps/web/components/salon/salon-address.ts`).
+ *
+ * ## Pourquoi dans le contrat, et non dans chaque écran
+ *
+ * Quatre surfaces ont besoin de la même réponse : le formulaire de réglages du
+ * salon, l'inscription en libre-service, le formulaire d'ouverture de la console
+ * et la composition de l'adresse à l'affichage. Quatre listes recopiées auraient
+ * fini par diverger sur le seul cas intéressant — le jour où un dixième pays
+ * s'ajoute, un des quatre écrans l'oublierait, et le champ saisi ne serait plus
+ * affiché nulle part.
+ */
+export const ADDRESS_REGION_COUNTRIES = ['US', 'CA'] as const;
+
+/** L'ensemble, monté une fois — même motif qu'`ASSIGNED` dans `constants/countries.ts`. */
+const ADDRESS_REGION_COUNTRY_SET: ReadonlySet<string> = new Set(ADDRESS_REGION_COUNTRIES);
+
+/**
+ * `true` si le pays écrit un État ou une province dans son adresse postale.
+ *
+ * Accepte l'absence de pays — un formulaire vide, une adresse non publiée — et
+ * rend `false` : tant qu'on ne sait pas où est le salon, on ne lui demande pas sa
+ * subdivision.
+ *
+ * **Sensible à la casse**, comme `isCountryCodeAlpha2` : le contrat porte ces
+ * codes en majuscules, et la normalisation appartient au schéma qui lit la
+ * saisie, pas à ce prédicat.
+ */
+export function countryUsesAddressRegion(country: string | null | undefined): boolean {
+  return (
+    country !== null && country !== undefined && ADDRESS_REGION_COUNTRY_SET.has(country)
+  );
+}
 
 /**
  * La même adresse, **telle qu'un formulaire la soumet** — #1330.
