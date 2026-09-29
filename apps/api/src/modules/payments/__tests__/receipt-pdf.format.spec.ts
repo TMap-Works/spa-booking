@@ -11,30 +11,110 @@ import {
   printable,
   receiptFileName,
 } from '../receipt-pdf/receipt-pdf.format';
+import { type ReceiptDisplay } from '../receipt-pdf/receipt-pdf.locale';
 import { receiptVocabulary } from '../receipt-pdf/receipt-pdf.vocabulary';
 
 /**
  * La mise en forme de ce qui s'imprime — #819, cinquième et septième critères ;
- * #1230 pour les deux langues.
+ * #1230 pour les deux langues ; #1325 pour la région et le cycle horaire.
  *
  * Ce qui se prouve ici : qu'un entier devient le bon montant dans sa devise, que
  * les instants sont rendus dans le fuseau du salon, qu'aucune ligne de règlement
  * ne porte quoi que ce soit d'une carte — et que **la langue change l'écriture,
  * jamais la valeur**.
+ *
+ * ## Deux salons, quatre contextes — #1325, quatrième critère
+ *
+ * Chaque attente d'écriture est jouée pour un salon **parisien** et pour un salon
+ * **new-yorkais**, dans les deux langues. C'est la seule façon de distinguer ce
+ * que la **langue** décide — les mots — de ce que le **pays du salon** décide —
+ * l'ordre d'une date, le cycle horaire, les séparateurs d'un nombre. Une suite
+ * qui n'aurait que `'fr'` et `'en'` laisserait passer exactement la faute que
+ * #1325 ferme : une pièce datée à l'américaine pour un salon parisien, au seul
+ * motif qu'elle sortait en anglais.
+ *
+ * ## Les tests miroir, et à quoi ils servent
+ *
+ * Les chaînes attendues ici sont **les mêmes** que celles de
+ * `apps/web/tests/unit/format.test.ts` et de
+ * `apps/web/tests/unit/receipt-ticket.test.ts` pour les mêmes entrées. C'est ce
+ * qui tient le premier critère de #1325 — *une seule fonction de locale de mise
+ * en forme, utilisée par le front ET le PDF de l'API* — tant que `packages/shared`
+ * n'héberge pas la fonction commune (voir l'en-tête de `receipt-pdf.locale.ts`).
+ * Une divergence d'un côté fait rougir les deux suites, ce qu'une consigne de
+ * relecture n'aurait pas donné.
  */
 
 const PARIS = 'Europe/Paris';
 const TANA = 'Indian/Antananarivo';
+const NEW_YORK = 'America/New_York';
+
+/** Un salon parisien — `fr-FR` en français, `en-FR` en anglais. */
+const enFrance = (locale: Locale): ReceiptDisplay => ({ locale, countryCode: 'FR' });
+
+/** Un salon new-yorkais — `fr-US` en français, `en-US` en anglais. */
+const auxEtatsUnis = (locale: Locale): ReceiptDisplay => ({ locale, countryCode: 'US' });
+
+/**
+ * Les quatre contextes d'affichage du produit : deux langues × deux pays.
+ *
+ * Les garanties qui ne dépendent **ni** de la langue **ni** du pays — les
+ * décimales d'une devise, le symbole étroit, l'absence d'espace fine insécable —
+ * se rejouent sur les quatre : ce sont celles qu'un ticket doit tenir où qu'il
+ * s'imprime, et les énumérer est ce qui empêche qu'un marché nouveau les perde.
+ */
+const SALONS: readonly ReceiptDisplay[] = LOCALES.flatMap((locale) => [
+  enFrance(locale),
+  auxEtatsUnis(locale),
+]);
+
+/**
+ * L'espace insécable ordinaire — U+00A0 —, celle que `printable` substitue à
+ * l'espace fine, et donc celle qui sépare les milliers sur le papier.
+ *
+ * Écrites par leur point de code plutôt qu'en littéral : deux espaces insécables
+ * ne se distinguent pas à l'œil dans un fichier source, et c'est précisément la
+ * distinction que ce module garantit.
+ */
+const MILLIERS = '\u00a0';
+
+/** L'espace fine insécable — U+202F —, que Roboto ne porte pas. */
+const ESPACE_FINE = '\u202f';
 
 describe('formatMoney', () => {
   it('rend un montant en euros avec ses deux décimales', () => {
-    expect(formatMoney({ amountMinor: 6500, currency: 'EUR' }, 'fr')).toContain('65,00');
-    expect(formatMoney({ amountMinor: 6500, currency: 'EUR' }, 'fr')).toContain('€');
+    expect(formatMoney({ amountMinor: 6500, currency: 'EUR' }, enFrance('fr'))).toContain('65,00');
+    expect(formatMoney({ amountMinor: 6500, currency: 'EUR' }, enFrance('fr'))).toContain('€');
   });
 
-  /** #1230, deuxième critère : la même valeur, écrite comme l'anglais l'écrit. */
-  it('rend le même montant à l’anglaise', () => {
-    expect(formatMoney({ amountMinor: 6500, currency: 'EUR' }, 'en')).toBe('€65.00');
+  /**
+   * #1230, deuxième critère : la même valeur, écrite comme l'anglais l'écrit — et
+   * #1325, deuxième critère : comme l'anglais **de ce pays-là** l'écrit. Un salon
+   * parisien garde la virgule décimale de son écran quand sa pièce sort en
+   * anglais ; c'est un salon new-yorkais qui prend le point.
+   */
+  it('rend le même montant à l’anglaise, dans la région du salon', () => {
+    expect(formatMoney({ amountMinor: 6500, currency: 'EUR' }, enFrance('en'))).toBe('€65,00');
+    expect(formatMoney({ amountMinor: 6500, currency: 'EUR' }, auxEtatsUnis('en'))).toBe('€65.00');
+  });
+
+  /**
+   * **#1325, deuxième critère.** CLDR déclare pour `en-FR` des séparateurs
+   * **monétaires** distincts de ceux du nombre ordinaire : `Intl` seul rendrait
+   * « €9,999.99 » juste au-dessus d'un taux écrit « 5,5% ». Un rouleau n'admet
+   * qu'une convention à la fois, et c'est celle du nombre ordinaire.
+   */
+  it('n’emploie pas les séparateurs que CLDR réserve à la monnaie', () => {
+    expect(formatMoney({ amountMinor: 999_999, currency: 'EUR' }, enFrance('en'))).toBe(
+      `€9${MILLIERS}999,99`,
+    );
+    expect(formatTaxRate(550, enFrance('en'))).toBe('5,5%');
+
+    // La même paire chez un salon new-yorkais : virgule et point, des deux côtés.
+    expect(formatMoney({ amountMinor: 999_999, currency: 'EUR' }, auxEtatsUnis('en'))).toBe(
+      '€9,999.99',
+    );
+    expect(formatTaxRate(550, auxEtatsUnis('en'))).toBe('5.5%');
   });
 
   /**
@@ -45,8 +125,8 @@ describe('formatMoney', () => {
    * nombre de décimales, et elle n'a rien à voir avec la langue du document.
    */
   it('rend un montant en ariary sans décimale, et sans le diviser', () => {
-    for (const locale of LOCALES) {
-      const formatted = formatMoney({ amountMinor: 6500, currency: 'MGA' }, locale);
+    for (const display of SALONS) {
+      const formatted = formatMoney({ amountMinor: 6500, currency: 'MGA' }, display);
 
       expect(formatted).toContain('6');
       expect(formatted).toContain('500');
@@ -57,16 +137,20 @@ describe('formatMoney', () => {
   });
 
   it('rend le symbole étroit, jamais le code à trois lettres', () => {
-    for (const locale of LOCALES) {
-      expect(formatMoney({ amountMinor: 24_000, currency: 'MGA' }, locale)).not.toContain('MGA');
+    for (const display of SALONS) {
+      expect(formatMoney({ amountMinor: 24_000, currency: 'MGA' }, display)).not.toContain('MGA');
     }
   });
 
   it('ne perd pas un centime sur un montant qui n’est pas rond', () => {
-    expect(formatMoney({ amountMinor: 1, currency: 'EUR' }, 'fr')).toContain('0,01');
-    expect(formatMoney({ amountMinor: 9_999_99, currency: 'EUR' }, 'fr')).toContain('99,99');
-    expect(formatMoney({ amountMinor: 1, currency: 'EUR' }, 'en')).toContain('0.01');
-    expect(formatMoney({ amountMinor: 9_999_99, currency: 'EUR' }, 'en')).toContain('99.99');
+    expect(formatMoney({ amountMinor: 1, currency: 'EUR' }, enFrance('fr'))).toContain('0,01');
+    expect(formatMoney({ amountMinor: 9_999_99, currency: 'EUR' }, enFrance('fr'))).toContain(
+      '99,99',
+    );
+    expect(formatMoney({ amountMinor: 1, currency: 'EUR' }, auxEtatsUnis('en'))).toContain('0.01');
+    expect(formatMoney({ amountMinor: 9_999_99, currency: 'EUR' }, auxEtatsUnis('en'))).toContain(
+      '99.99',
+    );
   });
 
   /**
@@ -78,8 +162,12 @@ describe('formatMoney', () => {
     const chiffres = (formatted: string): string => formatted.replaceAll(/\D/g, '');
 
     for (const amountMinor of [1, 6500, 9_999_99, 1_234_567]) {
-      expect(chiffres(formatMoney({ amountMinor, currency: 'EUR' }, 'fr'))).toBe(
-        chiffres(formatMoney({ amountMinor, currency: 'EUR' }, 'en')),
+      expect(chiffres(formatMoney({ amountMinor, currency: 'EUR' }, enFrance('fr')))).toBe(
+        chiffres(formatMoney({ amountMinor, currency: 'EUR' }, enFrance('en'))),
+      );
+      // Et d'un **pays** à l'autre : l'écriture change, la valeur non (#1325).
+      expect(chiffres(formatMoney({ amountMinor, currency: 'EUR' }, auxEtatsUnis('en')))).toBe(
+        chiffres(formatMoney({ amountMinor, currency: 'EUR' }, enFrance('fr'))),
       );
     }
   });
@@ -91,32 +179,34 @@ describe('formatMoney', () => {
    * papier de la cliente.
    */
   it('n’émet jamais l’espace fine insécable, que la police embarquée ignore', () => {
-    for (const locale of LOCALES) {
+    for (const display of SALONS) {
       for (const currency of ['EUR', 'MGA']) {
-        expect(formatMoney({ amountMinor: 1_234_567, currency }, locale)).not.toContain(' ');
+        expect(formatMoney({ amountMinor: 1_234_567, currency }, display)).not.toContain(
+          ESPACE_FINE,
+        );
       }
     }
 
-    expect(printable('6 500')).toBe('6 500');
+    expect(printable(`6${ESPACE_FINE}500`)).toBe(`6${MILLIERS}500`);
   });
 });
 
 describe('formatTaxRate', () => {
   it('rend les points de base en pourcentage', () => {
-    expect(formatTaxRate(2000, 'fr')).toContain('20');
-    expect(formatTaxRate(2000, 'fr')).toContain('%');
-    expect(formatTaxRate(550, 'fr')).toContain('5,5');
+    expect(formatTaxRate(2000, enFrance('fr'))).toContain('20');
+    expect(formatTaxRate(2000, enFrance('fr'))).toContain('%');
+    expect(formatTaxRate(550, enFrance('fr'))).toContain('5,5');
   });
 
   /** Le même taux, à l'anglaise : décimale au point, et pas d'espace avant le signe. */
   it('rend le taux à l’anglaise', () => {
-    expect(formatTaxRate(2000, 'en')).toBe('20%');
-    expect(formatTaxRate(550, 'en')).toBe('5.5%');
+    expect(formatTaxRate(2000, auxEtatsUnis('en'))).toBe('20%');
+    expect(formatTaxRate(550, auxEtatsUnis('en'))).toBe('5.5%');
   });
 
   it('n’imprime pas de décimales inutiles', () => {
-    expect(formatTaxRate(2000, 'fr')).not.toContain('20,00');
-    expect(formatTaxRate(2000, 'en')).not.toContain('20.00');
+    expect(formatTaxRate(2000, enFrance('fr'))).not.toContain('20,00');
+    expect(formatTaxRate(2000, auxEtatsUnis('en'))).not.toContain('20.00');
   });
 });
 
@@ -129,29 +219,51 @@ describe('les dates', () => {
   it('rend l’instant dans le fuseau du salon, et non en UTC', () => {
     const instant = new Date('2026-09-17T09:30:00.000Z');
 
-    expect(formatDateTime(instant, PARIS, 'fr')).toBe('17/09/2026 à 11:30');
-    expect(formatDateTime(instant, TANA, 'fr')).toBe('17/09/2026 à 12:30');
+    expect(formatDateTime(instant, PARIS, enFrance('fr'))).toBe('17/09/2026 à 11:30');
+    expect(formatDateTime(instant, TANA, enFrance('fr'))).toBe('17/09/2026 à 12:30');
   });
 
   /**
-   * **#1230, deuxième critère.** L'anglais écrit le mois d'abord et l'heure en
-   * douze heures — mais c'est le **même instant**, dans le **même fuseau** : la
-   * langue décide de l'écriture, le fuseau décide du jour.
+   * **#1230, deuxième critère**, corrigé par **#1325, deuxième critère.**
+   *
+   * Le mot change — « à » devient « at » — mais **l'ordre de la date et le cycle
+   * horaire ne changent pas** : ils viennent du pays du salon. C'est exactement
+   * ce que la pièce faisait mal, et le quatrième constat de #1325 : elle sortait
+   * « 09/17/2026 at 11:30 AM » pour un salon parisien dont l'écran de caisse
+   * venait d'écrire « 17/09/2026 11:30 ».
+   *
+   * C'est le même **instant** dans le même **fuseau** : la région décide de
+   * l'écriture, le fuseau décide du jour.
    */
-  it('rend le même instant à l’anglaise, dans le même fuseau', () => {
+  it('garde l’écriture du salon quand la pièce sort en anglais', () => {
     const instant = new Date('2026-09-17T09:30:00.000Z');
 
-    expect(formatDateTime(instant, PARIS, 'en')).toBe('09/17/2026 at 11:30 AM');
-    expect(formatDateTime(instant, TANA, 'en')).toBe('09/17/2026 at 12:30 PM');
+    expect(formatDateTime(instant, PARIS, enFrance('en'))).toBe('17/09/2026 at 11:30');
+    expect(formatDateTime(instant, TANA, enFrance('en'))).toBe('17/09/2026 at 12:30');
+  });
+
+  /**
+   * **#1325, deuxième critère — le salon américain, une seule convention.**
+   *
+   * Le cycle horaire n'est plus forcé par la langue : il est celui du pays. Un
+   * salon new-yorkais imprime donc « 05:30 AM » lu en anglais et « 05:30 » lu en
+   * français — une convention par document, jamais deux, et la même que celle de
+   * la gouttière de son planning et de sa grille de créneaux.
+   */
+  it('écrit un salon américain à l’américaine, mois d’abord et 12 heures', () => {
+    const instant = new Date('2026-09-17T09:30:00.000Z');
+
+    expect(formatDateTime(instant, NEW_YORK, auxEtatsUnis('en'))).toBe('09/17/2026 at 05:30 AM');
+    expect(formatDateTime(instant, NEW_YORK, auxEtatsUnis('fr'))).toBe('17/09/2026 à 05:30');
   });
 
   it('date la pièce du bon jour de part et d’autre de minuit local', () => {
     const instant = new Date('2026-09-17T22:30:00.000Z');
 
-    expect(formatDate(instant, PARIS, 'fr')).toBe('18/09/2026');
-    expect(formatDate(instant, 'UTC', 'fr')).toBe('17/09/2026');
-    expect(formatDate(instant, PARIS, 'en')).toBe('09/18/2026');
-    expect(formatDate(instant, 'UTC', 'en')).toBe('09/17/2026');
+    expect(formatDate(instant, PARIS, enFrance('fr'))).toBe('18/09/2026');
+    expect(formatDate(instant, 'UTC', enFrance('fr'))).toBe('17/09/2026');
+    expect(formatDate(instant, PARIS, auxEtatsUnis('en'))).toBe('09/18/2026');
+    expect(formatDate(instant, 'UTC', auxEtatsUnis('en'))).toBe('09/17/2026');
   });
 
   /**
@@ -159,11 +271,13 @@ describe('les dates', () => {
    * Roboto ne la porte pas davantage qu'entre les milliers. Le `printable` de
    * `formatDateTime` couvre les deux, et c'est ici qu'on l'exige.
    */
-  it('n’émet aucune espace fine insécable, dans aucune des deux langues', () => {
-    for (const locale of LOCALES) {
-      expect(formatDateTime(new Date('2026-09-17T09:30:00.000Z'), PARIS, locale)).not.toContain(
-        ' ',
-      );
+  it('n’émet aucune espace fine insécable, dans aucun des quatre contextes', () => {
+    for (const display of SALONS) {
+      for (const zone of [PARIS, NEW_YORK]) {
+        expect(formatDateTime(new Date('2026-09-17T09:30:00.000Z'), zone, display)).not.toContain(
+          ESPACE_FINE,
+        );
+      }
     }
   });
 });
@@ -361,7 +475,7 @@ describe('receiptVocabulary', () => {
 
   it('rend une table pour chacune des langues du contrat', () => {
     for (const locale of LOCALES) {
-      expect(receiptVocabulary(locale).intl).toMatch(/^(fr|en)-[A-Z]{2}$/);
+      expect(receiptVocabulary(locale).at.trim()).not.toBe('');
     }
   });
 

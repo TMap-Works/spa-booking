@@ -393,7 +393,9 @@ describe('le ticket 80 mm en anglais', () => {
 
     expect(text).toContain('Refunds');
     expect(text).toContain('TIC-2026-000123-R1');
-    expect(text).toContain('09/18/2026');
+    // Le salon de la doublure est **parisien** : l'avoir garde donc l'ordre
+    // français même sur une pièce anglaise (#1325). C'était « 09/18/2026 ».
+    expect(text).toContain('18/09/2026');
   });
 
   it('se déclare provisoire en anglais tant que la vente n’est pas close', () => {
@@ -445,22 +447,55 @@ describe('ce que la langue change, et ce qu’elle ne change pas', () => {
     expect(amountsOf('fr').length).toBeGreaterThan(0);
   });
 
-  it('écrit ces montants selon la langue', () => {
+  /**
+   * **#1325, deuxième critère.** Le salon de la doublure est parisien : ses deux
+   * pièces portent donc la **même** écriture des nombres, et seuls les mots
+   * changent. La place du symbole, elle, suit bien la langue — c'est une règle de
+   * CLDR sur laquelle le produit ne revient pas.
+   *
+   * L'anglais rendait « €65.00 » : la région venait alors de la langue, et non du
+   * salon.
+   */
+  it('écrit ces montants dans la convention du salon, dans les deux langues', () => {
     expect(render(receiptFixture(), context({ locale: 'fr' })).text_).toContain('65,00');
-    expect(render(receiptFixture(), context({ locale: 'en' })).text_).toContain('65.00');
+    expect(render(receiptFixture(), context({ locale: 'en' })).text_).toContain('65,00');
   });
 
   /**
-   * Le fuseau décide de **quel jour** on parle, la langue de **comment** on
-   * l'écrit. Les deux pièces datent du même 17 septembre, à la même heure.
+   * Le fuseau décide de **quel jour** on parle, le **pays du salon** de comment
+   * on l'écrit, la langue des seuls mots (#1325). Les deux pièces datent du même
+   * 17 septembre, à la même heure, et l'écrivent pareil : ce salon est parisien.
+   *
+   * L'anglais rendait « 09/17/2026 at 11:30 AM », c'est-à-dire l'écriture d'un
+   * salon américain pour un salon du 11e arrondissement.
    */
-  it('date la pièce du même instant, écrit autrement', () => {
+  it('date la pièce du même instant, et l’écrit de la même façon', () => {
     expect(render(receiptFixture(), context({ locale: 'fr' })).text_).toContain(
       '17/09/2026 à 11:30',
     );
     expect(render(receiptFixture(), context({ locale: 'en' })).text_).toContain(
-      '09/17/2026 at 11:30 AM',
+      '17/09/2026 at 11:30',
     );
+  });
+
+  /**
+   * **#1325, deuxième critère — le salon américain.** Le même instant, le même
+   * fuseau, un salon dont le pays est `US` : la pièce passe en 12 heures et en
+   * mois d'abord, et c'est la seule chose qui change.
+   *
+   * C'est le cas que la recette de #1325 n'avait pas pu vérifier — « aucun salon
+   * US n'est actif en local ». Il se vérifie ici.
+   */
+  it('écrit un salon américain à l’américaine, mois d’abord et 12 heures', () => {
+    const americain = receiptFixture({
+      issuer: { ...receiptFixture().issuer, countryCode: 'US', timezone: 'America/New_York' },
+    });
+
+    expect(render(americain, context({ locale: 'en' })).text_).toContain('09/17/2026 at 05:30 AM');
+    expect(render(americain, context({ locale: 'en' })).text_).toContain('€65.00');
+    // Le même salon lu en français : 24 heures, parce que c'est la convention
+    // que porte `fr-US` — mais une seule convention, sur toute la pièce.
+    expect(render(americain, context({ locale: 'fr' })).text_).toContain('17/09/2026 à 05:30');
   });
 
   /**

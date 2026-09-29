@@ -2,6 +2,11 @@ import type { Locale } from '@spa/shared';
 
 import type { Money } from '../payments.types';
 import type { ReceiptSettlement } from '../receipt.types';
+import {
+  receiptFormattingLocale,
+  withPlainSeparators,
+  type ReceiptDisplay,
+} from './receipt-pdf.locale';
 import { receiptVocabulary } from './receipt-pdf.vocabulary';
 
 /**
@@ -32,6 +37,19 @@ import { receiptVocabulary } from './receipt-pdf.vocabulary';
  * **Ce que la langue ne change pas** : les montants restent des entiers en plus
  * petite unité monétaire, accompagnés de leur code devise, et c'est la devise —
  * pas la langue — qui décide du nombre de décimales.
+ *
+ * ## La région non plus — elle vient du salon, comme à l'écran (#1325)
+ *
+ * Une langue ne suffit pas à écrire une date : `en-US` écrit « 09/17/2026 » là où
+ * `en-FR` écrit « 17/09/2026 », et les deux sont de l'anglais. La langue seule
+ * était pourtant tout ce que ces fonctions recevaient, et le vocabulaire y
+ * répondait par une étiquette figée — d'où un PDF daté « 09/29/2026 at 09:20 AM »
+ * pour un salon parisien dont le ticket à l'écran écrivait « 29/09/2026 09:20 ».
+ *
+ * Chaque fonction prend donc un {@link ReceiptDisplay} : la langue **et** le pays
+ * de l'établissement, celui que `ReceiptIssuer.countryCode` porte déjà. La règle
+ * qui en tire l'étiquette est écrite une fois, dans `receipt-pdf.locale.ts`, et
+ * c'est la même que celle du front.
  */
 
 /**
@@ -71,15 +89,16 @@ export function printable(text: string): string {
  * flottant dans le domaine, et aucun total n'est jamais calculé ici
  * (payments-stripe §5).
  */
-export function formatMoney(money: Money, locale: Locale): string {
-  const formatter = new Intl.NumberFormat(receiptVocabulary(locale).intl, {
+export function formatMoney(money: Money, display: ReceiptDisplay): string {
+  const tag = receiptFormattingLocale(display.locale, display.countryCode);
+  const options: Intl.NumberFormatOptions = {
     style: 'currency',
     currency: money.currency,
     currencyDisplay: 'narrowSymbol',
-  });
-  const digits = formatter.resolvedOptions().maximumFractionDigits ?? 2;
+  };
+  const digits = new Intl.NumberFormat(tag, options).resolvedOptions().maximumFractionDigits ?? 2;
 
-  return printable(formatter.format(money.amountMinor / 10 ** digits));
+  return printable(withPlainSeparators(money.amountMinor / 10 ** digits, tag, options));
 }
 
 /**
@@ -89,26 +108,32 @@ export function formatMoney(money: Money, locale: Locale): string {
  * un montant, et `maximumFractionDigits: 2` couvre les taux au centième de point
  * sans imprimer « 20,00 % » là où « 20 % » suffit.
  */
-export function formatTaxRate(rateBps: number, locale: Locale): string {
+export function formatTaxRate(rateBps: number, display: ReceiptDisplay): string {
+  const tag = receiptFormattingLocale(display.locale, display.countryCode);
+
+  // Mêmes séparateurs que les montants du même rouleau — voir
+  // {@link withPlainSeparators}. Un taux au centième de point écrit « 20.25 % »
+  // sous un total écrit « 1 200,00 € » serait la divergence de #1325 réduite à
+  // deux lignes qui se touchent.
   return printable(
-    new Intl.NumberFormat(receiptVocabulary(locale).intl, {
-      style: 'percent',
-      maximumFractionDigits: 2,
-    }).format(rateBps / 10_000),
+    withPlainSeparators(rateBps / 10_000, tag, { style: 'percent', maximumFractionDigits: 2 }),
   );
 }
 
 /**
- * La date seule, dans le fuseau du salon et l'ordre de la langue — « 17/09/2026 »
- * en français, « 09/17/2026 » en anglais.
+ * La date seule, dans le fuseau du salon et l'ordre **du pays du salon** —
+ * « 17/09/2026 » pour un salon parisien, « 09/17/2026 » pour un salon
+ * new-yorkais, dans les deux langues.
  *
  * Les deux formes datent **le même jour** : c'est le fuseau, et lui seul, qui
  * décide duquel. L'ordre des composantes est une convention d'écriture, au même
- * titre que le séparateur des milliers d'un montant.
+ * titre que le séparateur des milliers d'un montant — et depuis #1325 c'est la
+ * même convention que celle de l'écran qui imprime, `formatTicketDateTime` de
+ * `apps/web/lib/format.ts`.
  */
-export function formatDate(instant: Date, timeZone: string, locale: Locale): string {
+export function formatDate(instant: Date, timeZone: string, display: ReceiptDisplay): string {
   return printable(
-    new Intl.DateTimeFormat(receiptVocabulary(locale).intl, {
+    new Intl.DateTimeFormat(receiptFormattingLocale(display.locale, display.countryCode), {
       timeZone,
       day: '2-digit',
       month: '2-digit',
@@ -118,24 +143,31 @@ export function formatDate(instant: Date, timeZone: string, locale: Locale): str
 }
 
 /**
- * La date et l'heure, dans le fuseau du salon — « 17/09/2026 à 08:30 »,
- * « 09/17/2026 at 8:30 AM ».
+ * La date et l'heure, dans le fuseau du salon — « 17/09/2026 à 08:30 » pour un
+ * salon parisien, « 09/17/2026 at 08:30 AM » pour un salon new-yorkais.
  *
- * Le cycle horaire suit la langue (`ReceiptVocabulary.hourCycle`) : 24 heures en
- * français, 12 heures en anglais, comme l'un et l'autre s'écrivent. Le `printable`
- * n'est pas décoratif sur l'heure anglaise non plus — certaines versions d'ICU
- * glissent une espace fine insécable avant « AM », que Roboto ne porte pas.
+ * ## Le cycle horaire n'est plus forcé — #1325
+ *
+ * Il l'était par **langue** (`ReceiptVocabulary.hourCycle`) : 12 heures dès que
+ * la pièce sortait en anglais, y compris pour un salon parisien dont tout le
+ * reste de l'écran — et tout le reste du PDF — écrivait en 24 heures. Il est
+ * désormais celui que l'étiquette porte, c'est-à-dire celui du **pays du salon**,
+ * ce qui le met d'accord avec la grille de créneaux, les cartes du planning, la
+ * gouttière et le ticket à l'écran : 12 h partout pour un salon américain, 24 h
+ * partout pour un salon parisien.
+ *
+ * Le `printable` n'est pas décoratif sur l'heure anglaise non plus — certaines
+ * versions d'ICU glissent une espace fine insécable avant « AM », que Roboto ne
+ * porte pas.
  */
-export function formatDateTime(instant: Date, timeZone: string, locale: Locale): string {
-  const words = receiptVocabulary(locale);
-  const time = new Intl.DateTimeFormat(words.intl, {
-    timeZone,
-    hour: '2-digit',
-    minute: '2-digit',
-    hourCycle: words.hourCycle,
-  }).format(instant);
+export function formatDateTime(instant: Date, timeZone: string, display: ReceiptDisplay): string {
+  const words = receiptVocabulary(display.locale);
+  const time = new Intl.DateTimeFormat(
+    receiptFormattingLocale(display.locale, display.countryCode),
+    { timeZone, hour: '2-digit', minute: '2-digit' },
+  ).format(instant);
 
-  return `${formatDate(instant, timeZone, locale)} ${words.at} ${printable(time)}`;
+  return `${formatDate(instant, timeZone, display)} ${words.at} ${printable(time)}`;
 }
 
 /**
