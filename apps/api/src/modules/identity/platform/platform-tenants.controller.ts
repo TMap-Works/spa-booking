@@ -140,6 +140,7 @@ export class PlatformTenantsController {
       addressLine2: body.addressLine2 ?? null,
       postalCode: body.postalCode ?? null,
       city: body.city,
+      region: body.region ?? null,
       adminEmail: body.adminEmail,
       adminFirstName: body.adminFirstName,
       adminLastName: body.adminLastName,

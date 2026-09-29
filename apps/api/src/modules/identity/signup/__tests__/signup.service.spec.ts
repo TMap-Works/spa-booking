@@ -30,6 +30,8 @@ const PAYLOAD = {
   addressLine2: null,
   postalCode: '75011',
   city: 'Paris',
+  // Salon français : pas de subdivision postale (#1335).
+  region: null,
   adminEmail: 'Gerante@Maison-Lotus.test',
   adminFirstName: 'Alice',
   adminLastName: 'Durand',

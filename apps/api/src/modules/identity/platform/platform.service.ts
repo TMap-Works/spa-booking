@@ -148,6 +148,7 @@ export class PlatformService {
     addressLine2: string | null;
     postalCode: string | null;
     city: string;
+    region: string | null;
     adminEmail: string;
     adminFirstName: string;
     adminLastName: string;
@@ -180,6 +181,7 @@ export class PlatformService {
         addressLine2: input.addressLine2,
         postalCode: input.postalCode,
         city: input.city,
+        region: input.region,
         adminEmail,
         adminFirstName: input.adminFirstName,
         adminLastName: input.adminLastName,

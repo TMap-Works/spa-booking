@@ -37,6 +37,7 @@ const FICHE: PublicTenantRecord = {
   addressLine2: null,
   postalCode: null,
   city: null,
+  region: null,
   countryCode: null,
   openingHours: [],
 };
@@ -157,6 +158,38 @@ describe('PublicTenantService', () => {
       city: 'Paris',
       country: 'FR',
     });
+  });
+
+  it('publie l’État quand la colonne le porte, et l’omet sinon — #1335', async () => {
+    // La colonne est hors du triplet de complétude : un salon américain sans
+    // État reste servi, et sa vitrine écrit « New York 10118 » sans virgule.
+    const manhattan = {
+      addressLine1: '350 5th Avenue',
+      addressLine2: null,
+      postalCode: '10118',
+      city: 'New York',
+      countryCode: 'US',
+    };
+
+    const avecEtat = await runWithTenant(TENANT_A, async () =>
+      serviceOver({ ...FICHE, ...manhattan, region: 'NY' }).currentTenant(),
+    );
+
+    expect(avecEtat.address).toEqual({
+      line1: '350 5th Avenue',
+      postalCode: '10118',
+      city: 'New York',
+      region: 'NY',
+      country: 'US',
+    });
+
+    const sansEtat = await runWithTenant(TENANT_A, async () =>
+      serviceOver({ ...FICHE, ...manhattan, region: null }).currentTenant(),
+    );
+
+    // **Omise**, jamais `null` : c'est la forme que `postalAddressSchema`
+    // déclare, et un `null` ferait échouer la validation du contrat côté front.
+    expect(sansEtat.address).not.toHaveProperty('region');
   });
 
   it('n’expose pas d’adresse quand le triplet minimal est incomplet', async () => {

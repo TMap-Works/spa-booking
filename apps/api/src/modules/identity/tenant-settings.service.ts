@@ -133,11 +133,12 @@ export class TenantSettingsService {
    * compte : **absent** ne touche à rien, `null` efface.
    *
    * L'adresse est le seul champ composé, et le seul dont l'absence et le `null`
-   * ne se traduisent pas de la même façon : `null` retire les cinq colonnes
-   * d'un coup, un objet les pose toutes les cinq — `line2` et `postalCode`
-   * compris, remis à `null` s'ils ne sont pas fournis. C'est ce qui rend
+   * ne se traduisent pas de la même façon : `null` retire les six colonnes
+   * d'un coup, un objet les pose toutes les six — `line2`, `postalCode` et
+   * `region` compris, remis à `null` s'ils ne sont pas fournis. C'est ce qui rend
    * impossible l'adresse à moitié réécrite : on ne peut pas garder l'ancien
-   * complément d'adresse sous une nouvelle rue.
+   * complément d'adresse sous une nouvelle rue, ni l'État de l'adresse
+   * précédente sous un salon qui a déménagé en France (#1335).
    *
    * ## Le numéro de contact est normalisé ici, et avec le pays de la **même**
    * charge utile (#824)
@@ -186,6 +187,7 @@ export class TenantSettingsService {
               addressLine2: null,
               postalCode: null,
               city: null,
+              region: null,
               countryCode: null,
             }
           : {
@@ -193,6 +195,7 @@ export class TenantSettingsService {
               addressLine2: address.line2 ?? null,
               postalCode: address.postalCode ?? null,
               city: address.city,
+              region: address.region ?? null,
               countryCode: address.country,
             }),
       ...(changes.legalName === undefined ? {} : { legalName: changes.legalName }),

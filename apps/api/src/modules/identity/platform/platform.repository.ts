@@ -271,6 +271,7 @@ export class PlatformRepository {
             addressLine2: input.addressLine2,
             postalCode: input.postalCode,
             city: input.city,
+            region: input.region,
             countryCode: input.countryCode,
           },
           select: { id: true, createdAt: true },

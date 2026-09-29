@@ -182,6 +182,7 @@ export class FakeIdentityRepository {
       addressLine2: null,
       postalCode: null,
       city: null,
+      region: null,
       countryCode: null,
       openingHours: [],
       isActive: true,

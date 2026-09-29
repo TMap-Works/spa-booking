@@ -55,6 +55,17 @@ export class PostalAddressDto {
   @ApiProperty({ maxLength: 120, example: 'Paris' })
   public city!: string;
 
+  @ApiPropertyOptional({
+    type: String,
+    maxLength: 100,
+    example: 'NY',
+    description:
+      'État, province ou subdivision équivalente. Omis quand le pays n’en ' +
+      'porte pas — la vitrine écrit alors « New York 10118 » et non ' +
+      '« New York, NY 10118 ».',
+  })
+  public region?: string | undefined;
+
   @ApiProperty({
     example: 'FR',
     description:

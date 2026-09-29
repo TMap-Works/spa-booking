@@ -104,6 +104,7 @@ function tenantPayload(slug: string): {
   addressLine2: string | null;
   postalCode: string | null;
   city: string;
+  region: string | null;
   adminEmail: string;
   adminFirstName: string;
   adminLastName: string;
@@ -118,6 +119,8 @@ function tenantPayload(slug: string): {
     addressLine2: null,
     postalCode: '75011',
     city: 'Paris',
+    // Salon français : pas de subdivision postale (#1335).
+    region: null,
     adminEmail: 'Gerante@Maison-Lotus.test',
     adminFirstName: 'Alice',
     adminLastName: 'Durand',

@@ -49,6 +49,8 @@ export interface SelfServiceTenantInput {
   readonly addressLine2: string | null;
   readonly postalCode: string | null;
   readonly city: string;
+  /** L'État ou la province — `null` pour les pays qui n'en portent pas (#1335). */
+  readonly region: string | null;
   readonly adminEmail: string;
   readonly adminFirstName: string;
   readonly adminLastName: string;
@@ -94,6 +96,7 @@ export class SignupRepository {
             addressLine2: input.addressLine2,
             postalCode: input.postalCode,
             city: input.city,
+            region: input.region,
             countryCode: input.countryCode,
             contactEmail: input.adminEmail,
             billingStatus: 'PENDING',
