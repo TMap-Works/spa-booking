@@ -234,13 +234,21 @@ interface Announcement {
  * dû recoller ailleurs. `tests/unit/confirmation-step.test.tsx` en tient la
  * couture — elle tombe à la première divergence et nomme celle qui a bougé.
  *
- * **La couture ne couvre que le français, et c'est un constat, pas un oubli** :
- * les deux catalogues anglais divergent déjà — « Your slot is on hold; there is
- * nothing else for you to do. » (`messages/en/booking.json`) contre « Your slot
- * is held; there is nothing for you to do. » (`messages/en/account.json`). Le
- * cas anglais est donc écrit, sauté, et rattaché à **#1304**, qui tranchera
- * laquelle des deux phrases fait foi ; `messages/` est hors de l'empreinte d'un
- * ticket de correction i18n.
+ * **Elle tient les deux langues depuis #1304.** Elle n'a longtemps tenu que le
+ * français, et ce n'était pas un oubli : les deux catalogues anglais
+ * divergeaient — « Your slot is on hold; there is nothing else for you to do. »
+ * côté `booking.json` contre « Your slot is held; there is nothing for you to
+ * do. » côté `account.json` —, si bien que le cas anglais est resté écrit mais
+ * sauté le temps qu'un ticket puisse trancher, `messages/` étant hors de
+ * l'empreinte d'une correction i18n. Ces deux écritures sont de l'**historique**,
+ * et non des valeurs courantes : #1304 a tranché pour la seconde et aligné
+ * `messages/en/booking.json` dessus.
+ *
+ * La raison de cet arbitrage vaut d'être gardée, parce qu'elle vaut pour toute
+ * phrase de cet écran : celle-ci se lit sur **deux** surfaces — la sortie du
+ * tunnel, juste après la réservation, et la carte de l'espace client, rouverte
+ * des jours plus tard —, or « nothing *else* » présuppose un geste qu'on vient
+ * de faire, ce qui n'est vrai que de la première.
  *
  * La constante française qui portait cette phrase (`PENDING_HOLD_NOTE`) est
  * tombée avec #1297, comme `UNCLASSIFIED_TITLE` et `PUBLIC_EXIT_LABELS`.
