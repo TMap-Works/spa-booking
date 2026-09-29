@@ -1,4 +1,4 @@
-import type { PostalAddress } from '@spa/shared';
+import { countryUsesAddressRegion, type PostalAddress } from '@spa/shared';
 
 import { formattingLocale, type DisplayLocale } from '@/lib/format';
 
@@ -49,6 +49,14 @@ import { formattingLocale, type DisplayLocale } from '@/lib/format';
  * c'est ce qu'on écrit sur l'enveloppe qu'on lui poste. Confondre les deux aurait
  * réordonné l'adresse d'un salon selon qui la regarde — c'est le même arbitrage
  * que le reste de ce module, où seul le nom du pays se traduit.
+ *
+ * ## L'État s'écrit avec une virgule, et elle ne sépare pas ce qu'on croit (#1335)
+ *
+ * « New York, NY 10118 ». La virgule sépare la **ville de l'État**, jamais la
+ * ville du code postal : l'USPS écrit « CITY ST ZIP », et un salon sans État
+ * s'annonce « New York 10118 » sans virgule du tout. C'est pour cela que la
+ * ponctuation ne pouvait pas être livrée par #1332, qui n'avait que l'ordre — il
+ * fallait d'abord la colonne, et elle est arrivée avec ce ticket.
  */
 
 /**
@@ -71,7 +79,11 @@ export function addressLines(
   return [
     address.line1,
     ...(address.line2 === undefined ? [] : [address.line2]),
-    localityParts(address).join(' '),
+    // `localityLine` et non `localityParts.join(' ')` : c'est la même ligne
+    // d'enveloppe que rend la fiche de la console, virgule d'État comprise
+    // (#1335), et la recomposer ici l'aurait fait diverger au premier salon
+    // américain — exactement la faute que #1330 a relevée sur l'ordre.
+    localityLine(address),
     countryName(address.country, display),
   ];
 }
@@ -90,34 +102,65 @@ const CITY_BEFORE_POSTAL_CODE: ReadonlySet<string> = new Set(['US', 'CA']);
 
 /**
  * La localité, ses morceaux dans l'ordre du pays — « 75011 », « Paris » d'un
- * côté, « New York », « 10118 » de l'autre.
+ * côté, « New York », « NY », « 10118 » de l'autre.
  *
- * Rendue en morceaux et non déjà jointe : `addressLines` les colle à l'espace,
- * comme sur une enveloppe, et `addressQuery` les sépare par des virgules, comme
- * une requête géographique. Un seul ordre, deux ponctuations — plutôt que deux
+ * Rendue en morceaux et non déjà jointe : `localityLine` les assemble à la façon
+ * d'une enveloppe, et `addressQuery` les sépare par des virgules, comme une
+ * requête géographique. Un seul ordre, deux ponctuations — plutôt que deux
  * fonctions qui décideraient chacune de l'ordre et finiraient par ne plus le
  * décider pareil.
  *
  * Le code postal est **omis** quand il manque : tous les pays n'en ont pas
  * (`postalAddressSchema`), et une localité ne doit jamais commencer ni finir par
- * une espace en trop.
+ * une espace en trop. L'État l'est aussi, et pour une raison de plus : il n'est
+ * écrit que par les pays qui en portent un (#1335). Une région enregistrée sur
+ * un salon français — le cas d'un établissement qui a déménagé — n'est pas
+ * affichée plutôt que glissée dans une adresse qui ne sait pas où la mettre.
  */
 function localityParts(address: LocalityAddress): readonly string[] {
   const ordered = CITY_BEFORE_POSTAL_CODE.has(address.country)
-    ? [address.city, address.postalCode]
+    ? [address.city, addressRegion(address), address.postalCode]
     : [address.postalCode, address.city];
 
-  return ordered.filter(
-    (part): part is string => part !== undefined && part !== null && part !== '',
-  );
+  return ordered.filter(isWritten);
+}
+
+/** Un morceau d'adresse est écrit s'il n'est ni absent, ni nul, ni vide. */
+function isWritten(part: string | null | undefined): part is string {
+  return part !== undefined && part !== null && part !== '';
+}
+
+/**
+ * L'État ou la province de cette adresse, ou `null` — #1335.
+ *
+ * Deux conditions, et la seconde est celle qui compte : la valeur doit être
+ * écrite, **et** le pays doit en porter une. `countryUsesAddressRegion` est le
+ * prédicat partagé qu'emploient déjà les trois formulaires pour décider
+ * d'afficher le champ ; s'en servir aussi à l'affichage est ce qui garantit
+ * qu'on n'écrit jamais une subdivision qu'on n'aurait pas laissé saisir — le cas
+ * d'un salon passé des États-Unis à la France, dont la colonne porte encore
+ * « NY ».
+ *
+ * C'est une question distincte de celle que tranche `CITY_BEFORE_POSTAL_CODE`,
+ * même si les deux répondent « US, CA » aujourd'hui : l'une dit où va le code
+ * postal (#1330), l'autre si le pays a un État. Les confondre aurait rendu
+ * indémêlable le jour où le produit ouvre un pays qui écrit un État *et* met son
+ * code postal en dernier.
+ */
+function addressRegion(address: LocalityAddress): string | null {
+  if (!countryUsesAddressRegion(address.country) || !isWritten(address.region)) {
+    return null;
+  }
+
+  return address.region;
 }
 
 /**
  * Ce qu'il faut savoir d'une adresse pour en ordonner la localité.
  *
- * Trois champs et non `PostalAddress` : la fiche de la console reçoit son adresse
- * d'un autre schéma du contrat (`platformTenantDetailSchema`), qui rend `null` là
- * où la vitrine omet la clé. Décrire le minimum requis accepte les deux formes
+ * Le minimum requis, et non `PostalAddress` : la fiche de la console reçoit son
+ * adresse d'un autre schéma du contrat (`platformTenantDetailSchema`), qui rend
+ * `null` là où la vitrine omet la clé. Décrire le minimum requis accepte les deux formes
  * sans qu'aucun appelant ait à recomposer un objet pour satisfaire un type — et
  * sans que ce module ait à connaître la différence.
  *
@@ -128,18 +171,25 @@ function localityParts(address: LocalityAddress): readonly string[] {
 interface LocalityAddress {
   readonly postalCode?: string | null | undefined;
   readonly city: string;
+  /** L'État ou la province, quand le salon en a une (#1335). */
+  readonly region?: string | null | undefined;
   readonly country: string;
 }
 
 /**
  * La ligne de localité d'une adresse — « 75011 Paris », « New York 10118 ».
  *
- * Le point d'entrée des écrans qui affichent l'adresse **autrement** qu'en pile
- * de lignes. Un seul s'en sert à ce jour : la fiche d'un salon dans la console de
- * l'éditeur, qui met la localité et le pays sur une même ligne séparés d'un point
- * médian. Elle recomposait `[postalCode, city].join(' ')` de son côté (#1330), et
- * c'est ce doublon qui lui a fait garder l'ordre français sur un salon américain
- * alors que la vitrine du même salon était déjà correcte.
+ * **Le** point d'écriture de cette ligne, désormais, et non plus seulement le
+ * point d'entrée des écrans qui affichent l'adresse autrement qu'en pile de
+ * lignes : `addressLines` l'appelle aussi depuis #1335, au lieu de recoller les
+ * morceaux de son côté. La ponctuation de l'État ne pouvait pas vivre à deux
+ * endroits sans y diverger.
+ *
+ * L'appelant direct reste la fiche d'un salon dans la console de l'éditeur, qui
+ * met la localité et le pays sur une même ligne séparés d'un point médian. Elle
+ * recomposait `[postalCode, city].join(' ')` de son côté (#1330), et c'est ce
+ * doublon qui lui a fait garder l'ordre français sur un salon américain alors que
+ * la vitrine du même salon était déjà correcte.
  *
  * ## Trois surfaces recomposent encore la localité de leur côté
  *
@@ -152,14 +202,29 @@ interface LocalityAddress {
  * la règle dans `packages/shared`, ce qui est un changement de contrat et non une
  * reprise d'affichage.
  *
- * Il n'y a **pas** d'État/Province dans cette ligne, et c'est une limite connue,
- * non un oubli : le contrat ne porte pas ce champ (`postalAddressSchema`), donc
- * aucune colonne ne le stocke. « New York 10118 » est ce qu'on peut écrire de plus
- * juste avec ce qu'on a ; « New York, NY 10118 » — la virgule comprise, qui sépare
- * la ville de l'État et non la ville du code postal — demande d'abord la colonne.
+ * ## L'État, et la virgule qui l'accompagne (#1335)
+ *
+ * La colonne que cette ligne réclamait existe : `tenants.region`. Un salon de
+ * Manhattan s'écrit désormais « New York, NY 10118 », et un salon américain qui
+ * n'a pas renseigné son État reste « New York 10118 » — **sans virgule**. C'est
+ * tout le sens de cette ponctuation : elle sépare la ville de l'État, jamais la
+ * ville du code postal, et l'écrire sans État aurait produit « New York, 10118 »,
+ * qui n'est la forme d'aucune convention postale.
+ *
+ * La composition ne passe donc pas par `localityParts` quand l'État est là : ces
+ * morceaux se collent à l'espace, et une seule des trois jointures est une
+ * virgule.
  */
 export function localityLine(address: LocalityAddress): string {
-  return localityParts(address).join(' ');
+  const region = addressRegion(address);
+
+  if (region === null) {
+    return localityParts(address).join(' ');
+  }
+
+  // Ce cas n'est atteint que pour les pays à subdivision, qui écrivent tous la
+  // ville en tête (`CITY_BEFORE_POSTAL_CODE`) : « New York, NY 10118 ».
+  return [`${address.city}, ${region}`, address.postalCode].filter(isWritten).join(' ');
 }
 
 function countryName(code: string, display: DisplayLocale): string {
@@ -203,10 +268,14 @@ export function addressLocality(address: PostalAddress | undefined): string | nu
  * « 10118, New York » entretient — un code postal en tête se lit aussi comme un
  * numéro de voie. Et surtout, deux ordres pour la même adresse dans le même
  * module finissent par ne plus être deux choix mais un bug.
+ *
+ * L'État y entre comme un morceau parmi les autres — « New York, NY, 10118 »
+ * (#1335) —, et non avec la ponctuation de l'enveloppe : ici tout est séparé par
+ * des virgules, et c'est précisément ce qui désambiguïse Springfield.
  */
 export function addressQuery(address: PostalAddress): string {
   return [address.line1, address.line2, ...localityParts(address), address.country]
-    .filter((part): part is string => part !== undefined && part !== '')
+    .filter(isWritten)
     .join(', ');
 }
 

@@ -4,6 +4,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import {
   ERROR_CODES,
   SUBSCRIPTION_PLAN,
+  countryUsesAddressRegion,
   errorMessage,
   resourceSlugSchema,
   salonSignupRequestSchema,
@@ -105,6 +106,7 @@ const EMPTY_VALUES: SignupFormValues = {
   addressLine2: '',
   postalCode: '',
   city: '',
+  region: '',
   countryCode: DEFAULT_COUNTRY.code,
   timezone: DEFAULT_COUNTRY.timezones[0],
   defaultCurrency: DEFAULT_COUNTRY.currency,
@@ -133,6 +135,7 @@ const FIELD_ERROR_KEYS = {
   addressLine1: 'fieldErrors.addressLine1',
   postalCode: 'fieldErrors.postalCode',
   city: 'fieldErrors.city',
+  region: 'fieldErrors.region',
   countryCode: 'fieldErrors.countryCode',
   timezone: 'fieldErrors.timezone',
   defaultCurrency: 'fieldErrors.defaultCurrency',
@@ -392,6 +395,20 @@ export function SignupForm() {
             error={fieldError('city')}
             {...register('city')}
           />
+          {/*
+           * L'État ou la province, pour les seuls pays qui en portent un (#1335).
+           * Facultatif même affiché : un salon américain qui ne le renseigne pas
+           * s'annonce « New York 10118 », sans virgule.
+           */}
+          {countryUsesAddressRegion(country) ? (
+            <Field
+              id="inscription-region"
+              label={t('form.region')}
+              autoComplete="address-level1"
+              error={fieldError('region')}
+              {...register('region')}
+            />
+          ) : null}
         </div>
         <div className="spa-platform-form__row">
           <Select
@@ -405,6 +422,13 @@ export function SignupForm() {
               if (preset !== undefined) {
                 setValue('timezone', preset.timezones[0]);
                 setValue('defaultCurrency', preset.currency);
+              }
+              // Changer pour un pays sans subdivision **efface** l'État saisi
+              // (#1335) : le champ disparaît, et une valeur qu'on ne voit plus
+              // partirait sinon en base — « NY » sur une adresse parisienne. Même
+              // geste que la grille d'horaires, qui vide le jour qu'on referme.
+              if (!countryUsesAddressRegion(event.target.value)) {
+                setValue('region', '');
               }
             }}
           >

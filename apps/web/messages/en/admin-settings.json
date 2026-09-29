@@ -16,6 +16,8 @@
     "line2Hint": "Building, floor, box. Optional.",
     "postalCode": "Postcode",
     "city": "City",
+    "region": "State / Province",
+    "regionHint": "NY, QC… or the full name. Optional.",
     "country": "Country",
     "countryHint": "Two-letter code: FR, BE, MG…",
     "countryFormat": "ISO 3166-1 alpha-2 country code expected (“FR”)",
