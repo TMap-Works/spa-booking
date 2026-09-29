@@ -264,13 +264,13 @@ describe('modèles — le coût d’un SMS', () => {
     // `formatMoney` sépare les milliers par U+202F et la devise par U+00A0 :
     // aucune des deux n'est dans GSM-7. Une référence écrite avec des espaces
     // ordinaires aurait annoncé un segment GSM-7 pour un SMS qui part en UCS-2.
-    expect(measureSmsTemplate('Prix : {{prix}}', FR).encoding).toBe('UCS_2');
+    expect(measureSmsTemplate('Prix : {{prix}}', { locale: FR }).encoding).toBe('UCS_2');
   });
 
   it('mesure un modèle sur son rendu, jamais sur ses balises', () => {
     // `{{date}}` fait huit caractères et en rendra trente-quatre : mesurer la
     // chaîne brute dirait n'importe quoi.
-    expect(measureSmsTemplate('{{date}}', FR).units).toBeGreaterThan('{{date}}'.length);
+    expect(measureSmsTemplate('{{date}}', { locale: FR }).units).toBeGreaterThan('{{date}}'.length);
   });
 });
 
@@ -291,6 +291,9 @@ const PARIS: AppointmentMessageContext = {
   tenantName: 'Maison Lotus',
   tenantSlug: 'maison-lotus',
   tenantTimeZone: 'Europe/Paris',
+  // Le pays décide de l'écriture des dates, des heures et des montants depuis
+  // #1344 : un salon parisien écrit « 14:30 » dans les deux langues.
+  tenantCountryCode: 'FR',
   tenantAddress: '12 rue des Lilas, 75011 Paris',
   tenantPhone: '+33123456789',
   appointmentReference: 'RDV-8F3K-27',

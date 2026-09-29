@@ -5,7 +5,10 @@ import {
   cancellationUrl,
   formatDateTimeInTenantTimeZone,
   formatMoney,
+  formatTimeInTenantTimeZone,
+  measureSmsTemplate,
   renderNotification,
+  type NotificationDisplay,
 } from '../notification-content';
 import { defaultTemplateFor } from '../notification-default-templates';
 import { SMS_SINGLE_SEGMENT_UCS2, escapeHtml } from '../notification-template';
@@ -51,6 +54,19 @@ import type {
 
 /** La langue de cette suite — celle de ses assertions. */
 const FR: Locale = 'fr';
+
+/**
+ * Un salon **parisien** — `fr-FR` en français, `en-FR` en anglais (#1344).
+ *
+ * Même couple de fabriques que `receipt-pdf.format.spec.ts`, et pour la même
+ * raison : c'est la seule façon de distinguer ce que la **langue** décide — les
+ * mots — de ce que le **pays du salon** décide — l'ordre d'une date, le cycle
+ * horaire, les séparateurs d'un montant.
+ */
+const enFrance = (locale: Locale): NotificationDisplay => ({ locale, countryCode: 'FR' });
+
+/** Un salon **new-yorkais** — `fr-US` en français, `en-US` en anglais. */
+const auxEtatsUnis = (locale: Locale): NotificationDisplay => ({ locale, countryCode: 'US' });
 
 /**
  * Rend le modèle **par défaut** de ce message — ce que reçoit un salon qui n'a
@@ -128,6 +144,7 @@ const PARIS: AppointmentMessageContext = {
   tenantName: 'Maison Lotus',
   tenantSlug: 'maison-lotus',
   tenantTimeZone: 'Europe/Paris',
+  tenantCountryCode: 'FR',
   tenantAddress: '12 rue des Lilas, 75011 Paris',
   tenantPhone: '+33123456789',
   appointmentReference: 'RDV-8F3K-27',
@@ -144,6 +161,23 @@ const PARIS: AppointmentMessageContext = {
 };
 
 /**
+ * **Le même rendez-vous, chez un salon new-yorkais** — #1344.
+ *
+ * Le même instant UTC : 12:30 Z vaut 08:30 à New York en septembre (UTC−4). Ce
+ * contexte-ci existe pour le seul fait que la suite ne pouvait pas voir avec un
+ * salon unique — que l'écriture d'une heure vient du **pays du salon** et non de la
+ * langue du message.
+ */
+const NEW_YORK: AppointmentMessageContext = {
+  ...PARIS,
+  tenantName: 'Lotus House',
+  tenantSlug: 'lotus-house',
+  tenantTimeZone: 'America/New_York',
+  tenantCountryCode: 'US',
+  tenantAddress: '350 5th Avenue, New York, NY 10118',
+};
+
+/**
  * Sur sous-domaine depuis #837 : un salon est servi sur `{slug}.{domaine}`
  * (arbitrage du PO du 16/09/2026, #832). Les cas de repli par chemin et de mode
  * forcé vivent dans `tenant-subdomain-links.spec.ts`.
@@ -153,16 +187,20 @@ const CANCEL_URL = 'https://maison-lotus.reservation.test/compte';
 describe('notifications — l’heure est celle du salon, jamais UTC', () => {
   it('convertit l’instant UTC au fuseau du tenant', () => {
     // 12:30 UTC = 14:30 à Paris en septembre.
-    expect(formatDateTimeInTenantTimeZone(PARIS.startsAt, 'Europe/Paris', FR)).toContain('14:30');
+    expect(formatDateTimeInTenantTimeZone(PARIS.startsAt, 'Europe/Paris', enFrance(FR))).toContain(
+      '14:30',
+    );
   });
 
   it('rend le même instant différemment selon le fuseau de l’établissement', () => {
     // La preuve que la conversion a bien lieu : le même `Date`, deux salons.
     // 12:30 UTC = 15:30 à Antananarivo (UTC+3, sans heure d'été).
-    expect(formatDateTimeInTenantTimeZone(PARIS.startsAt, 'Indian/Antananarivo', FR)).toContain(
-      '15:30',
+    expect(
+      formatDateTimeInTenantTimeZone(PARIS.startsAt, 'Indian/Antananarivo', enFrance(FR)),
+    ).toContain('15:30');
+    expect(formatDateTimeInTenantTimeZone(PARIS.startsAt, 'Europe/Paris', enFrance(FR))).toContain(
+      '14:30',
     );
-    expect(formatDateTimeInTenantTimeZone(PARIS.startsAt, 'Europe/Paris', FR)).toContain('14:30');
   });
 
   it('suit le changement d’heure — le même mur d’horloge, deux décalages', () => {
@@ -171,34 +209,192 @@ describe('notifications — l’heure est celle du salon, jamais UTC', () => {
     const hiver = new Date('2026-01-08T11:30:00Z');
     const ete = new Date('2026-07-08T11:30:00Z');
 
-    expect(formatDateTimeInTenantTimeZone(hiver, 'Europe/Paris', FR)).toContain('12:30');
-    expect(formatDateTimeInTenantTimeZone(ete, 'Europe/Paris', FR)).toContain('13:30');
+    expect(formatDateTimeInTenantTimeZone(hiver, 'Europe/Paris', enFrance(FR))).toContain('12:30');
+    expect(formatDateTimeInTenantTimeZone(ete, 'Europe/Paris', enFrance(FR))).toContain('13:30');
   });
 
   it('le fuseau reste celui du salon quelle que soit la langue — #854', () => {
     // Troisième critère d'acceptation, et sa moitié la moins évidente : traduire
     // un message ne le déplace pas. Le rendez-vous est à 14:30 à Paris, qu'on
     // l'annonce en français ou en anglais — c'est le **fuseau du salon** qui fixe
-    // l'heure, et la langue qui fixe son écriture. Les confondre aurait fait
-    // arriver une cliente anglophone deux heures plus tôt.
-    expect(formatDateTimeInTenantTimeZone(PARIS.startsAt, 'Europe/Paris', 'en')).toContain('2:30');
-    expect(formatDateTimeInTenantTimeZone(PARIS.startsAt, 'Europe/Paris', 'en')).toContain('PM');
+    // l'heure, et la langue qui fixe les mots. Les confondre aurait fait arriver
+    // une cliente anglophone deux heures plus tôt.
+    expect(formatDateTimeInTenantTimeZone(PARIS.startsAt, 'Europe/Paris', enFrance('en'))).toContain(
+      '14:30',
+    );
   });
 
   it('écrit la date en toutes lettres, dans la langue d’envoi — #854', () => {
     // Le même instant, deux langues : c'est la preuve que le formatage suit la
     // langue du message et non une constante du code. « septembre » en dur dans
     // `notification-content.ts` aurait passé la moitié de ce témoin.
-    expect(formatDateTimeInTenantTimeZone(PARIS.startsAt, 'Europe/Paris', 'en')).toContain(
+    expect(formatDateTimeInTenantTimeZone(PARIS.startsAt, 'Europe/Paris', enFrance('en'))).toContain(
       'September',
     );
-    expect(formatDateTimeInTenantTimeZone(PARIS.startsAt, 'Europe/Paris', 'en')).not.toContain(
-      'septembre',
-    );
+    expect(
+      formatDateTimeInTenantTimeZone(PARIS.startsAt, 'Europe/Paris', enFrance('en')),
+    ).not.toContain('septembre');
   });
 
   it('écrit la date en toutes lettres, en français', () => {
-    expect(formatDateTimeInTenantTimeZone(PARIS.startsAt, 'Europe/Paris', FR)).toContain('septembre');
+    expect(formatDateTimeInTenantTimeZone(PARIS.startsAt, 'Europe/Paris', enFrance(FR))).toContain(
+      'septembre',
+    );
+  });
+});
+
+/**
+ * **La locale de mise en forme d'un message — #1344.**
+ *
+ * Ce qui s'y prouve, et que rien ne prouvait : que l'écriture d'une heure, d'une
+ * date et d'un montant vient du **pays de l'établissement** et non de la langue de
+ * la destinataire, et que le cycle horaire n'est forcé nulle part.
+ *
+ * ## La même horloge que le reçu, dans la forme brève du produit
+ *
+ * L'**horloge** attendue ici est celle de `receipt-pdf.format.spec.ts` pour les
+ * mêmes entrées — 24 heures chez le salon parisien dans les deux langues, 12 h
+ * chez le salon new-yorkais dans les deux langues. C'est ce que demande le
+ * quatrième critère d'acceptation, et c'est ce que la divergence d'origine
+ * violait : un e-mail daté « 11:30 AM » et un PDF daté « 11:30 » pour la même
+ * vente, en faisant passer les deux suites.
+ *
+ * La **forme** est celle des heures en prose du produit — `timeStyle: 'short'`,
+ * comme `formatTimeInTimeZone` du front, donc « 8:30 AM ». Le reçu et le ticket à
+ * l'écran écrivent « 08:30 AM », parce qu'ils datent en colonne de chiffres
+ * (« 17/09/2026 08:30 AM »). Les deux disent la même heure sur la même horloge ;
+ * et le septet que la forme brève économise est ce qui tient l'avis d'annulation
+ * anglais dans un seul segment chez un salon canadien.
+ */
+describe('notifications — la locale de mise en forme suit le pays du salon', () => {
+  /** L'instant du rendez-vous : 14:30 à Paris, 08:30 à New York. */
+  const INSTANT = PARIS.startsAt;
+
+  it('n’écrit pas 12 heures à un salon parisien qui lit l’anglais', () => {
+    // Le constat de l'issue, dans sa forme la plus courte. La langue décidait de
+    // l'horloge : une cliente anglophone de la Maison Lotus lisait « 2:30 PM »
+    // quand le reçu de la même vente écrivait « 14:30 ».
+    expect(formatTimeInTenantTimeZone(INSTANT, 'Europe/Paris', enFrance('en'))).toBe('14:30');
+    expect(formatTimeInTenantTimeZone(INSTANT, 'Europe/Paris', enFrance('en'))).not.toContain('PM');
+  });
+
+  it('écrit 12 heures à un salon américain, dans les deux langues qu’il sert', () => {
+    // Le pendant : ce n'est pas « 24 heures partout », c'est « l'horloge du pays ».
+    // Et elle ne change pas quand le message part en français — le salon est le
+    // même, sa convention aussi.
+    expect(formatTimeInTenantTimeZone(INSTANT, 'America/New_York', auxEtatsUnis('en'))).toBe(
+      '8:30 AM',
+    );
+    expect(formatTimeInTenantTimeZone(INSTANT, 'America/New_York', auxEtatsUnis(FR))).toBe('08:30');
+  });
+
+  it('garde les mots de la langue et l’ordre de la date du pays', () => {
+    // Les quatre écritures d'un même instant. C'est le seul témoin qui distingue
+    // ce que la langue décide de ce que le pays décide : « September 8 » contre
+    // « 8 September » est une affaire de pays, « Tuesday » contre « mardi » une
+    // affaire de langue.
+    expect(formatDateTimeInTenantTimeZone(INSTANT, 'Europe/Paris', enFrance(FR))).toBe(
+      'mardi 8 septembre 2026 à 14:30',
+    );
+    expect(formatDateTimeInTenantTimeZone(INSTANT, 'Europe/Paris', enFrance('en'))).toBe(
+      'Tuesday, 8 September 2026 at 14:30',
+    );
+    expect(formatDateTimeInTenantTimeZone(INSTANT, 'America/New_York', auxEtatsUnis('en'))).toBe(
+      'Tuesday, September 8, 2026 at 8:30 AM',
+    );
+    expect(formatDateTimeInTenantTimeZone(INSTANT, 'America/New_York', auxEtatsUnis(FR))).toBe(
+      'mardi 8 septembre 2026 à 08:30',
+    );
+  });
+
+  it('écrit le montant avec les séparateurs du pays, jamais ceux de la langue', () => {
+    // CLDR déclare pour `en-FR` des séparateurs **monétaires** à l'anglaise et des
+    // séparateurs ordinaires à la française : sans `withPlainSeparators`, l'e-mail
+    // d'un salon parisien lu en anglais écrivait « €65.00 » là où le reçu de la
+    // même vente écrit « €65,00 ».
+    expect(formatMoney(6_500, 'EUR', enFrance('en'))).toBe('€65,00');
+    expect(formatMoney(6_500, 'EUR', auxEtatsUnis('en'))).toBe('€65.00');
+  });
+
+  it('retombe sur la région du marché de la langue quand le salon n’a pas de pays', () => {
+    // `tenants.country_code` est nullable : un salon qui n'a pas publié son
+    // adresse n'a pas de région. Le repli est celui de la règle unique — documenté
+    // et figé dans `@spa/shared` —, jamais celui du serveur, qui ferait varier la
+    // date d'un conteneur ECS à l'autre pour le même salon.
+    expect(formatTimeInTenantTimeZone(INSTANT, 'Europe/Paris', { locale: FR })).toBe('14:30');
+    expect(formatTimeInTenantTimeZone(INSTANT, 'America/New_York', { locale: 'en' })).toBe(
+      '8:30 AM',
+    );
+    expect(formatTimeInTenantTimeZone(INSTANT, 'Europe/Paris', { locale: FR, countryCode: null })).toBe(
+      '14:30',
+    );
+  });
+
+  it('écrit la confirmation d’un salon américain à l’heure de son pays', () => {
+    // Le rendu complet, et non seulement le formateur : c'est lui que la cliente
+    // lit, et c'est par `buildTemplateVariables` que le pays du contexte doit
+    // arriver jusqu'à l'étiquette.
+    const francais = renderDefault('BOOKING_CONFIRMATION', 'EMAIL', NEW_YORK, CANCEL_URL);
+    const anglais = renderDefault(
+      'BOOKING_CONFIRMATION',
+      'EMAIL',
+      NEW_YORK,
+      CANCEL_URL,
+      NEW_YORK.clientId,
+      'en',
+    );
+
+    expect(francais.text).toContain('08:30');
+    expect(francais.text).not.toContain('AM');
+    expect(anglais.text).toContain('8:30 AM');
+    expect(anglais.subject).toContain('8:30 AM');
+  });
+
+  it('n’annonce pas la même heure à deux salons de fuseaux différents', () => {
+    // La garantie que le pays n'a pas emporté le fuseau au passage : le même
+    // instant, deux salons, deux heures — 14:30 à Paris, 08:30 à New York.
+    const paris = buildTemplateVariables(PARIS, '', 'EMAIL', PARIS.clientId, 'en');
+    const newYork = buildTemplateVariables(NEW_YORK, '', 'EMAIL', NEW_YORK.clientId, 'en');
+
+    expect(paris.heure).toBe('14:30');
+    expect(newYork.heure).toBe('8:30 AM');
+  });
+
+  /**
+   * **La mesure d'un SMS suit le pays du salon, elle aussi — #1344.**
+   *
+   * Ce que cette assertion ferme : une région de repli commune aurait laissé la
+   * validation de modèle mesurer un salon de Montréal à Paris ou à New York, alors
+   * que `fr-CA` écrit « 14 h 30 » et `en-CA` « 2:30 p.m. » — deux caractères de
+   * plus à chaque fois. Le salon se serait vu annoncer un segment pour un message
+   * qui lui en coûte deux, ce que la validation existe précisément pour empêcher
+   * (#854, septième critère ; notifications §5).
+   *
+   * Les trois pays sont ceux dont le produit connaît l'adresse : France (#1334),
+   * États-Unis et Canada (#1339).
+   */
+  it('mesure un modèle dans l’écriture du pays, et non dans celle d’un marché commun', () => {
+    // Deux caractères de plus au Canada, dans chacune des deux langues — c'est
+    // exactement l'écart qui fait basculer un segment en deux sur un modèle qui
+    // frôle la borne.
+    const date = '{{date}}';
+
+    expect(measureSmsTemplate(date, { locale: 'en', countryCode: 'CA' }).units).toBe(
+      measureSmsTemplate(date, { locale: 'en', countryCode: 'US' }).units + 2,
+    );
+    expect(measureSmsTemplate(date, { locale: FR, countryCode: 'CA' }).units).toBe(
+      measureSmsTemplate(date, { locale: FR, countryCode: 'FR' }).units + 2,
+    );
+  });
+
+  /**
+   * Le pendant côté langue, qui ne doit pas disparaître : la mesure reste une
+   * fonction de la langue autant que du pays (#854, septième critère).
+   */
+  it('mesure un modèle anglais plus cher qu’un modèle français, à pays égal', () => {
+    expect(measureSmsTemplate('{{date}}', { locale: 'en', countryCode: 'FR' }).units).toBeGreaterThan(
+      measureSmsTemplate('{{date}}', { locale: FR, countryCode: 'FR' }).units,
+    );
   });
 });
 
@@ -223,18 +419,21 @@ describe('notifications — le récapitulatif de la confirmation', () => {
   it('donne le prix sans jamais passer par un flottant du domaine', () => {
     // 6 500 centimes = 65,00 €. Le domaine ne manipule que l'entier ; la
     // division n'a lieu qu'ici, pour l'écriture.
-    expect(formatMoney(6_500, 'EUR', FR)).toContain('65');
+    expect(formatMoney(6_500, 'EUR', enFrance(FR))).toContain('65');
     // Une devise sans décimale n'est pas divisée par cent : `Intl` le sait.
-    expect(formatMoney(6_500, 'JPY', FR)).toContain('6');
-    expect(formatMoney(6_500, 'JPY', FR)).not.toContain('65,00');
+    expect(formatMoney(6_500, 'JPY', enFrance(FR))).toContain('6');
+    expect(formatMoney(6_500, 'JPY', enFrance(FR))).not.toContain('65,00');
   });
 
-  it('écrit le montant selon la langue, sans changer la valeur — #854', () => {
-    // Le français met le symbole après et sépare par une virgule décimale,
-    // l'anglais met le symbole avant et sépare par un point. C'est une écriture
-    // qui change, jamais un montant : les deux disent soixante-cinq euros.
-    expect(formatMoney(6_500, 'EUR', 'en')).toContain('65');
-    expect(formatMoney(6_500, 'EUR', 'en')).not.toContain('65,00');
+  it('écrit le montant selon la langue et le pays, sans changer la valeur — #854', () => {
+    // Le salon parisien met le symbole après et sépare par une virgule décimale,
+    // le salon américain met le symbole avant et sépare par un point. C'est une
+    // écriture qui change, jamais un montant : les deux disent soixante-cinq
+    // euros. Depuis #1344 c'est le **pays** qui en décide, et non la langue :
+    // « €65,00 » pour le salon parisien lu en anglais.
+    expect(formatMoney(6_500, 'EUR', auxEtatsUnis('en'))).toContain('65');
+    expect(formatMoney(6_500, 'EUR', auxEtatsUnis('en'))).not.toContain('65,00');
+    expect(formatMoney(6_500, 'EUR', enFrance('en'))).not.toContain('65.00');
   });
 
   it('omet l’adresse et le téléphone quand le salon ne les a pas renseignés', () => {

@@ -689,8 +689,26 @@ export interface StoredTemplateRow {
 export class FakeNotificationTemplates {
   private readonly stored: StoredTemplateRow[] = [];
 
+  /**
+   * Le pays du salon courant, tel que le dépôt le lit sur `tenants` (#1344).
+   *
+   * Il décide de l'écriture des dates et de la mesure d'un SMS. `null` par défaut
+   * — un salon qui n'a pas publié d'adresse —, et c'est le cas le plus sûr pour
+   * les suites qui ne parlent pas de région : la règle unique retombe alors sur le
+   * repli documenté de `@spa/shared`.
+   */
+  public countryCode: string | null = null;
+
   public seed(row: StoredTemplateRow): void {
     this.stored.push(row);
+  }
+
+  public tenantCountryCode(): Promise<string | null> {
+    // La portée est exigée ici comme sur les autres lectures : le pays est une
+    // donnée de l'établissement, pas une constante du processus.
+    this.requireScope('tenant.findFirst');
+
+    return Promise.resolve(this.countryCode);
   }
 
   public findAll(): Promise<readonly StoredNotificationTemplate[]> {
