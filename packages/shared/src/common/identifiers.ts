@@ -10,6 +10,7 @@
 import { type CountryCode, isValidPhoneNumber, parsePhoneNumberFromString } from 'libphonenumber-js';
 import { z } from 'zod';
 
+import { isCountryCodeAlpha2 } from '../constants/countries';
 import {
   DISPLAY_NAME_MAX_LENGTH,
   EMAIL_ADDRESS_MAX_LENGTH,
@@ -235,6 +236,44 @@ export const countryCodeSchema = z
   .refine((value) => COUNTRY_CODE_PATTERN.test(value), messageKey('identifier.countryCode'));
 
 export type CountryCodeAlpha2 = z.infer<typeof countryCodeSchema>;
+
+/**
+ * Le même code pays, **tel qu'on le saisit** : la forme, plus l'existence du pays
+ * — #1330, quatrième critère d'acceptation.
+ *
+ * ## Deux schémas pour un code pays, et pourquoi
+ *
+ * `countryCodeSchema` décrit le **stock** : deux lettres majuscules, sans jugement
+ * sur le pays qu'elles désignent. `submittedCountryCodeSchema` décrit la
+ * **saisie** : le pays doit exister (`isCountryCodeAlpha2`).
+ *
+ * C'est exactement l'asymétrie déjà arbitrée pour `storedPhoneSchema` /
+ * `phoneSchema` et pour `legalIdSchema` / `vatNumberSchema`, et elle est
+ * load-bearing ici. La recette de #1330 a enregistré « ZZ » dans les réglages d'un
+ * salon : cette ligne est en base. Durcir `countryCodeSchema` aurait refusé la
+ * **lecture** de cet établissement — `apps/web/lib/api-client.ts` valide chaque
+ * réponse contre le contrat et lève un `INTERNAL_ERROR` au moindre refus —, donc
+ * fait tomber sa vitrine, sa fiche de console et l'écran même où l'on vient
+ * corriger la valeur. On refuse la faute à l'entrée, on continue de servir ce qui
+ * est déjà écrit.
+ *
+ * Conséquence pratique : tout endpoint qui **reçoit** un pays emploie celui-ci —
+ * l'inscription, l'ouverture par la console, les réglages du salon. Les vues qui
+ * le **rendent** gardent `countryCodeSchema`.
+ *
+ * Le retour de l'affinement est annoté `boolean`, et l'annotation est
+ * load-bearing. `isCountryCodeAlpha2` est une **garde de type**, et TypeScript
+ * 5.5 déduit désormais la garde à travers une lambda qui ne fait que l'appeler :
+ * `zod` aurait alors typé la sortie du schéma comme l'union des deux cent
+ * quarante-neuf littéraux au lieu d'une chaîne. Un formulaire de réglages qui
+ * compose une `UpdateTenantRequest` depuis des champs de saisie ne s'y assignait
+ * plus — le contrat exigeait du front qu'il *prouve* le pays avant de l'envoyer au
+ * schéma chargé de le vérifier.
+ */
+export const submittedCountryCodeSchema = countryCodeSchema.refine(
+  (value): boolean => isCountryCodeAlpha2(value),
+  messageKey('identifier.countryCodeUnknown'),
+);
 
 /**
  * Numéro de téléphone — format libre borné à ce stade du MVP.

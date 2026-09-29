@@ -68,6 +68,10 @@ const EXPECTED_EXPORTS = [
   'MAX_AVAILABILITY_RANGE_DAYS',
   'MAX_APPOINTMENT_RANGE_DAYS',
   'RESERVED_TENANT_SLUGS',
+  // La liste des pays attribués par l'ISO 3166-1 (#1330). Elle ne vaut que si
+  // elle traverse le baril : les DTO de `identity` la lisent par `@spa/shared`,
+  // et un code pays inventé se refuse au même endroit des deux côtés.
+  'isCountryCodeAlpha2',
   // errors
   'ERROR_CODES',
   'isKnownErrorCode',
@@ -90,6 +94,11 @@ const EXPECTED_EXPORTS = [
   'notificationSchema',
   'paymentSchema',
   'publicTenantSchema',
+  // La forme **soumise** d'une adresse, distincte de la forme stockée (#1330) :
+  // c'est elle qui refuse un pays inexistant à l'écriture, et l'oublier dans le
+  // baril ferait retomber les réglages du salon sur la forme permissive.
+  'submittedPostalAddressSchema',
+  'SUBSCRIPTION_PLAN_PRICE',
   'saleReceiptSchema',
   'formatReceiptNumber',
   'myStaffAgendaSchema',

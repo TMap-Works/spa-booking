@@ -1,6 +1,7 @@
 import { ApiProperty, ApiPropertyOptional, PickType } from '@nestjs/swagger';
 import {
   DNS_LABEL_PATTERN,
+  ISO_3166_1_ALPHA_2_CODES,
   LOCALES,
   PLATFORM_NOTE_MAX_LENGTH,
   PLATFORM_STATUS_REASON_MAX_LENGTH,
@@ -322,7 +323,14 @@ export class CreateTenantDto {
     typeof value === 'string' ? value.trim().toUpperCase() : value,
   )
   @IsString()
-  @Matches(/^[A-Z]{2}$/, { message: 'countryCode : code pays ISO 3166-1 alpha-2 attendu (« FR »)' })
+  // Le pays doit **exister**, pas seulement avoir la forme d'un code pays
+  // (#1330) : même arbitrage et mêmes conséquences que sur les réglages du salon
+  // (`../../dto/tenant-settings.dto.ts`). Les deux portes d'ouverture d'un
+  // établissement — cette route et l'inscription en libre-service, qui valide
+  // contre `salonSignupRequestSchema` — refusent ainsi la même chose.
+  @IsIn(ISO_3166_1_ALPHA_2_CODES as readonly string[], {
+    message: 'countryCode : code pays ISO 3166-1 alpha-2 attendu (« FR »)',
+  })
   public countryCode!: string;
 
   @ApiProperty({ example: '12 rue des Lilas', maxLength: ADDRESS_LINE_MAX_LENGTH })

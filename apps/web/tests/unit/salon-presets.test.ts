@@ -1,4 +1,9 @@
-import { countryCodeSchema, currencyCodeSchema, timeZoneSchema } from '@spa/shared';
+import {
+  countryCodeSchema,
+  currencyCodeSchema,
+  isCountryCodeAlpha2,
+  timeZoneSchema,
+} from '@spa/shared';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -10,6 +15,8 @@ import {
   countryLabel,
   countryPreset,
   timezoneChoices,
+  timezoneLabel,
+  timezonesOf,
 } from '@/lib/salon-presets';
 
 /**
@@ -32,12 +39,18 @@ const US_TIMEZONES = [
   'Pacific/Honolulu',
 ];
 
-/** Ceux du Canada. L'Eastern en tête : c'est lui que le pays présélectionne. */
+/**
+ * Ceux du Canada. L'Eastern en tête : c'est lui que le pays présélectionne.
+ *
+ * `America/Regina` y est entré avec #1330 : la Saskatchewan ne change pas
+ * d'heure, et un salon de Regina n'avait aucun fuseau juste à choisir.
+ */
 const CA_TIMEZONES = [
   'America/Toronto',
   'America/Halifax',
   'America/St_Johns',
   'America/Winnipeg',
+  'America/Regina',
   'America/Edmonton',
   'America/Vancouver',
 ];
@@ -110,6 +123,11 @@ describe('les pays proposés à l’ouverture d’un salon', () => {
     for (const country of COUNTRY_PRESETS) {
       expect(countryCodeSchema.safeParse(country.code).success, country.code).toBe(true);
       expect(currencyCodeSchema.safeParse(country.currency).success, country.currency).toBe(true);
+      // Et le pays doit **exister**, non seulement avoir la forme d'un code
+      // (#1330) : depuis ce ticket l'API refuse l'ouverture d'un salon sur un
+      // code non attribué, et un préréglage inventé serait une impasse en bout
+      // de formulaire.
+      expect(isCountryCodeAlpha2(country.code), country.code).toBe(true);
     }
   });
 });
@@ -119,23 +137,23 @@ describe('les fuseaux proposés', () => {
     expect(countryPreset('US')?.timezones).toEqual(US_TIMEZONES);
   });
 
-  it('propose les six fuseaux du Canada, l’Eastern en tête', () => {
+  it('propose les sept fuseaux du Canada, l’Eastern en tête', () => {
     expect(countryPreset('CA')?.timezones).toEqual(CA_TIMEZONES);
   });
 
   it('restreint la liste aux fuseaux du pays choisi', () => {
-    expect(timezoneChoices('US')).toEqual(US_TIMEZONES);
-    expect(timezoneChoices('CA')).toEqual(CA_TIMEZONES);
-    expect(timezoneChoices('FR')).toEqual(['Europe/Paris']);
+    expect(timezonesOf('US')).toEqual(US_TIMEZONES);
+    expect(timezonesOf('CA')).toEqual(CA_TIMEZONES);
+    expect(timezonesOf('FR')).toEqual(['Europe/Paris']);
     // Aucun débordement : un salon américain ne se voit pas proposer La Réunion.
-    expect(timezoneChoices('US')).not.toContain('Indian/Reunion');
+    expect(timezonesOf('US')).not.toContain('Indian/Reunion');
   });
 
   it('retombe sur la liste complète pour un pays qu’elle ne connaît pas', () => {
     // Un `<select>` sans option afficherait une valeur que le formulaire ne
     // porte pas — c'est-à-dire un fuseau que personne n'a choisi.
-    expect(timezoneChoices('ZZ')).toEqual(TIMEZONE_CHOICES);
-    expect(timezoneChoices('ZZ').length).toBeGreaterThan(0);
+    expect(timezonesOf('ZZ')).toEqual(TIMEZONE_CHOICES);
+    expect(timezonesOf('ZZ').length).toBeGreaterThan(0);
   });
 
   it('ne laisse aucun pays sans fuseau', () => {
@@ -251,5 +269,97 @@ describe('les noms de pays (#1105)', () => {
     for (const choice of countryChoices('en')) {
       expect(choice.label).toBe(countryLabel(choice.code, 'en'));
     }
+  });
+});
+
+/**
+ * Les libellés de fuseau — #1330, deuxième critère d'acceptation.
+ *
+ * Les fuseaux se choisissaient sous leur identifiant IANA nu :
+ * « America/St_Johns » demandait de connaître la nomenclature pour ouvrir un
+ * salon. Ils portent désormais le nom du fuseau **et** sa ville, le premier
+ * traduit par ICU, la seconde laissée telle quelle — c'est un nom de lieu.
+ */
+describe('les libellés de fuseau (#1330)', () => {
+  it('nomme le fuseau et sa ville, dans la langue lue', () => {
+    expect(timezoneLabel('America/New_York', 'en')).toBe('Eastern Time (New York)');
+    expect(timezoneLabel('America/New_York', 'fr')).toBe('heure de l’Est nord-américain (New York)');
+  });
+
+  it('ne nomme pas la saison sur un fuseau qui change d’heure', () => {
+    // « Eastern Daylight Time » serait faux la moitié de l'année, et un libellé
+    // qui suivrait la saison changerait deux fois par an sous les yeux de
+    // l'utilisatrice. C'est la forme `longGeneric` d'ICU qui l'évite.
+    //
+    // La règle ne vaut **que** pour les fuseaux qui changent d'heure : Phoenix et
+    // Regina n'en changent pas, et ICU les nomme « Mountain Standard Time » /
+    // « Central Standard Time » — ce qui est exact toute l'année, et précisément
+    // ce qui les distingue de Denver et de Winnipeg.
+    for (const locale of ['fr', 'en'] as const) {
+      for (const timezone of ['America/New_York', 'America/Denver', 'Europe/Paris']) {
+        const label = timezoneLabel(timezone, locale);
+
+        expect(label, `${timezone}/${locale}`).not.toMatch(
+          /standard|daylight|avancée|d’été|d’hiver/iu,
+        );
+      }
+    }
+  });
+
+  it('distingue la Saskatchewan du Manitoba, qui partagent l’heure sans partager l’été', () => {
+    // La raison d'être de `America/Regina` dans la liste (#1330) : les deux sont
+    // au centre en hiver, une seule avance en été.
+    expect(timezoneLabel('America/Regina', 'en')).toBe('Central Standard Time (Regina)');
+    expect(timezoneLabel('America/Winnipeg', 'en')).toBe('Central Time (Winnipeg)');
+  });
+
+  it('remplace les tirets bas de l’identifiant par des espaces', () => {
+    expect(timezoneLabel('America/Los_Angeles', 'en')).toContain('(Los Angeles)');
+    expect(timezoneLabel('America/St_Johns', 'en')).toContain('(St Johns)');
+  });
+
+  it('ne rend jamais un identifiant IANA nu, dans aucune des deux langues', () => {
+    // C'est l'écart que le ticket corrige : une gérante lisait
+    // « America/St_Johns » dans le sélecteur qui ouvre son salon.
+    for (const locale of ['fr', 'en'] as const) {
+      for (const timezone of TIMEZONE_CHOICES) {
+        const label = timezoneLabel(timezone, locale);
+
+        expect(label, `${timezone}/${locale}`).not.toBe(timezone);
+        expect(label, `${timezone}/${locale}`).not.toContain('/');
+        expect(label, `${timezone}/${locale}`).not.toContain('_');
+      }
+    }
+  });
+
+  it('distingue les sept fuseaux d’un même pays', () => {
+    // Deux options de même libellé rendraient le sélecteur inutilisable : c'est
+    // tout l'objet d'accoler la ville au nom du fuseau, puisque Phoenix et Denver
+    // partagent « Mountain Time ».
+    for (const code of ['US', 'CA']) {
+      const labels = timezoneChoices(code, 'en').map((choice) => choice.label);
+
+      expect(new Set(labels).size, code).toBe(labels.length);
+    }
+  });
+
+  it('garde l’identifiant IANA comme valeur du choix, et l’ordre du pays', () => {
+    // C'est la seule forme que `timeZoneSchema` accepte : le libellé habille
+    // l'option, il ne remplace pas ce que le formulaire soumet.
+    for (const locale of ['fr', 'en'] as const) {
+      const choices = timezoneChoices('CA', locale);
+
+      expect(choices.map((choice) => choice.timezone)).toEqual(CA_TIMEZONES);
+      for (const choice of choices) {
+        expect(timeZoneSchema.safeParse(choice.timezone).success, choice.timezone).toBe(true);
+        expect(choice.label).toBe(timezoneLabel(choice.timezone, locale));
+      }
+    }
+  });
+
+  it('retombe sur la ville seule pour un fuseau qu’`Intl` ne connaît pas', () => {
+    // Un sélecteur reste utilisable avec « Nowhere » ; il ne l'est plus avec une
+    // option vide, et il ne doit pas faire tomber l'écran.
+    expect(timezoneLabel('Mars/Nowhere', 'en')).toBe('Nowhere');
   });
 });

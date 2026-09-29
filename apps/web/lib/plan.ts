@@ -1,4 +1,4 @@
-import { SUBSCRIPTION_PLAN, type Money } from '@spa/shared';
+import { SUBSCRIPTION_PLAN_PRICE, type Money } from '@spa/shared';
 
 import { formatMoneyCompact, type DisplayLocale } from './format';
 
@@ -20,18 +20,29 @@ import { formatMoneyCompact, type DisplayLocale } from './format';
  * clé `plan.promise` du namespace de chaque écran, avec le prix en paramètre.
  */
 
-/** L'offre, sous la forme que `lib/format.ts` attend — entier + code devise. */
-export const PLAN_MONEY: Money = {
-  amountMinor: SUBSCRIPTION_PLAN.amountMinor,
-  currency: SUBSCRIPTION_PLAN.currency,
-};
+/**
+ * L'offre, sous la forme que `lib/format.ts` attend — entier + code devise.
+ *
+ * Le montant **du contrat**, repris tel quel et non recomposé de ses deux champs
+ * (#1330) : `SUBSCRIPTION_PLAN_PRICE` est déjà un `Money`, dont la devise est une
+ * donnée et non le littéral `'EUR'` que `SUBSCRIPTION_PLAN` fige. La différence
+ * n'est pas de style — elle interdit à cet écran de se spécialiser sur l'euro, et
+ * fait suivre l'affichage le jour où le PO tranche la devise d'un salon US/CA.
+ * Voir `packages/shared/src/schemas/billing.ts` sur ce qui reste à trancher.
+ */
+export const PLAN_MONEY: Money = SUBSCRIPTION_PLAN_PRICE;
 
 /**
- * « 29 € », « €29 » — le prix mensuel dans la langue et la région d'affichage.
+ * « 29 € », « €29 », « $29 » — le prix mensuel dans la langue et la région
+ * d'affichage, **libellé dans la devise que porte le montant**.
  *
  * Une fonction et non une constante : c'est ce qui permet à l'accueil, à
  * l'inscription et à l'écran d'abonnement d'annoncer le **même** prix sans
  * pouvoir en annoncer trois écritures différentes.
+ *
+ * Aucun symbole n'est écrit ici, ni dans les catalogues : `formatMoneyCompact`
+ * lit la devise du montant et les décimales qu'ICU lui associe. C'est ce qui fait
+ * qu'un changement de devise de l'offre ne demande de toucher aucun écran.
  */
 export function planPriceLabel(display: DisplayLocale): string {
   return formatMoneyCompact(PLAN_MONEY, display);

@@ -28,6 +28,9 @@ export type {
   OutcomeAppointmentStatus,
 } from './appointment';
 
+export { ISO_3166_1_ALPHA_2_CODES, isCountryCodeAlpha2 } from './countries';
+export type { IsoCountryCode } from './countries';
+
 export {
   ADDRESS_LINE_MAX_LENGTH,
   CITY_MAX_LENGTH,
