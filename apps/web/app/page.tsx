@@ -9,8 +9,9 @@ import { SalonFinder } from '@/components/home/salon-finder';
 import { publicExitLabels } from '@/components/salon/public-exits';
 import { Icon, type IconName } from '@/components/ui/icon';
 import { ThemeToggle } from '@/components/ui/theme-toggle';
-import { formatMoneyCompact, type DisplayLocale } from '@/lib/format';
+import { type DisplayLocale } from '@/lib/format';
 import { PHOTOS, type Photo } from '@/lib/photos';
+import { planPriceLabel } from '@/lib/plan';
 import { PLATFORM_HOME_PATH, PLATFORM_NAME } from '@/lib/platform';
 import { readSalonIdentity } from '@/lib/salon-identity';
 
@@ -67,10 +68,21 @@ import { SALON_DOORS, salonDoorPath, type SalonDoor } from './salon-doors';
  * - le **nom des deux premières portes**, qui vient de `publicExitLabels` — la
  *   source unique des destinations du parcours public (#749). Cet écran lit la
  *   source directement, comme le fait le formulaire pour ses trois boutons ;
- * - le **prix de l'offre**, mis en forme par `lib/format.ts` dans la langue
- *   résolue. `PLAN_PRICE_LABEL` (`lib/plan.ts`) est une constante de module,
- *   évaluée à l'importation : elle ne peut pas connaître la langue de la
- *   requête, et annoncerait « 29 € » à qui lit « €29 ».
+ * - le **prix de l'offre**, rendu par `planPriceLabel` (`lib/plan.ts`) — la
+ *   source unique du tarif, que l'inscription et l'écran d'abonnement lisent
+ *   aussi, pour qu'un même prix ne s'écrive pas de trois façons. Une fonction et
+ *   non une constante de module : une constante est évaluée à l'importation,
+ *   hors de toute requête, et annoncerait « 29 € » à qui lit « €29 » (#1105).
+ *
+ * ## Deux devises sur le même écran, et pourquoi (#1308)
+ *
+ * Le bloc tarifaire annonce « 29 € » dans les deux langues, pendant que la
+ * vignette du héros annonce « $75.00 » en anglais. Ce n'est pas un défaut de mise
+ * en forme : le premier est le prix **facturé** de l'abonnement — celui que
+ * Stripe prélève —, le second le prix d'une prestation d'illustration que
+ * personne ne paie. La raison est écrite là où le montant est défini,
+ * `SUBSCRIPTION_PLAN` dans `packages/shared/src/schemas/billing.ts`, pour qu'on
+ * ne la cherche pas dans l'écran qui l'affiche.
  */
 
 /**
@@ -208,10 +220,10 @@ export default async function HomePage() {
   // repli de `lib/format.ts` (`en` → `en-US`, `fr` → `fr-FR`) s'applique.
   const display: DisplayLocale = { locale, countryCode: null };
   const doors = doorLabels(locale, t('home.common.doorBackOffice'));
-  const planPrice = formatMoneyCompact(
-    { amountMinor: SUBSCRIPTION_PLAN.amountMinor, currency: SUBSCRIPTION_PLAN.currency },
-    display,
-  );
+  // Le tarif vient de `lib/plan.ts` et non d'un montant recomposé ici : c'est le
+  // prix facturé de l'abonnement, et un écran qui le rassemble lui-même finit par
+  // en annoncer une variante — voir l'en-tête, « Deux devises sur le même écran ».
+  const planPrice = planPriceLabel(display);
 
   // Les six questions sont montées ici, et non lues par une clé construite dans
   // la boucle : trois d'entre elles portent des paramètres — une porte, la durée
