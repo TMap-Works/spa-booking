@@ -47,6 +47,22 @@ import fr from '@/messages/fr/format.json';
  * produit ; deviner autre chose (la région du serveur, celle du navigateur)
  * ferait varier l'affichage d'une machine à l'autre pour un même salon.
  *
+ * ### Le cycle horaire n'est jamais forcé — 12 h pour un salon américain (#1325)
+ *
+ * C'est la conséquence directe de la règle ci-dessus, et l'arbitrage que le
+ * deuxième critère de #1325 demandait de rendre : l'heure s'écrit comme
+ * l'étiquette `{langue}-{pays}` l'écrit, et **aucune surface ne la force**. Un
+ * salon de Manhattan lu en anglais (`en-US`) affiche donc « 2:10 PM » partout —
+ * grille de créneaux, cartes du planning, **gouttière du planning comprise**,
+ * ticket à l'écran, PDF —, et un salon parisien lu en anglais (`en-FR`) affiche
+ * « 14:10 » partout.
+ *
+ * L'alternative — 24 h partout, quel que soit le salon — a été écartée : elle
+ * aurait fait mentir la région du reste de l'écran, qui écrit déjà la date, les
+ * nombres et les montants à la façon du pays du salon, et aurait obligé chaque
+ * surface à repasser un `hourCycle` par-dessus `Intl` — c'est-à-dire à rouvrir
+ * la porte par laquelle les sept divergences du constat de #1325 sont entrées.
+ *
  * ### Ce qui ne change pas
  *
  * Le **fuseau** reste celui de l'établissement, toujours passé explicitement :
@@ -236,23 +252,90 @@ function fractionDigitsOf(currency: string, intlTag: string): number {
 }
 
 /**
+ * Un nombre écrit avec les séparateurs **des autres nombres de l'écran** — et
+ * non avec ceux qu'`Intl` réserve à la monnaie (#1325).
+ *
+ * ## Le fait, vérifiable en une ligne de Node
+ *
+ * ```
+ * new Intl.NumberFormat('en-FR').format(1234.5)                            // 1 234,5
+ * new Intl.NumberFormat('en-FR', { style: 'currency', currency: 'EUR' })
+ *   .format(1234.5)                                                        // €1,234.50
+ * ```
+ *
+ * Ce n'est pas un défaut d'ICU ni une étiquette mal formée : CLDR déclare pour
+ * `en-FR` — comme pour `en-DE` — des symboles `currencyDecimal` et
+ * `currencyGroup` **distincts** de ceux du nombre ordinaire. L'anglais de France
+ * y écrit ses nombres à la française et sa monnaie à l'anglaise.
+ *
+ * ## Pourquoi le produit refuse cette distinction
+ *
+ * Parce qu'elle place les deux formes **côte à côte sur le même écran**. Le
+ * tableau de bord du back-office écrivait « 50,0 % » et « 1 234 » à trois
+ * centimètres de « €140.00 » : c'est le deuxième constat de #1325, et son
+ * deuxième critère d'acceptation — *« sur un même écran, les dates, heures,
+ * nombres, pourcentages et montants suivent la même convention »* — ne peut pas
+ * être tenu en laissant `Intl` décider deux fois.
+ *
+ * Et l'écran n'était pas seul en cause : `formatAmountInput` pré-remplit un
+ * champ avec le séparateur **ordinaire**, et {@link parseAmountInput} relit la
+ * forme groupée **ordinaire**. Recopier dans le champ un total lu à l'écran
+ * — « 1,234.50 » — se faisait donc refuser en `en-FR`, alors que c'est
+ * exactement le geste que #1123 avait rendu possible.
+ *
+ * ## Ce qui est repris à `Intl`, et ce qui ne l'est pas
+ *
+ * Tout, sauf les deux séparateurs : le symbole de la devise, sa place, l'espace
+ * qui l'accompagne, le nombre de chiffres, le signe, la notation compacte, le
+ * groupement — tout cela reste rendu par CLDR, part par part. Seules les parts
+ * `decimal` et `group` sont remplacées par celles du nombre ordinaire de la même
+ * étiquette. Aucune table locale n'est écrite : les deux valeurs viennent
+ * d'`Intl` (voir {@link separatorsOf}), et c'est la même source qui décide des
+ * deux côtés.
+ *
+ * Le groupe n'est remplacé que s'il existe : une langue sans séparateur de
+ * milliers ne doit pas voir disparaître celui de sa monnaie.
+ */
+function withPlainSeparators(
+  value: number,
+  intlTag: string,
+  options: Intl.NumberFormatOptions,
+): string {
+  const plain = separatorsOf(intlTag);
+
+  return new Intl.NumberFormat(intlTag, options)
+    .formatToParts(value)
+    .map((part) => {
+      if (part.type === 'decimal') {
+        return plain.decimal;
+      }
+
+      return part.type === 'group' && plain.group !== '' ? plain.group : part.value;
+    })
+    .join('');
+}
+
+/**
  * « 35,00 € » à partir de `{ amountMinor: 3500, currency: 'EUR' }`.
  *
  * La division par la puissance de dix est le seul flottant du parcours, et il
  * est cantonné à l'affichage : aucun calcul n'en dépend, `Intl` arrondit à la
  * précision de la devise, et les montants du MVP tiennent dans un entier 32 bits
  * — donc très en deçà du seuil où un `number` cesse d'être exact.
+ *
+ * Les séparateurs sont ceux des autres nombres de l'écran, et non ceux que CLDR
+ * réserve à la monnaie : voir {@link withPlainSeparators}.
  */
 export function formatMoney(amount: Money, display: DisplayLocale = FALLBACK_DISPLAY): string {
   const intlTag = tag(display);
   const digits = fractionDigitsOf(amount.currency, intlTag);
 
-  return new Intl.NumberFormat(intlTag, {
+  return withPlainSeparators(amount.amountMinor / 10 ** digits, intlTag, {
     style: 'currency',
     currency: amount.currency,
     minimumFractionDigits: digits,
     maximumFractionDigits: digits,
-  }).format(amount.amountMinor / 10 ** digits);
+  });
 }
 
 /**
@@ -298,13 +381,17 @@ export function formatMoneyCompact(
   // d'affichage — voir {@link formatMoney} sur pourquoi il est sans risque ici.
   const major = amount.amountMinor / 10 ** digits;
 
-  return new Intl.NumberFormat(intlTag, {
+  // Mêmes séparateurs que {@link formatMoney} et que le tableau de la même
+  // figure : une graduation d'axe qui écrirait « 8.5 k € » sous un tableau à
+  // « 8 500,00 € » serait la divergence de #1325 réintroduite à l'échelle d'un
+  // graphique.
+  return withPlainSeparators(major, intlTag, {
     style: 'currency',
     currency: amount.currency,
     notation: 'compact',
     minimumFractionDigits: 0,
     maximumFractionDigits: Math.abs(major) < 1 ? digits : 1,
-  }).format(major);
+  });
 }
 
 /**
@@ -323,17 +410,32 @@ export function formatMoneyCompact(
  * toute façon avec les autres blancs, et c'est la forme textuelle — « , » ou
  * « . » — qui décide de la lecture groupée. Voir {@link splitAmountInput} pour
  * le sort des séparateurs qui ne sont ni l'un ni l'autre.
+ *
+ * Le résultat est **retenu par étiquette** : depuis #1325 chaque montant affiché
+ * le demande, et une liste de cent lignes construisait cent `Intl.NumberFormat`
+ * pour relire deux caractères qui ne changent pas.
  */
-function separatorsOf(intlTag: string): { readonly decimal: string; readonly group: string } {
-  const parts = new Intl.NumberFormat(intlTag).formatToParts(12345.6);
+const SEPARATORS = new Map<string, { readonly decimal: string; readonly group: string }>();
 
-  return {
+function separatorsOf(intlTag: string): { readonly decimal: string; readonly group: string } {
+  const retained = SEPARATORS.get(intlTag);
+
+  if (retained !== undefined) {
+    return retained;
+  }
+
+  const parts = new Intl.NumberFormat(intlTag).formatToParts(12345.6);
+  const separators = {
     // Les replis ne devraient jamais servir — toute locale a un séparateur
     // décimal —, mais `formatToParts` les déclare optionnels et un `undefined`
     // glissé dans une expression régulière refuserait tous les montants.
     decimal: parts.find((part) => part.type === 'decimal')?.value ?? '.',
     group: parts.find((part) => part.type === 'group')?.value ?? '',
   };
+
+  SEPARATORS.set(intlTag, separators);
+
+  return separators;
 }
 
 /**

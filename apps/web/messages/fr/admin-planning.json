@@ -31,8 +31,7 @@
     "moving": "Report en cours…"
   },
   "grid": {
-    "hour": "{hour} h",
-    "spokenTime": "{hours} h {minutes}",
+    "spokenSeparator": " h ",
     "closed": "Fermé",
     "break": "Pause",
     "outsideHours": "Hors horaires",

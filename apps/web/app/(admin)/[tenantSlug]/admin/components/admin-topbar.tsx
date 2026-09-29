@@ -4,7 +4,7 @@ import Link from 'next/link';
 
 import { Icon } from '@/components/ui/icon';
 import { ThemeToggle } from '@/components/ui/theme-toggle';
-import { formattingLocale } from '@/lib/format';
+import { formattingLocale, type DisplayLocale } from '@/lib/format';
 
 import type { AdminShellBilling } from '../layout';
 import { adminBillingPath } from '../paths';
@@ -17,19 +17,27 @@ import { adminBillingPath } from '../paths';
  * Elle ne porte **pas** le titre de l'écran : chaque page rend déjà son
  * `<h1 className="spa-admin__title">`.
  *
- * ## La langue (#845)
+ * ## La langue (#845), et la région du salon (#1325)
  *
  * Ses libellés viennent du namespace `shell`, et la date du jour est mise en
  * forme dans la langue résolue plutôt qu'en `fr-FR` codé en dur. Le **fuseau**,
  * lui, ne bouge pas : c'est celui du salon, et il le reste quelle que soit la
  * langue de qui lit — une date affichée dans le fuseau du lecteur ferait
  * annoncer une autre journée que celle que le planning montre.
+ *
+ * La **région** ne venait pas, elle : `formattingLocale(locale)` était appelé
+ * sans pays, et la barre écrivait « Tuesday, September 29, 2026 » — la région de
+ * repli de l'anglais — au-dessus d'un corps de page qui écrivait
+ * « 29 September 2026 ». Le pays du salon descend donc du gabarit, qui le
+ * connaît déjà (`shell.countryCode`) et le passe au fil d'annonces voisin.
  */
 
 interface AdminTopbarProps {
   readonly tenantSlug: string;
   readonly salonName: string;
   readonly timeZone: string | null;
+  /** `Tenant.address.country` — ISO 3166-1 alpha-2, ou rien. */
+  readonly countryCode: string | null;
   readonly billing: AdminShellBilling | null;
   readonly role: UserRole;
 }
@@ -85,8 +93,8 @@ function BillingPill({
   );
 }
 
-function todayIn(timeZone: string, locale: Locale): string {
-  const formatted = new Intl.DateTimeFormat(formattingLocale(locale), {
+function todayIn(timeZone: string, display: DisplayLocale): string {
+  const formatted = new Intl.DateTimeFormat(formattingLocale(display.locale, display.countryCode), {
     weekday: 'long',
     day: 'numeric',
     month: 'long',
@@ -96,9 +104,17 @@ function todayIn(timeZone: string, locale: Locale): string {
   return formatted.charAt(0).toUpperCase() + formatted.slice(1);
 }
 
-export function AdminTopbar({ tenantSlug, salonName, timeZone, billing, role }: AdminTopbarProps) {
+export function AdminTopbar({
+  tenantSlug,
+  salonName,
+  timeZone,
+  countryCode,
+  billing,
+  role,
+}: AdminTopbarProps) {
   const t = useTranslations('shell.admin.topbar');
   const locale = useLocale() as Locale;
+  const display: DisplayLocale = { locale, countryCode };
 
   return (
     <header className="spa-admin-topbar">
@@ -106,7 +122,7 @@ export function AdminTopbar({ tenantSlug, salonName, timeZone, billing, role }: 
         <span className="spa-admin-topbar__eyebrow">{salonName}</span>
         {/* Pas de date sans fuseau : elle serait celle d'un autre endroit. */}
         {timeZone === null ? null : (
-          <span className="spa-admin-topbar__date">{todayIn(timeZone, locale)}</span>
+          <span className="spa-admin-topbar__date">{todayIn(timeZone, display)}</span>
         )}
       </div>
       <div className="spa-admin-topbar__actions">

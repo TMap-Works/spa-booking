@@ -361,6 +361,12 @@ export function RescheduleForm({
         openingHours={openingHours}
         onMonthChange={goToMonth}
         timeZone={timeZone}
+        // Le pays du salon, sans quoi le sélecteur retombe sur la région de
+        // repli de sa langue — « 2:10 PM » et « Tuesday, September 29, 2026 »
+        // sous un bouton qui écrit « 15:10 » et « 29 September » (#1325). Il
+        // vient du même contexte que les dates du reste de l'écran, ce qui
+        // interdit aux deux de diverger.
+        countryCode={display.countryCode}
         headingId="report-creneaux-titre"
         selectedSlot={chosen}
         lockedSlotNote={currentSlotNote}

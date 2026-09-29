@@ -38,11 +38,34 @@ import { formattingLocale, type DisplayLocale } from './format';
  *
  * ## La langue est un paramètre, pas un défaut de module
  *
- * Chaque fonction la reçoit. Les dates passent par un {@link DisplayLocale} —
- * langue **et** pays — pour la même raison que dans `lib/format.ts` : `en-US`
- * écrit « 9/1/2026 » là où `en-GB` écrit « 01/09/2026 ». La console de l'éditeur
- * n'a pas d'établissement de référence, elle passe donc la seule langue et
- * laisse le repli documenté de `lib/format.ts` choisir la région.
+ * Chaque fonction la reçoit. Les dates passent par un {@link DisplayLocale} — le
+ * même type que dans `lib/format.ts`, pour n'avoir qu'une façon de nommer un
+ * contexte d'affichage dans le front.
+ *
+ * ## Une seule convention, celle de l'opérateur — #1325
+ *
+ * Et c'est ce qui distingue cette console du back-office d'un salon. Là-bas, la
+ * région vient du **pays de l'établissement** : on regarde un seul salon, et ses
+ * dates s'écrivent comme chez lui. Ici, on regarde **tous les salons à la fois**,
+ * et emprunter la région de chacun faisait cohabiter trois écritures sur le même
+ * écran — « 9/29/26, 3:45 AM » pour un salon américain, « 29/09/2026, 09:33 »
+ * pour son voisin parisien, « 07:44 AM UTC » pour l'horodatage de la page. Une
+ * liste qu'on trie et qu'on parcourt à l'œil ne se lit pas comme cela.
+ *
+ * La région est donc celle de la **langue de l'opérateur**, et d'elle seule :
+ * {@link consoleTag} n'a pas de paramètre de pays, et un `countryCode` posé dans
+ * le contexte d'affichage n'y a aucun effet — il ne peut donc pas s'y glisser
+ * par une propriété oubliée, ce qui est exactement ce qui était arrivé.
+ *
+ * ## Et le fuseau se nomme — #1325
+ *
+ * Un instant reste affiché dans le fuseau du salon qui le porte : c'est là que
+ * la chose a eu lieu, et le traduire dans celui de l'éditeur lui ferait
+ * chercher un rendez-vous à une heure que personne n'a vécue. Mais il est
+ * désormais **nommé** ({@link formatPlatformDateTime}), comme l'était déjà le
+ * seul horodatage qui le faisait ({@link formatPlatformStamp}) : sans cela,
+ * l'historique de deux salons de deux continents rendait deux heures sans dire
+ * qu'elles ne parlent pas de la même horloge.
  */
 
 /** Les deux catalogues, dans l'ordre où le front les sert. */
@@ -99,21 +122,38 @@ export function formatPlatformDate(
   timeZone: string,
   display: DisplayLocale,
 ): string {
-  return new Intl.DateTimeFormat(intlTag(display), { timeZone, dateStyle: 'medium' }).format(
+  return new Intl.DateTimeFormat(consoleTag(display), { timeZone, dateStyle: 'medium' }).format(
     new Date(instant),
   );
 }
 
-/** « 25/09/2026 14:32 » dans le fuseau donné. */
+/**
+ * « 25/09/2026 14:32 UTC+2 » dans le fuseau donné — **fuseau nommé** (#1325).
+ *
+ * Les composantes sont énumérées et non demandées par `dateStyle` / `timeStyle`,
+ * pour la même raison que dans {@link formatPlatformStamp} : `Intl` **lève**
+ * quand on joint `timeZoneName` à un style (ECMA-402,
+ * `InitializeDateTimeFormat`). L'énumération rend ce que les styles rendaient —
+ * « 25/09/2026, 14:32 », « 9/25/26, 2:32 PM » — suivi du fuseau.
+ *
+ * `timeZoneName: 'shortOffset'` et non `'short'` : `'short'` rend le décalage
+ * pour la plupart des fuseaux mais un sigle pour quelques-uns — « EDT » pour
+ * `America/New_York` —, et l'éditeur qui compare deux salons compte des heures,
+ * pas des sigles. Le décalage est le seul forme qui se soustraie de tête.
+ */
 export function formatPlatformDateTime(
   instant: string,
   timeZone: string,
   display: DisplayLocale,
 ): string {
-  return new Intl.DateTimeFormat(intlTag(display), {
+  return new Intl.DateTimeFormat(consoleTag(display), {
     timeZone,
-    dateStyle: 'short',
-    timeStyle: 'short',
+    year: 'numeric',
+    month: 'numeric',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    timeZoneName: 'shortOffset',
   }).format(new Date(instant));
 }
 
@@ -137,7 +177,7 @@ export function formatPlatformDateTime(
  * 12:32 PM » — suivi du fuseau.
  */
 export function formatPlatformStamp(instant: Date, display: DisplayLocale): string {
-  return new Intl.DateTimeFormat(intlTag(display), {
+  return new Intl.DateTimeFormat(consoleTag(display), {
     timeZone: 'UTC',
     year: 'numeric',
     month: 'long',
@@ -149,14 +189,20 @@ export function formatPlatformStamp(instant: Date, display: DisplayLocale): stri
 }
 
 /**
- * L'étiquette BCP 47 d'un contexte d'affichage — « fr-FR », « en-US ».
+ * L'étiquette BCP 47 de la console — « fr-FR », « en-US ».
  *
  * Le calcul vit dans `lib/format.ts` (`formattingLocale`), avec ses replis
  * documentés ; l'appeler ici plutôt que de le refaire garantit que la console et
  * le back-office écrivent une date de la même façon pour une même langue.
+ *
+ * **Le pays n'est pas passé**, et c'est délibéré (#1325) : la région est celle du
+ * repli documenté de la langue de l'opérateur, jamais celle d'un salon de la
+ * liste — voir l'en-tête du module. Le paramètre reste un {@link DisplayLocale}
+ * pour que les signatures publiques du module ne changent pas et que le type
+ * reste celui du reste du front, mais son `countryCode` n'est lu nulle part ici.
  */
-function intlTag(display: DisplayLocale): string {
-  return formattingLocale(display.locale, display.countryCode);
+function consoleTag(display: DisplayLocale): string {
+  return formattingLocale(display.locale);
 }
 
 /**
@@ -172,7 +218,7 @@ export function billingBadge(
   if (tenant.billingStatus === 'trialing' && tenant.trialEndsAt !== null) {
     return {
       label: fill(catalog.badge.trialEnds, {
-        date: new Intl.DateTimeFormat(intlTag(display), {
+        date: new Intl.DateTimeFormat(consoleTag(display), {
           timeZone: tenant.timezone,
           dateStyle: 'short',
         }).format(new Date(tenant.trialEndsAt)),

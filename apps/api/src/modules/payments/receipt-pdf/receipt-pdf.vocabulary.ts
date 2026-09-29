@@ -21,34 +21,34 @@ import type { Locale } from '@spa/shared';
  * | Ce qui suit la langue | Ce qui n'en dépend jamais |
  * |---|---|
  * | les libellés et les mentions | les **montants**, entiers en plus petite unité monétaire |
- * | l'ordre et les séparateurs d'une date | le **fuseau** de l'établissement, qui dit de quel jour on parle |
- * | la place du symbole, le séparateur des milliers | le **code devise**, et le nombre de décimales qu'il impose |
- * | le cycle horaire — 24 h en français, 12 h en anglais | le numéro de pièce, composé par `receipt.numbering.ts` |
+ * | le mot qui joint une date et une heure | le **fuseau** de l'établissement, qui dit de quel jour on parle |
+ * | le nom du fichier servi | le **code devise**, et le nombre de décimales qu'il impose |
+ * | le titre porté par les métadonnées du PDF | le numéro de pièce, composé par `receipt.numbering.ts` |
  *
  * Deux PDF de la même vente dans les deux langues portent donc **exactement les
  * mêmes valeurs**, écrites autrement. C'est ce que `receipt-pdf.template.spec.ts`
  * vérifie montant par montant.
  *
- * ## L'étiquette passée à `Intl` porte une région, la langue non
+ * ## Ce que cette table ne décide plus : l'écriture — #1325
  *
- * `Locale` est délibérément sans variante régionale (`packages/shared/src/locale`)
- * — le produit sert deux langues, pas quatre marchés. Mais `Intl` a besoin d'une
- * région pour décider de l'ordre d'une date : `en` seul résout sur le défaut de
- * l'ICU embarquée, c'est-à-dire sur une valeur qui n'est écrite nulle part et qui
- * peut changer avec la version de Node. Une pièce comptable ne peut pas dépendre
- * de cela, d'où les deux étiquettes complètes ci-dessous.
+ * Elle portait deux champs de convention, `intl` et `hourCycle`, figés par
+ * **langue** : `fr-FR`/24 h et `en-US`/12 h. C'était une troisième règle de
+ * région dans le produit, à côté de celle du front, et elle datait la pièce
+ * autrement que l'écran qui venait de l'imprimer — « 09/29/2026 at 09:20 AM » sur
+ * le PDF d'un salon parisien dont le ticket à l'écran écrivait
+ * « 29/09/2026 09:20 ». C'est le quatrième constat de #1325.
  *
- * `en-US` et non `en-GB` : l'anglais du produit est nord-américain — c'est la
- * justification même de `DEFAULT_LOCALE` (#844), « la clientèle du produit est
- * nord-américaine ». La date s'y écrit donc `09/17/2026`, et l'heure en 12 heures.
+ * L'écriture vient désormais du **pays de l'établissement**, par la règle unique
+ * de `receipt-pdf.locale.ts` — celle-là même que `apps/web/lib/format.ts` applique
+ * côté écran. Le cycle horaire n'est plus forcé du tout : il est celui que
+ * l'étiquette porte, donc 12 h pour un salon américain et 24 h pour un salon
+ * parisien, dans les deux langues comme sur toutes les autres surfaces.
+ *
+ * Il ne reste ici que des **mots**, ce qui est le seul objet d'un vocabulaire.
  */
 
-/** Ce qu'une langue décide de la pièce : ses conventions et ses mots. */
+/** Ce qu'une langue décide de la pièce : ses mots. */
 export interface ReceiptVocabulary {
-  /** L'étiquette BCP 47 complète donnée à `Intl` — voir l'en-tête. */
-  readonly intl: string;
-  /** Le cycle horaire de l'heure imprimée : 24 h en français, 12 h en anglais. */
-  readonly hourCycle: 'h12' | 'h23';
   /** Ce qui joint la date et l'heure — « 17/09/2026 à 11:30 ». */
   readonly at: string;
 
@@ -109,8 +109,6 @@ export interface ReceiptVocabulary {
 }
 
 const FRENCH: ReceiptVocabulary = {
-  intl: 'fr-FR',
-  hourCycle: 'h23',
   at: 'à',
 
   legalIdOther: 'Immatriculation',
@@ -155,8 +153,6 @@ const FRENCH: ReceiptVocabulary = {
 };
 
 const ENGLISH: ReceiptVocabulary = {
-  intl: 'en-US',
-  hourCycle: 'h12',
   at: 'at',
 
   legalIdOther: 'Registration no.',

@@ -399,6 +399,7 @@ export default async function AdminLayout({ children, params }: AdminLayoutProps
           <div className="spa-admin__main">
             <AdminTopbar
             billing={shell.billing}
+            countryCode={shell.countryCode}
             role={shell.role}
             salonName={salonName}
             tenantSlug={tenantSlug}

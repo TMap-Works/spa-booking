@@ -10,6 +10,7 @@ import {
   formatSettlementMethod,
   formatTaxRate,
 } from './receipt-pdf.format';
+import { receiptDisplay, type ReceiptDisplay } from './receipt-pdf.locale';
 import { qrMatrix } from './receipt-pdf.qr';
 import type { ReceiptPdfFormat } from './receipt-pdf.types';
 import { receiptVocabulary, type ReceiptVocabulary } from './receipt-pdf.vocabulary';
@@ -190,9 +191,9 @@ function identification(
   receipt: SaleReceipt,
   context: TemplateContext,
   words: ReceiptVocabulary,
+  display: ReceiptDisplay,
 ): void {
   const timezone = receipt.issuer.timezone;
-  const locale = context.locale;
   const invoice = context.variant === 'a4';
   const numbered = context.receiptNumber !== null && receipt.issuedAt !== null;
 
@@ -205,7 +206,7 @@ function identification(
     canvas.text(words.notAnAccountingRecord, {
       align: invoice ? 'left' : 'center',
     });
-    canvas.text(`${words.openedOn} ${formatDateTime(receipt.openedAt, timezone, locale)}`, {
+    canvas.text(`${words.openedOn} ${formatDateTime(receipt.openedAt, timezone, display)}`, {
       align: invoice ? 'left' : 'center',
     });
     canvas.gap(mm(2));
@@ -221,10 +222,10 @@ function identification(
     // Quatrième critère : « la mention *Facture n° …* ». La date et l'heure
     // tiennent sur une seule ligne : les séparer répétait la date deux fois.
     canvas.text(`${words.invoiceNumber} ${number}`, { weight: 'bold', size: 14 });
-    canvas.text(`${words.dateLabel} ${formatDateTime(issuedAt, timezone, locale)}`);
+    canvas.text(`${words.dateLabel} ${formatDateTime(issuedAt, timezone, display)}`);
   } else {
     canvas.text(number, { weight: 'bold', size: 12, align: 'center' });
-    canvas.text(formatDateTime(issuedAt, timezone, locale), { align: 'center' });
+    canvas.text(formatDateTime(issuedAt, timezone, display), { align: 'center' });
   }
 
   canvas.gap(mm(2));
@@ -290,7 +291,7 @@ function parties(
 const SELLABLE_KINDS: readonly SaleItemKind[] = ['SERVICE', 'PRODUCT'];
 
 /** Section 4 — les lignes, dans l'ordre du reçu, prix unitaire **TTC** (#816). */
-function lines(canvas: ReceiptSurface, receipt: SaleReceipt, locale: Locale): void {
+function lines(canvas: ReceiptSurface, receipt: SaleReceipt, display: ReceiptDisplay): void {
   for (const line of receipt.lines) {
     if (!SELLABLE_KINDS.includes(line.kind)) {
       continue;
@@ -299,10 +300,10 @@ function lines(canvas: ReceiptSurface, receipt: SaleReceipt, locale: Locale): vo
     // `line.label` est la saisie du salon — le nom de sa prestation. Il
     // s'imprime tel quel dans les deux langues : c'est une donnée, pas un
     // libellé (voir l'en-tête de ce fichier).
-    canvas.row(line.label, formatMoney(line.lineAmount, locale), { weight: 'bold' });
+    canvas.row(line.label, formatMoney(line.lineAmount, display), { weight: 'bold' });
 
     if (line.quantity !== 1) {
-      canvas.text(`${line.quantity} × ${formatMoney(line.unitAmount, locale)}`, { indent: mm(3) });
+      canvas.text(`${line.quantity} × ${formatMoney(line.unitAmount, display)}`, { indent: mm(3) });
     }
   }
 
@@ -322,30 +323,29 @@ function totals(
   receipt: SaleReceipt,
   context: TemplateContext,
   words: ReceiptVocabulary,
+  display: ReceiptDisplay,
 ): void {
-  const locale = context.locale;
-
   if (receipt.taxBreakdown.length > 0) {
-    canvas.row(words.subtotalExcludingTax, formatMoney(receipt.subtotal, locale));
+    canvas.row(words.subtotalExcludingTax, formatMoney(receipt.subtotal, display));
 
     for (const tax of receipt.taxBreakdown) {
       canvas.row(
-        `${words.tax} ${formatTaxRate(tax.rateBps, locale)}`,
-        formatMoney(tax.tax, locale),
+        `${words.tax} ${formatTaxRate(tax.rateBps, display)}`,
+        formatMoney(tax.tax, display),
         { indent: mm(3) },
       );
     }
 
-    canvas.row(words.totalTax, formatMoney(receipt.taxTotal, locale));
+    canvas.row(words.totalTax, formatMoney(receipt.taxTotal, display));
     canvas.gap(mm(1));
   }
 
   if (receipt.tip.amountMinor !== 0) {
-    canvas.row(words.tip, formatMoney(receipt.tip, locale));
+    canvas.row(words.tip, formatMoney(receipt.tip, display));
   }
 
   canvas.rule();
-  canvas.row(words.total, formatMoney(receipt.total, locale), {
+  canvas.row(words.total, formatMoney(receipt.total, display), {
     weight: 'bold',
     size: context.variant === 'a4' ? 14 : 12,
   });
@@ -367,7 +367,7 @@ function totals(
 function settlements(
   canvas: ReceiptSurface,
   receipt: SaleReceipt,
-  locale: Locale,
+  display: ReceiptDisplay,
   words: ReceiptVocabulary,
 ): void {
   if (receipt.settlements.length === 0) {
@@ -382,11 +382,11 @@ function settlements(
       // Le règlement entier, et non son seul `method` : c'est le **canal** qui
       // décide du libellé depuis #1027, et la référence du TPE ne se lit que
       // sur le canal qui peut en porter une.
-      formatSettlementMethod(settlement, locale),
-      formatMoney(settlement.amount, locale),
+      formatSettlementMethod(settlement, display.locale),
+      formatMoney(settlement.amount, display),
     );
 
-    renderChange(canvas, settlement, locale, words);
+    renderChange(canvas, settlement, display, words);
   }
 
   canvas.gap(mm(2));
@@ -396,15 +396,15 @@ function settlements(
 function renderChange(
   canvas: ReceiptSurface,
   settlement: ReceiptSettlement,
-  locale: Locale,
+  display: ReceiptDisplay,
   words: ReceiptVocabulary,
 ): void {
   if (settlement.tendered === null || settlement.change === null) {
     return;
   }
 
-  canvas.row(words.tendered, formatMoney(settlement.tendered, locale), { indent: mm(3) });
-  canvas.row(words.change, formatMoney(settlement.change, locale), { indent: mm(3) });
+  canvas.row(words.tendered, formatMoney(settlement.tendered, display), { indent: mm(3) });
+  canvas.row(words.change, formatMoney(settlement.change, display), { indent: mm(3) });
 }
 
 /** Les avoirs émis sur cette vente — le sixième critère de #818. */
@@ -413,12 +413,11 @@ function refunds(
   receipt: SaleReceipt,
   context: TemplateContext,
   words: ReceiptVocabulary,
+  display: ReceiptDisplay,
 ): void {
   if (receipt.refunds.length === 0) {
     return;
   }
-
-  const locale = context.locale;
 
   canvas.rule({ dashed: true });
   canvas.text(words.refunds, { weight: 'bold' });
@@ -432,8 +431,8 @@ function refunds(
         ? `${words.refund} ${refund.rank}`
         : `${context.receiptNumber}-R${refund.rank}`;
 
-    canvas.row(label, formatMoney(refund.amount, locale));
-    canvas.text(formatDate(refund.issuedAt, receipt.issuer.timezone, locale), { indent: mm(3) });
+    canvas.row(label, formatMoney(refund.amount, display));
+    canvas.text(formatDate(refund.issuedAt, receipt.issuer.timezone, display), { indent: mm(3) });
 
     if (refund.reason !== null) {
       canvas.text(refund.reason, { indent: mm(3) });
@@ -484,13 +483,18 @@ export function renderReceipt(
   // Résolu une fois pour tout le document : les huit sections écrivent dans la
   // même langue par construction, et non parce qu'elles pensent à la relire.
   const words = receiptVocabulary(context.locale);
+  // Et la **locale de mise en forme** avec eux (#1325) : la langue de la demande
+  // et le pays de l'établissement, résolus une seule fois pour que les huit
+  // sections écrivent leurs dates, leurs heures et leurs montants de la même
+  // façon — et de la même façon que l'écran de caisse qui les imprime.
+  const display = receiptDisplay(context.locale, receipt.issuer);
 
   header(canvas, receipt, context, words);
-  identification(canvas, receipt, context, words);
+  identification(canvas, receipt, context, words, display);
   parties(canvas, receipt, context, words);
-  lines(canvas, receipt, context.locale);
-  totals(canvas, receipt, context, words);
-  settlements(canvas, receipt, context.locale, words);
-  refunds(canvas, receipt, context, words);
+  lines(canvas, receipt, display);
+  totals(canvas, receipt, context, words, display);
+  settlements(canvas, receipt, display, words);
+  refunds(canvas, receipt, context, words, display);
   footer(canvas, receipt, context, words);
 }

@@ -31,8 +31,7 @@
     "moving": "Move in progress…"
   },
   "grid": {
-    "hour": "{hour}:00",
-    "spokenTime": "{hours}:{minutes}",
+    "spokenSeparator": ":",
     "closed": "Closed",
     "break": "Break",
     "outsideHours": "Outside opening hours",

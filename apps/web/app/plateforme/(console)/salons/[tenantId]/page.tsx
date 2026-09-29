@@ -114,12 +114,14 @@ export default async function PlatformTenantPage({ params }: PlatformTenantPageP
 
   const { tenant, activity, billing, defaultLocale: salonLocale } = detail;
   const zone = tenant.timezone;
-  // La région de mise en forme vient du pays que la fiche porte déjà : c'est le
-  // `country_code` de l'établissement, et il ne demande aucun appel de plus.
-  const display: DisplayLocale = {
-    locale: locale as Locale,
-    countryCode: detail.address?.country ?? null,
-  };
+  // `countryCode: null` — la convention de la console est celle de l'opérateur,
+  // pas celle du salon qu'il regarde (#1325). Emprunter le pays de la fiche
+  // faisait lire cette page-ci en « 9/29/26, 3:45 AM » quand la liste d'à côté
+  // et le tableau de bord écrivaient « 29/09/2026 » : trois écritures pour un
+  // seul outil, sur des salons qu'on compare précisément entre eux. C'est
+  // `lib/platform-console.ts` qui tient la règle — la valeur est posée ici
+  // explicitement pour que la lecture de la page la dise aussi.
+  const display: DisplayLocale = { locale: locale as Locale, countryCode: null };
   const steps = setupSteps(detail, display);
   const done = steps.filter((step) => step.done).length;
   const badge = billingBadge(tenant, display);

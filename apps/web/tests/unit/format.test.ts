@@ -9,7 +9,9 @@ import {
   formatDuration,
   formatMoney,
   formatMoneyCompact,
+  formatTicketDateTime,
   formatTimeInTimeZone,
+  formattingLocale,
   parseAmountInput,
 } from '@/lib/format';
 
@@ -390,5 +392,103 @@ describe('dates civiles de l’établissement', () => {
     expect(addCalendarDays('2026-12-31', 1)).toBe('2027-01-01');
     // Bascule d'heure d'été en Europe : un décalage en heures se tromperait ici.
     expect(addCalendarDays('2026-03-28', 1)).toBe('2026-03-29');
+  });
+});
+
+/**
+ * **#1325 — une convention par écran, deux salons, deux langues.**
+ *
+ * `formattingLocale` est la fonction unique dont le premier critère parle. Ce
+ * bloc épingle ce qu'elle décide, et surtout ce qu'elle ne laisse plus diverger :
+ * sur un même écran, une date, une heure, un nombre, un pourcentage et un montant
+ * se lisent dans la même convention.
+ */
+describe('la locale de mise en forme (#1325)', () => {
+  /** 09:20 à Paris, 03:20 à New York — le même instant. */
+  const INSTANT = '2026-09-29T07:20:00.000Z';
+  const PARIS = 'Europe/Paris';
+  const NEW_YORK = 'America/New_York';
+
+  const enFrance = (locale: 'fr' | 'en') => ({ locale, countryCode: 'FR' }) as const;
+  const auxEtatsUnis = (locale: 'fr' | 'en') => ({ locale, countryCode: 'US' }) as const;
+
+  it('colle la langue au pays du salon, et retombe sur le marché de la langue', () => {
+    expect(formattingLocale('en', 'FR')).toBe('en-FR');
+    expect(formattingLocale('fr', 'us')).toBe('fr-US');
+    expect(formattingLocale('en')).toBe('en-US');
+    expect(formattingLocale('fr', null)).toBe('fr-FR');
+    // Un pays mal saisi est ignoré plutôt que recopié : `Intl` lèverait un
+    // `RangeError` sur l'étiquette, et l'écran entier tomberait pour une adresse.
+    expect(formattingLocale('en', 'FRA')).toBe('en-US');
+  });
+
+  /**
+   * Le cœur du deuxième constat. CLDR déclare pour `en-FR` des séparateurs
+   * monétaires distincts de ceux du nombre ordinaire : le tableau de bord
+   * écrivait « 50,0 % » et « 1 234 » à trois centimètres de « €140.00 ».
+   */
+  it('écrit un montant avec les séparateurs des autres nombres de l’écran', () => {
+    const tag = formattingLocale('en', 'FR');
+    const millier = new Intl.NumberFormat(tag).format(1234.5).replace(/[\d,.]/g, '');
+    const decimal = new Intl.NumberFormat(tag).format(1.5).replace(/\d/g, '');
+
+    expect(millier).not.toBe('');
+    expect(decimal).toBe(',');
+
+    const montant = formatMoney({ amountMinor: 123_456, currency: 'EUR' }, enFrance('en'));
+
+    expect(montant).toBe(`€1${millier}234${decimal}56`);
+    // Et le taux de la même figure emploie exactement le même séparateur.
+    expect(
+      new Intl.NumberFormat(tag, { style: 'percent', minimumFractionDigits: 1 }).format(0.5),
+    ).toBe(`50${decimal}0%`);
+  });
+
+  /** Un salon américain, lui, prend le point partout — et 12 heures partout. */
+  it('écrit un salon américain en point décimal et en 12 heures', () => {
+    expect(formatMoney({ amountMinor: 123_456, currency: 'USD' }, auxEtatsUnis('en'))).toBe(
+      '$1,234.56',
+    );
+    expect(formatTimeInTimeZone(INSTANT, NEW_YORK, auxEtatsUnis('en'))).toBe('3:20 AM');
+    expect(formatTicketDateTime(INSTANT, NEW_YORK, auxEtatsUnis('en'))).toBe('09/29/2026 03:20 AM');
+  });
+
+  /** Un salon parisien reste en 24 heures, même lu en anglais. */
+  it('garde l’écriture du salon parisien quand l’écran est en anglais', () => {
+    expect(formatTimeInTimeZone(INSTANT, PARIS, enFrance('en'))).toBe('09:20');
+    expect(formatTicketDateTime(INSTANT, PARIS, enFrance('en'))).toBe('29/09/2026 09:20');
+    expect(formatCalendarDate('2026-09-29', enFrance('en'))).toBe('Tuesday, 29 September 2026');
+  });
+
+  /**
+   * **Le test miroir du PDF de l'API.**
+   *
+   * `apps/api/.../__tests__/receipt-pdf.format.spec.ts` attend ces mêmes chaînes
+   * pour ces mêmes entrées — c'est ce qui tient le premier critère de #1325 tant
+   * que la fonction commune n'a pas sa place dans `packages/shared` (voir
+   * l'en-tête de `apps/api/.../receipt-pdf/receipt-pdf.locale.ts`). Une
+   * divergence d'un côté fait rougir les deux suites.
+   */
+  it('rend le même horodatage que le PDF de la même vente', () => {
+    const vente = '2026-09-17T09:30:00.000Z';
+
+    // Ce que le PDF imprime : « <date> à|at <heure> ».
+    expect(formatTicketDateTime(vente, PARIS, enFrance('fr'))).toBe('17/09/2026 11:30');
+    expect(formatTicketDateTime(vente, PARIS, enFrance('en'))).toBe('17/09/2026 11:30');
+    expect(formatTicketDateTime(vente, NEW_YORK, auxEtatsUnis('en'))).toBe('09/17/2026 05:30 AM');
+    expect(formatTicketDateTime(vente, NEW_YORK, auxEtatsUnis('fr'))).toBe('17/09/2026 05:30');
+  });
+
+  /** L'aller-retour d'un champ de montant, que #1123 avait promis (#1325). */
+  it('relit le montant qu’il vient d’écrire, dans les quatre contextes', () => {
+    const amount = { amountMinor: 123_456, currency: 'EUR' } as const;
+
+    for (const display of [enFrance('fr'), enFrance('en'), auxEtatsUnis('fr'), auxEtatsUnis('en')]) {
+      expect(parseAmountInput(formatAmountInput(amount, display), 'EUR', display)).toEqual(amount);
+      // Et le montant **affiché**, celui qu'on recopie d'un total à un champ.
+      expect(parseAmountInput(formatMoney(amount, display).replace(/[^\d\s,.]/gu, ''), 'EUR', display)).toEqual(
+        amount,
+      );
+    }
   });
 });

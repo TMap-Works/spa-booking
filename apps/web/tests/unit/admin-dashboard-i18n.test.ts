@@ -185,6 +185,34 @@ describe('les chiffres suivent la langue et la région de l’établissement', (
     expect(formatRate(0.0335, NEW_YORK)).toBe('3.4%');
   });
 
+  /**
+   * **#1325, deuxième constat et deuxième critère.** Le taux, le compteur et le
+   * montant d'un même écran doivent s'écrire de la même façon. Ils ne le
+   * faisaient pas : `Intl` rendait « 50,0 % » et « 1 200 » pour `en-FR` — CLDR y
+   * pose la convention française du nombre ordinaire — mais « €140.00 » pour le
+   * montant, parce que CLDR y déclare des séparateurs **monétaires** distincts.
+   *
+   * Les trois sont donc confrontés dans une seule assertion, sur le seul contexte
+   * où la divergence existait : un salon parisien dont l'écran est en anglais.
+   */
+  it('écrit taux, compteur et montant d’une seule façon sur un même écran', () => {
+    const parisEnAnglais = { locale: 'en', countryCode: 'FR' } as const;
+    /** L'espace de groupement, quelle que soit celle qu'ICU a retenue. */
+    const lisible = (valeur: string): string => valeur.replaceAll(/[\u00a0\u202f]/gu, ' ');
+
+    // La virgule décimale des trois. Le montant, lui, s'écrivait « €140.00 » à
+    // trois centimètres d'un taux écrit « 50,0% » : c'est le point que CLDR
+    // réserve à la monnaie en `en-FR`, et que le produit refuse.
+    expect(formatRate(0.5, parisEnAnglais)).toBe('50,0%');
+    expect(formatMoney({ amountMinor: 14_000, currency: 'EUR' }, parisEnAnglais)).toBe('€140,00');
+
+    // Et le même séparateur de milliers de part et d'autre.
+    expect(lisible(formatCount(1200, parisEnAnglais))).toBe('1 200');
+    expect(lisible(formatMoney({ amountMinor: 120_000, currency: 'EUR' }, parisEnAnglais))).toBe(
+      '€1 200,00',
+    );
+  });
+
   it('garde le tiret cadratin faute de dénominateur, dans les deux langues', () => {
     // Un tiret n'est pas un mot : il n'a pas à être traduit, et une valeur
     // inventée serait pire qu'une absence assumée.
