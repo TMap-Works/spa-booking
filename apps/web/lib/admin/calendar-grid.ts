@@ -374,37 +374,166 @@ export interface CalendarBoard {
 }
 
 /**
- * « 09 h », « 09:00 » — l'étiquette d'heure de la gouttière.
+ * « 09 h », « 09 », « 9 AM » — l'étiquette d'heure de la gouttière.
  *
- * Le motif vient du catalogue et non d'`Intl` : la gouttière est une règle de
- * 24 heures que la grille aligne sur des rangées de 30 minutes, et l'écriture
- * en 12 heures qu'`en-US` imposerait doublerait sa largeur pour la moitié des
- * graduations — « 12 PM » contre « 12 » — sur l'écran le plus dense du
- * back-office. Les deux langues gardent donc l'horloge de 24 heures, qui est
- * celle du planning d'un salon, et seul le séparateur suit la langue.
+ * ## Elle vient d'`Intl`, comme tout le reste de l'écran (#1325)
+ *
+ * Elle venait du catalogue (`planning.grid.hour`), au motif qu'une gouttière est
+ * « une règle de 24 heures » et qu'en 12 heures elle doublerait de largeur. Le
+ * résultat était que le seul repère chiffré de l'écran le plus dense du
+ * back-office était **aussi le seul** à ne pas suivre la convention du salon :
+ * pour un salon américain lu en anglais, les cartes et les créneaux écrivaient
+ * « 2:10 PM » le long d'une gouttière graduée « 14:00 ». Deux horloges sur une
+ * même grille, dont l'une sert à situer l'autre.
+ *
+ * Le deuxième critère de #1325 tranche ce cas nommément, gouttière comprise :
+ * l'heure s'écrit comme l'étiquette `{langue}-{pays}` l'écrit, et rien ne la
+ * force. Un salon de Manhattan gradue donc « 9 AM », un salon parisien « 09 h »
+ * en français et « 09 » en anglais.
+ *
+ * ## La largeur, qui était la vraie objection
+ *
+ * `hour: 'numeric'` et non `'2-digit'` : la forme courte d'`Intl` rend « 9 AM »
+ * là où `'2-digit'` rendrait « 09 AM », et c'est la graduation qu'emploient les
+ * agendas du marché sur un compte américain. Cinq caractères tiennent dans les
+ * 4,5 rem de `--spa-admin-time-gutter` (`styles/tokens.css`), qui en portait déjà
+ * cinq avec « 09:00 ». Sur les langues à 24 heures, la forme se **raccourcit** :
+ * « 09 » au lieu de « 09:00 », le `:00` d'une graduation horaire n'apprenant
+ * rien.
+ *
+ * ## Pourquoi une date UTC arbitraire
+ *
+ * On ne met pas en forme un instant mais un **numéro d'heure** — la rangée
+ * `hour` de la grille, déjà résolue dans le fuseau du salon par
+ * {@link zonedFields}. Lire ce numéro à minuit UTC dans le référentiel UTC rend
+ * donc exactement l'heure demandée, sans qu'aucun fuseau ne s'y remette. C'est
+ * le même parti que `formatCalendarDate` de `lib/format.ts` pour une date civile.
  */
-function hourLabel(hour: number, words: GridWords): string {
-  return fillMessage(words.hour, { hour: String(hour).padStart(2, '0') });
+function hourLabel(hour: number, display: DisplayLocale): string {
+  return timeFormatter(HOUR_FORMATTERS, display, { timeZone: 'UTC', hour: 'numeric' }).format(
+    new Date(Date.UTC(2026, 0, 1, hour)),
+  );
 }
 
-/** « 09:15 » — des minutes depuis minuit, déjà locales : aucun fuseau ici. */
+/**
+ * Les formateurs de la grille, **retenus par étiquette**.
+ *
+ * Construire un `Intl.DateTimeFormat` coûte cent fois ce que coûte un `format`,
+ * et cette grille en demande une par graduation de la gouttière, par borne de
+ * bloc et par cellule libre — plusieurs centaines pour une vue semaine. Les
+ * retenir ramène le coût à celui d'un seul par étiquette et par forme. Le cache
+ * est borné par le nombre de couples `{langue}-{pays}` que le processus sert, et
+ * les formateurs d'`Intl` sont immuables : les partager n'a pas d'effet de bord.
+ */
+const HOUR_FORMATTERS = new Map<string, Intl.DateTimeFormat>();
+const CLOCK_FORMATTERS = new Map<string, Intl.DateTimeFormat>();
+
+function timeFormatter(
+  cache: Map<string, Intl.DateTimeFormat>,
+  display: DisplayLocale,
+  options: Intl.DateTimeFormatOptions,
+): Intl.DateTimeFormat {
+  const tag = formattingLocale(display.locale, display.countryCode);
+  const retained = cache.get(tag);
+
+  if (retained !== undefined) {
+    return retained;
+  }
+
+  const made = new Intl.DateTimeFormat(tag, options);
+  cache.set(tag, made);
+
+  return made;
+}
+
+/**
+ * « 09:15 » — des minutes depuis minuit, en **forme machine**.
+ *
+ * Ce n'est plus ce que la grille affiche depuis #1325 : c'est la clé qu'un
+ * appelant compare (`cell.time === '14:30'`) et qu'une action serveur renvoie.
+ * Elle ne suit donc aucune langue, exactement comme `formatAmountMachine` de
+ * `lib/format.ts` pour un montant. Aucun fuseau ici non plus : les minutes sont
+ * déjà celles de l'horloge du salon.
+ */
 function clockOf(minutes: number): string {
   return `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`;
 }
 
-/** « 09:30 » — l'heure d'une **rangée**, pour les cellules libres de la grille. */
+/**
+ * « 09:30 » — l'heure machine d'une **rangée**, la clé d'une cellule libre.
+ *
+ * Elle voyage jusqu'au formulaire du tiroir de rendez-vous, qui la renvoie au
+ * serveur : c'est une valeur, pas un libellé, et elle ne suit donc aucune langue.
+ * Ce que l'écran **montre** de cette rangée est {@link spokenClock}.
+ */
 function slotClock(slot: number): string {
   return clockOf(slot * SLOT_MINUTES);
 }
 
-/** « 10 h 30 », « 10:30 » — la même heure, telle qu'un lecteur d'écran l'entend. */
-function spokenClock(slot: number, words: GridWords): string {
-  const minutes = slot * SLOT_MINUTES;
+/**
+ * « 09:30 », « 9:30 AM » — la même heure murale, écrite comme le **pays du
+ * salon** l'écrit (#1325).
+ *
+ * C'est la contrepartie de {@link hourLabel} pour les heures qui ne tombent pas
+ * sur une heure pleine : les bornes d'un rendez-vous, l'heure d'une cellule
+ * libre. Sans elle, la gouttière d'un salon américain se serait graduée « 9 AM »
+ * au long de blocs annonçant « 09:00 – 12:00 » — la divergence de #1325
+ * réintroduite à l'intérieur d'une seule grille, et dans l'autre sens.
+ *
+ * La date UTC est arbitraire et le référentiel est UTC : on met en forme un
+ * **nombre de minutes**, déjà résolu dans le fuseau du salon par
+ * {@link zonedFields}, et non un instant. Voir {@link hourLabel}.
+ *
+ * Sur les langues à 24 heures — le français, l'anglais hors Amérique du Nord —
+ * la sortie est identique au caractère près à celle de {@link clockOf} : rien ne
+ * change pour un salon parisien.
+ */
+function clockLabel(minutes: number, display: DisplayLocale): string {
+  return timeFormatter(CLOCK_FORMATTERS, display, {
+    timeZone: 'UTC',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(new Date(Date.UTC(2026, 0, 1, Math.floor(minutes / 60), minutes % 60)));
+}
 
-  return fillMessage(words.spokenTime, {
-    hours: String(Math.floor(minutes / 60)).padStart(2, '0'),
-    minutes: String(minutes % 60).padStart(2, '0'),
-  });
+/**
+ * ## Minuit s'écrit « 00:00 », et non plus « 24:00 » — conséquence assumée
+ *
+ * Un rendez-vous qui finit à minuit porte `endMinutes = 1440`. L'ancienne forme
+ * chiffrée rendait « 24:00 », la mise en forme d'`Intl` rend l'heure zéro du
+ * lendemain — « 23:00 – 00:00 », « 11:00 PM – 12:00 AM ».
+ *
+ * C'est le bon comportement, et pas seulement le plus simple : « 24:00 » n'a
+ * aucune traduction en douze heures, et le rétablir obligerait à demander à
+ * l'étiquette si elle écrit en 24 heures — c'est-à-dire à remettre dans le code
+ * la décision de cycle horaire que #1325 vient d'en retirer. L'intervalle reste
+ * lisible parce que sa borne gauche le date : une plage qui commence à 23:00 et
+ * finit à 00:00 ne peut finir que la nuit suivante.
+ *
+ * L'heure **machine** de la même rangée, elle, ne bouge pas : {@link clockOf}
+ * rend toujours « 24:00 », et c'est elle que les comparaisons et le formulaire
+ * du tiroir emploient.
+ */
+
+/**
+ * « 10 h 30 », « 10:30 », « 10:30 AM » — la même heure, telle qu'un lecteur
+ * d'écran l'entend.
+ *
+ * Deux formes pour une seule heure, et elles ne disent pas la même chose parce
+ * qu'elles ne sont pas lues dans le même contexte : dans sa colonne « 10:30 » se
+ * comprend d'un coup d'œil, énoncé seul il s'entend « un zéro trois zéro ».
+ *
+ * Elle est **dérivée de la forme affichée** plutôt que recomposée chiffre à
+ * chiffre (#1325) : c'est ce qui garantit que les deux ne peuvent pas diverger —
+ * mêmes chiffres, même cycle horaire, seul le séparateur change — et c'est ce qui
+ * lui fait suivre le passage en 12 heures d'un salon américain, où « 10 h 30 AM »
+ * n'aurait aucun sens. Le séparateur vient du catalogue, parce que c'est une
+ * convention typographique de langue : le français remplace les deux-points par
+ * « h », l'anglais les garde. Même parti, même raison, que `spokenTime` de
+ * `components/booking/slot-picker.tsx`.
+ */
+function spokenClock(slot: number, display: DisplayLocale, words: GridWords): string {
+  return clockLabel(slot * SLOT_MINUTES, display).replace(':', words.spokenSeparator);
 }
 
 /** « Rina A. » — la vue semaine n'a pas la largeur d'un nom complet. */
@@ -912,6 +1041,7 @@ export function buildCalendarBoard(options: BuildOptions): CalendarBoard {
       lastSlot,
       timeZone,
       words,
+      display,
       opening,
       working: columnWorkOf(staffIds, input.day, opening, weeks, timeOff, timeZone),
       // Seule la vue jour nomme un congé : sa colonne est une personne. En vue
@@ -927,7 +1057,7 @@ export function buildCalendarBoard(options: BuildOptions): CalendarBoard {
 
   const hours: string[] = [];
   for (let hour = firstSlot / SLOTS_PER_HOUR; hour < lastSlot / SLOTS_PER_HOUR; hour += 1) {
-    hours.push(hourLabel(hour, words));
+    hours.push(hourLabel(hour, display));
   }
 
   return {
@@ -1070,6 +1200,8 @@ interface ColumnContext {
   readonly working: readonly OpeningWindow[] | null;
   /** Les congés du praticien de la colonne ce jour-là — vides en vue semaine. */
   readonly timeOff: readonly OpeningWindow[];
+  /** La langue et le pays qui décident de l'écriture des heures (#1325). */
+  readonly display: DisplayLocale;
   readonly now?: Date;
 }
 
@@ -1119,6 +1251,7 @@ function labelsOf(
   span: SlotSpan,
   view: CalendarView,
   words: GridWords,
+  display: DisplayLocale,
 ): {
   timeLabel: string;
   clientLabel: string;
@@ -1126,7 +1259,7 @@ function labelsOf(
   detailLabel: string | null;
   tooltip: string | null;
 } {
-  const timeRange = `${clockOf(span.startMinutes)} – ${clockOf(span.endMinutes)}`;
+  const timeRange = `${clockLabel(span.startMinutes, display)} – ${clockLabel(span.endMinutes, display)}`;
   const fullClientName = `${appointment.client.firstName} ${appointment.client.lastName}`;
 
   if (view !== 'semaine') {
@@ -1143,7 +1276,7 @@ function labelsOf(
   const staffName = appointment.staff.displayName;
 
   return {
-    timeLabel: clockOf(span.startMinutes),
+    timeLabel: clockLabel(span.startMinutes, display),
     clientLabel: shortClientName(appointment.client),
     serviceLabel: null,
     // « Prestation » et « Praticien » sont les mots du tiroir de rendez-vous et
@@ -1192,7 +1325,7 @@ function buildColumn(
       span: Math.max(end - start, 1),
       lane: lanes[index] ?? 0,
       appointment,
-      ...labelsOf(appointment, span, context.view, context.words),
+      ...labelsOf(appointment, span, context.view, context.words, context.display),
     });
   });
 
@@ -1211,7 +1344,7 @@ function buildColumn(
       lane: settledLanes.lanes[index] ?? 0,
       laneCount: settledLanes.laneCount,
       appointment,
-      ...labelsOf(appointment, span, context.view, context.words),
+      ...labelsOf(appointment, span, context.view, context.words, context.display),
     });
   });
 
@@ -1265,7 +1398,7 @@ function buildColumn(
       key: `libre-${input.id}-${String(slot)}`,
       slot: slot - context.firstSlot,
       span: 1,
-      timeLabel: spokenClock(slot, context.words),
+      timeLabel: spokenClock(slot, context.display, context.words),
       day: input.day,
       time: slotClock(slot),
       nowOffset: nowOffsetWithin(nowSlot, slot, slot + 1),

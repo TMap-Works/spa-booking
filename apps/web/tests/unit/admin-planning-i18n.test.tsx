@@ -156,7 +156,7 @@ describe('la grille rend ses mots dans la langue demandée', () => {
     { weekday: 3, opensAt: '14:00', closesAt: '19:00' },
   ];
 
-  function tableau(locale: 'fr' | 'en') {
+  function tableau(locale: 'fr' | 'en', countryCode?: string) {
     return buildCalendarBoard({
       view: 'jour',
       range: rangeOf('jour', WEDNESDAY),
@@ -164,7 +164,7 @@ describe('la grille rend ses mots dans la langue demandée', () => {
       staff: [{ id: 's1', displayName: 'Hanta R.' }],
       openingHours,
       timeZone: TIME_ZONE,
-      display: { locale, countryCode: locale === 'fr' ? 'FR' : 'US' },
+      display: { locale, countryCode: countryCode ?? (locale === 'fr' ? 'FR' : 'US') },
     });
   }
 
@@ -190,26 +190,98 @@ describe('la grille rend ses mots dans la langue demandée', () => {
     // Le fuseau du salon décide seul de la rangée : 08:00 UTC = 11:00 au salon,
     // c'est-à-dire la sixième demi-heure après 08 h. Le vérifier est ce qui
     // garde le ticket du seul défaut qui coûterait cher ici (`CLAUDE.md`).
-    const bloc = (locale: 'fr' | 'en'): unknown =>
-      (tableau(locale).columns[0]?.cells ?? []).find((cell) => cell.kind === 'event');
+    //
+    // La **rangée** ne bouge donc pas d'une langue à l'autre ni d'un pays à
+    // l'autre ; seule son écriture suit le pays du salon (#1325) — d'où les deux
+    // bornes en 12 heures pour le salon américain de `tableau('en')`.
+    const bloc = (locale: 'fr' | 'en', countryCode?: string): unknown =>
+      (tableau(locale, countryCode).columns[0]?.cells ?? []).find((cell) => cell.kind === 'event');
 
     expect(bloc('fr')).toMatchObject({ slot: 6, span: 2, timeLabel: '11:00 – 12:00' });
-    expect(bloc('en')).toMatchObject({ slot: 6, span: 2, timeLabel: '11:00 – 12:00' });
+    expect(bloc('en')).toMatchObject({ slot: 6, span: 2, timeLabel: '11:00 AM – 12:00 PM' });
+    // Le salon parisien lu en anglais garde ses 24 heures : c'est le pays qui
+    // décide, pas la langue.
+    expect(bloc('en', 'FR')).toMatchObject({ slot: 6, span: 2, timeLabel: '11:00 – 12:00' });
   });
 
-  it('écrit l’heure d’un créneau libre selon la langue, sans changer l’heure', () => {
-    const libre = (locale: 'fr' | 'en'): unknown =>
-      (tableau(locale).columns[0]?.cells ?? []).find(
+  /**
+   * L'heure d'une cellule libre existe en **deux formes**, et #1325 les sépare
+   * pour de bon : `time` est la clé que le tiroir de rendez-vous renvoie au
+   * serveur — elle ne suit aucune langue —, `timeLabel` est ce que l'écran montre
+   * et ce qu'un lecteur d'écran énonce. La seconde suit le pays du salon, cycle
+   * horaire compris ; la première ne bouge jamais.
+   */
+  it('écrit l’heure d’un créneau libre selon le salon, sans changer sa clé', () => {
+    const libre = (locale: 'fr' | 'en', countryCode?: string): unknown =>
+      (tableau(locale, countryCode).columns[0]?.cells ?? []).find(
         (cell) => cell.kind === 'free' && cell.time === '14:30',
       );
 
     expect(libre('fr')).toMatchObject({ timeLabel: '14 h 30', time: '14:30' });
-    expect(libre('en')).toMatchObject({ timeLabel: '14:30', time: '14:30' });
+    expect(libre('en')).toMatchObject({ timeLabel: '02:30 PM', time: '14:30' });
+    expect(libre('en', 'FR')).toMatchObject({ timeLabel: '14:30', time: '14:30' });
   });
 
-  it('gradue la gouttière dans la langue de la session', () => {
+  /**
+   * **#1325, deuxième critère — la gouttière suit le salon, sans exception.**
+   *
+   * Elle était graduée sur 24 heures dans les deux langues, par un motif de
+   * catalogue. Pour un salon américain lu en anglais, elle affichait donc
+   * « 09:00 » le long de cartes et de créneaux qui écrivaient « 2:10 PM » : deux
+   * horloges sur une même grille, dont l'une sert à situer l'autre.
+   *
+   * Elle vient désormais d'`Intl`, comme toutes les heures du produit, et le
+   * cycle horaire n'est jamais forcé — c'est celui que porte l'étiquette
+   * `{langue}-{pays}`.
+   */
+  it('gradue la gouttière dans le cycle horaire du pays du salon', () => {
     expect(tableau('fr').hours).toContain('09 h');
-    expect(tableau('en').hours).toContain('09:00');
+    expect(tableau('en').hours).toContain('9 AM');
+  });
+
+  /**
+   * Et c'est bien le **pays** qui décide, pas la langue : un salon parisien lu en
+   * anglais reste en 24 heures, un salon américain lu en français bascule en
+   * 24 heures lui aussi — parce que c'est ce que `fr-US` écrit. Une seule
+   * convention par écran, jamais deux, quel que soit le couple.
+   */
+  /**
+   * **#1325 — minuit.** Un rendez-vous qui finit à minuit s'écrivait « 24:00 »,
+   * une forme qui n'a pas de traduction en douze heures. Il s'écrit désormais
+   * « 00:00 » — et « 12:00 AM » chez un salon américain —, ce qui est la
+   * conséquence assumée de ne plus forcer le cycle horaire nulle part. La borne
+   * gauche date l'intervalle : une plage qui part de 23:00 ne peut finir que la
+   * nuit suivante.
+   */
+  it('écrit minuit comme la région du salon l’écrit', () => {
+    const nuit = (locale: 'fr' | 'en', countryCode: string): unknown => {
+      const board = buildCalendarBoard({
+        view: 'jour',
+        range: rangeOf('jour', WEDNESDAY),
+        appointments: [
+          rendezVous({
+            // 20:00 UTC = 23:00 au salon ; le soin d'une heure finit à minuit.
+            startsAt: `${WEDNESDAY}T20:00:00.000Z`,
+            endsAt: `${WEDNESDAY}T21:00:00.000Z`,
+          }),
+        ],
+        staff: [{ id: 's1', displayName: 'Hanta R.' }],
+        openingHours,
+        timeZone: TIME_ZONE,
+        display: { locale, countryCode },
+      });
+
+      return (board.columns[0]?.cells ?? []).find((cell) => cell.kind === 'event');
+    };
+
+    expect(nuit('fr', 'FR')).toMatchObject({ timeLabel: '23:00 – 00:00' });
+    expect(nuit('en', 'US')).toMatchObject({ timeLabel: '11:00 PM – 12:00 AM' });
+  });
+
+  it('ne fait pas dépendre le cycle horaire de la langue seule', () => {
+    expect(tableau('en', 'FR').hours).toContain('09');
+    expect(tableau('en', 'FR').hours).not.toContain('9 AM');
+    expect(tableau('fr', 'US').hours).toContain('09 h');
   });
 });
 
