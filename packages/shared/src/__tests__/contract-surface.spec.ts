@@ -82,6 +82,13 @@ const EXPECTED_EXPORTS = [
   'localeSchema',
   'DEFAULT_LOCALE',
   'isLocale',
+  // La règle de mise en forme (#1343). Elle ne vaut que si elle traverse le
+  // baril : `apps/web/lib/format.ts` et le PDF du reçu n'ont que `@spa/shared`
+  // pour l'atteindre, et sans lui ils la réécriraient chacun de son côté — ce
+  // qui est exactement le doublon que le ticket ferme.
+  'formattingLocale',
+  'separatorsOf',
+  'withPlainSeparators',
   // schemas
   'appointmentSchema',
   'createAppointmentRequestSchema',

@@ -39,8 +39,8 @@ import type { Locale } from '@spa/shared';
  * « 29/09/2026 09:20 ». C'est le quatrième constat de #1325.
  *
  * L'écriture vient désormais du **pays de l'établissement**, par la règle unique
- * de `receipt-pdf.locale.ts` — celle-là même que `apps/web/lib/format.ts` applique
- * côté écran. Le cycle horaire n'est plus forcé du tout : il est celui que
+ * de `@spa/shared` — celle-là même que `apps/web/lib/format.ts` applique côté
+ * écran, et que `receipt-pdf.locale.ts` lit pour la pièce (#1343). Le cycle horaire n'est plus forcé du tout : il est celui que
  * l'étiquette porte, donc 12 h pour un salon américain et 24 h pour un salon
  * parisien, dans les deux langues comme sur toutes les autres surfaces.
  *
