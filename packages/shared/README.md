@@ -8,7 +8,7 @@ src/
   common/     primitives transverses — montants, instants UTC, identifiants, pagination
   constants/  statuts de RDV, rôles, canaux de notification, bornes de champs
   errors/     codes d'erreur stables et enveloppe de réponse en échec
-  locale/     les deux langues du produit — `fr` et `en`, et leur seule définition
+  locale/     les deux langues du produit — `fr` et `en` —, et la règle de mise en forme qu'elles décident
   schemas/    entités et DTO, en schémas Zod dont les types sont inférés
   index.ts    baril racine — tout ce qu'expose `@spa/shared`
 ```
@@ -128,7 +128,7 @@ d'`apps/api` le refuse au lint.
 
 1. Modifier ou ajouter le schéma dans `src/`.
 2. L'exporter depuis le baril de sa famille (`common/`, `constants/`, `errors/`,
-   `schemas/`) — les réexports y sont nommés un par un, délibérément.
+   `locale/`, `schemas/`) — les réexports y sont nommés un par un, délibérément.
 3. Ajouter le test qui garde l'invariant, dans `src/__tests__/`.
 4. `npm run verify` à la racine : les erreurs de compilation dans `apps/*` sont
    la liste de travail.
