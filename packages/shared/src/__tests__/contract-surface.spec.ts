@@ -98,6 +98,11 @@ const EXPECTED_EXPORTS = [
   // c'est elle qui refuse un pays inexistant à l'écriture, et l'oublier dans le
   // baril ferait retomber les réglages du salon sur la forme permissive.
   'submittedPostalAddressSchema',
+  // L'ordre de la localité (#1334). Il ne vaut que s'il traverse le baril : les
+  // deux dépôts d'`apps/api` qui composent une adresse — le PDF du reçu et les
+  // e-mails — n'ont que `@spa/shared` pour l'atteindre, et sans lui ils
+  // recomposeraient chacun le leur, ce qui est exactement le bug corrigé.
+  'addressLocalityLine',
   'SUBSCRIPTION_PLAN_PRICE',
   'saleReceiptSchema',
   'formatReceiptNumber',

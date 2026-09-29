@@ -392,6 +392,9 @@ export type {
 
 export {
   ADDRESS_REGION_COUNTRIES,
+  CITY_BEFORE_POSTAL_CODE_COUNTRIES,
+  addressLocalityLine,
+  addressLocalityParts,
   countryUsesAddressRegion,
   legalIdSchema,
   legalIdTypeSchema,
@@ -412,6 +415,7 @@ export {
   vatNumberSchema,
 } from './tenant';
 export type {
+  AddressLocality,
   OpeningHoursEntry,
   PostalAddress,
   PublicTenant,
