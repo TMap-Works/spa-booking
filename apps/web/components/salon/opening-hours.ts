@@ -48,8 +48,8 @@ import { formattingLocale, type DisplayLocale } from '@/lib/format';
  * #843 prescrit à un module pur, et exactement celle de `lib/booking/consent.tsx`
  * depuis #1264.
  *
- * Un traducteur et non six chaînes résolues : quatre des six phrases portent des
- * paramètres (`{time}`, `{day}`, `{weekday}`), et c'est ce module qui décide
+ * Un traducteur et non sept chaînes résolues : quatre des sept phrases portent
+ * des paramètres (`{time}`, `{day}`, `{weekday}`), et c'est ce module qui décide
  * laquelle est écrite. Les lui faire toutes préparer par l'appelant reviendrait à
  * lui faire porter la branche.
  *
@@ -57,10 +57,23 @@ import { formattingLocale, type DisplayLocale } from '@/lib/format';
  * même geste, ce que l'en-tête d'hier annonçait pour la fin de l'épique #843 :
  * `tsc` nomme désormais tout appelant qui ne résout pas la langue, au lieu de le
  * laisser rendre du français sur un écran anglais.
+ *
+ * ## Les heures aussi suivent le pays du salon (#1345)
+ *
+ * Une troisième nature s'était glissée entre les deux précédentes : les **heures
+ * murales** du contrat — `'09:00'` —, que ce module recopiait telles quelles. Ce
+ * n'était pas un écart tant que tout s'écrivait en 24 heures ; depuis #1325 les
+ * *instants* des mêmes écrans suivent le pays du salon, et la carte « Horaires »
+ * d'un salon de Manhattan lue en anglais annonçait « 09:00 – 19:00 » au-dessus de
+ * créneaux proposés à « 9:00 AM ».
+ *
+ * Elles passent donc par {@link formatWallTime}, seul point d'écriture d'une heure
+ * murale du front, qui lit son étiquette de `formattingLocale` — la règle unique
+ * de `@spa/shared` (#1349) — et n'en réécrit rien.
  */
 
 /**
- * Les six phrases que ce module écrit, sous les clés du namespace `booking`.
+ * Les sept phrases que ce module écrit, sous les clés du namespace `booking`.
  *
  * Énumérées plutôt que déduites d'un gabarit, pour la raison que
  * `lib/booking/consent.tsx` donne à sa propre liste : le traducteur de
@@ -72,6 +85,7 @@ import { formattingLocale, type DisplayLocale } from '@/lib/format';
 export type HoursMessageKey =
   | 'salon.hours.unknownDay'
   | 'salon.hours.closed'
+  | 'salon.hours.midnight'
   | 'salon.hours.openUntil'
   | 'salon.hours.closedOpensAt'
   | 'salon.hours.closedOpensTomorrow'
@@ -237,22 +251,8 @@ export function groupOpeningHoursByDay(
   return days;
 }
 
-/**
- * « 09:00 – 12:00 », avec un tiret demi-cadratin et des espaces insécables.
- *
- * L'espace insécable n'est pas une coquetterie : sans lui, un retour à la ligne
- * peut tomber entre l'heure et le tiret, et la plage se lit alors comme deux
- * heures sans rapport.
- *
- * Aucun mot ici, et donc rien à traduire (#846) : deux heures murales telles que
- * le salon les a saisies, séparées par de la ponctuation.
- */
-export function formatOpeningRange(entry: OpeningHoursEntry): string {
-  return `${entry.opensAt}\u00a0\u2013\u00a0${entry.closesAt}`;
-}
-
 // ---------------------------------------------------------------------------
-// La semaine entière, jours fermés compris — BM-VITRINE-03 (#1046)
+// L'heure murale, écrite dans la convention du pays du salon — #1345
 // ---------------------------------------------------------------------------
 
 /** Minutes d'une journée civile — la valeur de `24:00`, borne haute légitime. */
@@ -286,6 +286,141 @@ function wallMinutes(time: string): number | null {
 
   return Number(match[1]) * 60 + Number(match[2]);
 }
+
+/**
+ * Les formateurs d'heure murale, **retenus par étiquette**.
+ *
+ * La carte « Horaires » en demande jusqu'à vingt-huit par rendu — sept jours,
+ * deux plages, deux bornes — toutes sur la même étiquette, et c'est une page dont
+ * le budget de LCP est de 2,5 s en 4G. Même parti, et même raison, que le cache de
+ * `lib/admin/calendar-grid.ts` et que `separatorsOf` de `@spa/shared` : ce qui ne
+ * dépend que de l'étiquette ne se reconstruit pas.
+ */
+const WALL_TIME_FORMATTERS = new Map<string, Intl.DateTimeFormat>();
+
+/**
+ * L'écriture de l'heure de ce contexte d'affichage.
+ *
+ * `timeStyle: 'short'`, c'est-à-dire **les mêmes options** que
+ * `formatTimeInTimeZone` de `lib/format.ts`, et c'est tout l'objet de #1345 : les
+ * créneaux de la vitrine et les rendez-vous de « Mon planning » passent par elle,
+ * et une plage écrite avec d'autres options aurait pu diverger d'eux à la largeur
+ * d'un zéro près — « 09:00 AM » sous un créneau à « 9:00 AM ».
+ */
+function wallTimeFormatter(display: DisplayLocale): Intl.DateTimeFormat {
+  const intlTag = formattingLocale(display.locale, display.countryCode);
+  const retained = WALL_TIME_FORMATTERS.get(intlTag);
+
+  if (retained !== undefined) {
+    return retained;
+  }
+
+  const made = new Intl.DateTimeFormat(intlTag, { timeZone: 'UTC', timeStyle: 'short' });
+  WALL_TIME_FORMATTERS.set(intlTag, made);
+
+  return made;
+}
+
+/**
+ * Des minutes depuis minuit écrites comme le **pays du salon** les écrit —
+ * « 09:00 » chez un salon parisien, « 9:00 AM » chez un salon de Manhattan lu en
+ * anglais (#1345).
+ *
+ * La date est arbitraire et le référentiel est UTC : ce qu'on met en forme est un
+ * **nombre de minutes** — une heure murale que la gérance a saisie —, et non un
+ * instant à reprojeter. Aucun fuseau n'intervient donc ici, et la sortie ne dépend
+ * d'aucune machine.
+ *
+ * `midnight` est le **mot** de la langue pour la borne `24:00` du contrat, et non
+ * une heure : `Intl` rendrait « 00:00 », l'heure zéro du lendemain, au milieu
+ * d'une plage, et une carte qui annonce « 18:00 – 00:00 » se lit comme une erreur
+ * de saisie. C'est l'inverse de l'arbitrage de `lib/admin/calendar-grid.ts`, et
+ * pour une raison de fond : là-bas la borne gauche **date** l'intervalle d'un
+ * rendez-vous qui court sur la nuit, ici les deux bornes sont deux heures d'un
+ * même jour de la semaine.
+ */
+function wallTimeLabel(minutes: number, display: DisplayLocale, midnight: string): string {
+  if (minutes === MINUTES_IN_CIVIL_DAY) {
+    return midnight;
+  }
+
+  const hour = Math.floor(minutes / 60);
+  const minute = minutes % 60;
+
+  try {
+    // Les espaces d'`Intl` sont rendus **insécables**, et c'est la même raison que
+    // celle de {@link formatOpeningRange} : en douze heures la sortie en porte un
+    // — « 9:00 AM » —, et un retour à la ligne qui y tomberait laisserait « 9:00 »
+    // seul en fin de ligne, c'est-à-dire une heure du matin là où il est 21 h. Le
+    // cas n'existait pas tant que tout s'écrivait en 24 heures ; il apparaît avec
+    // #1345, sur la colonne étroite de la carte « Horaires » à 360 px.
+    //
+    // Seul U+0020 est remplacé : selon la version d'ICU, la même sortie porte déjà
+    // U+202F, qui est insécable de naissance. Rien ne change à l'œil — l'écriture
+    // reste celle de `formatTimeInTimeZone`, au caractère blanc près.
+    return wallTimeFormatter(display)
+      .format(new Date(Date.UTC(2024, 0, 1, hour, minute)))
+      .replace(/\u0020/gu, '\u00a0');
+  } catch {
+    // Même précaution que `weekdayName` : une étiquette qu'`Intl` refuse rend la
+    // forme du contrat plutôt que de faire tomber la vitrine entière.
+    return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
+  }
+}
+
+/**
+ * Point d'écriture **unique** d'une heure murale du contrat dans `apps/web` —
+ * « 09:00 », « 9:00 AM », « minuit » pour `24:00` (#1345).
+ *
+ * Exportée parce que « Mon planning » écrit les mêmes heures que la vitrine :
+ * `lib/admin/my-planning.ts` la lit d'ici, et les plages de travail d'un
+ * praticien suivent donc la convention de son salon, exactement comme les
+ * rendez-vous affichés dans la même colonne. L'import va du back-office vers ce
+ * module, et jamais l'inverse — c'est le sens qui ne coûte rien au LCP de la
+ * vitrine, celui-là même que `wallMinutes` ci-dessus refuse de prendre.
+ *
+ * Le **mot** de minuit est un paramètre et non une clé lue ici : les deux surfaces
+ * ne lisent pas le même namespace — `booking` pour la vitrine,
+ * `admin-my-planning` pour le back-office —, et ce module n'importe plus aucun
+ * catalogue (#1142).
+ *
+ * Une heure que le contrat n'aurait pas validée est rendue **telle quelle** : la
+ * vitrine montre ce qui est en base plutôt que de blanchir une ligne, comme
+ * partout ailleurs dans ce module.
+ */
+export function formatWallTime(time: string, display: DisplayLocale, midnight: string): string {
+  const minutes = wallMinutes(time);
+
+  return minutes === null ? time : wallTimeLabel(minutes, display, midnight);
+}
+
+/**
+ * « 09:00 – 12:00 », « 9:00 AM – 12:00 PM », avec un tiret demi-cadratin et des
+ * espaces insécables.
+ *
+ * L'espace insécable n'est pas une coquetterie : sans lui, un retour à la ligne
+ * peut tomber entre l'heure et le tiret, et la plage se lit alors comme deux
+ * heures sans rapport.
+ *
+ * Les deux bornes passent par {@link formatWallTime} depuis #1345 : elles étaient
+ * recopiées du contrat, et la carte « Horaires » d'un salon de Manhattan lue en
+ * anglais annonçait donc « 09:00 – 19:00 » au-dessus de créneaux proposés à
+ * « 9:00 AM ». Le seul mot de la fonction est celui de minuit, d'où le traducteur
+ * (#846, #1142).
+ */
+export function formatOpeningRange(
+  entry: OpeningHoursEntry,
+  display: DisplayLocale,
+  t: HoursTranslator,
+): string {
+  const midnight = t('salon.hours.midnight');
+
+  return `${formatWallTime(entry.opensAt, display, midnight)}\u00a0\u2013\u00a0${formatWallTime(entry.closesAt, display, midnight)}`;
+}
+
+// ---------------------------------------------------------------------------
+// La semaine entière, jours fermés compris — BM-VITRINE-03 (#1046)
+// ---------------------------------------------------------------------------
 
 /** Une journée de la semaine, telle que la carte « Horaires » la rend. */
 export interface ScheduledDay {
@@ -459,7 +594,16 @@ export function openingStatus(
     }
 
     if (clock.minutes >= opens && clock.minutes < closes) {
-      return { open: true, label: t('salon.hours.openUntil', { time: entry.closesAt }) };
+      // L'heure de fermeture est mise en forme, et non recopiée du contrat
+      // (#1345) : le bandeau d'un salon américain annonçait « closes at 19:00 »
+      // au-dessus de créneaux à « 7:00 PM ». `closes` est déjà lu, et `24:00` y
+      // vaut 1440 : c'est `wallTimeLabel` qui en fait « minuit ».
+      return {
+        open: true,
+        label: t('salon.hours.openUntil', {
+          time: wallTimeLabel(closes, display, t('salon.hours.midnight')),
+        }),
+      };
     }
   }
 
@@ -507,7 +651,10 @@ function nextOpening(
       continue;
     }
 
-    const time = formatWallMinutes(earliest);
+    // Écrite dans la convention du pays du salon, comme la plage qu'elle ouvre
+    // (#1345). `24:00` n'y arrive pas — le contrat le refuse pour un `opensAt` —,
+    // mais le mot est passé quand même : une seule façon d'écrire une heure.
+    const time = wallTimeLabel(earliest, display, t('salon.hours.midnight'));
 
     if (offset === 0) {
       return t('salon.hours.closedOpensAt', { time });
@@ -524,12 +671,4 @@ function nextOpening(
   }
 
   return null;
-}
-
-/** L'inverse de `wallMinutes`, pour réécrire une heure d'ouverture retenue. */
-function formatWallMinutes(minutes: number): string {
-  const hour = Math.floor(minutes / 60);
-  const minute = minutes % 60;
-
-  return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
 }

@@ -224,6 +224,7 @@
     "hours": {
       "unknownDay": "Jour {weekday}",
       "closed": "Fermé",
+      "midnight": "minuit",
       "openUntil": "Ouvert — ferme à {time}",
       "closedOpensAt": "Fermé — ouvre à {time}",
       "closedOpensTomorrow": "Fermé — ouvre demain à {time}",
