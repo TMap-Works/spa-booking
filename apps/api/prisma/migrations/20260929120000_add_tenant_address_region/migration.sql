@@ -1,0 +1,65 @@
+-- État ou province dans l'adresse d'un salon — #1335, suite de #1330 et #1332.
+--
+-- #1332 a livré l'**ordre** de l'adresse nord-américaine : un salon de Manhattan
+-- s'annonce « New York 10118 » et non plus « 10118 New York ». Il manquait le
+-- champ lui-même. Une adresse américaine sans État n'est pas une adresse :
+-- l'USPS écrit « CITY ST ZIP », et deux villes homonymes dans deux États —
+-- Springfield, Portland, Columbus — ne se distinguent que par lui.
+--
+-- | Colonne | Type | Nullable | Défaut | Ce qu'elle porte |
+-- |---|---|---|---|---|
+-- | `tenants.region` | `VARCHAR(100)` | oui | — | l'État, la province ou la subdivision équivalente |
+--
+-- ## Nullable, et **hors** du triplet de complétude
+--
+-- `tenants_address_completeness_check` exige que `address_line1`, `city` et
+-- `country_code` soient les trois nuls ou les trois renseignés. `region` n'y
+-- entre pas, exactement comme `postal_code` et `address_line2` n'y entrent pas :
+-- des onze pays ouverts par le produit, deux seulement — US et CA — écrivent une
+-- subdivision dans leur adresse postale. L'ajouter au triplet aurait rendu la
+-- contrainte fausse pour les neuf autres, et rendu inenregistrable l'adresse
+-- d'un salon français.
+--
+-- La contrainte n'est donc **pas réécrite** : une colonne s'ajoute, rien d'autre
+-- ne change. C'est ce qui rend la migration purement additive — aucune ligne
+-- existante n'a de valeur à fournir, aucun `CHECK` existant ne devient faux, et
+-- une base déjà peuplée passe sans réécriture de table (`ADD COLUMN` nullable
+-- sans défaut est une opération de catalogue depuis PostgreSQL 11).
+--
+-- ## `VARCHAR(100)` et non `CHAR(2)`
+--
+-- L'abréviation de l'USPS (« NY ») est la plus courante, mais elle n'est pas la
+-- seule forme qu'on ait le droit de saisir : « New York », « British Columbia »,
+-- « Newfoundland and Labrador » sont les noms que l'ISO 3166-2 donne aux mêmes
+-- subdivisions. Une borne à deux caractères les aurait refusés, et un `CHECK`
+-- sur la liste des cinquante États aurait fait de ce champ une donnée de
+-- référence à tenir — pour un gain nul : le produit ne calcule rien sur cette
+-- valeur, il l'imprime.
+--
+-- Aucun format n'est imposé, pour la même raison qu'aucun ne l'est sur
+-- `postal_code` : il varie d'un pays à l'autre, et un motif trop strict
+-- refuserait l'adresse d'un salon parfaitement réelle. La borne de largeur est
+-- là pour arrêter un collage accidentel, pas pour trancher une convention.
+--
+-- ## Aucun index, délibérément
+--
+-- Cette colonne se lit avec la ligne qu'on regarde — la vitrine du salon, sa
+-- fiche dans la console, ses réglages — et ne sert aucun prédicat de recherche :
+-- le produit ne cherche pas les salons par État, et le fera d'autant moins qu'il
+-- n'expose aucune recherche géographique. Même arbitrage, et même motif, que
+-- `tenants.default_locale` (#844) et `users.data_consent_at` (#880).
+--
+-- ## Réversibilité
+--
+-- Purement additive, et réversible sans perte d'une donnée antérieure :
+--
+-- ```sql
+-- ALTER TABLE "tenants" DROP COLUMN "region";
+-- ```
+--
+-- Aucune colonne existante n'est modifiée, aucune ligne n'est réécrite, aucune
+-- contrainte ni aucun index n'est supprimé : revenir en arrière rend exactement
+-- la base d'avant, aux subdivisions saisies entre-temps près.
+
+-- AlterTable
+ALTER TABLE "tenants" ADD COLUMN     "region" VARCHAR(100);
