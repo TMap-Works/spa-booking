@@ -66,11 +66,54 @@ describe('l’ordre des cinq étapes', () => {
     expect(resolveLocale({ tenant: null })).toBe('en');
   });
 
+  it('3. `Accept-Language` gagne sur l’établissement, même déclaré `tenantFirst: false`', () => {
+    // Absent et `false` se lisent pareil : c'est la conduite du parcours public,
+    // celle de la grande majorité des requêtes.
+    expect(
+      resolveLocale({ acceptLanguage: 'fr-CA,fr;q=0.9', tenant: 'en', tenantFirst: false }),
+    ).toBe('fr');
+  });
+
   it('une étape illisible ne bloque pas la suivante', () => {
     // Un cookie trafiqué ne doit ni faire tomber la page, ni geler la
     // négociation sur une valeur qui n'existe pas.
     expect(resolveLocale({ explicit: 'es', acceptLanguage: 'fr' })).toBe('fr');
     expect(resolveLocale({ account: 'zz', tenant: 'fr' })).toBe('fr');
+  });
+});
+
+/**
+ * L'échange des deux dernières étapes sur le back-office — #1326.
+ *
+ * `tenantFirst` est ce qui distingue l'espace de travail de l'établissement des
+ * pages de son visiteur. Ce qui est éprouvé ici est la **règle** ; qui pose le
+ * signal, et sur la foi de quoi, l'est par `i18n-back-office-locale.test.ts`.
+ */
+describe('sur le back-office, l’établissement passe avant le navigateur', () => {
+  it('sert la langue de l’établissement contre celle du navigateur', () => {
+    expect(
+      resolveLocale({ acceptLanguage: 'fr-CA,fr;q=0.9', tenant: 'en', tenantFirst: true }),
+    ).toBe('en');
+  });
+
+  it('ne devance ni le choix explicite ni le compte', () => {
+    expect(resolveLocale({ explicit: 'fr', tenant: 'en', tenantFirst: true })).toBe('fr');
+    expect(resolveLocale({ account: 'fr', tenant: 'en', tenantFirst: true })).toBe('fr');
+  });
+
+  it('laisse la main au navigateur quand l’établissement n’a rien dit', () => {
+    // Un salon sans langue déclarée, une API muette, une réponse hors contrat :
+    // l'étape n'existe pas, et celle d'après tranche — comme partout ailleurs.
+    expect(resolveLocale({ acceptLanguage: 'fr', tenant: null, tenantFirst: true })).toBe('fr');
+    expect(resolveLocale({ acceptLanguage: 'fr', tenant: 'klingon', tenantFirst: true })).toBe(
+      'fr',
+    );
+  });
+
+  it('retombe sur l’anglais quand ni l’un ni l’autre ne dit rien', () => {
+    expect(resolveLocale({ acceptLanguage: '*;q=0.5', tenant: null, tenantFirst: true })).toBe(
+      'en',
+    );
   });
 });
 

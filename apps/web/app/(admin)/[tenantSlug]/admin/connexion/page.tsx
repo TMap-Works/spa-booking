@@ -2,6 +2,7 @@ import { getLocale, getTranslations } from 'next-intl/server';
 import { notFound, redirect } from 'next/navigation';
 
 import { AuthScreen, type AuthHighlight } from '@/components/auth/auth-screen';
+import { LocaleSwitcher } from '@/components/ui/locale-switcher';
 import { PHOTOS } from '@/lib/photos';
 import { publicExitLabels } from '@/components/salon/public-exits';
 import { PLATFORM_HOME_PATH, PLATFORM_NAME } from '@/lib/platform';
@@ -118,6 +119,18 @@ import { adminCalendarPath } from '../paths';
  * la table figée en français, dépréciée par #845 et supprimée par #1297 — à
  * `publicExitLabels(locale)`, exactement comme ce registre l'annonçait pour les
  * six surfaces qui le lisent.
+ *
+ * ## Le sélecteur de langue — #1326
+ *
+ * C'est le seul écran du back-office servi **sans rail**, et le rail est ce qui
+ * portait le sélecteur : personne ne pouvait donc changer de langue avant de se
+ * connecter. Il est posé sous le formulaire, dans le volet du formulaire — le
+ * volet d'accueil porte l'identité et jamais une commande (`auth-screen.tsx`).
+ *
+ * Cet écran-là s'affiche désormais dans la langue de l'établissement quand rien
+ * n'a été demandé : c'est son back-office, et l'ordre de résolution y place le
+ * salon avant le navigateur (`i18n/resolve.ts`). Le sélecteur est ce qui permet
+ * d'en sortir, et son choix reste la première étape de l'ordre.
  */
 
 export const dynamic = 'force-dynamic';
@@ -187,6 +200,7 @@ export default async function AdminLoginPage({ params, searchParams }: AdminLogi
       ]}
     >
       <AdminLoginForm tenantSlug={tenantSlug} notice={readSessionNotice(motif)} />
+      <LocaleSwitcher className="spa-locale-switcher--centered spa-locale-switcher--detached" />
     </AuthScreen>
   );
 }

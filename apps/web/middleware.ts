@@ -1,11 +1,12 @@
 import { NextResponse, type NextRequest } from 'next/server';
 
-import { TENANT_SLUG_HEADER } from '@/i18n/cookies';
-import { tenantSlugFromPathname } from '@/lib/tenant-slug';
+import { ADMIN_WORKSPACE, TENANT_SLUG_HEADER, TENANT_WORKSPACE_HEADER } from '@/i18n/cookies';
+import { pathSegment, tenantSlugFromPathname } from '@/lib/tenant-slug';
 
 /**
  * Le seul travail de ce middleware : dire à la résolution de langue **quel
- * salon** la page visitée concerne (#845).
+ * salon** la page visitée concerne (#845), et **de quel côté** de ce salon elle
+ * se trouve (#1326).
  *
  * ## Pourquoi il faut un middleware pour cela
  *
@@ -32,8 +33,20 @@ import { tenantSlugFromPathname } from '@/lib/tenant-slug';
  * Filtrer ici aurait demandé d'y tenir une seconde liste des routes réservées,
  * qui aurait divergé de celle de l'API au premier ajout.
  *
- * L'appel n'a de toute façon lieu que lorsque les trois signaux qui précèdent
+ * L'appel n'a de toute façon lieu que lorsque les signaux qui précèdent
  * l'établissement sont muets — voir `requestLocale`.
+ *
+ * ## Le second en-tête : le back-office (#1326)
+ *
+ * Le back-office d'un salon est **son** espace de travail, et non celui de son
+ * visiteur : son équipe y travaille dans la langue de l'établissement tant que
+ * personne n'a demandé autre chose — c'est ce que promet le bloc « Ma langue »
+ * de ses réglages. La résolution y place donc `Tenant.defaultLocale` avant
+ * l'`Accept-Language`, et le layout racine a besoin de savoir qu'il y est.
+ *
+ * Il ne le sait pas plus que le slug : même limite de l'App Router, même remède.
+ * Le second segment du chemin est donc recopié dans un second en-tête, et
+ * seulement quand il vaut `admin`.
  *
  * Seule la **forme** du segment est vérifiée ici, et ce n'est pas un filtre de
  * routes : un slug d'établissement est un label DNS (`SLUG_SHAPE` ci-dessous),
@@ -60,18 +73,44 @@ import { tenantSlugFromPathname } from '@/lib/tenant-slug';
  */
 const SLUG_SHAPE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
+/**
+ * Le segment qui ouvre le back-office d'un établissement — `/{slug}/admin/…`.
+ *
+ * Il se lit par `pathSegment` de `lib/tenant-slug.ts`, la même lecture que celle
+ * du slug et au rang suivant : décodée, parce que Next apparie ses routes sur des
+ * segments décodés — `/maison-lotus/%61dmin` sert donc bien le back-office, et un
+ * segment qu'on n'aurait pas reconnu aurait rendu l'écran dans la langue du
+ * navigateur au lieu de celle du salon — et enveloppée, parce qu'un échappement
+ * tronqué lève `URIError` : il ne désigne aucun espace connu, et ne doit pas
+ * faire tomber le middleware de **toutes** les pages.
+ */
+const ADMIN_SEGMENT = 'admin';
+
+/** Le rang du segment de l'espace de travail — `/{slug}/{espace}/…`. */
+const WORKSPACE_RANK = 2;
+
 export function middleware(request: NextRequest): NextResponse {
-  const tenantSlug = tenantSlugFromPathname(request.nextUrl.pathname);
+  const { pathname } = request.nextUrl;
+  const tenantSlug = tenantSlugFromPathname(pathname);
 
   const headers = new Headers(request.headers);
 
+  // Effacés plutôt que laissés tels quels : les deux en-têtes viennent du client
+  // sur une requête forgée, et un `x-spa-tenant-slug` envoyé à la main ferait
+  // lire la langue d'un établissement que la page ne sert pas.
+  headers.delete(TENANT_SLUG_HEADER);
+  headers.delete(TENANT_WORKSPACE_HEADER);
+
   if (tenantSlug === null || !SLUG_SHAPE.test(tenantSlug)) {
-    // Effacé plutôt que laissé tel quel : l'en-tête vient du client sur une
-    // requête forgée, et un `x-spa-tenant-slug` envoyé à la main ferait lire la
-    // langue d'un établissement que la page ne sert pas.
-    headers.delete(TENANT_SLUG_HEADER);
-  } else {
-    headers.set(TENANT_SLUG_HEADER, tenantSlug);
+    return NextResponse.next({ request: { headers } });
+  }
+
+  headers.set(TENANT_SLUG_HEADER, tenantSlug);
+
+  // L'espace n'est posé qu'avec le salon auquel il appartient : « le back-office
+  // de personne » n'existe pas, et la résolution n'aurait alors rien à y lire.
+  if (pathSegment(pathname, WORKSPACE_RANK) === ADMIN_SEGMENT) {
+    headers.set(TENANT_WORKSPACE_HEADER, ADMIN_WORKSPACE);
   }
 
   return NextResponse.next({ request: { headers } });

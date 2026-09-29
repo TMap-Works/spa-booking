@@ -8,6 +8,7 @@ import { BookingPreview } from '@/components/home/booking-preview';
 import { SalonFinder } from '@/components/home/salon-finder';
 import { publicExitLabels } from '@/components/salon/public-exits';
 import { Icon, type IconName } from '@/components/ui/icon';
+import { LocaleSwitcher } from '@/components/ui/locale-switcher';
 import { ThemeToggle } from '@/components/ui/theme-toggle';
 import { type DisplayLocale } from '@/lib/format';
 import { PHOTOS, type Photo } from '@/lib/photos';
@@ -640,6 +641,13 @@ export default async function HomePage() {
         <div className="spa-home__inner spa-home-footer__inner">
           <p className="spa-home-footer__brand">{PLATFORM_NAME}</p>
           <p className="spa-home-footer__text">{t('home.footer.text')}</p>
+          {/* Le sélecteur de langue (#1326), dans le pied et pour la même raison
+              que celui du thème : la barre du haut porte déjà cinq ancres et un
+              appel à l'action, et deux boutons de plus y faisaient passer la
+              marque sur une seconde ligne. C'est aussi là que le gabarit de
+              salon et le rail du back-office le posent — un visiteur le cherche
+              au même endroit sur les trois coquilles. */}
+          <LocaleSwitcher className="spa-locale-switcher--centered" />
           {/* Le sélecteur de thème du back-office, sur le même cookie (#1114).
               Dans le pied et non dans la barre : même à 1280 px, ses trois
               pastilles faisaient passer la marque et deux ancres sur deux

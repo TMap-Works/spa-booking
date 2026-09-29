@@ -32,6 +32,49 @@ import { DEFAULT_LOCALE, LOCALES, isLocale, type Locale } from '@spa/shared';
  * Chaque étape est franchie dès qu'elle rend une valeur **reconnue** : une
  * préférence illisible — un cookie trafiqué, un `Accept-Language` exotique — ne
  * bloque pas la suivante, elle n'existe simplement pas.
+ *
+ * ## Les deux derniers signaux s'échangent sur le back-office — #1326
+ *
+ * **La règle, en une phrase** : le navigateur passe avant l'établissement sur les
+ * pages du **visiteur** — vitrine, tunnel de réservation, espace client, accueil
+ * de la plateforme, inscription, page introuvable —, et l'établissement passe
+ * avant le navigateur sur **son back-office**. Les trois premières étapes, elles,
+ * ne changent jamais d'ordre.
+ *
+ * Ce n'est pas une exception de confort : c'est la seule lecture qui rende vraies
+ * les deux promesses écrites du produit, et elles ne disent pas la même chose.
+ *
+ * - Sur le parcours public, la page appartient au **visiteur** : « un navigateur
+ *   réglé en français obtient le français d'emblée » (ADR 0017). Un salon
+ *   parisien que découvre une visiteuse anglophone n'a aucune raison de lui
+ *   parler français.
+ * - Le back-office appartient à l'**établissement**. Son équipe y travaille sur
+ *   les mêmes fiches, les mêmes prestations et le même planning ; le bloc « Ma
+ *   langue » de ses réglages promet noir sur blanc que *« sans choix de votre
+ *   part, c'est la langue de l'établissement qui s'applique »*, et l'option qui
+ *   porte ce choix s'appelle « Langue de l'établissement ». Le navigateur d'une
+ *   praticienne n'est pas une préférence qu'elle a exprimée : c'est un réglage de
+ *   son téléphone.
+ *
+ * L'écart que #1326 corrige était exactement là : `users.locale = null` rendait
+ * la main à l'`Accept-Language`, et le back-office d'un salon anglophone
+ * repassait en français parce que le navigateur de la gérante est en français —
+ * à côté d'un texte d'aide qui promettait l'inverse.
+ *
+ * Les deux autres issues ont été écartées :
+ *
+ * - **échanger les deux étapes partout** aurait fait parler le salon à la place
+ *   de son visiteur sur la vitrine et dans le tunnel, c'est-à-dire renversé la
+ *   décision d'ADR 0017 pour corriger un écran de réglages ;
+ * - **corriger le texte d'aide** aurait supprimé la contradiction en supprimant
+ *   la promesse : l'option se serait alors appelée « Langue de l'établissement »
+ *   pour désigner la langue du navigateur.
+ *
+ * Le signal qui porte la distinction est `tenantFirst`, posé par
+ * `i18n/server.ts` sur la foi de l'en-tête `x-spa-tenant-workspace` que le
+ * middleware écrit — jamais sur la foi de quoi que ce soit que le client envoie.
+ * Et rien n'y enferme personne : le sélecteur de langue est présent sur le
+ * back-office comme ailleurs, et son choix reste la première étape de l'ordre.
  */
 
 /**
@@ -52,29 +95,35 @@ export interface LocaleSignals {
   readonly acceptLanguage?: string | null | undefined;
   /** `Tenant.defaultLocale` de l'établissement visité. */
   readonly tenant?: string | null | undefined;
+  /**
+   * L'établissement passe **avant** l'`Accept-Language` du navigateur — vrai sur
+   * son back-office, faux partout ailleurs (#1326, voir l'en-tête).
+   *
+   * Absent se lit « non » : c'est la conduite du parcours public, celle de la
+   * grande majorité des requêtes, et un appelant qui n'a pas d'avis ne doit pas
+   * avoir à en formuler un.
+   */
+  readonly tenantFirst?: boolean | undefined;
 }
 
 /** La langue à servir, sur la foi de ces signaux. Ne rend jamais `null`. */
 export function resolveLocale(signals: LocaleSignals): Locale {
-  const explicit = asLocale(signals.explicit);
+  const chosen = asLocale(signals.explicit) ?? asLocale(signals.account);
 
-  if (explicit !== null) {
-    return explicit;
-  }
-
-  const account = asLocale(signals.account);
-
-  if (account !== null) {
-    return account;
+  // Les deux premières étapes sont des choix — de la personne, puis de son
+  // compte. Rien ne les départage d'un espace à l'autre, et rien ne les devance.
+  if (chosen !== null) {
+    return chosen;
   }
 
   const negotiated = negotiateLocale(signals.acceptLanguage);
+  const tenant = asLocale(signals.tenant);
 
-  if (negotiated !== null) {
-    return negotiated;
-  }
+  // Les deux dernières sont des suppositions, et c'est l'espace qui dit laquelle
+  // est la meilleure : le navigateur chez le visiteur, l'établissement chez lui.
+  const guessed = signals.tenantFirst === true ? tenant ?? negotiated : negotiated ?? tenant;
 
-  return asLocale(signals.tenant) ?? DEFAULT_LOCALE;
+  return guessed ?? DEFAULT_LOCALE;
 }
 
 /**

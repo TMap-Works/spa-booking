@@ -2,6 +2,7 @@ import { getLocale, getTranslations } from 'next-intl/server';
 import { notFound, redirect } from 'next/navigation';
 
 import { AuthScreen, type AuthHighlight } from '@/components/auth/auth-screen';
+import { LocaleSwitcher } from '@/components/ui/locale-switcher';
 import { PHOTOS } from '@/lib/photos';
 import { publicExitLabels } from '@/components/salon/public-exits';
 import { PLATFORM_HOME_PATH, PLATFORM_NAME } from '@/lib/platform';
@@ -28,6 +29,10 @@ import { adminCalendarPath } from '../paths';
  * Ses mots viennent du catalogue `admin-auth` (#853), comme ceux de la
  * connexion, et par le même chemin : `getTranslations`, la page étant
  * asynchrone.
+ *
+ * Et comme elle, elle porte le sélecteur de langue depuis #1326 : c'est le
+ * **premier** écran qu'un membre de l'équipe voit du produit, et il est servi
+ * sans rail — donc sans la coquille qui porte le sélecteur ailleurs.
  */
 
 export const dynamic = 'force-dynamic';
@@ -79,6 +84,7 @@ export default async function AdminInvitationPage({
         tenantSlug={tenantSlug}
         token={typeof token === 'string' && token !== '' ? token : null}
       />
+      <LocaleSwitcher className="spa-locale-switcher--centered spa-locale-switcher--detached" />
     </AuthScreen>
   );
 }

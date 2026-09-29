@@ -57,6 +57,28 @@ export const MOT_DE_PASSE = 'Recette-2026!';
 const FUSEAU = 'Europe/Paris';
 const DEVISE = 'EUR';
 
+/**
+ * La langue déclarée de l'établissement — `Tenant.defaultLocale` (#844).
+ *
+ * Elle n'était pas écrite, et retombait donc sur le défaut du système, `en`
+ * (`schema.prisma`). Cela ne se voyait pas tant que personne ne la lisait ; depuis
+ * #1326, le **back-office** la lit avant l'`Accept-Language` du navigateur —
+ * c'est son espace de travail, pas celui de son visiteur —, et le comptoir de
+ * cette suite se serait mis à répondre « Email address » à un
+ * `getByLabel('Adresse e-mail')`.
+ *
+ * `fr` n'est pas un contournement, c'est la donnée manquante : cet établissement
+ * est français de bout en bout — « Parcours critique », « Soins du corps »,
+ * « Massage signature », `Europe/Paris`, `EUR`, 78,00 €. L'écrire rend la fixture
+ * cohérente avec elle-même, et fait de ce parcours la preuve de la règle plutôt
+ * que d'un défaut de schéma.
+ *
+ * Le parcours **public**, lui, ne change pas : l'`Accept-Language` y passe
+ * toujours devant l'établissement, et `parcours-bilingue.e2e.ts` continue donc de
+ * le traverser en anglais sur ce même salon.
+ */
+const LANGUE = 'fr';
+
 /** ISO 8601 — 1 lundi … 7 dimanche (`packages/shared/src/schemas/availability.ts`). */
 const JOURS_ISO = [1, 2, 3, 4, 5, 6, 7];
 const OUVERTURE_MINUTE = 8 * 60;
@@ -206,12 +228,18 @@ export async function amorcer({ slug, prisma, bcrypt }) {
 
   const tenant = await prisma.tenant.upsert({
     where: { slug },
-    update: { name: 'Parcours critique', isActive: true, timezone: FUSEAU },
+    update: {
+      name: 'Parcours critique',
+      isActive: true,
+      timezone: FUSEAU,
+      defaultLocale: LANGUE,
+    },
     create: {
       slug,
       name: 'Parcours critique',
       timezone: FUSEAU,
       defaultCurrency: DEVISE,
+      defaultLocale: LANGUE,
       isActive: true,
       slotIntervalMinutes: 15,
       minBookingNoticeMinutes: 60,

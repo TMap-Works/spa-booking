@@ -2,6 +2,7 @@ import { getTranslations } from 'next-intl/server';
 import { redirect } from 'next/navigation';
 
 import { AuthScreen, type AuthHighlight } from '@/components/auth/auth-screen';
+import { LocaleSwitcher } from '@/components/ui/locale-switcher';
 import { PHOTOS } from '@/lib/photos';
 import { PLATFORM_HOME_PATH, PLATFORM_NAME } from '@/lib/platform';
 
@@ -17,6 +18,12 @@ import { readPlatformAccessToken } from '../session';
  *
  * La page est asynchrone : c'est `getTranslations` qui lui donne ses mots, et un
  * composant asynchrone ne peut pas appeler un crochet (#1106).
+ *
+ * Elle porte le sélecteur de langue depuis #1326 : le rail de la console en
+ * porte un, mais il n'apparaît qu'une fois la session ouverte — et aucun
+ * établissement ne se trouve sur ce chemin dont la langue pourrait trancher.
+ * C'est donc l'`Accept-Language` qui décide ici, et le sélecteur est le seul
+ * moyen d'en changer.
  */
 
 /** Ce que la console ouvre — les clés, l'ordre, et le pictogramme de chacune. */
@@ -54,6 +61,7 @@ export default async function PlatformLoginPage({ searchParams }: PlatformLoginP
       ]}
     >
       <PlatformLoginForm expired={motif === 'session-expiree'} />
+      <LocaleSwitcher className="spa-locale-switcher--centered spa-locale-switcher--detached" />
     </AuthScreen>
   );
 }

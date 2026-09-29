@@ -5,6 +5,8 @@
 - **Décideurs** : équipe produit, PO
 - **Contexte CDC** : §1.4 (périmètre MVP), §2.2 (parcours client), §5.1 (données
   personnelles) · épique #843, ticket #845
+- **Révisé** : #1326 — l'ordre de résolution échange ses deux dernières étapes sur
+  le back-office d'un établissement (voir « La règle de résolution de la langue »)
 
 ## Contexte
 
@@ -140,9 +142,26 @@ Une valeur non reconnue à une étape ne bloque pas la suivante : elle n'existe
 simplement pas. Aucune panne de l'étape 4 — API éteinte, slug inconnu, réponse
 hors contrat — n'empêche la page de s'afficher.
 
-Le middleware ne fait qu'une chose pour cela : recopier le premier segment du
-chemin dans l'en-tête de requête `x-spa-tenant-slug`, que le layout racine ne
-peut pas lire autrement. Il ne redirige, ne réécrit et n'autorise rien.
+**Les étapes 3 et 4 s'échangent sur le back-office** — #1326. L'ordre ci-dessus
+est celui des pages du **visiteur** : vitrine, tunnel de réservation, espace
+client, accueil de la plateforme, inscription, page introuvable. Sur
+`/{slug}/admin/…`, l'établissement passe avant l'`Accept-Language`, parce que le
+back-office est son espace de travail et non celui de son visiteur : le bloc « Ma
+langue » de ses réglages promet que *« sans choix de votre part, c'est la langue
+de l'établissement qui s'applique »*, et le navigateur d'une praticienne n'est pas
+une préférence qu'elle a exprimée. Les étapes 1 et 2 — les deux **choix** — ne
+changent jamais de rang, et le sélecteur de langue est présent sur le back-office
+comme ailleurs : la règle ne verrouille personne. Le prix est un `GET
+/public/{slug}` par page du back-office ouverte par un compte sans préférence
+enregistrée, l'étape 3 ne dispensant plus de l'appel de l'étape 4.
+
+Le middleware ne fait que deux choses pour tout cela, et toutes deux consistent à
+recopier un segment du chemin dans un en-tête de requête que le layout racine ne
+peut pas lire autrement : le premier segment dans `x-spa-tenant-slug`, et — quand
+le second vaut `admin` — `admin` dans `x-spa-tenant-workspace`. Il efface les deux
+de toute requête entrante avant de les reposer, faute de quoi une requête forgée
+choisirait la langue d'un autre salon ou l'ordre de l'espace d'à côté. Il ne
+redirige, ne réécrit et n'autorise rien.
 
 ### La langue du formatage n'est pas celle des mots
 

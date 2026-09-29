@@ -4,6 +4,7 @@ import { useTranslations, useLocale } from 'next-intl';
 import { getLocale, getTranslations } from 'next-intl/server';
 
 import { AuthScreen, type AuthHighlight } from '@/components/auth/auth-screen';
+import { LocaleSwitcher } from '@/components/ui/locale-switcher';
 import type { DisplayLocale } from '@/lib/format';
 import { PHOTOS } from '@/lib/photos';
 import { planPriceLabel } from '@/lib/plan';
@@ -30,6 +31,15 @@ import '../../styles/admin/index.css';
  * `fr` → `fr-FR`), comme sur l'accueil de la plateforme. Le prix de l'offre est
  * en euros quel que soit le pays du salon qui s'inscrit — c'est le prix que
  * l'éditeur facture, pas celui que le salon vend.
+ *
+ * ## Le sélecteur de langue — #1326
+ *
+ * Cet écran demande de choisir **la langue du salon** (`defaultLocale`) : le
+ * laisser sans moyen de changer la sienne était particulièrement mal venu — une
+ * gérante québécoise remplissait un formulaire en anglais pour déclarer un salon
+ * francophone. Aucun établissement n'existe encore ici, donc aucune langue
+ * d'établissement à lire : c'est l'`Accept-Language` qui décide, et le sélecteur
+ * est ce qui le contredit.
  */
 
 /** La région de repli : il n'y a pas encore de salon dont lire le pays. */
@@ -95,6 +105,7 @@ export default function SignupPage() {
       exits={[{ href: PLATFORM_HOME_PATH, label: t('intro.home', { platform: PLATFORM_NAME }) }]}
     >
       <SignupForm />
+      <LocaleSwitcher className="spa-locale-switcher--centered spa-locale-switcher--detached" />
     </AuthScreen>
   );
 }
