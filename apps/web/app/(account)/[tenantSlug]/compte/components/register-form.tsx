@@ -22,6 +22,7 @@ import { Notification } from '@/components/ui/notification';
 import { PasswordField } from '@/components/ui/password-field';
 import { PhoneField } from '@/components/ui/phone-field';
 import { ConsentField, consentSchema } from '@/lib/booking/consent';
+import { refusalMessage, type Refusal } from '@/lib/refusal';
 
 import { registerAction } from '../actions';
 import { RETURN_QUERY_KEY, safeReturnPath, withReturnPath } from '../connexion/return-path';
@@ -96,7 +97,8 @@ export function RegisterForm({ tenantSlug }: RegisterFormProps) {
    * Voir `connexion/return-path.ts`.
    */
   const returnTo = safeReturnPath(useSearchParams().get(RETURN_QUERY_KEY), tenantSlug);
-  const [failure, setFailure] = useState<string | null>(null);
+  /** Le **code** du refus, pas sa phrase (#1327) — voir `lib/refusal.ts`. */
+  const [failure, setFailure] = useState<Refusal | null>(null);
   /*
    * Les bornes du contrat — longueur du mot de passe, adresse e-mail, numéro
    * incomplet — sont dites par `zodErrorMap(locale)` depuis #1232 : elles
@@ -174,19 +176,7 @@ export function RegisterForm({ tenantSlug }: RegisterFormProps) {
     });
 
     if (!result.ok) {
-      /*
-       * Le message du contrat dit « un compte existe déjà avec cette adresse » ;
-       * celui-ci ajoute les deux choses que cet écran-là sait et que le contrat
-       * ignore : l'unicité est bornée à **cet établissement**
-       * (`@@unique([tenantId, email])`), et la suite à donner est de se
-       * connecter. D'où une entrée en propre au catalogue plutôt que
-       * `errorMessage` (#847).
-       */
-      setFailure(
-        result.code === ERROR_CODES.EMAIL_ALREADY_REGISTERED
-          ? t('emailAlreadyRegistered')
-          : result.message,
-      );
+      setFailure({ code: result.code });
       return;
     }
 
@@ -203,7 +193,21 @@ export function RegisterForm({ tenantSlug }: RegisterFormProps) {
 
       {failure === null ? null : (
         <Notification tone="danger" title={t('failureTitle')}>
-          <p>{failure}</p>
+          {/*
+            La phrase est écrite ici, dans la langue de ce rendu (#1327).
+
+            Le message du contrat dit « un compte existe déjà avec cette
+            adresse » ; celui du catalogue ajoute les deux choses que cet écran
+            sait et que le contrat ignore : l'unicité est bornée à **cet
+            établissement** (`@@unique([tenantId, email])`), et la suite à donner
+            est de se connecter. D'où une entrée en propre plutôt que le repli
+            d'`errorMessage` (#847), sur lequel tout autre code retombe.
+          */}
+          <p>
+            {refusalMessage(failure, locale, (code) =>
+              code === ERROR_CODES.EMAIL_ALREADY_REGISTERED ? t('emailAlreadyRegistered') : null,
+            )}
+          </p>
         </Notification>
       )}
 

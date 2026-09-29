@@ -3,7 +3,6 @@
 import {
   ERROR_CODES,
   SUBSCRIPTION_PLAN,
-  errorMessage,
   type Locale,
   type TenantBilling,
 } from '@spa/shared';
@@ -17,6 +16,7 @@ import { Icon } from '@/components/ui/icon';
 import { Notification, type NotificationTone } from '@/components/ui/notification';
 import { formattingLocale } from '@/lib/format';
 import { planPriceLabel } from '@/lib/plan';
+import { refusalMessage, type Refusal } from '@/lib/refusal';
 
 import { openBillingPortalAction, startBillingCheckoutAction } from '../actions';
 import { adminCatalogPath, adminDashboardPath } from '../paths';
@@ -105,6 +105,11 @@ type RedirectErrorKey =
  * bilingue au premier refus inattendu. Le repli est `errorMessage(code, locale)`
  * du contrat partagé — la phrase de ce code dans la langue lue, et la phrase
  * générique d'`INTERNAL_ERROR` pour un code que le contrat ne nomme pas non plus.
+ *
+ * Cette résolution se fait **au rendu** depuis #1327, et non plus au moment du
+ * refus : la phrase, une fois rangée dans l'état, restait celle de la langue
+ * d'alors quand le sélecteur basculait l'écran — c'est-à-dire le défaut que
+ * #1234 croyait avoir refermé, à un rendu près. Voir `lib/refusal.ts`.
  */
 const REDIRECT_ERROR_KEYS: Readonly<Record<string, RedirectErrorKey>> = {
   [ERROR_CODES.BILLING_NOT_APPLICABLE]: 'redirect.errors.notApplicable',
@@ -139,7 +144,8 @@ export function BillingPanel({
   const locale = useLocale() as Locale;
   const router = useRouter();
   const [pending, setPending] = useState(false);
-  const [failure, setFailure] = useState<string | null>(null);
+  /** Le **code** du refus, pas sa phrase (#1327) — voir `lib/refusal.ts`. */
+  const [failure, setFailure] = useState<Refusal | null>(null);
 
   const price = planPriceLabel({ locale, countryCode });
   const intlTag = formattingLocale(locale, countryCode);
@@ -208,9 +214,7 @@ export function BillingPanel({
         : await openBillingPortalAction(tenantSlug, locale);
 
     if (!result.ok) {
-      const key = REDIRECT_ERROR_KEYS[result.code];
-
-      setFailure(key === undefined ? errorMessage(result.code, locale) : t(key));
+      setFailure({ code: result.code });
       setPending(false);
       return;
     }
@@ -278,7 +282,14 @@ export function BillingPanel({
 
           {failure === null ? null : (
             <Notification tone="danger" title={t('redirect.failureTitle')}>
-              <p>{failure}</p>
+              {/* La phrase est écrite ici, dans la langue de ce rendu (#1327). */}
+              <p>
+                {refusalMessage(failure, locale, (code) => {
+                  const key = REDIRECT_ERROR_KEYS[code];
+
+                  return key === undefined ? null : t(key);
+                })}
+              </p>
             </Notification>
           )}
 

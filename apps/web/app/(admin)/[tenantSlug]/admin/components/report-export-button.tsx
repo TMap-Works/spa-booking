@@ -1,10 +1,11 @@
 'use client';
 
-import { ERROR_CODES } from '@spa/shared';
+import { ERROR_CODES, type Locale } from '@spa/shared';
 import { useLocale, useTranslations } from 'next-intl';
 import { useState } from 'react';
 
 import { Button } from '@/components/ui/button';
+import { refusalMessage, type Refusal } from '@/lib/refusal';
 
 import {
   createReportExportAction,
@@ -87,11 +88,12 @@ interface ReportExportButtonProps {
 
 export function ReportExportButton({ tenantSlug, window: reportWindow }: ReportExportButtonProps) {
   const t = useTranslations('admin-reporting');
-  const locale = useLocale();
+  const locale = useLocale() as Locale;
   const { renewIfExpired } = useAdminSessionRenewal(tenantSlug);
   const [busy, setBusy] = useState(false);
   const [downloaded, setDownloaded] = useState<string | null>(null);
-  const [failure, setFailure] = useState<string | null>(null);
+  /** Le **code** du refus, pas sa phrase (#1327) — voir `lib/refusal.ts`. */
+  const [failure, setFailure] = useState<Refusal | null>(null);
 
   const download = async (): Promise<void> => {
     setBusy(true);
@@ -108,11 +110,7 @@ export function ReportExportButton({ tenantSlug, window: reportWindow }: ReportE
       }
 
       setDownloaded(null);
-      setFailure(
-        result.code === ERROR_CODES.REPORT_EXPORT_UNAVAILABLE
-          ? t('export.unavailable')
-          : t('export.failed', { message: result.message }),
-      );
+      setFailure({ code: result.code });
       setBusy(false);
       return;
     }
@@ -133,6 +131,22 @@ export function ReportExportButton({ tenantSlug, window: reportWindow }: ReportE
     setBusy(false);
   };
 
+  /**
+   * La phrase du refus, écrite **au rendu** — #1327.
+   *
+   * `REPORT_EXPORT_UNAVAILABLE` a son entrée au catalogue de cet écran : c'est le
+   * seul refus qui ne désigne pas une panne mais une **configuration** — aucun
+   * bucket sur cet environnement —, et la phrase du contrat ne dit pas à la
+   * gérante que l'écran, lui, reste juste. Tout le reste tient dans le gabarit
+   * « L'export a échoué : {message} », dont le détail est la phrase du contrat
+   * dans la langue lue, et non le message rendu par le serveur — c'est lui qui
+   * laissait une phrase française sous un écran anglais.
+   */
+  const failureMessage = (refusal: Refusal): string =>
+    refusal.code === ERROR_CODES.REPORT_EXPORT_UNAVAILABLE
+      ? t('export.unavailable')
+      : t('export.failed', { message: refusalMessage(refusal, locale) });
+
   return (
     <div className="spa-admin-report-export">
       <Button
@@ -147,7 +161,11 @@ export function ReportExportButton({ tenantSlug, window: reportWindow }: ReportE
         {t('export.label')}
       </Button>
       <p aria-live="polite" className="spa-admin-report-export__status">
-        {failure ?? (downloaded === null ? '' : t('export.downloaded', { filename: downloaded }))}
+        {failure === null
+          ? downloaded === null
+            ? ''
+            : t('export.downloaded', { filename: downloaded })
+          : failureMessage(failure)}
       </p>
     </div>
   );

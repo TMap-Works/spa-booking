@@ -48,11 +48,34 @@ const PREVIOUS_STEP: Readonly<Record<BookingStep, BookingStep | null>> = {
   confirmation: null,
 };
 
-interface Notice {
-  readonly tone: NotificationTone;
-  readonly title: string;
-  readonly body: string;
-}
+/**
+ * Ce que le tunnel a à dire, gardé en **motif** et non en phrase — #1327.
+ *
+ * Le sélecteur de langue du rail pose un cookie et laisse Next rejouer la route
+ * sans démonter le tunnel (`i18n/actions.ts`) : une phrase rangée ici resterait
+ * écrite dans la langue d'avant — « Ce créneau n'est plus disponible… » au milieu
+ * d'un tunnel anglais. Le motif, lui, ne se démode pas, et l'horaire perdu est
+ * une **donnée** : c'est `noticeCopy` qui en écrit la phrase, au rendu, dans la
+ * langue et le fuseau de ce rendu-là.
+ */
+type Notice =
+  | {
+      readonly kind: 'slotLost';
+      /**
+       * Le créneau qui vient d'être perdu, rappelé dans le fuseau du salon.
+       *
+       * `null` n'arrive pas depuis le récapitulatif, qui ne s'affiche pas sans
+       * créneau — c'est le type du brouillon qui l'impose ici.
+       */
+      readonly lostSlot: UtcInstant | null;
+    }
+  | { readonly kind: 'sessionEnded' };
+
+/** Le ton de chaque motif — la seule part qui ne se traduise pas. */
+const NOTICE_TONES: Readonly<Record<Notice['kind'], NotificationTone>> = {
+  slotLost: 'warning',
+  sessionEnded: 'warning',
+};
 
 interface BookingTunnelProps {
   readonly tenant: PublicTenant;
@@ -752,25 +775,10 @@ export function BookingTunnel({
    * cliente qui n'a aucun moyen de vérifier.
    */
   const onSlotLost = useCallback(() => {
-    const lost = draft.startsAt;
-
-    setNotice({
-      tone: 'warning',
-      title: t('tunnel.notices.slotLost.title'),
-      // Deux messages et non une phrase composée d'un morceau variable : le
-      // français dit « Le lundi 1 septembre à 09:00 », l'anglais « Your time on
-      // Monday, 1 September at 9:00 AM », et la préposition n'est pas au même
-      // endroit. `null` n'arrive de toute façon pas depuis le récapitulatif,
-      // qui ne s'affiche pas sans créneau — c'est le type qui l'impose ici.
-      body:
-        lost === null
-          ? t('tunnel.notices.slotLost.body')
-          : t('tunnel.notices.slotLost.bodyWithSlot', {
-              slot: formatDateTimeInTimeZone(lost, tenant.timezone, display),
-            }),
-    });
+    // Le créneau perdu, et lui seul : sa phrase s'écrit au rendu (#1327).
+    setNotice({ kind: 'slotLost', lostSlot: draft.startsAt });
     setDraft((current) => ({ ...current, startsAt: null, step: 'creneau' }));
-  }, [draft.startsAt, display, t, tenant.timezone]);
+  }, [draft.startsAt]);
 
   /**
    * L'action de réservation a refusé faute de compte (2026-09-22).
@@ -784,15 +792,11 @@ export function BookingTunnel({
    */
   const onSignInRequired = useCallback(() => {
     setSignedOut(true);
-    setNotice({
-      tone: 'warning',
-      // Écrite ici et non reprise du corps d'erreur de l'API, pour la raison
-      // déjà donnée à `onSlotLost` : seul le `code` engage l'API.
-      title: t('tunnel.notices.sessionEnded.title'),
-      body: t('tunnel.notices.sessionEnded.body'),
-    });
+    // Écrit ici et non repris du corps d'erreur de l'API, pour la raison déjà
+    // donnée à `onSlotLost` : seul le `code` engage l'API.
+    setNotice({ kind: 'sessionEnded' });
     setDraft((current) => ({ ...current, step: 'coordonnees' }));
-  }, [t]);
+  }, []);
 
   const onCancelled = useCallback((appointment: BookedAppointment) => {
     setNotice(null);
@@ -852,6 +856,41 @@ export function BookingTunnel({
   }, [step]);
 
   const zoneMention = hydrated ? timeZoneMention(tenant.timezone, display) : null;
+
+  /**
+   * Le titre et le corps du motif affiché, écrits **au rendu** — #1327.
+   *
+   * C'est ici que se tient toute la raison du type `Notice` : la phrase se
+   * recompose à chaque rendu, et un changement de langue en cours de tunnel la
+   * réécrit du même coup, horaire perdu compris.
+   *
+   * Le créneau reste dit par **deux clés** et non par une phrase à trou : le
+   * français dit « Le lundi 1 septembre à 09:00 », l'anglais « Your time on
+   * Monday, 1 September at 9:00 AM », et la préposition n'est pas au même
+   * endroit (#846).
+   */
+  const noticeCopy = (value: Notice): { readonly title: string; readonly body: string } => {
+    if (value.kind === 'sessionEnded') {
+      return {
+        title: t('tunnel.notices.sessionEnded.title'),
+        body: t('tunnel.notices.sessionEnded.body'),
+      };
+    }
+
+    return {
+      title: t('tunnel.notices.slotLost.title'),
+      body:
+        value.lostSlot === null
+          ? t('tunnel.notices.slotLost.body')
+          : t('tunnel.notices.slotLost.bodyWithSlot', {
+              slot: formatDateTimeInTimeZone(value.lostSlot, tenant.timezone, display),
+            }),
+    };
+  };
+
+  /** La notification telle qu'elle s'affiche — ton compris —, ou rien. */
+  const shownNotice =
+    notice === null ? null : { tone: NOTICE_TONES[notice.kind], ...noticeCopy(notice) };
 
   /**
    * Ce que le tunnel rappelle de la réservation en cours (#735, #1047).
@@ -960,13 +999,13 @@ export function BookingTunnel({
               title={gated ? t('tunnel.gateStep.title') : undefined}
             />
 
-            {notice === null ? null : (
+            {shownNotice === null ? null : (
               // `tabIndex={-1}` rend l'enveloppe focalisable par programme sans
               // l'insérer dans l'ordre de tabulation : elle ne devient une étape
               // du clavier ni avant ni après avoir reçu le focus.
               <div ref={noticeRef} tabIndex={-1}>
-                <Notification tone={notice.tone} title={notice.title}>
-                  <p>{notice.body}</p>
+                <Notification tone={shownNotice.tone} title={shownNotice.title}>
+                  <p>{shownNotice.body}</p>
                 </Notification>
               </div>
             )}
