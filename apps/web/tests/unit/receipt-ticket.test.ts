@@ -68,6 +68,63 @@ describe('le ticket de caisse', () => {
     ).toEqual(['12 rue des Lilas', '75011 Paris']);
   });
 
+  /**
+   * #1334 — l'ordre de la localité suit le **pays du salon**.
+   *
+   * Le rouleau recomposait `[postalCode, city].join(' ')` de son côté : un salon
+   * de Manhattan imprimait « 10118 New York » sur le ticket remis à sa cliente
+   * pendant que sa vitrine annonçait déjà « New York 10118 ». La règle vient
+   * désormais du contrat (`addressLocalityLine`), comme pour le PDF et les
+   * e-mails.
+   */
+  it('écrit la ville avant le code postal pour un salon nord-américain', () => {
+    expect(
+      issuerAddressLines({
+        name: 'Lotus House',
+        address: {
+          line1: '350 5th Avenue',
+          postalCode: '10118',
+          city: 'New York',
+          country: 'US',
+        },
+      }),
+    ).toEqual(['350 5th Avenue', 'New York 10118']);
+  });
+
+  /**
+   * L'État, et la virgule qui l'accompagne (#1335). Le rouleau ne le recevait
+   * pas — `region` n'était pas porté par `ReceiptIssuerDto` —, si bien qu'il
+   * imprimait une adresse plus pauvre que la vitrine du même salon.
+   */
+  it('écrit l’État d’un salon nord-américain, séparé de la ville par une virgule', () => {
+    expect(
+      issuerAddressLines({
+        name: 'Lotus House',
+        address: {
+          line1: '350 5th Avenue',
+          postalCode: '10118',
+          city: 'New York',
+          region: 'NY',
+          country: 'US',
+        },
+      }),
+    ).toEqual(['350 5th Avenue', 'New York, NY 10118']);
+  });
+
+  /**
+   * Le code postal est facultatif au contrat (`postalAddressSchema`) : un salon
+   * qui n'en a pas ne doit pas imprimer une ligne finissant par une espace — sur
+   * un rouleau de 80 mm, elle décale le centrage de l'en-tête.
+   */
+  it('n’imprime pas d’espace en trop quand le code postal manque', () => {
+    expect(
+      issuerAddressLines({
+        name: 'Lotus House',
+        address: { line1: '350 5th Avenue', city: 'New York', country: 'US' },
+      }),
+    ).toEqual(['350 5th Avenue', 'New York']);
+  });
+
   it('ne compte pas la taxe ni le pourboire parmi les articles vendus', () => {
     const money = { amountMinor: 100, currency: 'EUR' };
     const line = { quantity: 1, unitPrice: money, total: money, label: 'x' };

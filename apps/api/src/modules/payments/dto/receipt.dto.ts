@@ -67,6 +67,16 @@ export class ReceiptAddressDto {
   @ApiProperty({ example: 'Paris' })
   public city!: string;
 
+  /**
+   * L'État ou la province, pour les pays qui en portent un — « NY » (#1335).
+   *
+   * Omis, jamais `null`, comme le reste de l'adresse : c'est le régime de
+   * `postalAddressSchema`, dont l'écran du ticket de caisse compose la ligne de
+   * localité par `addressLocalityLine`.
+   */
+  @ApiPropertyOptional({ example: 'NY' })
+  public region?: string;
+
   @ApiProperty({ example: 'FR', minLength: 2, maxLength: 2 })
   public country!: string;
 }
@@ -373,6 +383,7 @@ function toIssuerDto(receipt: SaleReceipt): ReceiptIssuerDto {
             ...(issuer.addressLine2 === null ? {} : { line2: issuer.addressLine2 }),
             ...(issuer.postalCode === null ? {} : { postalCode: issuer.postalCode }),
             city: issuer.city ?? '',
+            ...(issuer.region === null ? {} : { region: issuer.region }),
             country: issuer.countryCode ?? '',
           },
         }

@@ -84,6 +84,7 @@ function toIssuer(tenant: ReceiptRow['tenant']): ReceiptIssuer {
     addressLine2: tenant.addressLine2,
     postalCode: tenant.postalCode,
     city: tenant.city,
+    region: tenant.region,
     countryCode: tenant.countryCode,
     contactEmail: tenant.contactEmail,
     contactPhone: tenant.contactPhone,

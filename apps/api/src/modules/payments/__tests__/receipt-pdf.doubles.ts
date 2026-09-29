@@ -113,6 +113,9 @@ export function receiptFixture(overrides: Partial<SaleReceipt> = {}): SaleReceip
       addressLine2: null,
       postalCode: '75011',
       city: 'Paris',
+      // Un salon parisien n'a pas d'État : les neuf pays hors Amérique du Nord
+      // n'en écrivent pas dans leur adresse (#1335).
+      region: null,
       countryCode: 'FR',
       contactEmail: 'contact@barber-tana.test',
       contactPhone: '+33 1 23 45 67 89',

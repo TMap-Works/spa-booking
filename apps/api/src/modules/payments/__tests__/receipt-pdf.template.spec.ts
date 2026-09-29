@@ -1,4 +1,5 @@
 import { renderReceipt, type TemplateContext } from '../receipt-pdf/receipt-pdf.template';
+import type { SaleReceipt } from '../receipt.types';
 import {
   ariaryReceiptFixture,
   receiptFixture,
@@ -487,6 +488,92 @@ describe('ce que la langue change, et ce qu’elle ne change pas', () => {
       expect(total?.amount).not.toContain('MGA');
       expect(total?.amount?.replaceAll(/\D/g, '')).toBe('24000');
     }
+  });
+});
+
+/**
+ * **#1334** — l'ordre de la localité suit le pays du salon, sur le PDF comme sur
+ * la vitrine.
+ *
+ * Le gabarit recomposait `[postalCode, city].join(' ')` de son côté, faute de
+ * pouvoir atteindre le module du front qui portait la règle. Un salon de
+ * Manhattan imprimait donc « 10118 New York » sur son reçu pendant que sa page
+ * publique annonçait déjà « New York 10118 ».
+ *
+ * Les deux cas sont exigés par le quatrième critère : un salon US et un salon FR,
+ * sur chaque surface.
+ */
+describe('l’adresse de l’émetteur suit le pays du salon', () => {
+  function issuedFrom(issuer: Partial<SaleReceipt['issuer']>): string {
+    const base = receiptFixture();
+
+    return render(receiptFixture({ issuer: { ...base.issuer, ...issuer } })).text_;
+  }
+
+  it('écrit la ville avant le code postal pour un salon américain', () => {
+    const text = issuedFrom({
+      addressLine1: '350 5th Avenue',
+      postalCode: '10118',
+      city: 'New York',
+      countryCode: 'US',
+    });
+
+    expect(text).toContain('New York 10118');
+    expect(text).not.toContain('10118 New York');
+  });
+
+  it('écrit le code postal en tête pour un salon français', () => {
+    const text = issuedFrom({ postalCode: '75011', city: 'Paris', countryCode: 'FR' });
+
+    expect(text).toContain('75011 Paris');
+    expect(text).not.toContain('Paris 75011');
+  });
+
+  /**
+   * L'État, et la virgule qui l'accompagne (#1335). `region` ne remontait pas
+   * jusqu'à la pièce : le reçu écrivait « New York 10118 » là où la vitrine du
+   * même salon annonçait déjà « New York, NY 10118 ».
+   */
+  it('écrit l’État d’un salon nord-américain', () => {
+    const text = issuedFrom({
+      addressLine1: '350 5th Avenue',
+      postalCode: '10118',
+      city: 'New York',
+      region: 'NY',
+      countryCode: 'US',
+    });
+
+    expect(text).toContain('New York, NY 10118');
+  });
+
+  /**
+   * Un salon passé des États-Unis à la France garde « NY » en colonne : la règle
+   * du contrat ne l'écrit pas dans une adresse qui ne sait pas où le mettre.
+   */
+  it('n’écrit pas d’État sur un salon d’un pays qui n’en porte pas', () => {
+    const text = issuedFrom({
+      postalCode: '75011',
+      city: 'Paris',
+      region: 'NY',
+      countryCode: 'FR',
+    });
+
+    expect(text).toContain('75011 Paris');
+    expect(text).not.toContain('NY');
+  });
+
+  /**
+   * La langue de la pièce (#1230) ne réordonne rien : c'est le pays du salon qui
+   * décide, parce que c'est ce qu'on écrit sur l'enveloppe qu'on lui poste.
+   */
+  it('garde l’ordre du pays quel que soit la langue du document', () => {
+    const base = receiptFixture();
+    const manhattan = receiptFixture({
+      issuer: { ...base.issuer, postalCode: '10118', city: 'New York', countryCode: 'US' },
+    });
+
+    expect(render(manhattan, context({ locale: 'fr' })).text_).toContain('New York 10118');
+    expect(render(base, context({ locale: 'en' })).text_).toContain('75011 Paris');
   });
 });
 
