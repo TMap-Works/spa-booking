@@ -3,6 +3,7 @@
 import { zodResolver } from '@hookform/resolvers/zod';
 import {
   ERROR_CODES,
+  countryUsesAddressRegion,
   createTenantRequestSchema,
   resourceSlugSchema,
   type CreateTenantRequest,
@@ -96,6 +97,7 @@ const EMPTY_VALUES: CreateTenantRequest = {
   addressLine2: '',
   postalCode: '',
   city: '',
+  region: '',
   countryCode: DEFAULT_COUNTRY.code,
   timezone: DEFAULT_COUNTRY.timezones[0],
   defaultCurrency: DEFAULT_COUNTRY.currency,
@@ -144,6 +146,7 @@ const FIELD_ERROR_KEYS = {
   addressLine2: 'create.fieldErrors.addressLine2',
   postalCode: 'create.fieldErrors.postalCode',
   city: 'create.fieldErrors.city',
+  region: 'create.fieldErrors.region',
   countryCode: 'create.fieldErrors.countryCode',
   timezone: 'create.fieldErrors.timezone',
   defaultCurrency: 'create.fieldErrors.defaultCurrency',
@@ -321,7 +324,11 @@ export function TenantCreateForm() {
   // Pas de `useMemo` ici, contrairement à l'inscription : ce composant rend un
   // écran de succès par un retour anticipé au-dessus, et un `useMemo` placé
   // après serait un appel conditionnel de hook.
-  const timezones = timezoneChoices(watch('countryCode'), locale);
+  //
+  // Le pays est lu une fois et sert deux fois : les fuseaux proposés, et
+  // l'affichage du champ État/Province (#1335).
+  const country = watch('countryCode');
+  const timezones = timezoneChoices(country, locale);
 
   return (
     <form className="spa-platform-form" onSubmit={(event) => void submit(event)} noValidate>
@@ -389,6 +396,21 @@ export function TenantCreateForm() {
             error={fieldError('city')}
             {...register('city')}
           />
+          {/*
+           * L'État ou la province, pour les seuls pays qui en portent un (#1335).
+           * Facultatif même affiché : l'opératrice qui ouvre un salon n'a pas
+           * toujours l'adresse complète sous les yeux, et la gérante le
+           * complétera dans ses réglages.
+           */}
+          {countryUsesAddressRegion(country) ? (
+            <Field
+              id="salon-region"
+              label={t('create.region')}
+              autoComplete="address-level1"
+              error={fieldError('region')}
+              {...register('region')}
+            />
+          ) : null}
         </div>
         <div className="spa-platform-form__row">
           <Select
@@ -402,6 +424,12 @@ export function TenantCreateForm() {
               if (preset !== undefined) {
                 setValue('timezone', preset.timezones[0]);
                 setValue('defaultCurrency', preset.currency);
+              }
+              // Changer pour un pays sans subdivision **efface** l'État saisi
+              // (#1335) : le champ disparaît, et une valeur qu'on ne voit plus
+              // partirait sinon en base — « NY » sur une adresse parisienne.
+              if (!countryUsesAddressRegion(event.target.value)) {
+                setValue('region', '');
               }
             }}
           >

@@ -82,6 +82,8 @@ export interface ProvisionTenantInput {
   readonly addressLine2: string | null;
   readonly postalCode: string | null;
   readonly city: string;
+  /** L'État ou la province — `null` pour les pays qui n'en portent pas (#1335). */
+  readonly region: string | null;
   readonly adminEmail: string;
   readonly adminFirstName: string;
   readonly adminLastName: string;
@@ -228,6 +230,8 @@ export interface TenantDetailRecord {
     readonly line2: string | null;
     readonly postalCode: string | null;
     readonly city: string;
+    /** L'État ou la province — `null` pour les pays qui n'en portent pas (#1335). */
+    readonly region: string | null;
     readonly country: string;
   } | null;
   readonly legalName: string | null;

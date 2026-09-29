@@ -101,6 +101,8 @@ const ADDRESS_LINE_MAX_LENGTH = 160;
 const POSTAL_CODE_MAX_LENGTH = 16;
 /** `VARCHAR(120)` — nom de commune. */
 const CITY_MAX_LENGTH = 120;
+/** `VARCHAR(100)` — État, province ou subdivision équivalente (#1335). */
+const REGION_MAX_LENGTH = 100;
 /** `VARCHAR(64)` — identifiant de fuseau IANA. */
 const TIMEZONE_MAX_LENGTH = 64;
 /** RFC 5321 §4.5.3.1.3 — la borne que `@IsEmail` applique de toute façon. */
@@ -270,6 +272,24 @@ export class UpdateTenantAddressDto {
   @MinLength(1)
   @MaxLength(CITY_MAX_LENGTH)
   public city!: string;
+
+  @ApiPropertyOptional({
+    type: String,
+    maxLength: REGION_MAX_LENGTH,
+    example: 'NY',
+    description:
+      'État, province ou subdivision équivalente (#1335). Facultatif : deux ' +
+      'des pays ouverts par le produit en portent une. Aucune liste fermée — ' +
+      'l’abréviation de l’USPS (« NY ») et le nom ISO 3166-2 (« New York ») ' +
+      'sont deux saisies légitimes, et le produit imprime la valeur sans la ' +
+      'calculer.',
+  })
+  @OptionalPresent()
+  @Trim()
+  @IsString()
+  @MinLength(1)
+  @MaxLength(REGION_MAX_LENGTH)
+  public region?: string;
 
   @ApiProperty({
     example: 'FR',

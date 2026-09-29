@@ -27,6 +27,7 @@ import { zodErrorMap } from '../errors/zod-messages';
 import type { Locale } from '../locale/index';
 import { createTenantRequestSchema } from '../schemas/platform';
 import {
+  countryUsesAddressRegion,
   postalAddressSchema,
   submittedPostalAddressSchema,
   updateTenantRequestSchema,
@@ -130,12 +131,54 @@ describe('l’adresse soumise', () => {
   it('garde la strictesse et le triplet minimal de l’adresse', () => {
     // `.extend()` ne relâche ni le `.strict()` ni les champs requis : une clé
     // inconnue et une ville manquante restent refusées.
-    expect(
-      submittedPostalAddressSchema.safeParse({ ...ADDRESS, region: 'NY' }).success,
-    ).toBe(false);
+    //
+    // `region` était l'exemple de clé inconnue de ce test jusqu'à #1335, qui l'a
+    // fait entrer au contrat. C'est `state` qui tient désormais le rôle — et le
+    // choix n'est pas anodin : c'est le nom qu'un formulaire américain aurait
+    // spontanément donné au champ, et le refuser est exactement ce que cette
+    // garde doit faire.
+    expect(submittedPostalAddressSchema.safeParse({ ...ADDRESS, state: 'NY' }).success).toBe(
+      false,
+    );
     expect(submittedPostalAddressSchema.safeParse({ line1: 'a', country: 'FR' }).success).toBe(
       false,
     );
+  });
+
+  it('accepte l’État en facultatif, sur les deux formes de l’adresse — #1335', () => {
+    // La forme soumise l'accepte…
+    expect(submittedPostalAddressSchema.safeParse({ ...ADDRESS, region: 'NY' }).success).toBe(
+      true,
+    );
+    // …et la forme stockée aussi, puisque l'une étend l'autre.
+    expect(postalAddressSchema.safeParse({ ...ADDRESS, region: 'NY' }).success).toBe(true);
+
+    // Facultative veut dire **absente**, pas vide : une chaîne vide en base
+    // produirait « New York,  10118 » — une virgule sans État derrière elle.
+    expect(submittedPostalAddressSchema.safeParse({ ...ADDRESS, region: '' }).success).toBe(
+      false,
+    );
+
+    // Aucune contrainte de pays à la saisie : c'est une règle de présentation
+    // (`countryUsesAddressRegion`), pas une règle de données — le jour où le
+    // produit ouvre l'Australie, rien ici n'aura à changer.
+    expect(
+      submittedPostalAddressSchema.safeParse({ ...ADDRESS, country: 'FR', region: 'Bretagne' })
+        .success,
+    ).toBe(true);
+  });
+
+  it('dit quels pays écrivent un État dans leur adresse — #1335', () => {
+    expect(countryUsesAddressRegion('US')).toBe(true);
+    expect(countryUsesAddressRegion('CA')).toBe(true);
+    expect(countryUsesAddressRegion('FR')).toBe(false);
+    // Sensible à la casse, comme `isCountryCodeAlpha2` : la normalisation
+    // appartient au schéma qui lit la saisie, pas à ce prédicat.
+    expect(countryUsesAddressRegion('us')).toBe(false);
+    // Un formulaire dont le pays n'est pas encore choisi ne demande pas d'État.
+    expect(countryUsesAddressRegion('')).toBe(false);
+    expect(countryUsesAddressRegion(null)).toBe(false);
+    expect(countryUsesAddressRegion(undefined)).toBe(false);
   });
 
   it('refuse le pays inventé sur le chemin des réglages du salon', () => {

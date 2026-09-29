@@ -93,6 +93,8 @@ const ADDRESS_LINE_MAX_LENGTH = 160;
 const POSTAL_CODE_MAX_LENGTH = 16;
 /** `tenants.city` — `VARCHAR(120)`. */
 const CITY_MAX_LENGTH = 120;
+/** `tenants.region` — `VARCHAR(100)`, État ou province (#1335). */
+const REGION_MAX_LENGTH = 100;
 
 // Les bornes de la clé d'idempotence — `IDEMPOTENCY_KEY_MIN_LENGTH` et
 // `IDEMPOTENCY_KEY_MAX_LENGTH` — viennent de `common/validation/idempotency-key.ts` :
@@ -360,6 +362,26 @@ export class CreateTenantDto {
   @MinLength(1, { message: 'city : au moins un caractère' })
   @MaxLength(CITY_MAX_LENGTH)
   public city!: string;
+
+  @ApiPropertyOptional({
+    example: 'NY',
+    maxLength: REGION_MAX_LENGTH,
+    description:
+      'État ou province (#1335). Facultatif comme le code postal : deux des ' +
+      'pays ouverts par le produit en portent une, et l’exiger refuserait ' +
+      'l’ouverture d’un salon français.',
+  })
+  @IsOptional()
+  @Trim()
+  @IsString()
+  // `MinLength(1)`, comme `UpdateTenantAddressDto.region` : facultatif veut dire
+  // **absent**, jamais vide. Une chaîne vide enregistrée en colonne ressortirait
+  // telle quelle de `toPostalAddress`, et `postalAddressSchema` — qui exige au
+  // moins un caractère — ferait alors échouer la lecture de la vitrine côté
+  // front, c'est-à-dire rendrait la page du salon inaccessible.
+  @MinLength(1, { message: 'region : au moins un caractère' })
+  @MaxLength(REGION_MAX_LENGTH)
+  public region?: string;
 
   @ApiProperty({ example: 'gerante@maison-lotus.test', maxLength: EMAIL_MAX_LENGTH })
   @Canonical()

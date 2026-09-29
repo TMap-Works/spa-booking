@@ -5,6 +5,8 @@ import {
   ADDRESS_LINE_MAX_LENGTH,
   CITY_MAX_LENGTH,
   POSTAL_CODE_MAX_LENGTH,
+  REGION_MAX_LENGTH,
+  countryUsesAddressRegion,
   displayNameSchema,
   emailSchema,
   e164PhoneSchema,
@@ -288,6 +290,10 @@ function settingsFormSchema(copy: SettingsCopy) {
         line2: z.string().trim().max(ADDRESS_LINE_MAX_LENGTH),
         postalCode: z.string().trim().max(POSTAL_CODE_MAX_LENGTH),
         city: z.string().trim().max(CITY_MAX_LENGTH),
+        // L'État ou la province (#1335) — jamais obligatoire, y compris quand le
+        // champ est affiché : un salon américain a le droit de ne pas le
+        // renseigner, sa vitrine s'écrit alors « New York 10118 », sans virgule.
+        region: z.string().trim().max(REGION_MAX_LENGTH),
         // Le pays doit **exister** en ISO 3166-1 alpha-2, non seulement en avoir
         // la forme (#1330) : « ZZ » a la forme, et c'est ce code-là qui s'est
         // retrouvé en base par cet écran. Le contrôle est le même que celui du
@@ -485,6 +491,7 @@ export function TenantSettingsForm({ tenantSlug, tenant }: TenantSettingsFormPro
       line2: tenant.address?.line2 ?? '',
       postalCode: tenant.address?.postalCode ?? '',
       city: tenant.address?.city ?? '',
+      region: tenant.address?.region ?? '',
       country: tenant.address?.country ?? '',
       days: WEEKDAYS.map((weekday) => ({
         open: isOpenOn(tenant, weekday),
@@ -589,6 +596,14 @@ export function TenantSettingsForm({ tenantSlug, tenant }: TenantSettingsFormPro
                 ...(values.line2 === '' ? {} : { line2: values.line2 }),
                 ...(values.postalCode === '' ? {} : { postalCode: values.postalCode }),
                 city: values.city,
+                // La région n'accompagne que les pays qui en portent une (#1335).
+                // Le test sur le pays, et non seulement sur le champ : il est
+                // masqué dès qu'on passe de « US » à « FR », mais sa valeur reste
+                // dans le formulaire — l'omettre ici est ce qui empêche un salon
+                // qui a déménagé d'emporter « NY » dans son adresse parisienne.
+                ...(countryUsesAddressRegion(values.country) && values.region !== ''
+                  ? { region: values.region }
+                  : {}),
                 country: values.country,
               },
               { errorMap: zodErrorMap(locale) },
@@ -729,6 +744,34 @@ export function TenantSettingsForm({ tenantSlug, tenant }: TenantSettingsFormPro
             error={errors.city?.message}
             {...register('city')}
           />
+          {/*
+           * L'État ou la province, pour les seuls pays qui en portent un —
+           * États-Unis et Canada (#1335). Demander « État » à une gérante
+           * parisienne, c'est lui demander d'inventer une réponse ; le champ
+           * n'apparaît donc qu'une fois le pays saisi, et disparaît si elle en
+           * change. La valeur laissée derrière lui n'est pas envoyée : c'est la
+           * composition de l'adresse, plus haut, qui s'en charge.
+           *
+           * `address-level1` est le jeton d'`autocomplete` que la spécification
+           * HTML réserve à la subdivision administrative la plus large — le
+           * navigateur propose alors l'État enregistré dans le profil, là où un
+           * jeton inventé n'aurait rien proposé du tout.
+           *
+           * Le pays est **normalisé** avant d'être jugé : ce champ est une saisie
+           * libre, et le schéma en accepte la casse (`.trim().toUpperCase()`).
+           * Sans cette normalisation, la gérante qui tape « us » enregistrait un
+           * salon américain sans jamais voir le champ État.
+           */}
+          {countryUsesAddressRegion(addressCountry.trim().toUpperCase()) ? (
+            <Field
+              id="tenant-region"
+              label={t('address.region')}
+              autoComplete="address-level1"
+              hint={t('address.regionHint')}
+              error={errors.region?.message}
+              {...register('region')}
+            />
+          ) : null}
           <Field
             id="tenant-country"
             label={t('address.country')}

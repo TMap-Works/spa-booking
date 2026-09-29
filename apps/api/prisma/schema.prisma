@@ -386,12 +386,30 @@ model Tenant {
   /// qu'elle produirait serait une donnée structurée incomplète — ce que la
   /// page publique refuse par principe d'inventer.
   ///
-  /// `address_line2` et `postal_code` restent libres : le premier est un
-  /// complément, le second n'existe pas dans tous les pays.
+  /// `address_line2`, `postal_code` et `region` restent libres : le premier est
+  /// un complément, les deux autres n'existent pas dans tous les pays.
   addressLine1 String? @map("address_line1") @db.VarChar(160)
   addressLine2 String? @map("address_line2") @db.VarChar(160)
   postalCode   String? @map("postal_code") @db.VarChar(16)
   city         String? @map("city") @db.VarChar(120)
+
+  /// État, province ou subdivision équivalente — « NY », « QC » (#1335).
+  ///
+  /// Nullable, et **hors** du triplet de `tenants_address_completeness_check` :
+  /// des onze pays ouverts par le produit, deux seulement écrivent une
+  /// subdivision dans leur adresse postale. L'ajouter au triplet aurait rendu la
+  /// contrainte fausse pour les neuf autres et bloqué l'enregistrement de toute
+  /// adresse française.
+  ///
+  /// Une chaîne libre et non une énumération des cinquante États : le contenu
+  /// varie selon le pays et selon la forme retenue — l'abréviation de l'USPS
+  /// (« NY ») ou le nom ISO 3166-2 (« New York »). Le produit ne calcule rien
+  /// dessus, il l'imprime : une énumération aurait été une donnée de référence à
+  /// tenir pour un gain nul.
+  ///
+  /// Sans préfixe `address_`, comme `city` et `postal_code` : le nommage de ce
+  /// bloc suit l'élément postal, pas la table.
+  region String? @map("region") @db.VarChar(100)
 
   /// Pays en ISO 3166-1 alpha-2, majuscules — « FR », « MG ».
   ///

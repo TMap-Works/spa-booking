@@ -156,6 +156,66 @@ describe('graphe schema.org', () => {
       // Le code ISO tel quel, comme schema.org le recommande.
       addressCountry: 'FR',
     });
+    // `addressRegion` est **omise** quand le salon n'a pas d'État (#1335) : un
+    // `PostalAddress` incomplet vaut mieux qu'un `PostalAddress` faux.
+    expect(graph['address']).not.toHaveProperty('addressRegion');
+  });
+
+  it('porte `addressRegion` pour un salon nord-américain (#1335)', () => {
+    const graph = buildSalonGraph(
+      {
+        ...tenant,
+        address: {
+          line1: '350 5th Avenue',
+          postalCode: '10118',
+          city: 'New York',
+          region: 'NY',
+          country: 'US',
+        },
+      },
+      [service],
+      URL_SALON,
+      URL_RESERVATION,
+    ) as Record<string, unknown>;
+
+    // La valeur brute, et non la ligne composée : `addressLocality` et
+    // `addressRegion` sont deux propriétés distinctes du vocabulaire, et c'est ce
+    // découpage qui distingue le Springfield de l'Illinois de celui du
+    // Massachusetts — ce que la virgule de la vitrine dit à un lecteur humain.
+    expect(graph['address']).toEqual({
+      '@type': 'PostalAddress',
+      streetAddress: '350 5th Avenue',
+      postalCode: '10118',
+      addressLocality: 'New York',
+      addressRegion: 'NY',
+      addressCountry: 'US',
+    });
+  });
+
+  it('n’affirme pas au moteur ce que la page n’affiche pas (#1335)', () => {
+    // Le contrat n'interdit pas `region` sur un salon français — c'est un choix
+    // assumé de `postalAddressSchema`, la liste des pays à subdivision étant une
+    // règle de présentation. Le graphe doit donc appliquer la **même** condition
+    // que la vitrine : sans ce second test, la page aurait affiché « 75011
+    // Paris » pendant que le JSON-LD annonçait `addressRegion: "NY"` — un graphe
+    // qui contredit sa propre page est pire qu'un graphe incomplet.
+    const graph = buildSalonGraph(
+      {
+        ...tenant,
+        address: {
+          line1: '12 rue des Lilas',
+          postalCode: '75011',
+          city: 'Paris',
+          region: 'NY',
+          country: 'FR',
+        },
+      },
+      [service],
+      URL_SALON,
+      URL_RESERVATION,
+    ) as Record<string, unknown>;
+
+    expect(graph['address']).not.toHaveProperty('addressRegion');
   });
 
   it('publie les horaires en `openingHoursSpecification`, minuit compris (#343)', () => {

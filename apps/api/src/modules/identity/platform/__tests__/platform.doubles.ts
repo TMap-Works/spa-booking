@@ -269,7 +269,16 @@ export class FakePlatformConsoleRepository {
       summary,
       contactEmail: 'contact@salon.test',
       contactPhone: '+33142000000',
-      address: { line1: '12 rue des Lilas', line2: null, postalCode: '75011', city: 'Paris', country: 'FR' },
+      // `region` à `null` : le salon de référence est français, et la France
+      // n'écrit pas de subdivision dans son adresse postale (#1335).
+      address: {
+        line1: '12 rue des Lilas',
+        line2: null,
+        postalCode: '75011',
+        city: 'Paris',
+        region: null,
+        country: 'FR',
+      },
       legalName: null,
       hasLegalId: false,
       defaultLocale: this.tenantLocale,

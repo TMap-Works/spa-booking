@@ -101,10 +101,8 @@ describe('addressLines — le pays suit la langue de l’écran (#1297)', () => 
  * de la console écrivaient tous l'ordre français : un salon de Manhattan
  * s'annonçait « 10118 New York ».
  *
- * Ce qui n'y est **pas**, et n'est pas un oubli : l'État/Province. Le contrat ne
- * porte pas ce champ, donc aucune colonne ne le stocke — « New York, NY 10118 »
- * demande d'abord la colonne, et la virgule de cette forme sépare la ville de
- * l'État, non la ville du code postal.
+ * L'État/Province manquait à cet ordre, faute de colonne. #1335 l'a posée, et le
+ * `describe` suivant tient la forme complète — virgule comprise.
  */
 describe('addressLines — l’ordre suit le pays (#1330)', () => {
   const MANHATTAN: PostalAddress = {
@@ -163,6 +161,77 @@ describe('addressLines — l’ordre suit le pays (#1330)', () => {
     // choix mais un bug : `directionsUrl` en dépend.
     expect(addressQuery(MANHATTAN)).toBe('350 5th Avenue, New York, 10118, US');
     expect(addressQuery(PARIS)).toBe('12 rue des Lilas, 75011, Paris, FR');
+  });
+});
+
+/**
+ * L'État/Province et sa virgule — #1335, sixième critère d'acceptation.
+ *
+ * Les trois salons que le critère demande : un américain **avec** État, un
+ * américain **sans**, un français. Ce sont les trois seules formes que la règle
+ * distingue, et la faute qu'elles empêchent est précise — une virgule posée entre
+ * la ville et le code postal, « New York, 10118 », qui n'est la forme d'aucune
+ * convention postale.
+ */
+describe('addressLines — l’État et sa virgule (#1335)', () => {
+  const MANHATTAN_AVEC_ETAT: PostalAddress = {
+    line1: '350 5th Avenue',
+    postalCode: '10118',
+    city: 'New York',
+    region: 'NY',
+    country: 'US',
+  };
+
+  it('écrit « New York, NY 10118 » quand l’État est renseigné', () => {
+    // La virgule sépare la ville de l'État ; l'espace sépare l'État du code
+    // postal. C'est la forme de l'USPS, « CITY ST ZIP ».
+    expect(addressLines(MANHATTAN_AVEC_ETAT, { locale: 'en' })[1]).toBe('New York, NY 10118');
+  });
+
+  it('écrit « New York 10118 » — sans virgule — quand il ne l’est pas', () => {
+    const { region: _sansEtat, ...sansRegion } = MANHATTAN_AVEC_ETAT;
+
+    expect(addressLines(sansRegion, { locale: 'en' })[1]).toBe('New York 10118');
+  });
+
+  it('laisse l’adresse française intacte', () => {
+    expect(addressLines(PARIS, { locale: 'fr' })[1]).toBe('75011 Paris');
+  });
+
+  it('n’écrit pas l’État d’un pays qui n’en porte pas', () => {
+    // Le cas du salon qui a déménagé : la colonne porte encore « NY », le pays
+    // est passé à « FR ». On n'écrit pas une subdivision qu'on n'aurait pas
+    // laissé saisir — le formulaire ne propose le champ que pour US et CA.
+    expect(addressLines({ ...PARIS, region: 'NY' }, { locale: 'fr' })[1]).toBe('75011 Paris');
+  });
+
+  it('se passe du code postal, l’État restant sans virgule pendante', () => {
+    const { postalCode: _sansCode, ...sansPostal } = MANHATTAN_AVEC_ETAT;
+
+    expect(addressLines(sansPostal, { locale: 'en' })[1]).toBe('New York, NY');
+  });
+
+  it('accepte le `null` de la fiche de la console comme la clé omise', () => {
+    expect(
+      localityLine({ postalCode: '10118', city: 'New York', region: null, country: 'US' }),
+    ).toBe('New York 10118');
+    expect(
+      localityLine({ postalCode: '10118', city: 'New York', region: 'NY', country: 'US' }),
+    ).toBe('New York, NY 10118');
+  });
+
+  it('écrit la province canadienne de la même façon', () => {
+    expect(
+      localityLine({ postalCode: 'M5V 3L9', city: 'Toronto', region: 'ON', country: 'CA' }),
+    ).toBe('Toronto, ON M5V 3L9');
+  });
+
+  it('sépare tout par des virgules dans la requête géographique', () => {
+    // Ici la ponctuation est uniforme : c'est ce que lit un géocodeur, et c'est
+    // précisément l'État qui désambiguïse les Springfield.
+    expect(addressQuery(MANHATTAN_AVEC_ETAT)).toBe(
+      '350 5th Avenue, New York, NY, 10118, US',
+    );
   });
 });
 

@@ -171,6 +171,7 @@ export class PlatformConsoleRepository {
         addressLine2: true,
         postalCode: true,
         city: true,
+        region: true,
         countryCode: true,
         legalName: true,
         legalId: true,
@@ -189,7 +190,8 @@ export class PlatformConsoleRepository {
       contactEmail: row.contactEmail,
       contactPhone: row.contactPhone,
       // La base garantit que les trois sont nuls ensemble ou renseignés
-      // ensemble (`tenants_address_completeness_check`).
+      // ensemble (`tenants_address_completeness_check`). `region` n'en fait pas
+      // partie et reste à `null` pour les pays qui n'en portent pas (#1335).
       address:
         row.addressLine1 === null || row.city === null || row.countryCode === null
           ? null
@@ -198,6 +200,7 @@ export class PlatformConsoleRepository {
               line2: row.addressLine2,
               postalCode: row.postalCode,
               city: row.city,
+              region: row.region,
               country: row.countryCode,
             },
       legalName: row.legalName,

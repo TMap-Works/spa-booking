@@ -141,6 +141,15 @@ const WRITE_ADDRESS = `
 `;
 
 /**
+ * L'État, écrit **seul** — #1335.
+ *
+ * Une instruction à part, et non un sixième paramètre de `WRITE_ADDRESS` : c'est
+ * précisément parce que la colonne est hors du triplet qu'elle doit pouvoir
+ * s'écrire sans lui, et le prouver demande de l'écrire sans lui.
+ */
+const WRITE_REGION = `UPDATE tenants SET region = $2 WHERE id = $1`;
+
+/**
  * Insère une plage d'ouverture sans passer par Prisma.
  *
  * `updated_at` est fourni : la colonne est `NOT NULL` et son remplissage est le
@@ -262,6 +271,23 @@ describe('Contraintes du paramétrage d’établissement — contre un vrai Post
       city: row.city,
       country: row.countryCode,
     };
+  }
+
+  /**
+   * L'État, lu seul — #1335.
+   *
+   * Séparé de `readAddress` à dessein : la colonne est hors du triplet de
+   * complétude, et la mêler aux cinq autres aurait fait échouer les dix cas qui
+   * comparent une adresse entière à `NO_ADDRESS` pour la seule raison qu'une
+   * colonne s'est ajoutée à la table.
+   */
+  async function readRegion(tenantId: string): Promise<string | null> {
+    const row = await prismaUnscoped.tenant.findUniqueOrThrow({
+      where: { id: tenantId },
+      select: { region: true },
+    });
+
+    return row.region;
   }
 
   /** Les paramètres de `WRITE_ADDRESS`, dans l'ordre. */
@@ -453,6 +479,38 @@ describe('Contraintes du paramétrage d’établissement — contre un vrai Post
         line2: 'Bâtiment B',
         postalCode: '75011',
       });
+    });
+
+    it('laisse l’État hors du triplet — #1335', async () => {
+      // Même exclusion que le code postal, et pour une raison de même nature :
+      // des onze pays ouverts par le produit, deux écrivent une subdivision.
+      // L'inclure au triplet aurait rendu inenregistrable l'adresse d'un salon
+      // français — c'est-à-dire cassé neuf pays pour en servir deux.
+      //
+      // Les deux moitiés, comme au-dessus : l'État n'est pas requis avec le
+      // triplet, et sa présence seule ne le réclame pas.
+      await accepted(WRITE_REGION, [salon, null]);
+      await accepted(
+        WRITE_ADDRESS,
+        addressParams(salon, {
+          line1: '350 5th Avenue',
+          line2: null,
+          postalCode: '10118',
+          city: 'New York',
+          country: 'US',
+        }),
+      );
+      await accepted(WRITE_REGION, [salon, 'NY']);
+
+      expect(await readRegion(salon)).toBe('NY');
+
+      // Une adresse effacée alors que l'État subsiste : la contrainte ne dit
+      // rien de lui, et c'est le service qui remet la colonne à `null` en
+      // réécrivant l'adresse (`toSettingsChanges`).
+      await accepted(WRITE_ADDRESS, addressParams(salon, NO_ADDRESS));
+
+      expect(await readAddress(salon)).toEqual(NO_ADDRESS);
+      expect(await readRegion(salon)).toBe('NY');
     });
   });
 

@@ -391,6 +391,8 @@ export type {
 } from './staff-portal';
 
 export {
+  ADDRESS_REGION_COUNTRIES,
+  countryUsesAddressRegion,
   legalIdSchema,
   legalIdTypeSchema,
   legalNameSchema,

@@ -23,9 +23,13 @@ import { minutesToWallClock } from './opening-hours';
  * trois champs requis dans l'objet, et rien dans le type de la ligne lue ne dit
  * qu'ils vont ensemble.
  *
- * `line2` et `postalCode` sont **omis** plutôt que rendus à `null`, comme les
- * contacts : c'est la forme que `postalAddressSchema` déclare, et un `null` là
- * où le front attend une chaîne ou rien ferait échouer la validation.
+ * `line2`, `postalCode` et `region` sont **omis** plutôt que rendus à `null`,
+ * comme les contacts : c'est la forme que `postalAddressSchema` déclare, et un
+ * `null` là où le front attend une chaîne ou rien ferait échouer la validation.
+ *
+ * `region` ne participe pas au triplet (#1335) : deux des onze pays ouverts par
+ * le produit écrivent une subdivision, et l'exiger aurait fait disparaître
+ * l'adresse de tous les autres.
  *
  * Exportée pour être vérifiée en test — sa seule règle intéressante est celle
  * du triplet, et elle ne se voit pas depuis un statut HTTP.
@@ -35,6 +39,7 @@ export function toPostalAddress(tenant: {
   addressLine2: string | null;
   postalCode: string | null;
   city: string | null;
+  region: string | null;
   countryCode: string | null;
 }): PostalAddressDto | undefined {
   if (tenant.addressLine1 === null || tenant.city === null || tenant.countryCode === null) {
@@ -46,6 +51,7 @@ export function toPostalAddress(tenant: {
     ...(tenant.addressLine2 === null ? {} : { line2: tenant.addressLine2 }),
     ...(tenant.postalCode === null ? {} : { postalCode: tenant.postalCode }),
     city: tenant.city,
+    ...(tenant.region === null ? {} : { region: tenant.region }),
     country: tenant.countryCode,
   };
 }

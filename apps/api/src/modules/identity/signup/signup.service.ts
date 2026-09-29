@@ -42,6 +42,7 @@ export class SignupService {
     addressLine2: string | null;
     postalCode: string | null;
     city: string;
+    region: string | null;
     adminEmail: string;
     adminFirstName: string;
     adminLastName: string;
@@ -77,6 +78,7 @@ export class SignupService {
       addressLine2: input.addressLine2,
       postalCode: input.postalCode,
       city: input.city,
+      region: input.region,
       adminEmail: normalizeEmail(input.adminEmail),
       adminFirstName: input.adminFirstName.trim(),
       adminLastName: input.adminLastName.trim(),

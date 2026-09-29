@@ -80,6 +80,10 @@ export class SignupController {
       addressLine2: body.addressLine2 ?? null,
       postalCode: body.postalCode ?? null,
       city: body.city,
+      // L'État ou la province, quand le pays en porte une (#1335). Le contrat
+      // ramène déjà à `undefined` la chaîne vide d'un champ rempli puis masqué
+      // en cours de saisie ; il ne reste ici qu'à choisir la forme de la colonne.
+      region: body.region ?? null,
       adminEmail: body.adminEmail,
       adminFirstName: body.adminFirstName,
       adminLastName: body.adminLastName,

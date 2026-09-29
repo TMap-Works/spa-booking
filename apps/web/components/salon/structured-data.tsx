@@ -1,4 +1,10 @@
-import type { OpeningHoursEntry, PostalAddress, PublicService, PublicTenant } from '@spa/shared';
+import {
+  countryUsesAddressRegion,
+  type OpeningHoursEntry,
+  type PostalAddress,
+  type PublicService,
+  type PublicTenant,
+} from '@spa/shared';
 import { useTranslations } from 'next-intl';
 
 import { formatAmountMachine } from '@/lib/format';
@@ -91,6 +97,23 @@ interface SalonStructuredDataProps {
  * `addressCountry` reçoit le code ISO 3166-1 alpha-2 tel quel : la
  * documentation de schema.org le recommande explicitement, et un nom de pays
  * traduit serait moins exploitable qu'un code.
+ *
+ * ## `addressRegion`, et pourquoi elle compte pour un moteur (#1335)
+ *
+ * La propriété est **omise** quand le salon n'a pas d'État — comme
+ * `postalCode` —, parce qu'un `PostalAddress` incomplet vaut mieux qu'un
+ * `PostalAddress` faux. Quand elle est là, elle porte la valeur brute et non la
+ * ligne composée : `addressLocality` et `addressRegion` sont deux propriétés
+ * distinctes du vocabulaire, et c'est ce découpage qui permet à un moteur de
+ * distinguer le Springfield de l'Illinois de celui du Massachusetts — la chose
+ * même que la virgule de la vitrine dit à un lecteur humain.
+ *
+ * La condition est la **même** que celle de la vitrine (`addressRegion` dans
+ * `salon-address.ts`) : la valeur doit être écrite *et* le pays doit porter une
+ * subdivision. Le contrat n'interdit pas `region` sur un salon français — c'est
+ * un choix assumé de `postalAddressSchema` —, et sans ce second test le graphe
+ * aurait publié « addressRegion: NY » sur une adresse parisienne, c'est-à-dire
+ * affirmé à un moteur le contraire de ce que la page affiche.
  */
 function toPostalAddressGraph(address: PostalAddress): JsonValue {
   return {
@@ -99,6 +122,9 @@ function toPostalAddressGraph(address: PostalAddress): JsonValue {
       address.line2 === undefined ? address.line1 : `${address.line1}\n${address.line2}`,
     ...(address.postalCode === undefined ? {} : { postalCode: address.postalCode }),
     addressLocality: address.city,
+    ...(address.region === undefined || !countryUsesAddressRegion(address.country)
+      ? {}
+      : { addressRegion: address.region }),
     addressCountry: address.country,
   };
 }

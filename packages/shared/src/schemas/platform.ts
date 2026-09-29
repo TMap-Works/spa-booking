@@ -23,7 +23,12 @@ import {
 } from '../common/identifiers';
 import { currencyCodeSchema, nonNegativeMoneySchema } from '../common/money';
 import { calendarDateSchema, timeZoneSchema, utcInstantSchema } from '../common/time';
-import { ADDRESS_LINE_MAX_LENGTH, CITY_MAX_LENGTH, POSTAL_CODE_MAX_LENGTH } from '../constants/limits';
+import {
+  ADDRESS_LINE_MAX_LENGTH,
+  CITY_MAX_LENGTH,
+  POSTAL_CODE_MAX_LENGTH,
+  REGION_MAX_LENGTH,
+} from '../constants/limits';
 import { messageKey } from '../errors/zod-messages';
 import { localeSchema, submittedLocaleSchema } from '../locale/index';
 import { tenantBillingStatusSchema } from './billing';
@@ -115,6 +120,17 @@ export const createTenantRequestSchema = z
     addressLine2: optionalText(ADDRESS_LINE_MAX_LENGTH),
     postalCode: optionalText(POSTAL_CODE_MAX_LENGTH),
     city: z.string().trim().min(1).max(CITY_MAX_LENGTH),
+    /**
+     * L'État ou la province — **facultative**, et seulement demandée aux salons
+     * dont le pays en porte une (#1335, `countryUsesAddressRegion`).
+     *
+     * `optionalText` comme le code postal et non `z.string().optional()` : les
+     * deux portes d'ouverture soumettent un formulaire, qui envoie la chaîne vide
+     * d'un champ qu'on a masqué après l'avoir rempli — un salon passé de US à FR
+     * en cours de saisie. La chaîne vide vaut « pas de région », jamais une
+     * colonne à `''` que la vitrine afficherait comme une virgule orpheline.
+     */
+    region: optionalText(REGION_MAX_LENGTH),
     adminEmail: emailSchema,
     adminFirstName: nameSchema,
     adminLastName: nameSchema,
@@ -400,6 +416,8 @@ export const platformTenantDetailSchema = z.object({
       line2: z.string().nullable(),
       postalCode: z.string().nullable(),
       city: z.string(),
+      /** L'État ou la province, `null` pour les pays qui n'en portent pas (#1335). */
+      region: z.string().nullable(),
       country: z.string(),
     })
     .nullable(),

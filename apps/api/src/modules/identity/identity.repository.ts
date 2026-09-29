@@ -81,6 +81,7 @@ export interface PublicTenantRecord {
   addressLine2: string | null;
   postalCode: string | null;
   city: string | null;
+  region: string | null;
   countryCode: string | null;
   openingHours: OpeningHourRecord[];
 }
@@ -149,6 +150,7 @@ export interface TenantSettingsChanges {
   addressLine2?: string | null;
   postalCode?: string | null;
   city?: string | null;
+  region?: string | null;
   countryCode?: string | null;
   // Identité légale et fiscalité (#913). `legalIdType` et `legalId` s'écrivent
   // **toujours ensemble** : la contrainte `tenants_legal_id_completeness_check`
@@ -319,6 +321,7 @@ const PUBLIC_TENANT_SELECT = {
   addressLine2: true,
   postalCode: true,
   city: true,
+  region: true,
   countryCode: true,
   openingHours: {
     select: { weekday: true, startMinute: true, endMinute: true },

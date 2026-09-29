@@ -100,6 +100,22 @@ export const POSTAL_CODE_MAX_LENGTH = 16;
 export const CITY_MAX_LENGTH = 120;
 
 /**
+ * `VARCHAR(100)` — État, province ou subdivision équivalente (#1335).
+ *
+ * Cent caractères et non deux : la forme abrégée de l'USPS (« NY ») est la plus
+ * courante, mais elle n'est pas la seule qu'on ait le droit de saisir — « New
+ * York », « British Columbia », « Newfoundland and Labrador » sont les noms que
+ * l'ISO 3166-2 donne aux mêmes subdivisions, et une borne à deux caractères les
+ * aurait refusés. Aucun format n'est imposé pour la même raison qu'aucun ne l'est
+ * sur le code postal : il varie d'un pays à l'autre.
+ *
+ * Plus court que la ville, pourtant : une subdivision est un nom de référence,
+ * pas une ligne saisie librement. La borne est là pour arrêter un collage
+ * accidentel, pas pour trancher une convention.
+ */
+export const REGION_MAX_LENGTH = 100;
+
+/**
  * Nombre maximal de plages d'ouverture dans une semaine (#343).
  *
  * Quatre coupures par jour, comme `MAX_STAFF_SCHEDULE_ENTRIES` : la coupure

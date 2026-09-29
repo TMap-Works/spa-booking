@@ -45,6 +45,7 @@ const FICHE: TenantRecord = {
   addressLine2: null,
   postalCode: null,
   city: null,
+  region: null,
   countryCode: null,
   openingHours: [],
   isActive: true,
@@ -375,7 +376,7 @@ describe('TenantSettingsService', () => {
     expect(reponse.message).toEqual([expect.stringMatching(/^contactPhone : /)]);
   });
 
-  it('pose les cinq colonnes d’adresse d’un coup, complément absent remis à `null`', async () => {
+  it('pose les six colonnes d’adresse d’un coup, complément absent remis à `null`', async () => {
     // Pas de mise à jour partielle d'adresse : sans cela, poser une nouvelle rue
     // sans complément garderait l'ancien « Bâtiment B » sous la nouvelle voie.
     const harness = harnessOver(FICHE);
@@ -388,11 +389,46 @@ describe('TenantSettingsService', () => {
       addressLine2: null,
       postalCode: null,
       city: 'Lyon',
+      region: null,
       countryCode: 'FR',
     });
   });
 
-  it('efface les cinq colonnes d’adresse sur `address: null`', async () => {
+  it('écrit l’État d’un salon nord-américain — #1335', async () => {
+    const harness = harnessOver(FICHE);
+    await update(harness, {
+      address: {
+        line1: '350 5th Avenue',
+        postalCode: '10118',
+        city: 'New York',
+        region: 'NY',
+        country: 'US',
+      },
+    });
+
+    expect(harness.changes()).toEqual({
+      addressLine1: '350 5th Avenue',
+      addressLine2: null,
+      postalCode: '10118',
+      city: 'New York',
+      region: 'NY',
+      countryCode: 'US',
+    });
+  });
+
+  it('remet l’État à `null` quand la nouvelle adresse n’en porte pas — #1335', async () => {
+    // Le salon qui déménage de Manhattan à Paris : « NY » ne doit pas survivre à
+    // l'adresse qui le portait. C'est la même règle que le complément d'adresse,
+    // et elle découle du même choix — l'adresse se pose en entier.
+    const harness = harnessOver({ ...FICHE, region: 'NY', countryCode: 'US' });
+    await update(harness, {
+      address: { line1: '12 rue des Lilas', city: 'Paris', country: 'FR' },
+    });
+
+    expect(harness.changes()).toMatchObject({ region: null, countryCode: 'FR' });
+  });
+
+  it('efface les six colonnes d’adresse sur `address: null`', async () => {
     const harness = harnessOver(FICHE);
     await update(harness, { address: null });
 
@@ -401,6 +437,7 @@ describe('TenantSettingsService', () => {
       addressLine2: null,
       postalCode: null,
       city: null,
+      region: null,
       countryCode: null,
     });
   });
