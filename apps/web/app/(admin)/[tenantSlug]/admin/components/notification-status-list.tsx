@@ -1,4 +1,9 @@
-import type { Notification as NotificationTrace, TimeZone } from '@spa/shared';
+import {
+  notificationFailureReasonOf,
+  type Notification as NotificationTrace,
+  type NotificationFailureReason,
+  type TimeZone,
+} from '@spa/shared';
 import { useLocale, useTranslations } from 'next-intl';
 
 import { formatDateTimeInTimeZone, type DisplayLocale } from '@/lib/format';
@@ -76,6 +81,30 @@ interface NotificationStatusListProps {
 type TraceLabelKey = `types.${NotificationTrace['type']}`;
 type ChannelLabelKey = `channels.${NotificationTrace['channel']}`;
 type StatusLabelKey = `statuses.${NotificationTrace['status']}`;
+
+/**
+ * Le motif d'échec, traduit — #1328.
+ *
+ * L'API rendait une phrase française, écrite dans
+ * `apps/api/src/modules/notifications/notifications.errors.ts`, et cette ligne
+ * l'affichait telle quelle : « Aucun expéditeur n'est configuré pour ce canal de
+ * notification. » au milieu d'un écran en anglais. Elle rend maintenant un code,
+ * et la phrase se choisit ici, dans la langue de qui regarde.
+ *
+ * **Le repli n'est pas une précaution de style.** Deux valeurs arrivent que le
+ * vocabulaire ne nomme pas, et elles arrivent en production :
+ *
+ * 1. les motifs **déjà stockés** avant le ticket — une phrase française, en base,
+ *    que rien ne réécrit : la migration est de contrat, pas de données ;
+ * 2. un code qu'une API plus récente émettrait avant que ce front ne soit déployé.
+ *
+ * `t()` sur une clé absente rend `admin-planning.notifications.failureReasons.…`
+ * en clair, ou lève selon la configuration de `next-intl` : dans les deux cas, la
+ * seule information qui explique une cliente absente serait perdue.
+ * `notificationFailureReasonOf` rabat donc tout l'inconnu sur `unknown`, et c'est
+ * le contrat partagé qui en juge — pas ce composant, qui aurait dupliqué la liste.
+ */
+type FailureReasonKey = `failureReasons.${NotificationFailureReason}`;
 
 /**
  * Le modificateur de badge, repris des teintes existantes.
@@ -171,12 +200,32 @@ function body({
           <span className="spa-admin-notifications__moment">
             {moment(trace, timeZone, display, t)}
           </span>
-          {trace.failureReason === undefined ? null : (
-            <span className="spa-admin-notifications__reason">{trace.failureReason}</span>
-          )}
+          {failureReason(trace, t)}
         </li>
       ))}
     </ul>
+  );
+}
+
+/**
+ * Le motif de l'échec, ou rien du tout quand il n'y en a pas.
+ *
+ * Écrit à part plutôt qu'en ternaire dans la liste : la résolution du repli est
+ * la seule logique de ce composant, et c'est elle que la suite unitaire vise.
+ */
+function failureReason(trace: NotificationTrace, t: PlanningTranslator) {
+  const reason = notificationFailureReasonOf(trace.failureReason);
+
+  if (reason === undefined) {
+    return null;
+  }
+
+  return (
+    <span className="spa-admin-notifications__reason">
+      {t(
+        `notifications.failureReasons.${reason}` satisfies `notifications.${FailureReasonKey}`,
+      )}
+    </span>
   );
 }
 

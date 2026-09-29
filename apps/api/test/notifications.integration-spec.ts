@@ -1,4 +1,5 @@
 import type { INestApplication } from '@nestjs/common';
+import { isNotificationFailureReason, notificationFailureReasonOf } from '@spa/shared';
 import request from 'supertest';
 
 import { createNotificationsHarness, type NotificationsHarness } from './notifications.harness';
@@ -84,7 +85,9 @@ describe('GET /api/v1/notifications — le journal d’envois', () => {
       type: 'BOOKING_CONFIRMATION',
       channel: 'SMS',
       status: 'FAILED',
-      failureReason: "Aucun expéditeur n'est configuré pour ce canal de notification.",
+      // Un **code** depuis #1328, et plus la phrase française que l'API rédigeait :
+      // c'est le front qui choisit la phrase, dans la langue de qui regarde.
+      failureReason: 'sender_not_configured',
       createdAt: new Date('2026-09-06T08:00:02Z'),
     });
     harness.seed({
@@ -170,7 +173,47 @@ describe('GET /api/v1/notifications — le journal d’envois', () => {
     const body = response.body as ListBody;
 
     expect(body.items).toHaveLength(1);
-    expect(body.items[0]?.failureReason).toContain('expéditeur');
+    // Un code du vocabulaire de `@spa/shared`, pas une phrase : c'est ce que le
+    // premier critère d'acceptation de #1328 demande, et c'est ce qui rend
+    // l'écran traduisible.
+    expect(body.items[0]?.failureReason).toBe('sender_not_configured');
+    expect(isNotificationFailureReason(body.items[0]?.failureReason)).toBe(true);
+  });
+
+  it('sert encore les motifs rédigés avant #1328, sans les refuser ni les vider', async () => {
+    // Le deuxième critère d'acceptation, du côté de l'API. La migration est de
+    // **contrat**, pas de données : les lignes écrites avant portent une phrase
+    // française, et rien ne les réécrit. Refuser de les sérialiser — ou les
+    // remplacer par un code que la base ne porte pas — aurait vidé le journal du
+    // rendez-vous qui en contient une, c'est-à-dire précisément celui qu'on
+    // consulte pour comprendre une cliente absente.
+    harness.seed({
+      tenantId: harness.tenantId,
+      id: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',
+      appointmentId: RDV,
+      recipientUserId: CLIENTE,
+      type: 'REMINDER_24H',
+      channel: 'SMS',
+      status: 'FAILED',
+      failureReason: "Aucun expéditeur n'est configuré pour ce canal de notification.",
+      createdAt: new Date('2026-09-06T09:00:00Z'),
+    });
+
+    const response = await request(server())
+      .get(`${BASE}?appointmentId=${RDV}&channel=sms&statuses=failed`)
+      .set('Authorization', await harness.bearer('MANAGER'))
+      .expect(200);
+
+    const historique = (response.body as ListBody).items.find(
+      (item) => item.id === 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',
+    );
+
+    expect(historique?.failureReason).toBe(
+      "Aucun expéditeur n'est configuré pour ce canal de notification.",
+    );
+    // Et le repli du contrat en fait un motif affichable, que le front traduit
+    // sous `unknown` plutôt que de rendre la phrase brute.
+    expect(notificationFailureReasonOf(historique?.failureReason)).toBe('unknown');
   });
 
   it('accepte plusieurs statuts d’un coup', async () => {
@@ -351,7 +394,7 @@ describe('GET /api/v1/notifications — la portée du praticien', () => {
       type: 'REMINDER_24H',
       channel: 'EMAIL',
       status: 'FAILED',
-      failureReason: 'SES throttling',
+      failureReason: 'unknown',
       createdAt: new Date('2026-09-06T10:00:00Z'),
     });
 
@@ -364,7 +407,7 @@ describe('GET /api/v1/notifications — la portée du praticien', () => {
       appointmentId: RDV,
       recipientUserId: CLIENTE,
       status: 'failed',
-      failureReason: 'SES throttling',
+      failureReason: 'unknown',
     });
   });
 

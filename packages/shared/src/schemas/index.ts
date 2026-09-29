@@ -230,7 +230,11 @@ export type {
 } from './identity';
 
 export {
+  isNotificationFailureReason,
+  NOTIFICATION_FAILURE_REASONS,
   notificationChannelSchema,
+  notificationFailureReasonOf,
+  notificationFailureReasonSchema,
   notificationListQuerySchema,
   notificationPreferencesSchema,
   notificationSchema,
@@ -239,6 +243,7 @@ export {
 } from './notification';
 export type {
   Notification,
+  NotificationFailureReason,
   NotificationListQuery,
   NotificationPreferences,
 } from './notification';

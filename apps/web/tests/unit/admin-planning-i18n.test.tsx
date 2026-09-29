@@ -1,4 +1,9 @@
-import { errorMessage, type Appointment, type OpeningHoursEntry } from '@spa/shared';
+import {
+  errorMessage,
+  type Appointment,
+  type Notification as NotificationTrace,
+  type OpeningHoursEntry,
+} from '@spa/shared';
 import { cleanup, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -34,6 +39,7 @@ import { nextIntlFixe } from '../support/langue-figee';
 vi.mock('next-intl', () => nextIntlFixe('en'));
 
 import { CalendarMoveConfirm } from '@/app/(admin)/[tenantSlug]/admin/components/calendar-move-confirm';
+import { NotificationStatusList } from '@/app/(admin)/[tenantSlug]/admin/components/notification-status-list';
 import { planDeskMove } from '@/lib/admin/appointment-desk';
 import { buildCalendarBoard } from '@/lib/admin/calendar-grid';
 import {
@@ -300,5 +306,64 @@ describe('la confirmation de changement de praticien, rendue en anglais', () => 
     expect(question).toContain('August 26');
     expect(question).toContain('at 15:00');
     expect(question).not.toContain('mercredi');
+  });
+});
+
+describe('le motif d’échec d’une notification, rendu en anglais (#1328)', () => {
+  /**
+   * Le bug que ce ticket corrige, vu du seul endroit où il se voyait.
+   *
+   * L'API rédigeait la phrase — « Aucun expéditeur n'est configuré pour ce canal
+   * de notification. » —, la stockait, et le tiroir l'affichait telle quelle : du
+   * français au milieu d'un back-office anglais. Elle rend maintenant un code, et
+   * c'est ici que la traduction se prouve dans l'autre langue — la suite française
+   * du composant (`admin-notification-status.test.tsx`) ne pouvait pas le faire,
+   * l'amorce fixant toutes les suites à `fr`.
+   */
+  function motifAffiche(failureReason: string | undefined): string | null {
+    const trace: NotificationTrace = {
+      id: 'ffffffff-0000-4000-8000-000000000002',
+      appointmentId: 'aaaaaaaa-0000-4000-8000-000000000001',
+      type: 'booking_confirmation',
+      channel: 'sms',
+      status: 'failed',
+      attemptCount: 2,
+      createdAt: '2026-08-01T08:00:01.000Z',
+      ...(failureReason === undefined ? {} : { failureReason }),
+    };
+
+    const { container } = render(
+      <NotificationStatusList notifications={[trace]} timeZone={TIME_ZONE} />,
+    );
+
+    return container.querySelector('.spa-admin-notifications__reason')?.textContent ?? null;
+  }
+
+  it.each([
+    ['sender_not_configured', 'Sending messages is not configured on this channel.'],
+    ['template_missing', 'No template is available to compose this message.'],
+    ['appointment_gone', 'The appointment this message announces no longer exists.'],
+    ['unknown', 'Sending failed for an undetermined reason.'],
+  ])('rend le code %s en anglais', (code, phrase) => {
+    expect(motifAffiche(code)).toBe(phrase);
+  });
+
+  it('replie en anglais un motif stocké en français avant le ticket', () => {
+    // C'est exactement le constat de l'issue : cette phrase-là, sur cet écran-là.
+    // Le repli est traduit, il n'est pas la phrase brute.
+    const affiche = motifAffiche(
+      "Aucun expéditeur n'est configuré pour ce canal de notification.",
+    );
+
+    expect(affiche).toBe('Sending failed for an undetermined reason.');
+    expect(affiche).not.toContain('expéditeur');
+  });
+
+  it('replie en anglais un code inconnu, sans laisser fuir la clé du catalogue', () => {
+    const affiche = motifAffiche('quota_exceeded');
+
+    expect(affiche).toBe('Sending failed for an undetermined reason.');
+    expect(affiche).not.toContain('failureReasons');
+    expect(affiche).not.toContain('MISSING_MESSAGE');
   });
 });
