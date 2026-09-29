@@ -30,7 +30,8 @@
  * française écrite en dur. La carte est désormais celle de la requête, et le
  * repli la phrase de `VALIDATION_ERROR` dans cette langue — rendue par
  * `validationRefusal` d'`action-result.ts`, qui la tient pour toutes les actions
- * serveur depuis #1310.
+ * serveur depuis #1310, et par `invalidFromZod` qui assemble les deux depuis
+ * #1319.
  *
  * L'inscription est vue par un gérant qui n'a encore aucun compte : c'est
  * exactement l'écran où une phrase française sur une page anglaise se paie.
@@ -51,8 +52,7 @@ import { getLocale } from 'next-intl/server';
 
 import {
   failure,
-  invalid,
-  validationRefusal,
+  invalidFromZod,
   type AdminActionResult,
 } from '@/app/(admin)/[tenantSlug]/admin/action-result';
 import { adminBillingPath } from '@/app/(admin)/[tenantSlug]/admin/paths';
@@ -69,7 +69,7 @@ export async function signupSalonAction(values: unknown): Promise<AdminActionRes
   const parsed = salonSignupRequestSchema.safeParse(values, { errorMap: zodErrorMap(locale) });
 
   if (!parsed.success) {
-    return invalid(parsed.error.issues[0]?.message ?? validationRefusal(locale));
+    return invalidFromZod(parsed.error, locale);
   }
 
   let opened;
