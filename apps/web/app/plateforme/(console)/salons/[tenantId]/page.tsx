@@ -8,6 +8,7 @@ import { getLocale, getTranslations } from 'next-intl/server';
 import Link from 'next/link';
 import { notFound, redirect } from 'next/navigation';
 
+import { localityLine } from '@/components/salon/salon-address';
 import { Icon } from '@/components/ui/icon';
 import { ApiClientError, fetchPlatformTenantDetail } from '@/lib/api-client';
 import { formatReceiptPhone } from '@/lib/admin/receipt-ticket';
@@ -451,7 +452,15 @@ export default async function PlatformTenantPage({ params }: PlatformTenantPageP
                         </>
                       )}
                       <br />
-                      {[detail.address.postalCode, detail.address.city].filter(Boolean).join(' ')} ·{' '}
+                      {/*
+                        `localityLine` et non une jointure recomposée ici (#1330) :
+                        l'ordre de la ville et du code postal dépend du pays du
+                        salon — « New York 10118 », « 75011 Paris » —, et cette
+                        fiche était le dernier écran à en décider de son côté.
+                        Elle annonçait donc « 10118 New York » sur un salon
+                        américain dont la vitrine était déjà juste.
+                      */}
+                      {localityLine(detail.address)} ·{' '}
                       {/*
                         `address.country` est le **code** ISO que la base stocke
                         (`tenants.country_code`) : il se nomme par `Intl.DisplayNames`,
