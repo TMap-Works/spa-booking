@@ -67,6 +67,27 @@ const EN: DisplayLocale = { locale: 'en' };
 const fr = hoursTranslator('fr');
 const en = hoursTranslator('en');
 
+/**
+ * Les quatre contextes du troisième critère de #1345 — un salon français et un
+ * salon américain, chacun lu dans les deux langues.
+ *
+ * `EN` ci-dessus vaut déjà `en-US` : le repli de `formattingLocale` place la
+ * langue anglaise sur son marché quand le salon n'a pas publié de pays
+ * (`@spa/shared`). Les quatre étiquettes sont nommées ici quand même, parce que
+ * c'est le **couple** langue × pays qui décide de l'écriture d'une heure, et
+ * qu'une suite qui s'appuierait sur le repli mesurerait autre chose que ce que la
+ * vitrine d'un salon renseigné fait.
+ */
+const SALON_FR = {
+  fr: { locale: 'fr', countryCode: 'FR' },
+  en: { locale: 'en', countryCode: 'FR' },
+} as const satisfies Record<Locale, DisplayLocale>;
+
+const SALON_US = {
+  fr: { locale: 'fr', countryCode: 'US' },
+  en: { locale: 'en', countryCode: 'US' },
+} as const satisfies Record<Locale, DisplayLocale>;
+
 describe('le nom d’un jour de la semaine', () => {
   it('nomme les sept jours en numérotation ISO, lundi en tête', () => {
     // Appelé par une lambda et non passé directement à `map` : `weekdayLabel`
@@ -262,17 +283,35 @@ describe('l’état d’ouverture, maintenant', () => {
     // Les quatre phrases d'état viennent du catalogue et non du module : rendues
     // en anglais, elles portent la casse de la langue sur le nom du jour — « opens
     // Saturday » et non « opens samedi ».
+    //
+    // Les heures, elles, sont en 12 heures : `EN` n'a pas de pays, et le repli de
+    // `formattingLocale` place l'anglais sur son marché — `en-US` (#1345). C'est
+    // la même bascule que celle des créneaux de la page, et c'est bien le propos :
+    // le bandeau écrivait « closes at 19:00 » au-dessus de « 7:00 PM ».
+    //
+    // Le blanc qui précède « PM » est **insécable** (U+00A0) : `wallTimeLabel` rend
+    // insécables les espaces qu'`Intl` insère, faute de quoi un retour à la ligne
+    // laisserait « 7:00 » seul en fin de ligne — une heure du matin là où il est
+    // 19 h. C'est la même précaution que le tiret de `formatOpeningRange`.
     expect(openingStatus([MARDI], ZONE, chez(2, '09:00'), EN, en)?.label).toBe(
-      'Open — closes at 19:00',
+      'Open — closes at 7:00\u00a0PM',
     );
     expect(openingStatus([MARDI], ZONE, chez(2, '04:00'), EN, en)?.label).toBe(
-      'Closed — opens at 09:00',
+      'Closed — opens at 9:00\u00a0AM',
     );
     expect(openingStatus([MARDI], ZONE, chez(1, '17:00'), EN, en)?.label).toBe(
-      'Closed — opens tomorrow at 09:00',
+      'Closed — opens tomorrow at 9:00\u00a0AM',
     );
     expect(openingStatus([MARDI, SAMEDI], ZONE, chez(3, '09:00'), EN, en)?.label).toBe(
-      'Closed — opens Saturday at 10:00',
+      'Closed — opens Saturday at 10:00\u00a0AM',
+    );
+  });
+
+  it('garde les 24 heures pour un salon français lu en anglais', () => {
+    // Le cas qui distingue le pays du salon de la langue de la session : la même
+    // phrase anglaise, et l'heure du salon parisien (#1345).
+    expect(openingStatus([MARDI], ZONE, chez(2, '09:00'), SALON_FR.en, en)?.label).toBe(
+      'Open — closes at 19:00',
     );
   });
 
@@ -288,10 +327,17 @@ describe('l’état d’ouverture, maintenant', () => {
   it('tient le salon ouvert jusqu’à minuit pour une fermeture à 24:00', () => {
     // 20:30 UTC = 23:30 à Antananarivo, un samedi : `24:00` est la borne haute
     // que le contrat admet, et non une heure illisible à écarter.
+    //
+    // Le mot, et non le chiffre, depuis #1345 : « ferme à 24:00 » n'est ni une
+    // heure qu'`Intl` sache écrire ni une phrase qu'on prononce, et le passer au
+    // formateur aurait rendu « ferme à 00:00 » — l'heure zéro du lendemain.
     expect(openingStatus([SAMEDI], ZONE, chez(6, '20:30'), FR, fr)).toEqual({
       open: true,
-      label: 'Ouvert — ferme à 24:00',
+      label: 'Ouvert — ferme à minuit',
     });
+    expect(openingStatus([SAMEDI], ZONE, chez(6, '20:30'), SALON_US.en, en)?.label).toBe(
+      'Open — closes at midnight',
+    );
   });
 
   it('se tait quand il n’y a rien à dire plutôt que d’annoncer « fermé »', () => {
@@ -311,11 +357,56 @@ describe('l’état d’ouverture, maintenant', () => {
   });
 });
 
+/**
+ * Le libellé d'une plage (#343), et la convention dans laquelle il l'écrit (#1345).
+ *
+ * Ce que ces cas verrouillent est le constat de #1345 : la plage était recopiée du
+ * contrat, et la carte « Horaires » d'un salon de Manhattan lue en anglais
+ * annonçait « 09:00 – 19:00 » au-dessus de créneaux proposés à « 9:00 AM ». Les
+ * quatre combinaisons du troisième critère sont couvertes, et trois d'entre elles
+ * doivent **rester** en 24 heures — le français partout, l'anglais hors du marché
+ * américain : c'est le pays du salon qui décide, pas la langue de la session.
+ */
 describe('le libellé d’une plage', () => {
+  const MATIN: OpeningHoursEntry = { weekday: 1, opensAt: '09:00', closesAt: '12:00' };
+  /** Le tiret demi-cadratin entre espaces insécables, tel que la plage le porte. */
+  const A = '\u00a0\u2013\u00a0';
+
+  it('passe en 12 heures chez un salon américain lu en anglais, et là seulement', () => {
+    expect(formatOpeningRange(MATIN, SALON_US.en, en)).toBe(`9:00\u00a0AM${A}12:00\u00a0PM`);
+    // Le salon français lu en anglais est le cas qui distingue « pays du salon »
+    // de « langue de la session » : c'est lui qu'un `hourCycle` forcé, ou une
+    // étiquette composée sur la seule langue, aurait fait basculer à tort.
+    expect(formatOpeningRange(MATIN, SALON_FR.en, en)).toBe(`09:00${A}12:00`);
+    expect(formatOpeningRange(MATIN, SALON_US.fr, fr)).toBe(`09:00${A}12:00`);
+  });
+
+  it('garde le mot « minuit » pour la borne 24:00 du contrat', () => {
+    // `24:00` est la borne haute que `scheduleEndTimeSchema` admet. Mise en forme
+    // par `Intl`, elle deviendrait « 00:00 » — l'heure zéro du lendemain — et la
+    // carte annoncerait « 18:00 – 00:00 », qui se lit comme une erreur de saisie.
+    const nuit: OpeningHoursEntry = { weekday: 6, opensAt: '18:00', closesAt: '24:00' };
+
+    expect(formatOpeningRange(nuit, SALON_FR.fr, fr)).toBe(`18:00${A}minuit`);
+    expect(formatOpeningRange(nuit, SALON_US.en, en)).toBe(`6:00\u00a0PM${A}midnight`);
+  });
+
+  it('rend telle quelle une heure que le contrat aurait refusée', () => {
+    // La validation l'a écartée à l'écriture ; une donnée héritée ne doit ni
+    // blanchir la ligne ni faire tomber la vitrine.
+    const cassee = {
+      weekday: 1,
+      opensAt: '99:99',
+      closesAt: '12:00',
+    } as unknown as OpeningHoursEntry;
+
+    expect(formatOpeningRange(cassee, SALON_US.en, en)).toBe(`99:99${A}12:00\u00a0PM`);
+  });
+
   it('sépare les heures par un tiret demi-cadratin entre espaces insécables', () => {
     // L'espace insécable évite qu'un retour à la ligne tombe entre l'heure et le
     // tiret, ce qui ferait lire la plage comme deux heures sans rapport.
-    expect(formatOpeningRange({ weekday: 1, opensAt: '09:00', closesAt: '12:00' })).toBe(
+    expect(formatOpeningRange(MATIN, SALON_FR.fr, fr)).toBe(
       '09:00\u00a0\u2013\u00a012:00',
     );
   });
