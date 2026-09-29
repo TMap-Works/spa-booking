@@ -125,17 +125,25 @@ describe('les dates de la console', () => {
   it('nomment le fuseau de chaque instant', () => {
     // Le préfixe du décalage est celui de la langue — « UTC » en français,
     // « GMT » en anglais —, et c'est `Intl` qui le choisit. Ce qui se vérifie ici
-    // est qu'un décalage est **présent et chiffré** : c'est lui qui rend deux
-    // heures comparables, pas son préfixe.
-    expect(formatPlatformDateTime(TENANT.createdAt, 'UTC', { locale: 'en' })).toMatch(/(UTC|GMT)$/);
-    expect(formatPlatformDateTime(TENANT.createdAt, 'America/New_York', { locale: 'fr' })).toContain(
-      'UTC−4',
+    // est qu'un fuseau est **nommé** : c'est lui qui rend deux heures
+    // comparables, pas la forme exacte que CLDR lui donne.
+    //
+    // Le décalage nul en est la preuve : l'ICU du poste rend « GMT », celle du
+    // runner de CI « GMT+0 ». Épingler l'une des deux ferait rougir la suite à la
+    // prochaine version de Node sans qu'aucun code de production n'ait changé —
+    // le même piège que `NO_BREAK_SPACES` dans `format.test.ts`. Le signe moins
+    // est celui d'`Intl` (U+2212), pas le tiret ASCII.
+    const fuseau = /(UTC|GMT)(?:[+−-]\d{1,2}(?::\d{2})?)?$/u;
+
+    expect(formatPlatformDateTime(TENANT.createdAt, 'UTC', { locale: 'en' })).toMatch(fuseau);
+    expect(formatPlatformDateTime(TENANT.createdAt, 'America/New_York', { locale: 'fr' })).toMatch(
+      /UTC[−-]4(?::00)?$/u,
     );
-    expect(formatPlatformDateTime(TENANT.createdAt, 'Europe/Paris', { locale: 'fr' })).toContain(
-      'UTC+2',
+    expect(formatPlatformDateTime(TENANT.createdAt, 'Europe/Paris', { locale: 'fr' })).toMatch(
+      /UTC\+2(?::00)?$/u,
     );
-    expect(formatPlatformDateTime(TENANT.createdAt, 'Europe/Paris', { locale: 'en' })).toContain(
-      'GMT+2',
+    expect(formatPlatformDateTime(TENANT.createdAt, 'Europe/Paris', { locale: 'en' })).toMatch(
+      /GMT\+2(?::00)?$/u,
     );
   });
 });
