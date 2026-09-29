@@ -23,12 +23,13 @@
  * `admin-invitation-form.tsx`) — mais une phrase en dur finit toujours par
  * s'afficher, et celle-ci l'aurait fait en français sur un back-office anglais.
  *
- * Elles passent donc par `errorMessage(code, locale)` du contrat partagé, comme
- * `reglages/actions.ts` et comme `action-result.ts` pour tout le reste du
- * back-office. Toujours `VALIDATION_ERROR`, et jamais un code choisi pour la
- * phrase qu'il porte : c'est le code qu'`invalid()` pose, et une phrase qui
- * dirait autre chose que son code rendrait le refus illisible pour l'écran, qui
- * trie sur le code.
+ * Elles passent donc par la phrase du **code**, et non par un littéral. Depuis
+ * #1310 elle vient de `validationRefusal(locale)` d'`action-result.ts` — le
+ * module qui dit déjà comment un refus se présente, et qui pose
+ * `VALIDATION_ERROR` — plutôt que d'un `errorMessage(ERROR_CODES.VALIDATION_ERROR,
+ * locale)` recopié à chaque site d'appel. Toujours ce code-là, et jamais un code
+ * choisi pour la phrase qu'il porte : une phrase qui dirait autre chose que son
+ * code rendrait le refus illisible pour l'écran, qui trie sur le code.
  *
  * ## Et le message que le schéma nomme lui-même — #1299
  *
@@ -43,9 +44,7 @@
  */
 
 import {
-  ERROR_CODES,
   acceptInvitationRequestSchema,
-  errorMessage,
   loginRequestSchema,
   slugSchema,
   submittedLocaleSchema,
@@ -67,7 +66,7 @@ import {
   updateTenantSettings,
 } from '@/lib/api-client';
 
-import { failure, invalid, type AdminActionResult } from './action-result';
+import { failure, invalid, validationRefusal, type AdminActionResult } from './action-result';
 import {
   clearAdminSession,
   adminActionAccess,
@@ -93,7 +92,7 @@ export async function adminLoginAction(
   const parsed = loginRequestSchema.safeParse(credentials);
 
   if (!slug.success || !parsed.success) {
-    return invalid(errorMessage(ERROR_CODES.VALIDATION_ERROR, await getLocale()));
+    return invalid(validationRefusal(await getLocale()));
   }
 
   try {
@@ -121,7 +120,7 @@ export async function adminAcceptInvitationAction(
   const parsed = acceptInvitationRequestSchema.safeParse(values, { errorMap: zodErrorMap(locale) });
 
   if (!slug.success || !parsed.success) {
-    const generique = errorMessage(ERROR_CODES.VALIDATION_ERROR, locale);
+    const generique = validationRefusal(locale);
 
     // Le premier refus du schéma quand il en nomme un — c'est ce qui distingue
     // « douze caractères au minimum » d'un mot de passe absent. À défaut, la
@@ -149,7 +148,7 @@ export async function adminLogoutAction(tenantSlug: string): Promise<AdminAction
   const slug = slugSchema.safeParse(tenantSlug);
 
   if (!slug.success) {
-    return invalid(errorMessage(ERROR_CODES.VALIDATION_ERROR, await getLocale()));
+    return invalid(validationRefusal(await getLocale()));
   }
 
   const refreshToken = await readAdminRefreshToken();
@@ -184,7 +183,7 @@ export async function updateTenantSettingsAction(
   const parsed = updateTenantRequestSchema.safeParse(changes, { errorMap: zodErrorMap(locale) });
 
   if (!slug.success) {
-    return invalid(errorMessage(ERROR_CODES.VALIDATION_ERROR, locale));
+    return invalid(validationRefusal(locale));
   }
   if (!parsed.success) {
     // Le message du premier refus, et non un « formulaire invalide » générique :
@@ -192,9 +191,7 @@ export async function updateTenantSettingsAction(
     // se recouvrent », et l'écran n'a pas d'autre source pour le dire. Il est dit
     // dans la langue de la requête depuis #1299 — la carte contextuelle
     // ci-dessus l'emporte sur la carte globale du contrat, en français.
-    return invalid(
-      parsed.error.issues[0]?.message ?? errorMessage(ERROR_CODES.VALIDATION_ERROR, locale),
-    );
+    return invalid(parsed.error.issues[0]?.message ?? validationRefusal(locale));
   }
 
   const access = await adminActionAccess(slug.data);
@@ -257,7 +254,7 @@ async function billingRedirect(
     // Le slug et la langue sont deux entrées de cette action : un slug illisible
     // est un refus de validation au même titre qu'une langue hors contrat, et
     // c'est le code qu'`invalid` pose de toute façon.
-    return invalid(errorMessage(ERROR_CODES.VALIDATION_ERROR, await getLocale()));
+    return invalid(validationRefusal(await getLocale()));
   }
 
   const access = await adminActionAccess(slug.data);

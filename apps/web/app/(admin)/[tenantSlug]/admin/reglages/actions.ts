@@ -22,20 +22,14 @@
  * langue retirée reviendrait au rendu suivant.
  */
 
-import {
-  ERROR_CODES,
-  errorMessage,
-  slugSchema,
-  updateProfileRequestSchema,
-  type SessionUser,
-} from '@spa/shared';
+import { slugSchema, updateProfileRequestSchema, type SessionUser } from '@spa/shared';
 import { getLocale } from 'next-intl/server';
 import { cookies } from 'next/headers';
 
 import { attachProfileLocaleCookies } from '@/app/(account)/[tenantSlug]/compte/account-locale';
 import { updateOwnProfile } from '@/lib/api-client';
 
-import { failure, invalid, type AdminActionResult } from '../action-result';
+import { failure, invalid, validationRefusal, type AdminActionResult } from '../action-result';
 import { adminActionAccess } from '../session';
 
 /**
@@ -57,8 +51,10 @@ export async function saveMemberLocaleAction(
 
   if (!slug.success || !parsed.success) {
     // La phrase vient du contrat et non d'un littéral : elle existe dans les
-    // deux langues, et l'écran n'a pas à en réécrire une (#845).
-    return invalid(errorMessage(ERROR_CODES.VALIDATION_ERROR, await getLocale()));
+    // deux langues, et l'écran n'a pas à en réécrire une (#845). Elle est lue
+    // par `validationRefusal` d'`action-result.ts`, qui la tient pour toutes les
+    // actions serveur depuis #1310.
+    return invalid(validationRefusal(await getLocale()));
   }
 
   const access = await adminActionAccess(slug.data);

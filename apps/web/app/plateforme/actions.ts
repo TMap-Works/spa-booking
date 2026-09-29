@@ -23,11 +23,13 @@
  *
  * Deux corrections, celles qu'a prises le back-office en #1234 :
  *
- * - **plus aucun littéral.** La phrase du refus vient d'`errorMessage(code,
- *   locale)` du contrat partagé — toujours `VALIDATION_ERROR`, jamais un code
- *   choisi pour la phrase qu'il porte : c'est le code qu'`invalid()` pose, et un
- *   refus dont la phrase dirait autre chose que son code serait illisible pour
- *   l'écran, qui trie sur le code ;
+ * - **plus aucun littéral.** La phrase du refus vient de la table bilingue du
+ *   contrat partagé, lue par `validationRefusal(locale)` d'`action-result.ts`
+ *   depuis #1310 — la console partage ce module avec le back-office, comme elle
+ *   partage déjà `invalid()`, `failure()` et `expired()`. Toujours
+ *   `VALIDATION_ERROR`, jamais un code choisi pour la phrase qu'il porte : c'est
+ *   le code qu'`invalid()` pose, et un refus dont la phrase dirait autre chose
+ *   que son code serait illisible pour l'écran, qui trie sur le code ;
  * - **la carte de zod est celle de la requête.** Là où le message du premier
  *   refus du schéma est rendu tel quel — il nomme le champ fautif, là où le
  *   repli ne dit que « incomplètes ou mal formées » —, le `safeParse` reçoit
@@ -41,15 +43,12 @@
  */
 
 import {
-  ERROR_CODES,
   createPlatformNoteRequestSchema,
   createTenantRequestSchema,
-  errorMessage,
   platformLoginRequestSchema,
   updateTenantStatusRequestSchema,
   uuidSchema,
   zodErrorMap,
-  type Locale,
   type PlatformOperator,
   type PlatformTenant,
   type PlatformTenantEvent,
@@ -67,24 +66,17 @@ import {
   updatePlatformTenantStatus,
 } from '@/lib/api-client';
 
-import { expired, failure, invalid, type AdminActionResult } from '@/app/(admin)/[tenantSlug]/admin/action-result';
+import {
+  expired,
+  failure,
+  invalid,
+  validationRefusal,
+  type AdminActionResult,
+} from '@/app/(admin)/[tenantSlug]/admin/action-result';
 import { platformTenantPath } from './paths';
 import { clearPlatformSession, readPlatformAccessToken, writePlatformSession } from './session';
 
 export type PlatformActionResult<TData> = AdminActionResult<TData>;
-
-/**
- * La phrase de `VALIDATION_ERROR`, dans la langue donnée.
- *
- * Synchrone et non exportée : `'use server'` n'admet que des exports
- * asynchrones, chacun devenant un point d'entrée appelable depuis le navigateur.
- * La langue est un paramètre plutôt qu'une lecture interne pour qu'une action
- * qui la lit déjà — parce qu'elle en fait aussi une carte de zod — n'interroge
- * pas la requête deux fois.
- */
-function refusDeValidation(locale: Locale): string {
-  return errorMessage(ERROR_CODES.VALIDATION_ERROR, locale);
-}
 
 export async function platformLoginAction(
   credentials: unknown,
@@ -92,7 +84,7 @@ export async function platformLoginAction(
   const parsed = platformLoginRequestSchema.safeParse(credentials);
 
   if (!parsed.success) {
-    return invalid(refusDeValidation(await getLocale()));
+    return invalid(validationRefusal(await getLocale()));
   }
 
   try {
@@ -122,10 +114,10 @@ export async function provisionTenantAction(
   const parsed = createTenantRequestSchema.safeParse(values, { errorMap: zodErrorMap(locale) });
 
   if (!parsed.success) {
-    return invalid(parsed.error.issues[0]?.message ?? refusDeValidation(locale));
+    return invalid(parsed.error.issues[0]?.message ?? validationRefusal(locale));
   }
   if (!/^[A-Za-z0-9-]{8,128}$/.test(idempotencyKey)) {
-    return invalid(refusDeValidation(locale));
+    return invalid(validationRefusal(locale));
   }
 
   const accessToken = await readPlatformAccessToken();
@@ -148,7 +140,7 @@ export async function reissueTenantInvitationAction(
   const id = uuidSchema.safeParse(tenantId);
 
   if (!id.success) {
-    return invalid(refusDeValidation(await getLocale()));
+    return invalid(validationRefusal(await getLocale()));
   }
 
   const accessToken = await readPlatformAccessToken();
@@ -182,10 +174,10 @@ export async function addTenantNoteAction(
   });
 
   if (!id.success) {
-    return invalid(refusDeValidation(locale));
+    return invalid(validationRefusal(locale));
   }
   if (!parsed.success) {
-    return invalid(parsed.error.issues[0]?.message ?? refusDeValidation(locale));
+    return invalid(parsed.error.issues[0]?.message ?? validationRefusal(locale));
   }
 
   const accessToken = await readPlatformAccessToken();
@@ -215,10 +207,10 @@ export async function updateTenantStatusAction(
   });
 
   if (!id.success) {
-    return invalid(refusDeValidation(locale));
+    return invalid(validationRefusal(locale));
   }
   if (!parsed.success) {
-    return invalid(parsed.error.issues[0]?.message ?? refusDeValidation(locale));
+    return invalid(parsed.error.issues[0]?.message ?? validationRefusal(locale));
   }
 
   const accessToken = await readPlatformAccessToken();

@@ -28,7 +28,9 @@
  * du schéma — c'est lui que l'action rend, parce qu'il nomme le champ fautif —
  * arrivait en français sur un formulaire anglais, et le repli était une phrase
  * française écrite en dur. La carte est désormais celle de la requête, et le
- * repli la phrase de `VALIDATION_ERROR` dans cette langue.
+ * repli la phrase de `VALIDATION_ERROR` dans cette langue — rendue par
+ * `validationRefusal` d'`action-result.ts`, qui la tient pour toutes les actions
+ * serveur depuis #1310.
  *
  * L'inscription est vue par un gérant qui n'a encore aucun compte : c'est
  * exactement l'écran où une phrase française sur une page anglaise se paie.
@@ -44,10 +46,15 @@
  * ci-dessus demande, et le code ne le tenait que par l'ordre des lignes.
  */
 
-import { ERROR_CODES, errorMessage, salonSignupRequestSchema, zodErrorMap } from '@spa/shared';
+import { salonSignupRequestSchema, zodErrorMap } from '@spa/shared';
 import { getLocale } from 'next-intl/server';
 
-import { failure, invalid, type AdminActionResult } from '@/app/(admin)/[tenantSlug]/admin/action-result';
+import {
+  failure,
+  invalid,
+  validationRefusal,
+  type AdminActionResult,
+} from '@/app/(admin)/[tenantSlug]/admin/action-result';
 import { adminBillingPath } from '@/app/(admin)/[tenantSlug]/admin/paths';
 import { writeAdminSession } from '@/app/(admin)/[tenantSlug]/admin/session';
 import { signupSalon, startBillingCheckout } from '@/lib/api-client';
@@ -62,9 +69,7 @@ export async function signupSalonAction(values: unknown): Promise<AdminActionRes
   const parsed = salonSignupRequestSchema.safeParse(values, { errorMap: zodErrorMap(locale) });
 
   if (!parsed.success) {
-    return invalid(
-      parsed.error.issues[0]?.message ?? errorMessage(ERROR_CODES.VALIDATION_ERROR, locale),
-    );
+    return invalid(parsed.error.issues[0]?.message ?? validationRefusal(locale));
   }
 
   let opened;
