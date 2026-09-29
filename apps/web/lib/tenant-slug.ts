@@ -48,14 +48,31 @@
  * `readApiSessionCookie` dans `lib/api-client.ts`.
  */
 export function tenantSlugFromPathname(pathname: string): string | null {
-  const [, encodedSlug = ''] = pathname.split('/');
+  return pathSegment(pathname, 1);
+}
 
-  if (encodedSlug === '') {
+/**
+ * Le `rank`-ième segment de `pathname`, **décodé**, ou `null` s'il n'y en a pas
+ * de lisible — `1` étant le premier, celui du slug.
+ *
+ * C'est la lecture ci-dessus, rendue à son rang : #1326 en avait besoin du
+ * **second** segment — `admin` de `/maison-lotus/admin/flux`, par quoi le
+ * middleware dit de quel côté de l'établissement la page se trouve —, et
+ * recopier les deux gardes dans `middleware.ts` aurait rouvert exactement la
+ * divergence que l'en-tête de ce module raconte : elles auraient alors été
+ * corrigées chacune dans son coin, sans que rien ne le signale.
+ *
+ * Les deux gardes sont donc ici, une fois, et valent pour tout rang.
+ */
+export function pathSegment(pathname: string, rank: number): string | null {
+  const encoded = pathname.split('/')[rank] ?? '';
+
+  if (encoded === '') {
     return null;
   }
 
   try {
-    return decodeURIComponent(encodedSlug);
+    return decodeURIComponent(encoded);
   } catch {
     return null;
   }

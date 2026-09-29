@@ -1,6 +1,12 @@
 import { cookies, headers } from 'next/headers';
 
-import { ACCOUNT_LOCALE_COOKIE, LOCALE_COOKIE, TENANT_SLUG_HEADER } from './cookies';
+import {
+  ACCOUNT_LOCALE_COOKIE,
+  ADMIN_WORKSPACE,
+  LOCALE_COOKIE,
+  TENANT_SLUG_HEADER,
+  TENANT_WORKSPACE_HEADER,
+} from './cookies';
 import type { LocaleSignals } from './resolve';
 
 /**
@@ -92,4 +98,21 @@ export async function visitedTenantSlug(): Promise<string | null> {
   const slug = (await headers()).get(TENANT_SLUG_HEADER);
 
   return slug === null || slug === '' ? null : slug;
+}
+
+/**
+ * Vrai quand la page visitée est le **back-office** de l'établissement — #1326.
+ *
+ * Ce n'est pas une langue non plus, c'est ce qui décide de l'ordre des deux
+ * dernières étapes : l'établissement passe alors avant l'`Accept-Language` du
+ * navigateur (`resolve.ts`, « Les deux derniers signaux s'échangent sur le
+ * back-office »).
+ *
+ * Le middleware efface cet en-tête de toute requête entrante avant de le reposer
+ * depuis le chemin : sa valeur ne peut donc pas venir du client. Une comparaison
+ * stricte plutôt qu'une présence — c'est ce qui laissera un autre espace se
+ * nommer ici sans retourner le sens de celui-ci.
+ */
+export async function visitedAdminWorkspace(): Promise<boolean> {
+  return (await headers()).get(TENANT_WORKSPACE_HEADER) === ADMIN_WORKSPACE;
 }

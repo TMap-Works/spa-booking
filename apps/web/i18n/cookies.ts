@@ -74,5 +74,31 @@ export function localeCookieOptions() {
 /** L'en-tête par lequel le middleware transmet le salon visité à la résolution. */
 export const TENANT_SLUG_HEADER = 'x-spa-tenant-slug';
 
+/**
+ * L'en-tête par lequel le middleware dit **de quel côté de l'établissement** la
+ * page visitée se trouve — #1326.
+ *
+ * Il ne porte qu'une valeur, `admin`, et n'est posé que sur `/{slug}/admin/…`.
+ * C'est ce qui permet à la résolution de placer `Tenant.defaultLocale` avant
+ * l'`Accept-Language` du navigateur sur le back-office, et **là seulement** :
+ * l'ordre des deux derniers signaux n'est pas le même selon que la page
+ * appartienne à l'établissement ou à son visiteur (voir `resolve.ts`).
+ *
+ * Même régime que le slug : il vient du chemin et de nulle part ailleurs, et le
+ * middleware l'efface de toute requête entrante avant de le reposer lui-même.
+ * Un `x-spa-tenant-workspace: admin` envoyé à la main ne peut donc rien changer.
+ */
+export const TENANT_WORKSPACE_HEADER = 'x-spa-tenant-workspace';
+
+/**
+ * La seule valeur de cet en-tête : le back-office de l'établissement.
+ *
+ * Une valeur nommée plutôt qu'un booléen implicite — l'espace client
+ * (`/{slug}/compte`) et la vitrine sont eux aussi des pages d'établissement, et
+ * un jour où l'un d'eux voudrait sa propre règle, il se nommera ici plutôt que
+ * de retourner le sens d'un en-tête vide.
+ */
+export const ADMIN_WORKSPACE = 'admin';
+
 /** Ce qu'un cookie de langue porte — une étiquette du contrat, rien d'autre. */
 export type LocaleCookieValue = Locale;
