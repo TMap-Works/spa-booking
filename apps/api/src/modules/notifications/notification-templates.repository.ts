@@ -114,6 +114,34 @@ export class NotificationTemplatesRepository {
   public constructor(@Inject(PRISMA) private readonly prisma: ScopedPrismaClient) {}
 
   /**
+   * Le pays de l'établissement courant — `tenants.country_code`, ou `null` —
+   * #1344.
+   *
+   * ## Pourquoi ce dépôt-ci lit `tenants`
+   *
+   * Parce que le coût d'un modèle de SMS et son aperçu dépendent désormais de
+   * l'écriture du salon, donc de son pays : mesurer un salon montréalais à la
+   * région du marché de sa langue lui annoncerait un segment pour un avis qui lui
+   * en coûte deux. La question « quel pays » appartient au même geste que « quels
+   * modèles », et la faire remonter au service par une seconde dépendance —
+   * `NotificationsRepository`, qui est une prise de droit sous concurrence —
+   * aurait couplé l'écran de configuration au chemin d'expédition.
+   *
+   * ## Elle ne rouvre pas la porte que l'extension de scoping ferme
+   *
+   * Le `where` reste vide : c'est l'extension qui borne `tenants` sur
+   * l'identifiant du contexte, et ce fichier ne le lit toujours pas
+   * (tenant-isolation §3). `findFirst` ne peut donc rendre que l'établissement
+   * courant — la même lecture, et la même justification, que
+   * `notifications.repository.ts`.
+   */
+  public async tenantCountryCode(): Promise<string | null> {
+    const tenant = await this.prisma.tenant.findFirst({ select: { countryCode: true } });
+
+    return tenant?.countryCode ?? null;
+  }
+
+  /**
    * Toutes les personnalisations de l'établissement, toutes langues confondues.
    *
    * Vingt-quatre lignes au plus depuis #854 — six messages, deux canaux, deux

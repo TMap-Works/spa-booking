@@ -106,7 +106,7 @@ describe('l’exemple de modèle suit la même forme', () => {
     // Il sert à mesurer la longueur d'un SMS, mais il est aussi ce qu'un
     // intégrateur recopie dans un modèle de salon : le laisser sur l'ancienne
     // forme aurait diffusé l'adresse d'avant #837.
-    expect(smsReferenceVariables(locale)['lien_annulation']).toBe(
+    expect(smsReferenceVariables({ locale })['lien_annulation']).toBe(
       cancellationUrl('https://reservation.spa-booking.app', SLUG, 'subdomain'),
     );
   });
@@ -117,6 +117,6 @@ describe('l’exemple de modèle suit la même forme', () => {
     // qui garantit qu'aucun modèle de salon ne bascule d'un segment à deux à
     // cause de ce ticket.
     const avant = 'https://reservation.spa-booking.app/maison-lotus/compte';
-    expect(smsReferenceVariables(locale)['lien_annulation']).toHaveLength(avant.length);
+    expect(smsReferenceVariables({ locale })['lien_annulation']).toHaveLength(avant.length);
   });
 });

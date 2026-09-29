@@ -41,6 +41,7 @@ const CONTEXTE: AppointmentMessageContext = {
   tenantName: 'Maison Lotus',
   tenantSlug: 'maison-lotus',
   tenantTimeZone: 'Europe/Paris',
+  tenantCountryCode: 'FR',
   tenantAddress: '12 rue des Lilas, 75011 Paris',
   tenantPhone: '+33123456789',
   appointmentReference: 'RDV-8F3K-27',
@@ -355,10 +356,13 @@ describe('rendu à l’envoi — quel modèle part', () => {
 
       expect(enFrancais.subject).toContain('septembre');
       expect(enAnglais.subject).toContain('September');
-      // 14:30 à Paris des deux côtés : la langue met en forme, elle ne convertit
-      // pas. L'anglais l'écrit sur douze heures.
+      // 14:30 à Paris des deux côtés, et **sur la même horloge** : la langue
+      // choisit les mots, le pays du salon choisit l'écriture (#1344). L'anglais
+      // écrivait ici « 2:30 PM » pour un salon parisien, pendant que le reçu de la
+      // même vente écrivait « 14:30 » — la divergence que ce ticket ferme.
       expect(enFrancais.subject).toContain('14:30');
-      expect(enAnglais.subject).toContain('2:30');
+      expect(enAnglais.subject).toContain('14:30');
+      expect(enAnglais.subject).not.toContain('PM');
     });
 
     it('refuse plutôt que de partir quand la langue demandée n’a aucun modèle', async () => {

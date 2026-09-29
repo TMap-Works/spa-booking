@@ -1,4 +1,10 @@
-import { tenantPublicUrl, type Locale, type TenantUrlMode } from '@spa/shared';
+import {
+  formattingLocale,
+  tenantPublicUrl,
+  withPlainSeparators,
+  type Locale,
+  type TenantUrlMode,
+} from '@spa/shared';
 
 import {
   SMS_TENANT_NAME_MAX,
@@ -55,30 +61,51 @@ import type {
  */
 
 /**
- * L'étiquette `Intl` de chaque langue du contrat — #854, troisième critère.
+ * Ce qui décide de la mise en forme d'un message : une langue, et le pays de
+ * l'établissement — #1344.
  *
- * ## Deux étiquettes, et non deux langues de plus
+ * ## Une langue ne suffit pas à écrire une heure
  *
  * `Locale` ne connaît que `fr` et `en` (#844, « pas de variantes régionales »),
- * mais `Intl` a besoin d'une région pour choisir un ordre de date et un
- * séparateur décimal : `en` seul se résout selon l'implémentation, et le même
- * rendez-vous s'écrirait « 16 September 2026 » sur une machine et
- * « September 16, 2026 » sur une autre. La région est donc **fixée ici**, une
- * fois, plutôt que subie.
+ * et `Intl` a besoin d'une région pour choisir un ordre de date, un cycle horaire
+ * et un séparateur décimal. Ce fichier la **figeait par langue** — une table
+ * `{ fr: 'fr-FR', en: 'en-US' }` doublée d'un `HOUR_CYCLES` qui imposait 12 heures
+ * à tout message anglais —, si bien qu'un salon parisien dont la cliente lit
+ * l'anglais recevait une confirmation datée « September 17, 2026 at 11:30 AM »
+ * pendant que le PDF du reçu de la même vente écrivait « 17/09/2026 at 11:30 ».
  *
- * `en-US` parce que la clientèle du produit est nord-américaine — la même
- * décision du PO qui a fait de `en` la langue par défaut du système (#844,
- * `DEFAULT_LOCALE`).
+ * C'est la divergence que #1325 a fermée sur toutes les autres surfaces — grille
+ * de créneaux, planning, gouttière, ticket à l'écran, PDF — et que ce contexte
+ * ferme ici : la région vient du **pays du salon** (`tenants.country_code`), et le
+ * cycle horaire n'est plus forcé nulle part. Il est celui que porte l'étiquette.
  *
- * Ce n'est pas le fuseau ni la devise : ceux-là ont leurs propres colonnes sur
- * l'établissement, et une cliente anglophone d'un salon parisien lit bien ses
- * heures en `Europe/Paris` et ses prix en euros. La langue décide de l'**écriture**
- * — l'ordre des termes, le mot de liaison, l'horloge —, jamais du fond.
+ * ## La règle vit dans `@spa/shared`, et ce module n'en est qu'un point d'emploi
+ *
+ * `formattingLocale` (#1349, `locale/formatting.ts`) compose l'étiquette et porte
+ * le repli documenté quand le salon n'a pas publié de pays. Aucune table locale
+ * n'est réécrite ici : le précédent est `receipt-pdf.locale.ts`, et c'est la même
+ * fonction — non pas « la même règle que » — qui décide des deux côtés.
+ *
+ * ## Un objet, et non deux paramètres positionnels
+ *
+ * Même forme que `ReceiptDisplay` du PDF et que `DisplayLocale` du front : les
+ * formateurs se passent le contexte d'affichage sans qu'aucun appelant ait à se
+ * souvenir de l'ordre, et une troisième dimension ne ferait pas changer cinq
+ * signatures.
+ *
+ * Il est **construit** ici et non importé de `payments` : un module n'importe pas
+ * l'interne d'un autre (api-module §3).
  */
-const INTL_LOCALES: Readonly<Record<Locale, string>> = {
-  fr: 'fr-FR',
-  en: 'en-US',
-};
+export interface NotificationDisplay {
+  readonly locale: Locale;
+  /** `tenants.country_code` — ISO 3166-1 alpha-2, ou rien. */
+  readonly countryCode?: string | null | undefined;
+}
+
+/** L'étiquette `Intl` de ce contexte d'affichage — « fr-FR », « en-FR », « en-US ». */
+function tag(display: NotificationDisplay): string {
+  return formattingLocale(display.locale, display.countryCode);
+}
 
 /**
  * Le mot qui relie la date à l'heure, par langue.
@@ -91,19 +118,6 @@ const INTL_LOCALES: Readonly<Record<Locale, string>> = {
 const DATE_TIME_JOINERS: Readonly<Record<Locale, string>> = {
   fr: ' à ',
   en: ' at ',
-};
-
-/**
- * L'horloge de chaque langue.
- *
- * `h23` en français — « 14:30 », ce que le français attend. `h12` en anglais —
- * « 2:30 PM », ce qu'une cliente nord-américaine lit sur son propre agenda. Lui
- * servir « 14:30 » l'obligerait à compter, sur le message même qui existe pour
- * qu'elle n'ait rien à faire.
- */
-const HOUR_CYCLES: Readonly<Record<Locale, 'h12' | 'h23'>> = {
-  fr: 'h23',
-  en: 'h12',
 };
 
 /**
@@ -137,21 +151,26 @@ function withPlainSpaces(value: string): string {
 }
 
 /**
- * « lundi 8 septembre 2026 à 14:30 » — l'instant, dans le fuseau du salon et
- * dans la langue de l'envoi.
+ * « lundi 8 septembre 2026 à 14:30 » — l'instant, dans le fuseau du salon, dans
+ * la langue de l'envoi et dans l'écriture du pays du salon.
  *
  * Le fuseau et la langue sont deux paramètres distincts, et c'est le troisième
  * critère d'acceptation de #854 au mot près : « les dates et heures du message
  * sont formatées dans la langue d'envoi **et** dans le fuseau de
  * l'établissement ». Une cliente anglophone d'un salon parisien lit
- * « Monday, September 8, 2026 at 2:30 PM » — l'heure de Paris, écrite en anglais.
+ * « Monday, 8 September 2026 at 14:30 » — l'heure de Paris, écrite en anglais, à
+ * l'ordre et à l'horloge de la France (#1344).
+ *
+ * Seul le **mot de liaison** reste choisi par la langue : c'est un mot, pas une
+ * convention d'écriture, et le PDF du reçu fait exactement pareil avec son
+ * `words.at`.
  */
 export function formatDateTimeInTenantTimeZone(
   instant: Date,
   timeZone: string,
-  locale: Locale,
+  display: NotificationDisplay,
 ): string {
-  const date = new Intl.DateTimeFormat(INTL_LOCALES[locale], {
+  const date = new Intl.DateTimeFormat(tag(display), {
     timeZone,
     weekday: 'long',
     day: 'numeric',
@@ -159,27 +178,51 @@ export function formatDateTimeInTenantTimeZone(
     year: 'numeric',
   }).format(instant);
 
-  return `${date}${DATE_TIME_JOINERS[locale]}${formatTimeInTenantTimeZone(instant, timeZone, locale)}`;
+  return `${date}${DATE_TIME_JOINERS[display.locale]}${formatTimeInTenantTimeZone(instant, timeZone, display)}`;
 }
 
-/** « 14:30 », ou « 2:30 PM » — l'heure seule, dans le fuseau du salon. */
+/**
+ * « 14:30 », ou « 2:30 PM » — l'heure seule, dans le fuseau du salon et
+ * l'horloge de son pays.
+ *
+ * ## Le cycle horaire n'est pas forcé, et n'est même plus lu — #1344
+ *
+ * Il l'était par **langue**, et par une table de ce fichier : 12 heures dès que le
+ * message partait en anglais, y compris pour un salon parisien dont tout le reste
+ * du produit — grille de créneaux, planning, ticket, PDF du reçu — écrivait en
+ * 24 heures. Il est désormais celui que porte l'étiquette, donc celui du pays du
+ * salon : 24 h pour un salon parisien lu en anglais, 12 h pour un salon
+ * new-yorkais lu en français. Rien ici ne le lit ni ne le choisit — c'est ce que
+ * `timeStyle` délègue entièrement à `Intl`.
+ *
+ * ## `timeStyle: 'short'`, la forme brève du produit
+ *
+ * C'est **la même option** que `formatTimeInTimeZone` d'`apps/web/lib/format.ts`,
+ * celle de la grille de créneaux et de l'espace client — donc celle par laquelle
+ * la cliente a vu l'heure qu'elle a choisie. Un message qui lui renvoie ce
+ * créneau doit l'écrire comme l'écran où elle l'a pris.
+ *
+ * Le PDF du reçu et le ticket à l'écran emploient, eux, `hour`/`minute` en
+ * `2-digit` (« 05:30 AM ») : c'est la forme d'un **horodatage tout en chiffres**,
+ * « 17/09/2026 05:30 AM », où le zéro de tête aligne la colonne. Les deux formes
+ * disent la même heure sur la même horloge ; c'est ce que demande le quatrième
+ * critère d'acceptation, et ce que le constat de l'issue oppose — « 11:30 AM »
+ * contre « 11:30 », une horloge contre une autre, pas un zéro de tête.
+ *
+ * Le septet que la forme brève économise n'est pas anecdotique : il est ce qui
+ * tient `CANCELLATION_SMS_EN` **dans un seul segment** chez un salon canadien, où
+ * `en-CA` écrit « 2:30 p.m. ». En `2-digit` le même avis en coûtait deux, soit le
+ * double de sa facture (notifications §5) — et
+ * `notification-default-templates.spec.ts` le vérifie marché par marché plutôt
+ * que de l'espérer.
+ */
 export function formatTimeInTenantTimeZone(
   instant: Date,
   timeZone: string,
-  locale: Locale,
+  display: NotificationDisplay,
 ): string {
-  const cycle = HOUR_CYCLES[locale];
-
   return withPlainSpaces(
-    new Intl.DateTimeFormat(INTL_LOCALES[locale], {
-      timeZone,
-      // `numeric` sur une horloge de 12 heures : « 2:30 PM » et non « 02:30 PM »,
-      // qui n'est la convention de personne. Sur 24 heures, le zéro de tête est
-      // au contraire ce que le français attend.
-      hour: cycle === 'h12' ? 'numeric' : '2-digit',
-      minute: '2-digit',
-      hourCycle: cycle,
-    }).format(instant),
+    new Intl.DateTimeFormat(tag(display), { timeZone, timeStyle: 'short' }).format(instant),
   );
 }
 
@@ -193,16 +236,36 @@ export function formatTimeInTenantTimeZone(
  * `Intl.NumberFormat` connaît le nombre de décimales de chaque devise, ce qu'une
  * division en dur par 100 ignorerait — le yen n'en a aucune.
  *
- * La **devise** ne dépend pas de la langue : elle vient de l'établissement, et
- * seul son écriture change — « 1 250,00 € » en français, « €1,250.00 » en
- * anglais. C'est la même somme, et c'est ce que le CDC exige (« montants en
- * entiers avec un code devise explicite »).
+ * La **devise** ne dépend ni de la langue ni du pays : elle vient de
+ * l'établissement, et seule son écriture change — « 1 250,00 € » chez un salon
+ * français, « €1,250.00 » chez un salon américain. C'est la même somme, et c'est
+ * ce que le CDC exige (« montants en entiers avec un code devise explicite »).
+ *
+ * ## Les séparateurs sont ceux du nombre ordinaire de l'étiquette — #1344
+ *
+ * `withPlainSeparators` est la seconde moitié de la règle unique, et elle n'est
+ * pas facultative ici : CLDR déclare pour `en-FR` des séparateurs monétaires
+ * **distincts** de ceux de ses nombres ordinaires, si bien qu'un salon parisien lu
+ * en anglais aurait vu son total écrit « €65.00 » dans l'e-mail et « €65,00 » sur
+ * le reçu de la même vente. Le détail du fait — et la raison pour laquelle le
+ * produit refuse cette distinction — est dans `locale/formatting.ts`.
+ *
+ * Le **symbole**, lui, reste celui par défaut d'`Intl` et non le symbole étroit du
+ * PDF : un e-mail n'a pas la contrainte de largeur d'un rouleau de 80 mm, et le
+ * choix d'un symbole n'est pas une convention de locale. Il n'entre donc pas dans
+ * ce ticket.
  */
-export function formatMoney(amountMinor: number, currency: string, locale: Locale): string {
-  const formatter = new Intl.NumberFormat(INTL_LOCALES[locale], { style: 'currency', currency });
-  const digits = formatter.resolvedOptions().maximumFractionDigits ?? 2;
+export function formatMoney(
+  amountMinor: number,
+  currency: string,
+  display: NotificationDisplay,
+): string {
+  const intlTag = tag(display);
+  const options: Intl.NumberFormatOptions = { style: 'currency', currency };
+  const digits =
+    new Intl.NumberFormat(intlTag, options).resolvedOptions().maximumFractionDigits ?? 2;
 
-  return formatter.format(amountMinor / 10 ** digits);
+  return withPlainSeparators(amountMinor / 10 ** digits, intlTag, options);
 }
 
 /**
@@ -495,6 +558,15 @@ export function cancellationOrigin(
  * message-ci. Deux avis d'annulation du même rendez-vous — l'un vers une cliente
  * anglophone, l'autre vers un praticien francophone — traversent cette fonction
  * avec deux langues différentes.
+ *
+ * ## Le pays, lui, vient du contexte — #1344
+ *
+ * Et il ne peut venir que de là : c'est le pays de l'**établissement**, pas celui
+ * du destinataire. Les deux avis d'annulation ci-dessus sortent donc avec deux
+ * langues et **une seule** région — celle du salon —, exactement comme l'adresse
+ * postale que `postalAddress` compose depuis la même colonne (#1341). Le passer en
+ * argument à côté de la langue aurait ouvert la porte à un appelant qui daterait un
+ * message autrement que le salon ne le date.
  */
 export function buildTemplateVariables(
   context: AppointmentMessageContext,
@@ -504,6 +576,7 @@ export function buildTemplateVariables(
   locale: Locale,
 ): TemplateVariables {
   const zone = context.tenantTimeZone;
+  const display: NotificationDisplay = { locale, countryCode: context.tenantCountryCode };
 
   return {
     client: clientName(context),
@@ -517,11 +590,11 @@ export function buildTemplateVariables(
     salon: channel === 'SMS' ? shortenForSms(context.tenantName) : context.tenantName,
     adresse: context.tenantAddress ?? '',
     telephone: context.tenantPhone ?? '',
-    date: formatDateTimeInTenantTimeZone(context.startsAt, zone, locale),
-    heure: formatTimeInTenantTimeZone(context.startsAt, zone, locale),
-    fin: formatTimeInTenantTimeZone(context.endsAt, zone, locale),
+    date: formatDateTimeInTenantTimeZone(context.startsAt, zone, display),
+    heure: formatTimeInTenantTimeZone(context.startsAt, zone, display),
+    fin: formatTimeInTenantTimeZone(context.endsAt, zone, display),
     fuseau: zone,
-    prix: formatMoney(context.priceAmountMinor, context.priceCurrency, locale),
+    prix: formatMoney(context.priceAmountMinor, context.priceCurrency, display),
     lien_annulation: cancelUrl,
     origine: cancellationOrigin(context.cancelledBy, locale),
     destinataire_client: recipientUserId === context.clientId ? 'oui' : '',
@@ -563,6 +636,31 @@ const REFERENCE_START = new Date('2026-09-16T11:30:00Z');
 const REFERENCE_END = new Date('2026-09-16T12:30:00Z');
 
 /**
+ * Le **rendez-vous de référence est fictif ; la locale de mise en forme ne l'est
+ * pas** — #1344.
+ *
+ * Tout ce que la référence invente reste inventé : le fuseau
+ * ({@link REFERENCE_ZONE}, choisi long et non lu en base), l'enseigne, l'adresse,
+ * la devise, la prestation. C'est ce qui lui permet de mesurer un modèle quand
+ * aucun rendez-vous n'existe encore.
+ *
+ * La **région**, elle, est celle du salon qui mesure, et ne peut pas ne pas
+ * l'être. Une région de repli — `fr` → `FR`, `en` → `US` — aurait été un pari, et
+ * un pari perdant : l'écriture d'une heure et d'une date dépend désormais du pays,
+ * et rien ne garantit que la région du marché de la langue soit la plus longue.
+ * Elle ne l'est pas. Sur le même instant, `en-CA` écrit « 2:30 p.m. » là où
+ * `en-US` écrit « 2:30 PM », et `fr-CA` écrit « 14 h 30 » là où `fr-FR` écrit
+ * « 14:30 » : un salon de Montréal mesuré à Paris ou à New York se serait vu
+ * annoncer un segment pour un avis d'annulation qui lui en coûte deux, ce que la
+ * validation de modèle existe précisément pour empêcher (#854, septième critère,
+ * et notifications §5).
+ *
+ * `countryCode` reste facultatif — `undefined` retombe sur le repli documenté de
+ * `@spa/shared` —, et c'est ce que font les suites qui mesurent les **défauts de
+ * la plateforme** : ceux-là n'appartiennent à aucun salon.
+ */
+
+/**
  * L'enseigne de référence — **quarante caractères**, soit exactement
  * `SMS_TENANT_NAME_MAX`.
  *
@@ -593,11 +691,18 @@ function referenceTenantName(): string {
  * appel : les recalculer à chaque fois payait cinquante constructions `Intl` pour
  * deux résultats possibles.
  *
+ * ## La clé est l'**étiquette**, et non la langue — #1344
+ *
+ * Depuis que la région entre dans le formatage, deux salons de langue anglaise
+ * n'écrivent plus forcément la même date : la mémoire doit donc distinguer
+ * `en-US` d'`en-CA`. Et l'étiquette suffit à tout désigner — elle porte la langue
+ * autant que la région, si bien qu'aucune clé composite n'est nécessaire.
+ *
  * Le jeu rendu est **gelé** : il n'est qu'une source de substitution, aucun
  * appelant ne l'écrit, et le figer rend cet invariant vérifiable plutôt que
  * supposé.
  */
-const REFERENCE_VARIABLES = new Map<Locale, TemplateVariables>();
+const REFERENCE_VARIABLES = new Map<string, TemplateVariables>();
 
 /**
  * Un jeu de valeurs **de référence**, pour mesurer un modèle avant tout envoi.
@@ -638,6 +743,15 @@ const REFERENCE_VARIABLES = new Map<Locale, TemplateVariables>();
  * coût de six caractères — de quoi annoncer un segment à un salon qui en paiera
  * deux.
  *
+ * ## Et du **pays**, depuis #1344
+ *
+ * Pour exactement la même raison, une fois que le pays du salon décide de
+ * l'écriture : « Wednesday, September 16, 2026 at 2:30 p.m. » d'un salon canadien
+ * fait deux caractères de plus que celle d'un salon américain. La référence porte
+ * donc le contexte d'affichage entier, et non la seule langue — voir le paragraphe
+ * qui précède {@link REFERENCE_TENANT_NAME} sur ce que la référence invente et ce
+ * qu'elle ne s'autorise pas à inventer.
+ *
  * ## Pourquoi elles sont **calculées** et non écrites en dur
  *
  * Parce qu'une référence écrite à la main ment dès que le formatage change, et
@@ -650,26 +764,29 @@ const REFERENCE_VARIABLES = new Map<Locale, TemplateVariables>();
  * ## Ce que la référence ne couvre toujours pas
  *
  * La longueur de `{{fuseau}}`, pour la raison qu'expose `BOOKING_CONFIRMATION_SMS` :
- * `Indian/Antananarivo` est « parmi les plus longs », pas le plus long. Et, en
- * anglais, l'heure de référence tombe l'après-midi (« 2:30 PM », sept
- * caractères) là où une heure entre minuit et une heure du matin en coûterait
- * huit (« 12:30 AM »). Un septet de marge, du même ordre que celui qui est déjà
- * assumé sur le fuseau.
+ * `Indian/Antananarivo` est « parmi les plus longs », pas le plus long. Et, sur une
+ * horloge de 12 heures, l'heure de référence tombe l'après-midi (« 2:30 PM », sept
+ * caractères) là où une heure entre minuit et une heure du matin en coûterait huit
+ * (« 12:30 AM »). Un septet de marge, du même ordre que celui qui est déjà assumé
+ * sur le fuseau.
  */
-export function smsReferenceVariables(locale: Locale): TemplateVariables {
-  const cached = REFERENCE_VARIABLES.get(locale);
+export function smsReferenceVariables(display: NotificationDisplay): TemplateVariables {
+  const key = tag(display);
+  const cached = REFERENCE_VARIABLES.get(key);
 
   if (cached !== undefined) {
     return cached;
   }
 
-  const variables = Object.freeze(buildReferenceVariables(locale));
-  REFERENCE_VARIABLES.set(locale, variables);
+  const variables = Object.freeze(buildReferenceVariables(display));
+  REFERENCE_VARIABLES.set(key, variables);
 
   return variables;
 }
 
-function buildReferenceVariables(locale: Locale): TemplateVariables {
+function buildReferenceVariables(display: NotificationDisplay): TemplateVariables {
+  const { locale } = display;
+
   return {
     client: 'Marie-Christine Rakotoarison',
     // Onze caractères, et c'est le pire cas : la référence est de largeur fixe
@@ -681,16 +798,16 @@ function buildReferenceVariables(locale: Locale): TemplateVariables {
     salon: referenceTenantName(),
     adresse: '12 rue des Lilas, 75011 Paris',
     telephone: '+33 1 23 45 67 89',
-    date: formatDateTimeInTenantTimeZone(REFERENCE_START, REFERENCE_ZONE, locale),
-    heure: formatTimeInTenantTimeZone(REFERENCE_START, REFERENCE_ZONE, locale),
-    fin: formatTimeInTenantTimeZone(REFERENCE_END, REFERENCE_ZONE, locale),
+    date: formatDateTimeInTenantTimeZone(REFERENCE_START, REFERENCE_ZONE, display),
+    heure: formatTimeInTenantTimeZone(REFERENCE_START, REFERENCE_ZONE, display),
+    fin: formatTimeInTenantTimeZone(REFERENCE_END, REFERENCE_ZONE, display),
     fuseau: REFERENCE_ZONE,
     // `Intl.NumberFormat` sépare les milliers par une espace fine insécable
     // (U+202F) en français et le symbole monétaire par une insécable (U+00A0)
     // dans les deux langues. **Aucune des deux n'est dans GSM-7**, et c'est
     // précisément ce que la mesure doit voir : un modèle de SMS qui nomme
     // `{{prix}}` part en UCS-2, donc à 70 caractères par segment.
-    prix: formatMoney(125_000, 'MGA', locale),
+    prix: formatMoney(125_000, 'MGA', display),
     // Sur sous-domaine depuis #837, comme le lien que compose `cancellationUrl`.
     lien_annulation: 'https://maison-lotus.reservation.spa-booking.app/compte',
     // La plus longue des trois formulations que `cancellationOrigin` sait rendre
@@ -727,13 +844,18 @@ function longestCancellationOrigin(locale: Locale): string {
 }
 
 /**
- * Ce qu'un modèle de SMS coûtera, une fois ses variables remplies, dans cette
- * langue.
+ * Ce qu'un modèle de SMS coûtera, une fois ses variables remplies, **chez ce
+ * salon-là** — dans sa langue et dans l'écriture de son pays.
  *
  * C'est cette mesure que la validation compare à `SMS_MAX_SEGMENTS`, et c'est
  * elle que l'API rend au back-office : un salon qui écrit « à très bientôt ! »
  * avec une apostrophe typographique doit **voir** que son message vient de passer
  * de un segment à deux.
+ *
+ * Le pays y entre depuis #1344, et il n'est pas décoratif : un avis d'annulation
+ * qui tient en un segment à New York en coûte deux à Montréal, « 2:30 p.m. »
+ * faisant deux caractères de plus que « 2:30 PM ». Mesurer tout le monde à la
+ * région du marché de la langue aurait annoncé la facture d'un salon à un autre.
  *
  * Elle vit ici depuis #854, et non plus dans `notification-template.ts` : elle a
  * désormais besoin des formateurs de ce fichier pour composer sa référence, et un
@@ -741,8 +863,8 @@ function longestCancellationOrigin(locale: Locale): string {
  * cycle. La frontière reste la même qu'avant — `notification-template.ts` compte
  * les septets, il ne sait pas ce qu'est un rendez-vous.
  */
-export function measureSmsTemplate(source: string, locale: Locale): SmsCost {
-  return measureSms(renderTemplateSource(source, smsReferenceVariables(locale), keepAsIs));
+export function measureSmsTemplate(source: string, display: NotificationDisplay): SmsCost {
+  return measureSms(renderTemplateSource(source, smsReferenceVariables(display), keepAsIs));
 }
 
 /**

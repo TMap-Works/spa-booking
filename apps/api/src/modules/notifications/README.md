@@ -211,9 +211,14 @@ cela change, en trois règles :
   plus longue, mesurer l'anglais contre la référence française aurait
   sous-estimé sa facture.
 
-Les dates, les heures et les montants sont formatés par `Intl` dans la langue
-d'envoi (`fr-FR` ou `en-US`) et **toujours** dans le fuseau de l'établissement :
-la langue choisit l'ordre des mots et le cycle horaire, jamais le fuseau.
+Les dates, les heures et les montants sont formatés par `Intl` selon la **locale
+de mise en forme** du produit — l'étiquette `{langue d'envoi}-{pays du salon}` que
+`formattingLocale` de `@spa/shared` compose — et **toujours** dans le fuseau de
+l'établissement. La langue choisit les mots ; le pays du salon choisit l'ordre
+d'une date, les séparateurs d'un montant et le cycle horaire ; le fuseau choisit
+l'instant. Rien n'est forcé par-dessus `Intl` : un salon parisien dont la cliente
+lit l'anglais reçoit « Monday, 8 September 2026 at 14:30 », la même heure que le
+reçu de la même vente (#1344, #1325).
 
 ## Les rebonds et les plaintes (#73)
 

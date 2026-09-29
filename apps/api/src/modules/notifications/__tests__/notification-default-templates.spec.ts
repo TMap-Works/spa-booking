@@ -144,7 +144,7 @@ describe('modèles par défaut — le coût d’un SMS, dans chaque langue', () 
       for (const { type, source } of servedTemplates(locale).filter(
         (entry) => entry.channel === 'SMS',
       )) {
-        const cost = measureSmsTemplate(source.text, locale);
+        const cost = measureSmsTemplate(source.text, { locale });
 
         expect({ locale, type, encoding: cost.encoding, segments: cost.segments }).toEqual({
           locale,
@@ -153,6 +153,42 @@ describe('modèles par défaut — le coût d’un SMS, dans chaque langue', () 
           segments: 1,
         });
         expect(cost.segments).toBeLessThanOrEqual(SMS_MAX_SEGMENTS);
+      }
+    }
+  });
+
+  /**
+   * **Le même segment unique dans chaque pays servi — #1344.**
+   *
+   * Depuis que l'écriture d'une date suit le pays du salon, « un segment » cesse
+   * d'être une propriété de la langue : `en-CA` écrit « 2:30 p.m. » là où `en-US`
+   * écrit « 2:30 PM », et `fr-CA` écrit « 14 h 30 » là où `fr-FR` écrit « 14:30 ».
+   * Deux caractères, sur un avis d'annulation qui frôle déjà les 160 septets — et
+   * la facture SMS du produit double pour un marché entier, sans que personne ne
+   * s'en aperçoive avant le relevé (notifications §5).
+   *
+   * Les pays énumérés sont ceux dont le produit connaît l'adresse : la France
+   * (#1334), les États-Unis et le Canada, dont #1339 a ajouté l'État/Province et
+   * la colonne `tenants.region`. `null` y figure aussi — un salon qui n'a pas
+   * publié son adresse —, parce que c'est l'état par défaut d'un établissement
+   * qui vient d'être créé.
+   *
+   * C'est une barrière de **coût**, pas de style : elle rougit le jour où une
+   * reformulation de modèle, ou une version d'ICU, fait déborder l'un des marchés.
+   */
+  it.each([null, 'FR', 'US', 'CA'])('tient en un seul segment — pays %s', (countryCode) => {
+    for (const locale of LOCALES) {
+      for (const { type, source } of servedTemplates(locale).filter(
+        (entry) => entry.channel === 'SMS',
+      )) {
+        const cost = measureSmsTemplate(source.text, { locale, countryCode });
+
+        expect({ locale, type, countryCode, segments: cost.segments }).toEqual({
+          locale,
+          type,
+          countryCode,
+          segments: 1,
+        });
       }
     }
   });

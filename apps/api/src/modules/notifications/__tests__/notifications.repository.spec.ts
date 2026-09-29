@@ -708,6 +708,23 @@ describe('NotificationsRepository.loadAppointmentContext — l’adresse du salo
     expect(context?.tenantAddress).toBe('12 rue des Lilas, 75011 Paris');
   });
 
+  /**
+   * **Le pays descend dans le contexte, et pas seulement dans l'adresse — #1344.**
+   *
+   * La même colonne décide de deux choses : l'ordre de la localité ci-dessus, et
+   * l'écriture des dates, des heures et des montants du message. Tant qu'elle
+   * restait locale à `postalAddress`, le rendu n'avait rien pour composer son
+   * étiquette `{langue}-{pays}` et retombait sur une table par langue — un e-mail
+   * daté « 11:30 AM » pour un salon parisien dont le reçu écrivait « 11:30 ».
+   */
+  it('porte le pays du salon dans le contexte du message', async () => {
+    const americain = await addressRepository(MANHATTAN).loadAppointmentContext('appointment-1');
+    const francais = await addressRepository(PARIS).loadAppointmentContext('appointment-1');
+
+    expect(americain?.tenantCountryCode).toBe('US');
+    expect(francais?.tenantCountryCode).toBe('FR');
+  });
+
   it('rend `null` quand le salon n’a publié aucune adresse', async () => {
     const vide: TenantAddressRow = {
       addressLine1: null,

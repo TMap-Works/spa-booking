@@ -558,7 +558,7 @@ function segmentsFor(units: number, single: number, concatenated: number): numbe
  * référence était un littéral : une date écrite à la main, un montant écrit à la
  * main. Avec deux langues, ces valeurs doivent être **formatées** — « mercredi 16
  * septembre 2026 à 14:30 » fait 34 caractères, « Wednesday, September 16, 2026 at
- * 2:30 PM » en fait 40 —, et les formateurs vivent dans `notification-content.ts`,
+ * 02:30 PM » en fait 41 —, et les formateurs vivent dans `notification-content.ts`,
  * qui importe déjà ce fichier. Les laisser ici aurait formé un cycle.
  *
  * La frontière n'a pas bougé pour autant, et c'est elle qui compte : ce fichier
