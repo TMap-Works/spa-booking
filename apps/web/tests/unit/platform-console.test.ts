@@ -87,19 +87,56 @@ describe('les dates de la console', () => {
     );
   });
 
-  it('suivent la région de l’établissement quand il en a publié une', () => {
-    // Même langue, deux régions : le Royaume-Uni écrit le jour d'abord.
-    const american = formatPlatformDateTime(TENANT.createdAt, 'UTC', {
+  /**
+   * **#1325, troisième critère — une convention d'opérateur unique.**
+   *
+   * La console emprunte la région de **l'opérateur**, jamais celle du salon
+   * qu'elle affiche. Elle prenait celle du salon, et l'écran faisait alors
+   * cohabiter trois écritures : « 9/29/26, 3:45 AM » pour un salon américain,
+   * « 29/09/2026, 09:33 » pour son voisin parisien, « 07:44 AM UTC » pour
+   * l'horodatage de la page. Une liste qu'on trie et qu'on compare à l'œil ne se
+   * lit pas comme cela.
+   *
+   * Le `countryCode` est donc **sans effet** dans ce module — et c'est exigé ici
+   * plutôt que laissé à la relecture : c'est par une propriété passée de bonne foi
+   * que la divergence était entrée.
+   */
+  it('ignorent la région du salon et gardent celle de l’opérateur', () => {
+    const americain = formatPlatformDateTime(TENANT.createdAt, 'UTC', {
       locale: 'en',
       countryCode: 'US',
     });
-    const british = formatPlatformDateTime(TENANT.createdAt, 'UTC', {
+    const britannique = formatPlatformDateTime(TENANT.createdAt, 'UTC', {
       locale: 'en',
       countryCode: 'GB',
     });
+    const sansPays = formatPlatformDateTime(TENANT.createdAt, 'UTC', { locale: 'en' });
 
-    expect(american.startsWith('9/6/26')).toBe(true);
-    expect(british.startsWith('06/09/2026')).toBe(true);
+    expect(americain).toBe(sansPays);
+    expect(britannique).toBe(sansPays);
+    expect(sansPays.startsWith('9/6/2026')).toBe(true);
+  });
+
+  /**
+   * **#1325, troisième critère — le fuseau est nommé.** L'historique d'un salon
+   * rendait « 29/09/2026, 09:33 » sans dire de quelle horloge il parlait : deux
+   * salons de deux continents affichaient deux heures qu'on croyait comparables.
+   */
+  it('nomment le fuseau de chaque instant', () => {
+    // Le préfixe du décalage est celui de la langue — « UTC » en français,
+    // « GMT » en anglais —, et c'est `Intl` qui le choisit. Ce qui se vérifie ici
+    // est qu'un décalage est **présent et chiffré** : c'est lui qui rend deux
+    // heures comparables, pas son préfixe.
+    expect(formatPlatformDateTime(TENANT.createdAt, 'UTC', { locale: 'en' })).toMatch(/(UTC|GMT)$/);
+    expect(formatPlatformDateTime(TENANT.createdAt, 'America/New_York', { locale: 'fr' })).toContain(
+      'UTC−4',
+    );
+    expect(formatPlatformDateTime(TENANT.createdAt, 'Europe/Paris', { locale: 'fr' })).toContain(
+      'UTC+2',
+    );
+    expect(formatPlatformDateTime(TENANT.createdAt, 'Europe/Paris', { locale: 'en' })).toContain(
+      'GMT+2',
+    );
   });
 });
 
