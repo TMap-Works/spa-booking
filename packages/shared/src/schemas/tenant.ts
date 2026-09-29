@@ -169,6 +169,152 @@ export function countryUsesAddressRegion(country: string | null | undefined): bo
 }
 
 /**
+ * Les pays qui écrivent la **ville avant le code postal** — #1330, monté ici par
+ * #1334.
+ *
+ * Les deux du périmètre nord-américain, et eux seuls. Ce n'est volontairement pas
+ * une table des conventions postales du monde : le produit ouvre onze pays
+ * (`lib/salon-presets.ts`, côté web), dix d'entre eux écrivent le code postal en
+ * tête, et une table exhaustive serait une donnée de référence à maintenir pour
+ * deux lignes de sortie. Un pays qu'on ajoute ici se voit sur une ligne de diff ;
+ * une table de deux cents entrées se relit une fois et se croit ensuite.
+ *
+ * ## Pourquoi dans le contrat, et non dans le seul front
+ *
+ * Parce que l'ordre d'une adresse n'est pas une affaire d'écran : le ticket de
+ * caisse imprimé au comptoir, le PDF du reçu et les e-mails de confirmation
+ * écrivent la même enveloppe, et les deux derniers sont composés par `apps/api`,
+ * d'où `apps/web/components/salon/salon-address.ts` est inatteignable. Les trois
+ * recomposaient donc la localité de leur côté et gardaient l'ordre français sur
+ * un salon de Manhattan — c'est le bug de #1334.
+ *
+ * C'est la même raison qui fait vivre `formatReceiptNumber` dans le contrat : une
+ * règle de présentation partagée par le front et par tout ce que le serveur rend
+ * lisible.
+ *
+ * ## Distincte d'`ADDRESS_REGION_COUNTRIES`, même si les deux disent « US, CA »
+ *
+ * L'une dit où va le code postal, l'autre si le pays porte un État. Les confondre
+ * rendrait indémêlable le jour où le produit ouvre un pays qui écrit un État
+ * *et* met son code postal en dernier.
+ */
+export const CITY_BEFORE_POSTAL_CODE_COUNTRIES = ['US', 'CA'] as const;
+
+/** L'ensemble, monté une fois — même motif qu'`ADDRESS_REGION_COUNTRY_SET`. */
+const CITY_BEFORE_POSTAL_CODE_SET: ReadonlySet<string> = new Set(
+  CITY_BEFORE_POSTAL_CODE_COUNTRIES,
+);
+
+/**
+ * Ce qu'il faut savoir d'une adresse pour en ordonner la localité.
+ *
+ * Le minimum requis, et non `PostalAddress` : les quatre surfaces qui composent
+ * cette ligne ne tiennent pas l'adresse sous la même forme. La vitrine a un
+ * `PostalAddress` (clés omises), la fiche de la console un
+ * `platformTenantDetailSchema` (`null`), et les deux dépôts d'`apps/api` des
+ * colonnes Prisma à plat, toutes `string | null`. Décrire le minimum requis les
+ * accepte toutes sans qu'aucun appelant ait à recomposer un objet.
+ *
+ * `| undefined` est écrit explicitement en plus du `?` : sous
+ * `exactOptionalPropertyTypes`, une propriété facultative n'accepte pas
+ * `undefined` comme **valeur**, et `PostalAddress.postalCode` en porte un.
+ *
+ * `city` et `country` sont facultatifs ici alors que `postalAddressSchema` les
+ * exige : côté serveur, une adresse est un jeu de colonnes nullables dont la
+ * complétude n'est vérifiée qu'au moment de servir la pièce. Une localité vide
+ * rend une chaîne vide, ce que chaque appelant sait déjà écarter.
+ */
+export interface AddressLocality {
+  readonly postalCode?: string | null | undefined;
+  readonly city?: string | null | undefined;
+  /** L'État ou la province, quand le salon en a une (#1335). */
+  readonly region?: string | null | undefined;
+  readonly country?: string | null | undefined;
+}
+
+/** Un morceau d'adresse est écrit s'il n'est ni absent, ni nul, ni vide. */
+function isWrittenPart(part: string | null | undefined): part is string {
+  return part !== undefined && part !== null && part.trim() !== '';
+}
+
+/**
+ * L'État ou la province de cette adresse, ou `null` — #1335.
+ *
+ * Deux conditions, et la seconde est celle qui compte : la valeur doit être
+ * écrite, **et** le pays doit en porter une. `countryUsesAddressRegion` est le
+ * prédicat qu'emploient déjà les trois formulaires pour décider d'afficher le
+ * champ ; s'en servir aussi à l'affichage garantit qu'on n'écrit jamais une
+ * subdivision qu'on n'aurait pas laissé saisir — le cas d'un salon passé des
+ * États-Unis à la France, dont la colonne porte encore « NY ».
+ */
+function localityRegion(address: AddressLocality): string | null {
+  if (!countryUsesAddressRegion(address.country) || !isWrittenPart(address.region)) {
+    return null;
+  }
+
+  return address.region;
+}
+
+/**
+ * La localité, ses morceaux dans l'ordre du pays — « 75011 », « Paris » d'un
+ * côté, « New York », « NY », « 10118 » de l'autre.
+ *
+ * Rendue en morceaux et non déjà jointe : `addressLocalityLine` les assemble à la
+ * façon d'une enveloppe, et la requête géographique de la vitrine les sépare par
+ * des virgules. Un seul ordre, deux ponctuations — plutôt que deux fonctions qui
+ * décideraient chacune de l'ordre et finiraient par ne plus le décider pareil.
+ *
+ * Un morceau **manquant est omis** : tous les pays n'ont pas de code postal
+ * (`postalAddressSchema`), et une localité ne doit jamais commencer ni finir par
+ * une espace en trop.
+ */
+export function addressLocalityParts(address: AddressLocality): readonly string[] {
+  const ordered = CITY_BEFORE_POSTAL_CODE_SET.has(address.country ?? '')
+    ? [address.city, localityRegion(address), address.postalCode]
+    : [address.postalCode, address.city];
+
+  return ordered.filter(isWrittenPart);
+}
+
+/**
+ * La ligne de localité d'une adresse — « 75011 Paris », « New York 10118 »,
+ * « New York, NY 10118 ».
+ *
+ * **Le** point d'écriture de cette ligne, pour le front comme pour le serveur
+ * (#1334). La vitrine, l'espace client, le récapitulatif du tunnel, le `.ics`
+ * d'un rendez-vous, la fiche de la console, le ticket de caisse, le PDF du reçu
+ * et les e-mails l'appellent tous : une ligne d'enveloppe composée à huit
+ * endroits finit par diverger sur le seul cas intéressant, et c'est exactement ce
+ * qui est arrivé.
+ *
+ * ## L'ordre suit le pays du salon, non la langue du lecteur
+ *
+ * L'adresse d'un salon parisien lue en anglais reste « 75011 Paris », parce que
+ * c'est ce qu'on écrit sur l'enveloppe qu'on lui poste. Confondre les deux aurait
+ * réordonné l'adresse selon qui la regarde.
+ *
+ * ## La virgule sépare la ville de l'État, jamais la ville du code postal
+ *
+ * L'USPS écrit « CITY ST ZIP » : un salon américain sans État s'annonce
+ * « New York 10118 », **sans virgule du tout**. C'est pour cela que la
+ * composition ne passe pas par `addressLocalityParts` quand l'État est là — ces
+ * morceaux se collent à l'espace, et une seule des jointures est une virgule.
+ */
+export function addressLocalityLine(address: AddressLocality): string {
+  const region = localityRegion(address);
+
+  // Sans ville écrite, il n'y a rien à séparer de l'État : la composition
+  // retombe sur les morceaux, qui l'omettent d'eux-mêmes.
+  if (region === null || !isWrittenPart(address.city)) {
+    return addressLocalityParts(address).join(' ');
+  }
+
+  // Ce cas n'est atteint que pour les pays à subdivision, qui écrivent tous la
+  // ville en tête (`CITY_BEFORE_POSTAL_CODE_COUNTRIES`) : « New York, NY 10118 ».
+  return [`${address.city}, ${region}`, address.postalCode].filter(isWrittenPart).join(' ');
+}
+
+/**
  * La même adresse, **telle qu'un formulaire la soumet** — #1330.
  *
  * Un seul champ diffère, et c'est tout l'objet de ce schéma : le pays doit

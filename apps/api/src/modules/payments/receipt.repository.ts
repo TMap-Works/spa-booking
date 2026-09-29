@@ -48,6 +48,10 @@ const ISSUER_SELECT = {
   addressLine2: true,
   postalCode: true,
   city: true,
+  // L'État, quand le salon en porte un — « New York, NY 10118 » (#1335). La
+  // localité de la pièce est composée par `addressLocalityLine`, qui l'écrit
+  // pour les pays qui en portent un et l'ignore pour les autres.
+  region: true,
   countryCode: true,
   contactEmail: true,
   contactPhone: true,
@@ -159,6 +163,7 @@ export interface ReceiptRow {
     addressLine2: string | null;
     postalCode: string | null;
     city: string | null;
+    region: string | null;
     countryCode: string | null;
     contactEmail: string | null;
     contactPhone: string | null;

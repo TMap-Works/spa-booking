@@ -28,6 +28,7 @@ function issuer(overrides: Partial<ReceiptRow['tenant']> = {}): ReceiptRow['tena
     addressLine2: null,
     postalCode: null,
     city: null,
+    region: null,
     countryCode: null,
     contactEmail: null,
     contactPhone: null,

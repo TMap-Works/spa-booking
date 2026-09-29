@@ -1,5 +1,6 @@
 import {
   addMoney,
+  addressLocalityLine,
   type Locale,
   type Money,
   type ReceiptIssuer,
@@ -80,7 +81,15 @@ export function formatReceiptPhone(phone: string): string {
   return phone;
 }
 
-/** Les lignes d'adresse du salon, dans l'ordre d'une enveloppe. */
+/**
+ * Les lignes d'adresse du salon, dans l'ordre d'une enveloppe.
+ *
+ * La localité vient d'`addressLocalityLine` et non d'une jointure recomposée ici
+ * (#1334) : un salon de Manhattan imprimait « 10118 New York » sur le ticket
+ * remis à sa cliente alors que sa vitrine annonçait déjà « New York 10118 ». La
+ * règle est celle du **pays du salon**, pas de la langue de la session — la même
+ * pièce, imprimée en anglais ou en français, porte la même adresse.
+ */
 export function issuerAddressLines(issuer: ReceiptIssuer): readonly string[] {
   const address = issuer.address;
 
@@ -88,9 +97,7 @@ export function issuerAddressLines(issuer: ReceiptIssuer): readonly string[] {
     return [];
   }
 
-  const locality = [address.postalCode, address.city].filter(Boolean).join(' ');
-
-  return [address.line1, address.line2, locality].filter(
+  return [address.line1, address.line2, addressLocalityLine(address)].filter(
     (line): line is string => line !== undefined && line.trim() !== '',
   );
 }

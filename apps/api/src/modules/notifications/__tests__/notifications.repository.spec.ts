@@ -577,6 +577,154 @@ describe('NotificationsRepository.loadAppointmentContext — l’heure annoncée
 });
 
 /**
+ * **L'adresse du salon dans un e-mail — #1334.**
+ *
+ * Les trois messages du module — confirmation, rappel J-1, avis d'annulation —
+ * impriment `{{adresse}}`, et ce dépôt est le seul endroit qui la compose. Il
+ * recollait `[postalCode, city]` de son côté, faute de pouvoir atteindre le
+ * module du front qui portait la règle d'ordre : une cliente de Manhattan lisait
+ * « 10118 New York » dans sa confirmation pendant que la vitrine du même salon
+ * annonçait déjà « New York 10118 ».
+ *
+ * Deux propriétés se vérifient ici, et le second cas est celui qui rendait le
+ * premier impossible : `countryCode` n'était pas dans le `select`, si bien que la
+ * règle n'avait rien pour décider.
+ */
+describe('NotificationsRepository.loadAppointmentContext — l’adresse du salon', () => {
+  interface TenantAddressRow {
+    addressLine1: string | null;
+    addressLine2: string | null;
+    postalCode: string | null;
+    city: string | null;
+    region: string | null;
+    countryCode: string | null;
+  }
+
+  const PARIS: TenantAddressRow = {
+    addressLine1: '12 rue des Lilas',
+    addressLine2: null,
+    postalCode: '75011',
+    city: 'Paris',
+    region: null,
+    countryCode: 'FR',
+  };
+
+  const MANHATTAN: TenantAddressRow = {
+    addressLine1: '350 5th Avenue',
+    addressLine2: null,
+    postalCode: '10118',
+    city: 'New York',
+    region: null,
+    countryCode: 'US',
+  };
+
+  /** Ce que la requête a demandé, pour l'affirmer sans base. */
+  const selections: Record<string, unknown>[] = [];
+
+  function addressRepository(tenant: TenantAddressRow): NotificationsRepository {
+    return new NotificationsRepository({
+      appointment: {
+        findFirst: () =>
+          Promise.resolve({
+            startsAt: new Date('2026-09-08T12:15:00Z'),
+            priceAmountMinor: 6_500,
+            priceCurrency: 'EUR',
+            client: { firstName: 'Amina', lastName: 'Rakoto' },
+            service: { name: 'Massage suédois', durationMinutes: 60, bufferBeforeMinutes: 0 },
+            staff: { displayName: 'Claire D.' },
+          }),
+      },
+      tenant: {
+        findFirst: (args: { select: Record<string, unknown> }) => {
+          selections.push(args.select);
+
+          return Promise.resolve({
+            name: 'Maison Lotus',
+            slug: 'maison-lotus',
+            timezone: 'Europe/Paris',
+            contactPhone: null,
+            ...tenant,
+          });
+        },
+      },
+    } as unknown as ScopedPrismaClient);
+  }
+
+  beforeEach(() => {
+    selections.length = 0;
+  });
+
+  it('écrit la ville avant le code postal pour un salon américain', async () => {
+    const context = await addressRepository(MANHATTAN).loadAppointmentContext('appointment-1');
+
+    expect(context?.tenantAddress).toBe('350 5th Avenue, New York 10118');
+  });
+
+  it('écrit le code postal en tête pour un salon français', async () => {
+    const context = await addressRepository(PARIS).loadAppointmentContext('appointment-1');
+
+    expect(context?.tenantAddress).toBe('12 rue des Lilas, 75011 Paris');
+  });
+
+  /**
+   * Le `select` et non le résultat : sans `countryCode`, la règle d'ordre n'a
+   * rien pour décider, et l'e-mail retomberait sur la forme française pour tous.
+   * C'est la moitié invisible du ticket — un double qui rend le pays quand même
+   * ferait passer les deux cas ci-dessus quel que soit le `select`.
+   */
+  it('lit `countryCode` avec l’adresse', async () => {
+    await addressRepository(MANHATTAN).loadAppointmentContext('appointment-1');
+
+    expect(selections[0]).toMatchObject({ countryCode: true, city: true, postalCode: true });
+  });
+
+  /**
+   * L'État, et la virgule qui l'accompagne (#1335).
+   *
+   * `region` manquait au `select` comme `countryCode` : l'e-mail écrivait donc
+   * « New York 10118 » là où la vitrine du même salon annonçait déjà
+   * « New York, NY 10118 » — le même écart entre surfaces, une colonne plus loin.
+   */
+  it('écrit l’État d’un salon nord-américain, et le lit avec l’adresse', async () => {
+    const context = await addressRepository({
+      ...MANHATTAN,
+      region: 'NY',
+    }).loadAppointmentContext('appointment-1');
+
+    expect(context?.tenantAddress).toBe('350 5th Avenue, New York, NY 10118');
+    expect(selections[0]).toMatchObject({ region: true });
+  });
+
+  /**
+   * Un salon passé des États-Unis à la France garde « NY » en colonne : la règle
+   * du contrat ne l'écrit pas dans une adresse qui ne sait pas où le mettre.
+   */
+  it('n’écrit pas d’État sur un salon d’un pays qui n’en porte pas', async () => {
+    const context = await addressRepository({
+      ...PARIS,
+      region: 'NY',
+    }).loadAppointmentContext('appointment-1');
+
+    expect(context?.tenantAddress).toBe('12 rue des Lilas, 75011 Paris');
+  });
+
+  it('rend `null` quand le salon n’a publié aucune adresse', async () => {
+    const vide: TenantAddressRow = {
+      addressLine1: null,
+      addressLine2: null,
+      postalCode: null,
+      city: null,
+      region: null,
+      countryCode: null,
+    };
+
+    const context = await addressRepository(vide).loadAppointmentContext('appointment-1');
+
+    expect(context?.tenantAddress).toBeNull();
+  });
+});
+
+/**
  * **Le `where` que la portée de lecture produit réellement** — #1200.
  *
  * Ces cas existent parce qu'aucun autre ne les couvrait : les suites de

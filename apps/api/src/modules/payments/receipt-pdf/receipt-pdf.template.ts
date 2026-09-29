@@ -1,4 +1,4 @@
-import type { LegalIdType, Locale } from '@spa/shared';
+import { addressLocalityLine, type LegalIdType, type Locale } from '@spa/shared';
 
 import type { SaleItemKind } from '../pos.types';
 import type { ReceiptIssuer, ReceiptSettlement, SaleReceipt } from '../receipt.types';
@@ -77,17 +77,38 @@ function legalIdLabel(type: LegalIdType, words: ReceiptVocabulary): string {
   return LEGAL_ID_REGISTRIES[type] ?? words.legalIdOther;
 }
 
-/** L'adresse postale sur une ligne, ou `null` si le salon n'en a pas saisi. */
+/**
+ * L'adresse postale du salon, en lignes d'enveloppe — vide si rien n'est saisi.
+ *
+ * La localité vient d'`addressLocalityLine`, le point d'écriture partagé par le
+ * front et le serveur (#1334), et non d'une jointure recomposée ici : un salon
+ * américain imprimait « 10118 New York » sur son PDF là où sa vitrine annonçait
+ * déjà « New York 10118 ». `countryCode` est la colonne qui tranche, et elle est
+ * lue depuis #1027 (`ISSUER_SELECT`) — elle ne servait jusqu'ici qu'au DTO.
+ *
+ * `region` y est lue pour la même raison (#1335) : sans elle, la pièce écrirait
+ * « New York 10118 » là où la vitrine du même salon annonce « New York, NY
+ * 10118 » — un écart entre surfaces de la même nature que celui sur l'ordre.
+ *
+ * L'ordre suit le **pays du salon**, jamais la langue du document : le même reçu
+ * tiré en anglais (`?locale=en`, #1230) porte la même adresse, parce que c'est
+ * celle qu'on écrit sur l'enveloppe qu'on lui poste.
+ */
 function addressLines(issuer: ReceiptIssuer): readonly string[] {
   if (issuer.addressLine1 === null || issuer.city === null) {
     return [];
   }
 
-  const locality = [issuer.postalCode, issuer.city].filter((part) => part !== null).join(' ');
-
-  return [issuer.addressLine1, issuer.addressLine2, locality].filter(
-    (line): line is string => line !== null && line.trim() !== '',
-  );
+  return [
+    issuer.addressLine1,
+    issuer.addressLine2,
+    addressLocalityLine({
+      postalCode: issuer.postalCode,
+      city: issuer.city,
+      region: issuer.region,
+      country: issuer.countryCode,
+    }),
+  ].filter((line): line is string => line !== null && line.trim() !== '');
 }
 
 /**

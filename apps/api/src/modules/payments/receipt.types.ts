@@ -39,6 +39,14 @@ export interface ReceiptIssuer {
   readonly addressLine2: string | null;
   readonly postalCode: string | null;
   readonly city: string | null;
+  /**
+   * L'État ou la province — `tenants.region`, #1335.
+   *
+   * Lu ici parce que la pièce l'imprime : un salon de Manhattan s'écrit
+   * « New York, NY 10118 » sur sa vitrine, et une adresse plus pauvre sur son
+   * reçu serait le même écart entre surfaces que #1334 ferme sur l'ordre.
+   */
+  readonly region: string | null;
   readonly countryCode: string | null;
   readonly contactEmail: string | null;
   readonly contactPhone: string | null;
