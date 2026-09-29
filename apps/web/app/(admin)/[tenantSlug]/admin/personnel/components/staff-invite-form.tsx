@@ -12,6 +12,7 @@ import { Notification } from '@/components/ui/notification';
 import { PhoneField } from '@/components/ui/phone-field';
 import { Select } from '@/components/ui/select';
 import { inviteStaffAccountRequestSchema } from '@/lib/admin/staff-contract';
+import { refusalMessage } from '@/lib/refusal';
 
 import { roleLabel } from '../../components/navigation';
 import { adminInvitationPath } from '../../invitation/paths';
@@ -86,6 +87,20 @@ type InviteField = keyof InviteDraft;
 /** Le message porté par chaque champ fautif, `undefined` pour les autres. */
 type InviteFieldErrors = Partial<Record<InviteField, string>>;
 
+/**
+ * Ce que le bandeau du formulaire a à dire, gardé en **motif** — #1327.
+ *
+ * Il rangeait une phrase : `result.message`, c'est-à-dire un texte écrit par
+ * l'action serveur dans la langue de la requête. Le sélecteur de langue rejoue la
+ * route sans démonter ce formulaire, si bien que « Un compte existe déjà… »
+ * restait en français sous un titre « Cannot invite » qui, lui, suivait le
+ * rendu. Voir `lib/refusal.ts`.
+ *
+ * Deux motifs, parce que les deux refus n'ont pas la même origine : la saisie
+ * refusée par le contrat avant tout appel, et le refus rendu par l'API.
+ */
+type InviteFailure = { readonly kind: 'invalid' } | { readonly kind: 'refusal'; readonly code: string };
+
 const INVITE_FIELDS = ['firstName', 'lastName', 'email', 'phone', 'role'] as const satisfies
   readonly InviteField[];
 
@@ -148,7 +163,7 @@ export function StaffInviteForm({ tenantSlug }: { readonly tenantSlug: string })
   const [sending, setSending] = useState(false);
   const [, startRefresh] = useTransition();
   const [fieldErrors, setFieldErrors] = useState<InviteFieldErrors>({});
-  const [formError, setFormError] = useState<string | null>(null);
+  const [formError, setFormError] = useState<InviteFailure | null>(null);
   const [invitation, setInvitation] = useState<{ email: string; url: string } | null>(null);
 
   function change(changes: Partial<InviteDraft>): void {
@@ -211,7 +226,7 @@ export function StaffInviteForm({ tenantSlug }: { readonly tenantSlug: string })
       // muet. Le message du contrat partagé, lui, ne remonte plus — c'est un
       // littéral français, et il aurait parlé français sous un champ anglais
       // (#848).
-      setFormError(Object.keys(fields).length === 0 ? t('invite.invalid') : null);
+      setFormError(Object.keys(fields).length === 0 ? { kind: 'invalid' } : null);
       return;
     }
 
@@ -228,7 +243,11 @@ export function StaffInviteForm({ tenantSlug }: { readonly tenantSlug: string })
       if (renewIfExpired(result)) {
         return;
       }
-      setFormError(result.message);
+      // Le code, pas la phrase (#1327) : c'est `refusalMessage` qui l'écrit au
+      // rendu, dans la langue lue. « Un compte existe déjà avec cette adresse
+      // e-mail. » vient de la table du contrat partagé, celle-là même que
+      // l'action serveur consultait.
+      setFormError({ kind: 'refusal', code: result.code });
       return;
     }
 
@@ -253,7 +272,12 @@ export function StaffInviteForm({ tenantSlug }: { readonly tenantSlug: string })
     <section className="spa-admin__section spa-admin-form">
       {formError === null ? null : (
         <Notification tone="danger" title={t('invite.failureTitle')}>
-          <p>{formError}</p>
+          {/* La phrase est écrite ici, dans la langue de ce rendu (#1327). */}
+          <p>
+            {formError.kind === 'invalid'
+              ? t('invite.invalid')
+              : refusalMessage(formError, locale)}
+          </p>
         </Notification>
       )}
 

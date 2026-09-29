@@ -532,3 +532,37 @@ export function formatDuration(minutes: number, display: DisplayLocale = FALLBAC
         minutes: String(rest).padStart(2, '0'),
       });
 }
+
+/**
+ * Le même montant, réécrit dans une autre langue — « 10,00 » → « 10.00 » (#1327).
+ *
+ * C'est ce dont un champ de saisie a besoin quand la langue de l'écran change
+ * **sous** lui : le sélecteur du rail pose un cookie et laisse Next rejouer la
+ * route sans démonter le formulaire (`i18n/actions.ts`), si bien qu'un prix
+ * pré-rempli « 10,00 » restait écrit à la française sous un gabarit qui, lui,
+ * annonçait « 35.00 ». Rien ne s'y perdait — {@link parseAmountInput} reste
+ * tolérant aux deux séparateurs —, mais l'écran se contredisait.
+ *
+ * La lecture se fait avec `from`, la langue dans laquelle la saisie a été
+ * écrite, et **non** avec `to` : « 1,234 » vaut mille deux cent trente-quatre
+ * sous un écran anglais et un virgule deux cent trente-quatre sous un écran
+ * français, et c'est celui qui a tapé qui décide lequel. Lire avec la langue
+ * d'arrivée reviendrait à réinterpréter sa saisie au moment précis où on la
+ * réécrit.
+ *
+ * `null` quand la saisie n'est pas un montant lisible : le champ vide, une frappe
+ * en cours, une devise à deux décimales à qui l'on en a donné trois. L'appelant
+ * **laisse alors le texte tel quel** — réécrire une saisie qu'on n'a pas comprise
+ * l'effacerait, et c'est le schéma du formulaire qui a le dernier mot sur ce qui
+ * est refusé, à la soumission.
+ */
+export function reformatAmountInput(
+  text: string,
+  currency: string,
+  from: DisplayLocale,
+  to: DisplayLocale,
+): string | null {
+  const amount = parseAmountInput(text, currency, from);
+
+  return amount === null ? null : formatAmountInput(amount, to);
+}

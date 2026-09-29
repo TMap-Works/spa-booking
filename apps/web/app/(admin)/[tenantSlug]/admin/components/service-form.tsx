@@ -17,7 +17,7 @@ import {
 } from '@spa/shared';
 import { useLocale, useTranslations } from 'next-intl';
 import { useRouter } from 'next/navigation';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
 
@@ -30,8 +30,10 @@ import {
   formatAmountInput,
   formatDuration,
   parseAmountInput,
+  reformatAmountInput,
   type DisplayLocale,
 } from '@/lib/format';
+import { refusalMessage, type Refusal } from '@/lib/refusal';
 
 import { adminServicePath } from '../paths';
 import { createServiceAction, updateServiceAction } from '../catalogue/actions';
@@ -292,7 +294,8 @@ export function ServiceForm({
   const announce = useAdminAnnouncement();
   const { renewIfExpired } = useAdminSessionRenewal(tenantSlug);
   const [saved, setSaved] = useState(false);
-  const [failure, setFailure] = useState<string | null>(null);
+  /** Le **code** du refus, pas sa phrase (#1327) — voir `lib/refusal.ts`. */
+  const [failure, setFailure] = useState<Refusal | null>(null);
   /**
    * Ce qui met en forme un montant sur cet écran — la langue de la session.
    *
@@ -347,7 +350,10 @@ export function ServiceForm({
   const {
     register,
     handleSubmit,
+    getValues,
     setError,
+    setValue,
+    trigger,
     watch,
     formState: { errors, isSubmitting },
   } = useForm<ServiceFormValues, unknown, z.output<ReturnType<typeof serviceFormSchema>>>({
@@ -363,19 +369,87 @@ export function ServiceForm({
       /*
        * Écrit dans la langue de l'écran (#1123).
        *
-       * `defaultValues` n'est lu qu'au **montage**. Le sélecteur de langue du
-       * rail, lui, pose un cookie et laisse Next rejouer la route sans navigation
-       * (`i18n/actions.ts`) : les étiquettes et le gabarit passent à l'anglais,
-       * la valeur déjà dans le champ reste écrite comme elle a été posée. Rien ne
-       * s'y perd — `parseAmountInput` reste tolérant aux deux séparateurs et rend
-       * le même entier —, et la réécrire d'office effacerait une saisie en cours
-       * de frappe pour un gain d'apparence. Au prochain chargement de la fiche,
-       * elle suit la langue.
+       * `defaultValues` n'est lu qu'au **montage** ; le sélecteur de langue du
+       * rail, lui, rejoue la route sans démonter ce formulaire. C'est l'effet
+       * juste au-dessous qui réécrit le champ quand la langue bouge (#1327).
        */
       price: service === undefined ? '' : formatAmountInput(service.price, display),
     },
     mode: 'onTouched',
   });
+
+  /**
+   * La langue dans laquelle le champ de prix est **actuellement écrit** — #1327.
+   *
+   * Une référence et non un état : elle ne pilote aucun rendu, elle sert à savoir
+   * avec quels séparateurs relire la saisie avant de la réécrire. Initialisée à
+   * la langue du montage, celle de `defaultValues`.
+   *
+   * Elle n'avance qu'aux deux moments où le texte du champ change **vraiment**
+   * de langue : la réécriture réussie de l'effet ci-dessous, et une frappe de la
+   * gérante (l'`onChange` posé sur `register('price')`). L'avancer après une
+   * réécriture **refusée** laisserait la référence mentir — le texte est resté
+   * écrit dans l'ancienne langue — et la bascule suivante relirait la saisie avec
+   * des séparateurs qu'elle n'a jamais employés : « 35,005 » refusé en français
+   * deviendrait « 35005,00 » au retour, un prix mille fois trop élevé.
+   */
+  const priceDisplayRef = useRef<DisplayLocale>(display);
+  /** L'erreur que porte le champ de prix, s'il en porte une. */
+  const priceError = errors.price;
+
+  /**
+   * Le prix se réécrit quand la langue de l'écran change — deuxième critère
+   * d'acceptation de #1327.
+   *
+   * Le sélecteur de langue du rail pose un cookie et laisse Next rejouer la route
+   * **sans navigation** (`i18n/actions.ts`) : ce formulaire n'est pas démonté, et
+   * une fiche pré-remplie « 10,00 » restait écrite à la française sous un gabarit
+   * qui annonçait désormais « 35.00 ». Rien ne s'y perdait — `parseAmountInput`
+   * reste tolérant aux deux séparateurs —, mais l'écran se contredisait à
+   * l'endroit exact où il demande de recopier une forme.
+   *
+   * Trois précautions :
+   *
+   * - la relecture se fait avec la langue **d'avant**, celle dans laquelle la
+   *   saisie a été écrite (`reformatAmountInput`). Relire avec la nouvelle
+   *   réinterpréterait « 1,234 » ;
+   * - une saisie illisible est **laissée telle quelle**, et la référence de
+   *   langue ne bouge alors pas : un montant plus précis que la devise
+   *   (« 35,005 ») reste écrit dans la langue où il a été tapé, et la bascule
+   *   suivante le relira avec les bons séparateurs plutôt que d'y voir un
+   *   groupement de milliers ;
+   * - `shouldDirty: false` — cette réécriture n'est pas une modification de la
+   *   gérante, et marquer le formulaire modifié ferait mentir tout garde-fou de
+   *   sortie qui s'y adosserait.
+   *
+   * La validation est rejouée pour le seul champ de prix, et seulement s'il porte
+   * déjà une erreur : sa phrase vient du catalogue et se serait sinon figée dans
+   * la langue d'avant, comme les états d'erreur que ce ticket corrige par
+   * ailleurs. Aucun `trigger` sur les champs sains — un formulaire ne se met pas
+   * à reprocher des champs qu'on n'a pas encore remplis parce qu'on a changé de
+   * langue.
+   */
+  useEffect(() => {
+    const from = priceDisplayRef.current;
+
+    if (from.locale === display.locale) {
+      return;
+    }
+
+    const rewritten = reformatAmountInput(getValues('price'), currency, from, display);
+
+    if (rewritten !== null) {
+      priceDisplayRef.current = display;
+      setValue('price', rewritten, { shouldDirty: false, shouldTouch: false });
+    }
+
+    if (priceError !== undefined) {
+      void trigger('price');
+    }
+    // `priceError` figure dans les dépendances par honnêteté envers le crochet,
+    // mais ne déclenche rien seul : la garde de langue ci-dessus fait sortir
+    // l'effet dès que ce n'est pas un changement de langue qui l'a réveillé.
+  }, [currency, display, getValues, priceError, setValue, trigger]);
 
   // Recalculée à chaque frappe : c'est la durée que l'agenda bloquera, et la
   // voir avant d'enregistrer évite de découvrir après coup pourquoi le créneau
@@ -440,7 +514,7 @@ export function ServiceForm({
         setError('slug', { message: t('errors.slugTaken') });
         return;
       }
-      setFailure(result.message);
+      setFailure({ code: result.code });
       return;
     }
 
@@ -473,7 +547,10 @@ export function ServiceForm({
 
       {failure === null ? null : (
         <Notification tone="danger" title={t('failureTitle')}>
-          <p>{failure}</p>
+          {/* La phrase est écrite ici, dans la langue de ce rendu (#1327). Le
+              seul refus que cet écran nomme lui-même — le conflit de slug — se
+              pose sur son champ, pas dans ce bandeau. */}
+          <p>{refusalMessage(failure, locale)}</p>
         </Notification>
       )}
 
@@ -569,7 +646,15 @@ export function ServiceForm({
         hint={t('priceHint')}
         disabled={!canManage}
         error={errors.price?.message}
-        {...register('price')}
+        {...register('price', {
+          // Ce que la gérante tape est écrit dans la langue de l'écran qu'elle a
+          // sous les yeux : la référence se recale ici, sinon une bascule laissée
+          // sans réécriture (montant illisible) la ferait relire une frappe
+          // neuve avec les séparateurs d'une langue qu'elle a quittée.
+          onChange: () => {
+            priceDisplayRef.current = display;
+          },
+        })}
       />
 
       <Field

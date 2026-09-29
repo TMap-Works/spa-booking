@@ -1,3 +1,4 @@
+import { ERROR_CODES, errorMessage } from '@spa/shared';
 import { cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -212,9 +213,22 @@ describe('StaffInviteForm — signalement des champs fautifs', () => {
     expect(await screen.findByRole('button', { name: /Lien copié/ })).toBeTruthy();
   });
 
+  /**
+   * Le bandeau écrit la phrase du **contrat**, pas celle du serveur (#1327).
+   *
+   * Il rangeait `result.message` — un texte écrit par l'action serveur, donc figé
+   * dans la langue de la requête qui l'a obtenu. Le formulaire garde désormais le
+   * code et en lit la phrase au rendu. La phrase attendue est **lue** dans
+   * `errorMessage` et jamais recopiée : un littéral resterait vert le jour où ce
+   * formulaire cesserait de consulter la table.
+   */
   it('affiche le refus du serveur en bandeau, sans marquer de champ', async () => {
     inviteStaffAccountAction.mockResolvedValue({
       ok: false,
+      code: ERROR_CODES.EMAIL_ALREADY_REGISTERED,
+      // Le message du serveur, que le bandeau n'affiche plus : il est ici pour
+      // que la doublure ait la forme d'un vrai refus, et pour que l'assertion
+      // ci-dessous prouve qu'il ne traverse pas.
       message: 'Cette adresse est déjà utilisée.',
     });
 
@@ -227,7 +241,10 @@ describe('StaffInviteForm — signalement des champs fautifs', () => {
 
     const alertes = screen.getAllByRole('alert');
     expect(alertes).toHaveLength(1);
-    expect(alertes[0]?.textContent).toContain('Cette adresse est déjà utilisée.');
+    expect(alertes[0]?.textContent).toContain(
+      errorMessage(ERROR_CODES.EMAIL_ALREADY_REGISTERED, 'fr'),
+    );
+    expect(alertes[0]?.textContent).not.toContain('Cette adresse est déjà utilisée.');
     expect(invalide(EMAIL)).toBe(false);
   });
 });

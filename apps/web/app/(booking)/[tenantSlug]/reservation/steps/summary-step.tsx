@@ -3,17 +3,19 @@
 import {
   ERROR_CODES,
   type BookedAppointment,
+  type Locale,
   type PublicService,
   type PublicTenant,
   type UtcInstant,
 } from '@spa/shared';
-import { useTranslations } from 'next-intl';
+import { useLocale, useTranslations } from 'next-intl';
 import { useState } from 'react';
 
 import { BookingActionBar } from '@/components/booking/summary-bar';
 import { Button } from '@/components/ui/button';
 import { Notification } from '@/components/ui/notification';
 import type { ContactDraft } from '@/lib/booking/draft';
+import { refusalMessage, type Refusal } from '@/lib/refusal';
 
 import { requestBooking } from '../booking-request';
 
@@ -49,20 +51,6 @@ interface SummaryStepProps {
 }
 
 /**
- * Ce qui s'affiche au-dessus du récapitulatif quand la réservation est refusée.
- *
- * Un seul ton depuis #1222, et c'est pourquoi il n'est plus porté ici : le
- * refus d'adresse — `CLIENT_EMAIL_NOT_BOOKABLE`, en `warning` parce qu'il
- * désignait une correction à un écran d'ici — n'est plus émis par aucune route.
- * Les deux refus que cet écran **traite** partent ailleurs (`onSlotLost`,
- * `onSignInRequired`) ; ce qui reste est la panne, et une panne est `danger`.
- */
-interface Refusal {
-  readonly title: string;
-  readonly body: string;
-}
-
-/**
  * Récapitulatif et validation — quatrième critère d'acceptation de #45.
  *
  * ## Ce que #1051 y change
@@ -95,14 +83,20 @@ interface Refusal {
  * Un double clic ne doit jamais produire deux réservations (skill web-frontend
  * §3).
  *
- * ## La langue (#846)
+ * ## La langue (#846, #1327)
  *
- * Le seul code de refus que cet écran transforme encore en phrase est traité
- * chez l'orchestrateur — `SLOT_NO_LONGER_AVAILABLE` —, et il a sa clé. Le refus
- * générique, lui, affiche `result.message` : c'est la phrase que la route a
- * écrite (traduite depuis le catalogue) ou celle que l'API a renvoyée, et la
- * seconde appartient à l'API — la reformuler ici effacerait le seul détail
- * qu'on ait d'une panne qu'aucun code ne nomme.
+ * Les deux codes que cet écran **traite** partent ailleurs — `onSlotLost`,
+ * `onSignInRequired` —, et l'orchestrateur en écrit les phrases. Ce qui reste
+ * est la panne, et une panne est `danger` : un seul ton depuis #1222, le refus
+ * d'adresse en `warning` n'étant plus émis par aucune route.
+ *
+ * Ce refus générique garde le **code** et rien d'autre (#1327). Il affichait
+ * `result.message`, c'est-à-dire la phrase que la route avait écrite : rangée
+ * dans l'état du composant, elle restait en français quand la cliente basculait
+ * l'écran en anglais, sous un titre qui, lui, suivait le rendu. La phrase se
+ * calcule donc au rendu, par `errorMessage` du contrat partagé
+ * (`lib/refusal.ts`) — c'est la même table que la route consultait, lue dans la
+ * langue de ce rendu-ci.
  */
 export function SummaryStep({
   tenant,
@@ -118,6 +112,7 @@ export function SummaryStep({
   onSignInRequired,
 }: SummaryStepProps) {
   const t = useTranslations('booking');
+  const locale = useLocale() as Locale;
   const [submitting, setSubmitting] = useState(false);
   const [refusal, setRefusal] = useState<Refusal | null>(null);
 
@@ -157,9 +152,15 @@ export function SummaryStep({
         // réparer tout seul, et `draft.ts` interdit déjà d'y arriver.
         dataConsent: contact.consent,
       },
-      // La phrase de repli, quand la route ne rend rien d'affichable — réseau
-      // coupé, passerelle qui rend du HTML. Elle est écrite ici parce que c'est
-      // ici qu'on a le catalogue traduit sous la main.
+      // Le message de repli du corps de réponse, quand la route ne rend rien
+      // d'affichable — réseau coupé, passerelle qui rend du HTML. Il est écrit
+      // ici parce que c'est ici qu'on a le catalogue traduit sous la main.
+      //
+      // Cet écran ne l'affiche plus depuis #1327 : il garde le code que
+      // `requestBooking` pose dans ces deux cas — `SERVICE_UNAVAILABLE` et
+      // `INTERNAL_ERROR` — et en écrit la phrase au rendu. Le champ reste au
+      // contrat JSON de `compte/reservation/route.ts`, où il est le diagnostic
+      // que l'onglet réseau et les journaux donnent à lire.
       t('tunnel.actions.unexpectedError'),
     );
 
@@ -194,7 +195,7 @@ export function SummaryStep({
 
     // Tout le reste est une panne, et se dit comme telle : aucun autre code ne
     // désigne de correction que cet écran saurait proposer.
-    setRefusal({ title: t('tunnel.summaryStep.failureTitle'), body: result.message });
+    setRefusal({ code: result.code });
     // Le bouton se réarme : la panne est peut-être passagère, et sans cela la
     // seule issue offerte serait le rechargement de la page.
     setSubmitting(false);
@@ -210,8 +211,8 @@ export function SummaryStep({
            coordonnées » n'existait que pour le refus d'adresse, qui n'est plus
            émis. Une panne ne se corrige pas en changeant de coordonnées, et le
            « Modifier » du bloc de coordonnées reste à deux lignes d'ici. */
-        <Notification tone="danger" title={refusal.title}>
-          <p>{refusal.body}</p>
+        <Notification tone="danger" title={t('tunnel.summaryStep.failureTitle')}>
+          <p>{refusalMessage(refusal, locale)}</p>
         </Notification>
       )}
 

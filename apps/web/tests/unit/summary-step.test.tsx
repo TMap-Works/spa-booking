@@ -1,3 +1,4 @@
+import { ERROR_CODES, errorMessage } from '@spa/shared';
 import { cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -239,10 +240,19 @@ describe('le bouton de soumission se désactive dès le premier clic', () => {
     expect(onSlotLost).toHaveBeenCalledTimes(1);
   });
 
+  /**
+   * Le refus générique dit la phrase du **contrat**, pas celle de la route (#1327).
+   *
+   * L'écran rangeait `result.message` : la phrase de la route, figée dans la
+   * langue où elle a été obtenue, sous un titre qui, lui, suivait le rendu. Il
+   * garde désormais le code et en lit la phrase au rendu — celle-ci est donc
+   * **lue** dans `errorMessage` et jamais recopiée.
+   */
   it('réarme le bouton après une erreur passagère', async () => {
     bookAppointmentAction.mockResolvedValue({
       ok: false,
-      code: 'SERVICE_UNAVAILABLE',
+      code: ERROR_CODES.SERVICE_UNAVAILABLE,
+      // Le message de la route, que l'écran n'affiche plus.
       message: 'Service injoignable.',
     });
 
@@ -251,7 +261,10 @@ describe('le bouton de soumission se désactive dès le premier clic', () => {
 
     await user.click(screen.getByRole('button', { name: /Confirmer la réservation/ }));
 
-    expect(screen.getByRole('alert').textContent).toContain('Service injoignable.');
+    const alerte = screen.getByRole('alert').textContent ?? '';
+
+    expect(alerte).toContain(errorMessage(ERROR_CODES.SERVICE_UNAVAILABLE, 'fr'));
+    expect(alerte).not.toContain('Service injoignable.');
     expect(
       screen.getByRole('button', { name: /Confirmer la réservation/ }),
     ).toHaveProperty('disabled', false);

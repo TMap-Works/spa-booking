@@ -18,6 +18,7 @@ import { Button } from '@/components/ui/button';
 import { Field } from '@/components/ui/field';
 import { Notification, type NotificationTone } from '@/components/ui/notification';
 import { PasswordField } from '@/components/ui/password-field';
+import { refusalMessage, type Refusal } from '@/lib/refusal';
 import type { SessionNotice } from '@/lib/session-refresh';
 
 import { loginAction } from '../actions';
@@ -86,7 +87,14 @@ export function LoginForm({ tenantSlug, notice }: LoginFormProps) {
    * ouverte, et c'est celui du produit où il faut le moins en poser.
    */
   const returnTo = safeReturnPath(useSearchParams().get(RETURN_QUERY_KEY), tenantSlug);
-  const [failure, setFailure] = useState<string | null>(null);
+  /*
+   * Le **code** du refus, pas sa phrase (#1327).
+   *
+   * Le sélecteur de langue rejoue la route sans démonter ce formulaire : une
+   * phrase rangée ici resterait écrite dans la langue d'avant, sous un titre
+   * « Sign-in refused » qui, lui, suit le rendu. Voir `lib/refusal.ts`.
+   */
+  const [failure, setFailure] = useState<Refusal | null>(null);
   /*
    * Les refus des champs viennent de zod, donc de `zodErrorMap` — « Saisissez
    * une adresse e-mail valable. » et non « Enter a valid email address. » sous un
@@ -121,20 +129,7 @@ export function LoginForm({ tenantSlug, notice }: LoginFormProps) {
     const result = await loginAction(tenantSlug, values);
 
     if (!result.ok) {
-      /*
-       * L'action rend déjà une phrase dans la langue de la requête
-       * (`errorMessage`, #847). Celle-ci est réécrite ici pour une seule raison :
-       * `INVALID_CREDENTIALS` doit rester **indistinct** — ni « adresse
-       * inconnue », ni « mot de passe faux » —, et c'est cet écran-là qui en
-       * répond. La formulation du catalogue est la même que celle du contrat ;
-       * l'avoir en propre est ce qui garantit qu'un durcissement du message
-       * générique ne la rendra jamais bavarde.
-       */
-      setFailure(
-        result.code === ERROR_CODES.INVALID_CREDENTIALS
-          ? t('invalidCredentials')
-          : result.message,
-      );
+      setFailure({ code: result.code });
       return;
     }
 
@@ -176,7 +171,22 @@ export function LoginForm({ tenantSlug, notice }: LoginFormProps) {
 
       {failure === null ? null : (
         <Notification tone="danger" title={t('failureTitle')}>
-          <p>{failure}</p>
+          {/*
+            La phrase est écrite ici, dans la langue de ce rendu (#1327).
+
+            `INVALID_CREDENTIALS` a sa propre entrée au catalogue pour une seule
+            raison : il doit rester **indistinct** — ni « adresse inconnue », ni
+            « mot de passe faux » —, et c'est cet écran-là qui en répond. La
+            formulation est la même que celle du contrat ; l'avoir en propre est
+            ce qui garantit qu'un durcissement du message générique ne la rendra
+            jamais bavarde. Tout autre code retombe sur la phrase du contrat,
+            traduite (`lib/refusal.ts`).
+          */}
+          <p>
+            {refusalMessage(failure, locale, (code) =>
+              code === ERROR_CODES.INVALID_CREDENTIALS ? t('invalidCredentials') : null,
+            )}
+          </p>
         </Notification>
       )}
 

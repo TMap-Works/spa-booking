@@ -2,7 +2,13 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import type { Locale, Service, ServiceCategory } from '@spa/shared';
+import {
+  ERROR_CODES,
+  errorMessage,
+  type Locale,
+  type Service,
+  type ServiceCategory,
+} from '@spa/shared';
 import { cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { renderToStaticMarkup } from 'react-dom/server';
@@ -292,7 +298,10 @@ describe('back-office — la prestation créée s’annonce sur sa fiche', () =>
   it('n’annonce rien quand la création échoue', async () => {
     createServiceAction.mockResolvedValue({
       ok: false,
-      code: 'VALIDATION_ERROR',
+      code: ERROR_CODES.VALIDATION_ERROR,
+      // Le message de l'action serveur, que le bandeau n'affiche plus depuis
+      // #1327 : le formulaire garde le code et en lit la phrase au rendu, sans
+      // quoi ce refus restait en français après une bascule de langue.
       message: 'La prestation saisie est invalide.',
     });
     const { container, rerender } = render(ecranDeCreation());
@@ -300,7 +309,9 @@ describe('back-office — la prestation créée s’annonce sur sa fiche', () =>
 
     await creer(user, 'Gommage corps');
 
-    expect(await screen.findByText('La prestation saisie est invalide.')).toBeDefined();
+    expect(
+      await screen.findByText(errorMessage(ERROR_CODES.VALIDATION_ERROR, 'fr')),
+    ).toBeDefined();
     expect(push).not.toHaveBeenCalled();
 
     // Même en ouvrant une fiche de son propre chef, il n'y a rien à annoncer :
