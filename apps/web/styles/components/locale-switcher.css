@@ -1,10 +1,15 @@
 /*
- * Composant — Sélecteur de langue (#845)
+ * Composant — Sélecteur de langue (#845, #1326)
  * =============================================================================
  *
- * Un `<form>` et un bouton par langue, posé dans les trois coquilles : le pied
- * du gabarit de salon (vitrine et espace client) et le pied du rail du
- * back-office.
+ * Un `<form>` et un bouton par langue, posé dans les coquilles qui portent un
+ * pied — le gabarit de salon (vitrine et espace client), le rail du back-office,
+ * le rail de la console, le tunnel de réservation — et, depuis #1326, sur les
+ * écrans qui n'en ont aucun : la page introuvable et les quatre volets
+ * d'identification (connexion et invitation du back-office, connexion de la
+ * console, inscription d'un salon), auxquels s'ajoute le pied de l'accueil de la
+ * plateforme. Un visiteur dont le navigateur est en français y était sans issue
+ * vers l'anglais, et réciproquement.
  *
  * Il n'introduit aucune variante de bouton : les deux boutons sont ceux du
  * design system — `--neutral` pour la langue affichée, `--quiet` pour l'autre.
@@ -23,10 +28,10 @@
   flex-wrap: wrap;
   align-items: center;
   /*
-   * Les deux coquilles qui le portent sont des colonnes flex — le bloc du pied
-   * de salon et le pied du rail admin —, dont les enfants s'étirent par défaut.
-   * Sans cela, le sélecteur occuperait toute la largeur et ses deux boutons
-   * flotteraient à gauche d'un bloc vide.
+   * Les coquilles qui le portent sont des colonnes flex — le bloc du pied de
+   * salon, le pied du rail admin, celui du rail de la console —, dont les
+   * enfants s'étirent par défaut. Sans cela, le sélecteur occuperait toute la
+   * largeur et ses deux boutons flotteraient à gauche d'un bloc vide.
    */
   align-self: flex-start;
   gap: var(--spa-space-2);
@@ -53,4 +58,40 @@
  */
 .spa-locale-switcher .spa-button[aria-current] {
   font-weight: var(--spa-font-weight-bold);
+}
+
+/*
+ * Les deux réglages des écrans sans pied — #1326
+ * -----------------------------------------------------------------------------
+ *
+ * Deux modificateurs, et non une classe par écran : les six surfaces ajoutées
+ * n'ont que ces deux besoins, et une règle par gabarit aurait fait grossir cette
+ * feuille d'un bloc à chaque page qui accueille le sélecteur.
+ */
+
+/*
+ * Au milieu de la colonne, et non contre son bord.
+ *
+ * La page introuvable est une colonne centrée — `.spa-empty-state` de `base.css`
+ * porte `align-items: center` et `text-align: center` —, que l'`align-self:
+ * flex-start` ci-dessus décalerait à gauche du texte qu'elle centre. Les volets
+ * d'identification sont des colonnes dont les enfants s'étirent
+ * (`.spa-auth__panel`, `auth.css`) : le sélecteur y est ramené à la largeur de
+ * ses deux boutons et posé au milieu du formulaire qu'il suit, plutôt que contre
+ * son bord de départ. Dans le pied de l'accueil, qui est une **ligne**, la même
+ * déclaration centre le sélecteur sur la hauteur de la ligne — comme le fait
+ * déjà le sélecteur de thème, dont les boutons n'ont pas la ligne de base.
+ */
+.spa-locale-switcher--centered {
+  align-self: center;
+}
+
+/*
+ * Détaché de ce qui le précède, là où rien ne l'en sépare : sous le bouton de
+ * soumission d'un formulaire d'identification, sous la phrase d'une page
+ * introuvable. Un sélecteur collé au bouton principal se lirait comme une
+ * troisième action du formulaire.
+ */
+.spa-locale-switcher--detached {
+  margin-block-start: var(--spa-space-6);
 }
