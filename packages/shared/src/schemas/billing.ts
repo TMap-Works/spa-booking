@@ -12,6 +12,7 @@
 
 import { z } from 'zod';
 
+import { money, type Money } from '../common/money';
 import { utcInstantSchema } from '../common/time';
 import { submittedLocaleSchema } from '../locale/index';
 
@@ -55,6 +56,52 @@ export const SUBSCRIPTION_PLAN = Object.freeze({
   interval: 'month',
   trialDays: 14,
 } as const);
+
+/**
+ * Le prix de l'offre, **sous la forme d'un montant du contrat** — #1330.
+ *
+ * ## Ce que cette constante change, et ce qu'elle ne change pas
+ *
+ * Elle ne change **aucun montant** : c'est le même entier et la même devise que
+ * `SUBSCRIPTION_PLAN` ci-dessus, et elle en dérive plutôt que de les recopier.
+ * Ce qu'elle change est le **type** que voient les écrans : `Money`, dont la
+ * `currency` est une chaîne, là où `SUBSCRIPTION_PLAN.currency` est le littéral
+ * `'EUR'` que `as const` fige. Un affichage qui lit celle-ci ne peut donc plus se
+ * spécialiser sur l'euro — ni au type, ni par un symbole écrit à la main : il met
+ * en forme la devise **que la donnée porte**, quelle qu'elle soit.
+ *
+ * C'est tout l'objet du troisième critère de #1330, et c'en est aussi la limite.
+ * La recette de traduction a relevé « 14 days free, then €29 a month » sur
+ * l'inscription d'un salon américain, et deux lectures s'en suivent :
+ *
+ * - **un écran qui code l'euro en dur** est un défaut d'affichage, et il se corrige
+ *   ici, par cette constante ;
+ * - **facturer un salon de Chicago en euros** est une question de prix, donc une
+ *   **décision commerciale du PO** — déjà signalée le 2026-09-19, toujours
+ *   ouverte, et explicitement laissée ouverte par #1330 lui-même (« Le ticket se
+ *   borne à afficher le prix dans la devise décidée »).
+ *
+ * Ce fichier ne la tranche donc pas, et n'établit **aucune correspondance
+ * pays → devise** : il n'y a pas de table `US → USD` ici, parce qu'un tarif en
+ * dollars n'est pas la traduction d'un tarif en euros mais un autre tarif. Le
+ * comportement d'avant #1330 reste le défaut — un prix unique, facturé et affiché
+ * en euros, `SUBSCRIPTION_PLAN` en étant la source. Le jour où le PO décide, il y
+ * a un seul endroit à changer, et l'affichage suit sans qu'on y retouche.
+ *
+ * Passée par `money()` et non écrite à la main : c'est `moneySchema` qui vérifie
+ * que le montant est un entier dans les bornes et que le code devise a la forme
+ * ISO 4217. Une offre mal libellée échouerait au chargement du module plutôt que
+ * sur la page de paiement d'un salon.
+ *
+ * Gelée comme `SUBSCRIPTION_PLAN` au-dessus : c'est désormais l'objet même que
+ * les écrans partagent — `apps/web/lib/plan.ts` l'exporte tel quel sous
+ * `PLAN_MONEY` — et non plus une copie par consommateur. Une écriture sur ce
+ * montant changerait le prix annoncé partout à la fois ; `Object.freeze` la
+ * refuse au lieu de la propager.
+ */
+export const SUBSCRIPTION_PLAN_PRICE: Money = Object.freeze(
+  money(SUBSCRIPTION_PLAN.amountMinor, SUBSCRIPTION_PLAN.currency),
+);
 
 /**
  * Où en est la facturation d'un salon.

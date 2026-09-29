@@ -1,5 +1,5 @@
 import {
-  SUBSCRIPTION_PLAN,
+  SUBSCRIPTION_PLAN_PRICE,
   type Money,
   type PlatformSignupWeek,
   type PlatformTenantOrigin,
@@ -97,9 +97,12 @@ export function recurringRevenue(byStatus: Readonly<Record<TenantBillingStatus, 
   readonly atRisk: Money;
   readonly inTrial: Money;
 } {
+  // `SUBSCRIPTION_PLAN_PRICE` et non les deux champs de `SUBSCRIPTION_PLAN` lus
+  // séparément (#1330) : le prix de l'offre est **un** montant, et le recomposer
+  // ici laissait deux endroits décider de la devise du revenu récurrent.
   const monthly = (count: number): Money => ({
-    amountMinor: count * SUBSCRIPTION_PLAN.amountMinor,
-    currency: SUBSCRIPTION_PLAN.currency,
+    amountMinor: count * SUBSCRIPTION_PLAN_PRICE.amountMinor,
+    currency: SUBSCRIPTION_PLAN_PRICE.currency,
   });
 
   return {
