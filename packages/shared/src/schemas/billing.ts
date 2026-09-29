@@ -18,6 +18,35 @@ import { submittedLocaleSchema } from '../locale/index';
 /**
  * L'offre unique. Le montant est en **plus petite unité** de la devise
  * (centimes), jamais un flottant — CLAUDE.md, « Argent ».
+ *
+ * ## `currency` est la devise **facturée**, pas une devise d'affichage (#1308)
+ *
+ * `amountMinor` et `currency` sont les deux champs que
+ * `payments/billing/billing.service.ts` passe à Stripe Checkout : c'est, au
+ * centime près, ce dont la carte du salon est débitée chaque mois. Le PO a fixé
+ * l'offre à **29 € par mois** (ADR 0016) ; en changer la devise ici ne changerait
+ * pas un libellé, cela changerait la somme prélevée.
+ *
+ * C'est ce qui permet à l'accueil public de montrer **deux devises sur le même
+ * écran** sans se contredire — l'écart relevé par #1308, et la raison qu'il
+ * demandait d'écrire ici :
+ *
+ * - le **bloc tarifaire** (`apps/web/app/page.tsx`, section `#tarifs`) annonce
+ *   *ce* prix : « 29 € » en français comme en anglais. Il est mis en forme selon
+ *   la langue lue, mais pas converti — une facture ne change pas de montant
+ *   selon la langue dans laquelle on la lit ;
+ * - la **vignette du héros** (`apps/web/components/home/booking-preview.tsx`)
+ *   annonce le prix d'une prestation d'illustration, que personne ne paie et qui
+ *   n'est la contrepartie d'aucune facture. Sa devise peut donc suivre la langue
+ *   lue — `$75.00` en anglais, `75,00 €` en français (#1300).
+ *
+ * Autrement dit : un seul de ces deux montants est un prix. Les deux autres
+ * suites possibles qu'examinait #1308 demandent un arbitrage humain et ne sont
+ * pas tranchées ici — convertir le tarif à un taux suppose une source de taux et
+ * une règle de fraîcheur, que #1308 range hors périmètre MVP en l'état ; le
+ * libeller *et* le facturer en dollars serait un changement de prix, donc une
+ * décision du PO, pas une reprise d'affichage. Tant qu'aucune n'est tranchée, le
+ * montant et la devise ci-dessous ne bougent pas.
  */
 export const SUBSCRIPTION_PLAN = Object.freeze({
   name: 'Spa & Salon Booking',
