@@ -3,7 +3,7 @@ import type { Locale } from '@spa/shared';
 import type { Money } from '../payments.types';
 import type { ReceiptSettlement } from '../receipt.types';
 import {
-  receiptFormattingLocale,
+  formattingLocale,
   withPlainSeparators,
   type ReceiptDisplay,
 } from './receipt-pdf.locale';
@@ -48,8 +48,9 @@ import { receiptVocabulary } from './receipt-pdf.vocabulary';
  *
  * Chaque fonction prend donc un {@link ReceiptDisplay} : la langue **et** le pays
  * de l'établissement, celui que `ReceiptIssuer.countryCode` porte déjà. La règle
- * qui en tire l'étiquette est écrite une fois, dans `receipt-pdf.locale.ts`, et
- * c'est la même que celle du front.
+ * qui en tire l'étiquette est écrite une fois pour tout le produit, dans
+ * `@spa/shared` (#1343), et lue ici par `receipt-pdf.locale.ts` : ce n'est plus
+ * seulement « la même que celle du front », c'est la même fonction.
  */
 
 /**
@@ -90,7 +91,7 @@ export function printable(text: string): string {
  * (payments-stripe §5).
  */
 export function formatMoney(money: Money, display: ReceiptDisplay): string {
-  const tag = receiptFormattingLocale(display.locale, display.countryCode);
+  const tag = formattingLocale(display.locale, display.countryCode);
   const options: Intl.NumberFormatOptions = {
     style: 'currency',
     currency: money.currency,
@@ -109,7 +110,7 @@ export function formatMoney(money: Money, display: ReceiptDisplay): string {
  * sans imprimer « 20,00 % » là où « 20 % » suffit.
  */
 export function formatTaxRate(rateBps: number, display: ReceiptDisplay): string {
-  const tag = receiptFormattingLocale(display.locale, display.countryCode);
+  const tag = formattingLocale(display.locale, display.countryCode);
 
   // Mêmes séparateurs que les montants du même rouleau — voir
   // {@link withPlainSeparators}. Un taux au centième de point écrit « 20.25 % »
@@ -133,7 +134,7 @@ export function formatTaxRate(rateBps: number, display: ReceiptDisplay): string 
  */
 export function formatDate(instant: Date, timeZone: string, display: ReceiptDisplay): string {
   return printable(
-    new Intl.DateTimeFormat(receiptFormattingLocale(display.locale, display.countryCode), {
+    new Intl.DateTimeFormat(formattingLocale(display.locale, display.countryCode), {
       timeZone,
       day: '2-digit',
       month: '2-digit',
@@ -163,7 +164,7 @@ export function formatDate(instant: Date, timeZone: string, display: ReceiptDisp
 export function formatDateTime(instant: Date, timeZone: string, display: ReceiptDisplay): string {
   const words = receiptVocabulary(display.locale);
   const time = new Intl.DateTimeFormat(
-    receiptFormattingLocale(display.locale, display.countryCode),
+    formattingLocale(display.locale, display.countryCode),
     { timeZone, hour: '2-digit', minute: '2-digit' },
   ).format(instant);
 
