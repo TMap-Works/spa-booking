@@ -104,7 +104,9 @@ const SMS_ECHOUE: NotificationTrace = {
   channel: 'sms',
   status: 'failed',
   attemptCount: 2,
-  failureReason: 'Aucun expéditeur n’est configuré pour ce canal de notification.',
+  // Un code depuis #1328, et plus la phrase que l'API rédigeait : c'est l'écran
+  // qui choisit la phrase, dans la langue de qui regarde.
+  failureReason: 'sender_not_configured',
   createdAt: '2026-08-01T08:00:01.000Z',
 };
 
@@ -189,7 +191,7 @@ describe('le statut d’envoi est visible dans le back-office', () => {
 
     renderPanel();
 
-    expect(await screen.findByText(/Aucun expéditeur n’est configuré/)).toBeDefined();
+    expect(await screen.findByText(/L’envoi de messages n’est pas configuré/)).toBeDefined();
   });
 
   it('demande le journal du rendez-vous ouvert, et de lui seul', async () => {
@@ -261,6 +263,62 @@ describe('l’heure affichée est celle du salon', () => {
 
     expect(screen.getByText(/Inscrit le/)).toBeDefined();
     expect(screen.queryByText(/Envoyé le/)).toBeNull();
+  });
+});
+
+describe('le motif d’échec est traduit, jamais rendu brut (#1328)', () => {
+  /** Le motif tel qu'il s'affiche — la seule sortie que ce ticket change. */
+  function motifAffiche(failureReason: string | undefined): string | null {
+    const { container } = render(
+      <NotificationStatusList
+        notifications={[{ ...SMS_ECHOUE, failureReason }]}
+        timeZone={TIMEZONE}
+      />,
+    );
+
+    return container.querySelector('.spa-admin-notifications__reason')?.textContent ?? null;
+  }
+
+  it.each([
+    ['sender_not_configured', 'L’envoi de messages n’est pas configuré sur ce canal.'],
+    ['template_missing', 'Aucun modèle ne permet de composer ce message.'],
+    ['appointment_gone', 'Le rendez-vous que ce message annonce n’existe plus.'],
+    [
+      'recipient_unreachable',
+      'La cliente n’est plus joignable sur ce canal : vérifiez ses coordonnées sur sa fiche.',
+    ],
+    ['unknown', 'L’envoi a échoué pour un motif indéterminé.'],
+  ])('rend le code %s dans la langue de l’écran', (code, phrase) => {
+    expect(motifAffiche(code)).toBe(phrase);
+  });
+
+  it('replie un motif déjà rédigé en français — la donnée d’avant le ticket', () => {
+    // Deuxième critère d'acceptation : la migration est de contrat, pas de
+    // données. Une ligne écrite avant #1328 porte cette phrase en base, et rien
+    // ne la réécrit. Elle doit rester **affichable**, sans écran vide et sans
+    // laisser passer du français dans un back-office anglophone.
+    expect(motifAffiche("Aucun expéditeur n'est configuré pour ce canal de notification.")).toBe(
+      'L’envoi a échoué pour un motif indéterminé.',
+    );
+  });
+
+  it('replie un code que ce front ne connaît pas, plutôt que de le montrer', () => {
+    // Le cas d'un déploiement d'API en avance sur le front. `t()` sur une clé
+    // absente rendrait `admin-planning.notifications.failureReasons.…` en clair,
+    // ou lèverait un `MISSING_MESSAGE` : dans les deux cas l'information qui
+    // explique une cliente absente serait perdue.
+    const affiche = motifAffiche('quota_exceeded');
+
+    expect(affiche).toBe('L’envoi a échoué pour un motif indéterminé.');
+    expect(affiche).not.toContain('failureReasons');
+    expect(affiche).not.toContain('MISSING_MESSAGE');
+  });
+
+  it('n’affiche rien du tout quand il n’y a pas d’échec', () => {
+    // Ni la ligne vide qu'une chaîne blanche aurait produite : le repli ne doit
+    // pas inventer un échec sur un message parti.
+    expect(motifAffiche(undefined)).toBeNull();
+    expect(motifAffiche('   ')).toBeNull();
   });
 });
 

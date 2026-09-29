@@ -178,6 +178,13 @@
       "pending": "En attente",
       "sent": "Envoyé",
       "failed": "Échec"
+    },
+    "failureReasons": {
+      "sender_not_configured": "L’envoi de messages n’est pas configuré sur ce canal.",
+      "template_missing": "Aucun modèle ne permet de composer ce message.",
+      "appointment_gone": "Le rendez-vous que ce message annonce n’existe plus.",
+      "recipient_unreachable": "La cliente n’est plus joignable sur ce canal : vérifiez ses coordonnées sur sa fiche.",
+      "unknown": "L’envoi a échoué pour un motif indéterminé."
     }
   },
   "actions": {

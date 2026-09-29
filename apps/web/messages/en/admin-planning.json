@@ -178,6 +178,13 @@
       "pending": "Pending",
       "sent": "Sent",
       "failed": "Failed"
+    },
+    "failureReasons": {
+      "sender_not_configured": "Sending messages is not configured on this channel.",
+      "template_missing": "No template is available to compose this message.",
+      "appointment_gone": "The appointment this message announces no longer exists.",
+      "recipient_unreachable": "The client can no longer be reached on this channel: check their contact details on their record.",
+      "unknown": "Sending failed for an undetermined reason."
     }
   },
   "actions": {
