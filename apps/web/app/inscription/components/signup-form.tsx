@@ -314,7 +314,14 @@ export function SignupForm() {
   const countryField = register('countryCode');
   // Les fuseaux proposés suivent le pays choisi : un salon de Chicago n'a que
   // faire de `Indian/Reunion` (#1103).
-  const timezones = timezoneChoices(watch('countryCode'));
+  // Nommés dans la langue lue — « Eastern Time (New York) » plutôt que
+  // « America/New_York » (#1330). La valeur soumise reste l'identifiant IANA.
+  //
+  // Mémorisé comme `countries` : ce formulaire se rend à chaque frappe, et la
+  // liste ne dépend que du pays et de la langue. Sans ce cache, chaque caractère
+  // saisi dans le nom du salon relançait sept mises en forme de fuseau.
+  const country = watch('countryCode');
+  const timezones = useMemo(() => timezoneChoices(country, locale), [country, locale]);
 
   return (
     <form
@@ -413,9 +420,9 @@ export function SignupForm() {
             error={fieldError('timezone')}
             {...register('timezone')}
           >
-            {timezones.map((timezone) => (
-              <option key={timezone} value={timezone}>
-                {timezone}
+            {timezones.map((choice) => (
+              <option key={choice.timezone} value={choice.timezone}>
+                {choice.label}
               </option>
             ))}
           </Select>

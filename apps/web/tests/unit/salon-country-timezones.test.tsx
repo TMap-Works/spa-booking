@@ -65,6 +65,9 @@ const CA_TIMEZONES = [
   'America/Halifax',
   'America/St_Johns',
   'America/Winnipeg',
+  // La Saskatchewan, entrée avec #1330 : elle ne change pas d'heure, et un salon
+  // de Regina n'avait aucun fuseau juste à choisir.
+  'America/Regina',
   'America/Edmonton',
   'America/Vancouver',
 ];
@@ -104,6 +107,13 @@ function optionValues(select: HTMLSelectElement): string[] {
   return within(select)
     .getAllByRole('option')
     .map((option) => (option as HTMLOptionElement).value);
+}
+
+/** Ce que la liste déroulante **affiche**, dans le même ordre. */
+function optionLabels(select: HTMLSelectElement): string[] {
+  return within(select)
+    .getAllByRole('option')
+    .map((option) => option.textContent ?? '');
 }
 
 describe.each(FORMS)('$name — le pays règle le fuseau', ({ render: renderForm, currencyLabel }) => {
@@ -170,6 +180,30 @@ describe.each(FORMS)('$name — le pays règle le fuseau', ({ render: renderForm
 
     expect(optionValues(timezone)).toEqual(US_TIMEZONES);
     expect(timezone.value).toBe('America/New_York');
+  });
+
+  it('affiche le fuseau en clair, sans montrer l’identifiant IANA (#1330)', () => {
+    // La faute relevée par la recette de traduction : une gérante lisait
+    // « America/St_Johns » dans le sélecteur qui ouvre son salon. L'étiquette est
+    // lisible, la **valeur** reste l'identifiant — c'est la seule forme que l'API
+    // stocke.
+    renderForm();
+    const { timezone } = selects(currencyLabel);
+
+    // Le traducteur de test rend le français : c'est donc la preuve que
+    // l'étiquette suit la langue lue, sans une entrée de catalogue par fuseau.
+    expect(optionLabels(timezone)).toEqual([
+      'heure de l’Est nord-américain (New York)',
+      'heure du centre nord-américain (Chicago)',
+      'heure des Rocheuses (Denver)',
+      // Phoenix ne change pas d'heure : « normale » y est exact toute l'année, et
+      // c'est ce qui la distingue de Denver.
+      'heure normale des Rocheuses (Phoenix)',
+      'heure du Pacifique nord-américain (Los Angeles)',
+      'heure de l’Alaska (Anchorage)',
+      'heure normale d’Hawaï - Aléoutiennes (Honolulu)',
+    ]);
+    expect(optionValues(timezone)).toEqual(US_TIMEZONES);
   });
 
   it('n’affiche jamais un fuseau que le formulaire ne porte pas', async () => {

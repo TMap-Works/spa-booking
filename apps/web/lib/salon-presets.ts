@@ -8,16 +8,27 @@
  *
  * ## Un pays, plusieurs fuseaux
  *
- * Les États-Unis en comptent sept et le Canada six : un pays ne peut donc pas
+ * Les États-Unis en comptent sept et le Canada sept : un pays ne peut donc pas
  * porter un fuseau unique (#1103). Choisir un pays présélectionne le **premier**
  * de ses fuseaux et borne la liste proposée à ce pays — on ne propose pas
  * `Indian/Reunion` à un salon de Chicago, et l'erreur la plus probable devient
  * impossible à commettre par simple inattention.
  *
- * Les fuseaux sont proposés sous leur identifiant IANA, sans libellé traduit :
- * c'est la seule forme que l'API stocke (`timeZoneSchema`), et la seule qui ne
- * demande pas une entrée de catalogue par fuseau. L'habillage de ces listes
- * relève des tickets d'internationalisation de l'épique #843.
+ * ## Les fuseaux se lisent, l'API stocke l'identifiant (#1330)
+ *
+ * Ils étaient proposés sous leur identifiant IANA nu — « America/New_York »,
+ * « America/St_Johns » —, ce qui demandait de connaître la nomenclature pour
+ * ouvrir un salon, et laissait une gérante de Saint-Jean de Terre-Neuve deviner
+ * lequel des sept est le sien. Ils portent désormais un libellé lisible et
+ * traduit, « Eastern Time (New York) » / « heure de l'Est nord-américain (New
+ * York) », rendu par {@link timezoneLabel}.
+ *
+ * La **valeur** soumise ne change pas : c'est toujours l'identifiant IANA
+ * canonique, la seule forme que `timeZoneSchema` accepte. Seule l'étiquette de
+ * l'option change, et elle vient d'`Intl` plutôt que d'un catalogue — même
+ * arbitrage que {@link countryLabel} (#1105) : vingt-trois fuseaux à traduire à la
+ * main dans deux langues auraient été quarante-six entrées de catalogue pour
+ * redire ce qu'ICU sait déjà, et qui suivra l'ajout d'un pays sans qu'on y pense.
  *
  * ## Le nom des pays vient d'`Intl`, pas de ce fichier (#1105)
  *
@@ -88,6 +99,12 @@ export const COUNTRY_PRESETS: readonly [CountryPreset, ...CountryPreset[]] = [
       'America/Halifax',
       'America/St_Johns',
       'America/Winnipeg',
+      // La Saskatchewan ne change pas d'heure : elle reste au centre toute
+      // l'année, là où Winnipeg avance en été. Un fuseau à part entière, et non
+      // un synonyme de `America/Winnipeg` sept mois par an — exactement le cas de
+      // `America/Phoenix` chez le voisin du sud. Elle manquait (#1330), et un
+      // salon de Regina n'avait aucun fuseau juste à choisir.
+      'America/Regina',
       'America/Edmonton',
       'America/Vancouver',
     ],
@@ -220,16 +237,133 @@ export function countryChoices(locale: Locale): readonly CountryChoice[] {
 }
 
 /**
- * Les fuseaux à proposer pour un pays — les siens, ou tous si on ne le connaît
- * pas.
+ * Les identifiants des fuseaux d'un pays — les siens, ou tous si on ne le
+ * connaît pas.
  *
  * Le repli n'est pas décoratif : une liste vide rendrait un `<select>` sans
  * option, dont la valeur affichée ne serait plus celle du formulaire. Mieux
  * vaut trop de fuseaux qu'un salon ouvert dans un fuseau que personne n'a
  * choisi.
  */
-export function timezoneChoices(countryCode: string): readonly string[] {
+export function timezonesOf(countryCode: string): readonly string[] {
   return countryPreset(countryCode)?.timezones ?? TIMEZONE_CHOICES;
+}
+
+/**
+ * Les formateurs d'un couple langue/fuseau, montés une fois — #1330.
+ *
+ * Même raison que {@link COUNTRY_NAMES}, et elle pèse davantage ici : un
+ * `Intl.DateTimeFormat` est plus coûteux à construire qu'un `DisplayNames`, et
+ * sans ce cache le sélecteur en construirait un **par option et par rendu** —
+ * sept pour un salon américain, à chaque frappe dans le formulaire d'inscription.
+ */
+const ZONE_NAMES = new Map<string, Intl.DateTimeFormat | null>();
+
+/**
+ * L'instant de référence des libellés de fuseau.
+ *
+ * `longGeneric` ne dépend pas de la saison — c'est tout son intérêt : il rend
+ * « Eastern Time » et non « Eastern Standard Time » ou « Eastern Daylight Time »
+ * selon la date. L'instant reste néanmoins **figé** plutôt que `Date.now()` :
+ * un libellé qui dépendrait de l'heure de la machine ferait d'un test un test
+ * fragile, et d'un rendu serveur puis client deux chaînes qui peuvent différer —
+ * ce que React signale en écart d'hydratation.
+ */
+const ZONE_REFERENCE = Date.UTC(2026, 0, 15, 12, 0, 0);
+
+function zoneFormatter(timezone: string, locale: Locale): Intl.DateTimeFormat | null {
+  const key = `${locale}|${timezone}`;
+  const cached = ZONE_NAMES.get(key);
+
+  if (cached !== undefined) {
+    return cached;
+  }
+
+  let formatter: Intl.DateTimeFormat | null;
+
+  try {
+    formatter = new Intl.DateTimeFormat(locale, {
+      timeZone: timezone,
+      timeZoneName: 'longGeneric',
+    });
+  } catch {
+    // Un fuseau qu'ICU ne connaît pas, ou un moteur sans `longGeneric` : le
+    // repli sur la ville seule vaut mieux qu'un sélecteur qui fait tomber
+    // l'écran.
+    formatter = null;
+  }
+
+  ZONE_NAMES.set(key, formatter);
+
+  return formatter;
+}
+
+/**
+ * La ville d'un identifiant IANA — « America/New_York » → « New York ».
+ *
+ * Le dernier segment, tirets bas remplacés. Ce n'est pas traduit, et ce n'est pas
+ * un oubli : c'est un nom de lieu, du même régime que la voie et la ville d'une
+ * adresse de salon (`components/salon/salon-address.ts`) — on n'écrit pas
+ * « Nouvelle-York ». Ce que la langue change, c'est le nom du fuseau qui
+ * l'accompagne.
+ */
+function timezoneCity(timezone: string): string {
+  const segments = timezone.split('/');
+
+  return (segments[segments.length - 1] ?? timezone).replace(/_/g, ' ');
+}
+
+/**
+ * Le fuseau tel qu'une gérante le lit — « Eastern Time (New York) », « heure de
+ * l'Est nord-américain (New York) » (#1330, deuxième critère d'acceptation).
+ *
+ * Deux informations, et les deux sont nécessaires : le **nom du fuseau** dit à
+ * quelle heure on est, la **ville** dit lequel des sept est le sien. « Eastern
+ * Time » seul laisse une gérante de Detroit hésiter ; « New York » seul ne dit pas
+ * l'heure d'un salon de Toronto, qui partage ce fuseau sans partager ce nom de
+ * ville.
+ *
+ * Le nom vient de la forme `longGeneric` d'ICU, qui est celle du fuseau **hors
+ * saison** : « Eastern Time », jamais « Eastern Standard Time ». Un libellé qui
+ * nommerait l'heure d'hiver serait faux la moitié de l'année, et un libellé qui
+ * suivrait la saison changerait deux fois par an sous les yeux de l'utilisatrice.
+ *
+ * Repli sur la ville seule quand ICU n'a pas de nom générique à rendre : un
+ * sélecteur reste utilisable avec « Antananarivo », il ne l'est plus avec une
+ * option vide.
+ */
+export function timezoneLabel(timezone: string, locale: Locale): string {
+  const city = timezoneCity(timezone);
+  const parts = zoneFormatter(timezone, locale)?.formatToParts(ZONE_REFERENCE);
+  const name = parts?.find((part) => part.type === 'timeZoneName')?.value;
+
+  if (name === undefined || name === '' || name === city) {
+    return city;
+  }
+
+  return `${name} (${city})`;
+}
+
+/** Un fuseau tel qu'un sélecteur l'affiche : sa valeur IANA, et son nom lisible. */
+export interface TimezoneChoice {
+  readonly timezone: string;
+  readonly label: string;
+}
+
+/**
+ * Les fuseaux à proposer pour un pays, nommés dans la langue lue — **celui à
+ * présélectionner en tête**.
+ *
+ * Le pendant de {@link countryChoices}, et la même règle sur l'ordre : celui de
+ * {@link CountryPreset.timezones}, d'est en ouest, et non l'ordre alphabétique du
+ * libellé traduit. Le premier rang porte la présélection du pays (#1103) — la
+ * faire dépendre de la langue l'aurait rendue imprévisible.
+ */
+export function timezoneChoices(countryCode: string, locale: Locale): readonly TimezoneChoice[] {
+  return timezonesOf(countryCode).map((timezone) => ({
+    timezone,
+    label: timezoneLabel(timezone, locale),
+  }));
 }
 
 /** « Maison Lotus & Spa » → « maison-lotus-spa » : l'adresse web proposée. */

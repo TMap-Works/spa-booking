@@ -315,7 +315,13 @@ export function TenantCreateForm() {
   const nameField = register('name');
   const slugField = register('slug');
   const countryField = register('countryCode');
-  const timezones = timezoneChoices(watch('countryCode'));
+  // Nommés dans la langue lue — « Eastern Time (New York) » plutôt que
+  // « America/New_York » (#1330). La valeur soumise reste l'identifiant IANA.
+  //
+  // Pas de `useMemo` ici, contrairement à l'inscription : ce composant rend un
+  // écran de succès par un retour anticipé au-dessus, et un `useMemo` placé
+  // après serait un appel conditionnel de hook.
+  const timezones = timezoneChoices(watch('countryCode'), locale);
 
   return (
     <form className="spa-platform-form" onSubmit={(event) => void submit(event)} noValidate>
@@ -412,9 +418,9 @@ export function TenantCreateForm() {
             error={fieldError('timezone')}
             {...register('timezone')}
           >
-            {timezones.map((timezone) => (
-              <option key={timezone} value={timezone}>
-                {timezone}
+            {timezones.map((choice) => (
+              <option key={choice.timezone} value={choice.timezone}>
+                {choice.label}
               </option>
             ))}
           </Select>
