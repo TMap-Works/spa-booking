@@ -56,7 +56,7 @@
  * fonction `async` déballe la promesse qu'on lui rend, et aucun d'eux n'a changé.
  */
 
-import { ERROR_CODES, errorMessage } from '@spa/shared';
+import { ERROR_CODES, errorMessage, type Locale } from '@spa/shared';
 import { getLocale } from 'next-intl/server';
 
 import { ApiClientError } from '@/lib/api-client';
@@ -102,6 +102,36 @@ export async function failure(error: unknown): Promise<AdminActionFailure> {
 /** Refus de validation : l'appel n'a même pas atteint l'API. */
 export function invalid(message: string): AdminActionFailure {
   return { ok: false, code: ERROR_CODES.VALIDATION_ERROR, message };
+}
+
+/**
+ * La phrase générique d'un refus de validation, dans la langue donnée — #1310.
+ *
+ * C'est le repli de tout `safeParse` en échec des actions serveur : celles du
+ * back-office, celles de la console de l'éditeur, celle de l'inscription. Elle
+ * était recopiée mot pour mot à chacun de ses sites d'appel, alors que sa place
+ * est ici — aux côtés d'`invalid()`, qui pose le code que cette phrase dit.
+ *
+ * Toujours `VALIDATION_ERROR`, et jamais un code choisi pour la phrase qu'il
+ * porte : c'est le code qu'`invalid()` pose, et un refus dont la phrase dirait
+ * autre chose que son code serait illisible pour l'écran, qui trie sur le code.
+ *
+ * ## Pourquoi synchrone, et pourquoi la langue en paramètre
+ *
+ * Synchrone parce qu'un module `'use server'` ne peut pas la porter : il
+ * n'exporte que des fonctions asynchrones, dont chacune devient un point
+ * d'entrée appelable depuis le navigateur — c'est la raison d'être de ce
+ * fichier-ci, dite en tête de module. Elle rejoint donc `invalid()` du même
+ * côté de la frontière, et non `failure()` ni `expired()`, qui lisent la langue
+ * eux-mêmes parce que leurs appelants ne l'ont pas.
+ *
+ * La langue en paramètre, enfin, pour qu'une action qui la lit déjà — parce
+ * qu'elle en fait aussi une carte de zod (#1299) — n'interroge pas la requête
+ * deux fois. Celles qui n'en ont pas besoin par ailleurs passent
+ * `await getLocale()` sur place.
+ */
+export function validationRefusal(locale: Locale): string {
+  return errorMessage(ERROR_CODES.VALIDATION_ERROR, locale);
 }
 
 /**
