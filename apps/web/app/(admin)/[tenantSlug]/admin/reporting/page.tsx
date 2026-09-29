@@ -43,6 +43,7 @@ import {
   type ScopedActivity,
 } from '@/lib/admin/reporting-view';
 import {
+  boundLabel,
   daysInRange,
   parseReportDate,
   parseReportPeriod,
@@ -404,7 +405,7 @@ export default async function ReportingPage({ params, searchParams }: ReportingP
           labelHeader={volumeLabelHeader(axis.groupBy, t)}
           layout={axis.groupBy === 'day' ? 'colonnes' : 'barres'}
           seriesLabel={t('volumeChart.series')}
-          summary={volumeSummary(axis.groupBy, range, noShowWord, t)}
+          summary={volumeSummary(axis.groupBy, range, noShowWord, t, display)}
           title={volumeTitle(axis.groupBy, t)}
           valueHeader={t('volumeChart.valueHeader')}
         />
@@ -558,8 +559,18 @@ function volumeSummary(
   range: ReportRange,
   noShows: string,
   t: ReportingTranslator,
+  display: DisplayLocale,
 ): string {
-  const values = { noShows, from: range.from, to: range.to };
+  // Les bornes sont **localisées** et non recopiées du contrat (#1325) : la
+  // légende annonçait « from 2026-08-31 to 2026-09-29 inclusive », deux dates
+  // ISO brutes, à côté d'un titre de période qui écrivait déjà « 31 August –
+  // 29 September 2026 ». C'est la seule phrase de l'écran qu'un lecteur d'écran
+  // entend pour situer le graphique : elle doit se dire comme le reste.
+  const values = {
+    noShows,
+    from: boundLabel(range.from, display),
+    to: boundLabel(range.to, display),
+  };
 
   if (groupBy === 'staff') {
     return t('volumeChart.summaryStaff', values);

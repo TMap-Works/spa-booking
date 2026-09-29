@@ -398,10 +398,11 @@ export function resolveReportRange(
 export function rangeLabel(range: ReportRange, display: DisplayLocale = FALLBACK_DISPLAY): string {
   const tag = formattingLocale(display.locale, display.countryCode);
 
+  // Une journée seule est une borne nommée seule : c'est exactement ce que
+  // {@link boundLabel} écrit, et le réécrire ici ferait deux façons de dater un
+  // même jour sur un même écran.
   if (range.from === range.to) {
-    return new Intl.DateTimeFormat(tag, { timeZone: 'UTC', dateStyle: 'long' }).format(
-      new Date(`${range.from}T00:00:00Z`),
-    );
+    return boundLabel(range.from, display);
   }
 
   const sameMonth = range.from.slice(0, 7) === range.to.slice(0, 7);
@@ -419,6 +420,28 @@ export function rangeLabel(range: ReportRange, display: DisplayLocale = FALLBACK
   }).format(new Date(`${range.to}T00:00:00Z`));
 
   return `${start} – ${end}`;
+}
+
+/**
+ * « 31 août 2026 », « 31 August 2026 » — une borne de période **nommée seule**,
+ * hors de la paire que {@link rangeLabel} sait resserrer.
+ *
+ * C'est ce qu'attend la légende du graphique de volume (#1325) : le message
+ * porte les deux bornes à des places que la langue choisit — « du {from} au {to}
+ * inclus », « from {from} to {to} inclusive » —, et chacune doit donc se lire
+ * entière. `rangeLabel`, qui efface le mois de la borne de gauche quand les deux
+ * tombent dans le même, ne peut pas la servir : la légende écrivait jusqu'ici
+ * les deux dates ISO brutes, « from 2026-08-31 to 2026-09-29 ».
+ *
+ * Même parti que ses voisines sur le fuseau : la date civile est déjà celle de
+ * l'établissement et se met en forme **en UTC**, sans quoi tout salon à l'est de
+ * Greenwich verrait sa borne reculer d'un jour.
+ */
+export function boundLabel(date: CalendarDate, display: DisplayLocale = FALLBACK_DISPLAY): string {
+  return new Intl.DateTimeFormat(formattingLocale(display.locale, display.countryCode), {
+    timeZone: 'UTC',
+    dateStyle: 'long',
+  }).format(new Date(`${date}T00:00:00Z`));
 }
 
 /**
