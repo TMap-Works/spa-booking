@@ -31,7 +31,7 @@
 import { z } from 'zod';
 
 import { utcInstantSchema } from '../common/time';
-import { submittedLocaleSchema } from '../locale/index';
+import { DEFAULT_LOCALE, submittedLocaleSchema } from '../locale/index';
 import type { Locale } from '../locale/locale';
 
 /**
@@ -112,19 +112,40 @@ export const reportExportLocaleSchema = submittedLocaleSchema;
 /**
  * La langue employée quand la demande n'en porte aucune.
  *
- * **Le français**, et non `DEFAULT_LOCALE` — qui vaut `en`, la langue par défaut
- * du *système*. Les deux ne répondent pas à la même question : celle-ci dit ce
- * qu'un export doit contenir quand personne n'a demandé de langue, c'est-à-dire
- * quand l'appelant est antérieur à ce ticket. Avant #851 le fichier était écrit
- * en français, en dur ; un repli sur `en` aurait donc fait basculer en anglais,
- * sans qu'aucun appel ne change, les exports de tout client non encore mis à
- * jour.
+ * `DEFAULT_LOCALE` — donc l'anglais, et non plus le français (#1305).
  *
- * C'est la même conduite que le repli transitoire de `lib/format.ts` et de
- * `lib/appointment-status.ts` côté web (#845) : le défaut garde le comportement
- * d'avant le ticket.
+ * ## Pourquoi ce repli a d'abord valu le français, et pourquoi il ne le vaut plus
+ *
+ * #851 l'avait posé sur le français pour une raison de transition : le fichier
+ * était écrit en français **en dur** avant lui, et un repli sur `en` aurait fait
+ * basculer de langue, sans qu'aucun appel ne change, les exports de tout appelant
+ * pas encore mis à jour. Même conduite que les replis transitoires de
+ * `lib/format.ts` et de `lib/appointment-status.ts` côté web (#845).
+ *
+ * Ces replis-là sont tous revenus à `DEFAULT_LOCALE` avec #1297 ; celui-ci était
+ * resté en arrière, `apps/api/` étant hors de son empreinte. La transition a
+ * donc eu lieu, et ce qui la justifiait a disparu : la langue par défaut du
+ * produit est l'anglais (décision du PO du 2026-09-19, `DEFAULT_LOCALE`), et un
+ * export qui sort en français sans que personne ne l'ait demandé est désormais
+ * l'anomalie, pas la continuité.
+ *
+ * ## Ce repli décide du **format** du fichier, pas seulement de ses mots
+ *
+ * `report-export.vocabulary.ts` accorde les deux séparateurs à la langue — `;`
+ * et la virgule décimale en français, `,` et le point décimal en anglais, parce
+ * qu'un tableur en locale française lit la virgule comme décimale. Un export non
+ * paramétré change donc de **forme** et pas seulement de vocabulaire. C'est
+ * assumé : la virgule est le seul séparateur que RFC 4180 normalise, et c'est
+ * celui qu'attend un tableur en locale anglaise.
+ *
+ * ## Aligné, et non recopié
+ *
+ * `DEFAULT_LOCALE` plutôt que `'en'` écrit à la main : `locale.spec.ts` épingle
+ * l'égalité des deux, pour qu'un futur changement de langue par défaut du
+ * produit n'oublie pas l'export derrière lui — c'est exactement ce qui vient
+ * d'arriver.
  */
-export const REPORT_EXPORT_FALLBACK_LOCALE: Locale = 'fr';
+export const REPORT_EXPORT_FALLBACK_LOCALE: Locale = DEFAULT_LOCALE;
 
 /**
  * La langue d'une demande d'export, quoi qu'elle porte — jamais d'erreur.

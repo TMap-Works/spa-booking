@@ -106,7 +106,10 @@ describe('ReportExportService.create', () => {
     const [objet] = [...storage.objects.values()];
 
     expect(objet?.contentType).toBe('text/csv;charset=utf-8');
-    expect(objet?.body).toContain('section;cle;libelle;mesure;valeur;devise');
+    // Sans langue demandée, le service retombe sur `REPORT_EXPORT_FALLBACK_LOCALE`,
+    // qui vaut `DEFAULT_LOCALE` depuis #1305 — d'où l'en-tête anglais et la
+    // virgule de colonnes.
+    expect(objet?.body).toContain('section,key,label,measure,value,currency');
   });
 
   it('extrait le hors taxes au taux de l’établissement, relu en base', async () => {
@@ -117,7 +120,7 @@ describe('ReportExportService.create', () => {
     const [objet] = [...storage.objects.values()];
 
     // 120,00 € TTC à 20 % — le taux semé pour `maison-lotus` — font 100,00 € HT.
-    expect(objet?.body).toContain('revenu_total;CARD-EUR;CARD;ht_minor;10000;EUR');
+    expect(objet?.body).toContain('revenu_total,CARD-EUR,CARD,ht_minor,10000,EUR');
   });
 
   it('applique au voisin **son** taux, et non celui de l’appelant précédent', async () => {
@@ -132,8 +135,8 @@ describe('ReportExportService.create', () => {
     await runWithTenant(VOISIN, async () => service.create(SEPTEMBRE));
     const [chezNous, chezLeVoisin] = [...storage.objects.values()];
 
-    expect(chezNous?.body).toContain('revenu_total;CARD-EUR;CARD;ht_minor;10000;EUR');
-    expect(chezLeVoisin?.body).toContain('revenu_total;CARD-EUR;CARD;ht_minor;12000;EUR');
+    expect(chezNous?.body).toContain('revenu_total,CARD-EUR,CARD,ht_minor,10000,EUR');
+    expect(chezLeVoisin?.body).toContain('revenu_total,CARD-EUR,CARD,ht_minor,12000,EUR');
   });
 
   it('tire une clé différente à chaque appel — deux exports ne s’écrasent pas', async () => {

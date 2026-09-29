@@ -106,7 +106,11 @@ describe('Export du reporting — URL présignée', () => {
       const [objet] = [...harness.storage.objects.values()];
 
       expect(objet?.contentType).toBe('text/csv;charset=utf-8');
-      expect(objet?.body).toContain('revenu_total;CARD-EUR;CARD;net_minor;12000;EUR');
+      // La virgule, et non le point-virgule : `creer()` ne demande aucune langue,
+      // et le repli du contrat partagé vaut `DEFAULT_LOCALE` depuis #1305. Le
+      // sujet de ce cas reste le chiffre et sa devise — la forme du fichier suit
+      // ici le chemin qu'emprunte un appelant qui ne demande rien.
+      expect(objet?.body).toContain('revenu_total,CARD-EUR,CARD,net_minor,12000,EUR');
       expect(objet?.body).toContain('Europe/Paris');
     });
 
@@ -117,8 +121,8 @@ describe('Export du reporting — URL présignée', () => {
       await creer();
       const [objet] = [...harness.storage.objects.values()];
 
-      expect(objet?.body).toContain('revenu_jour;2026-09-03;2026-09-03 · CARD;ht_minor;10000;EUR');
-      expect(objet?.body).toContain('revenu_total;CARD-EUR;CARD;ht_minor;10000;EUR');
+      expect(objet?.body).toContain('revenu_jour,2026-09-03,2026-09-03 · CARD,ht_minor,10000,EUR');
+      expect(objet?.body).toContain('revenu_total,CARD-EUR,CARD,ht_minor,10000,EUR');
     });
 
     it('rend une échéance future, et à moins de quinze minutes', async () => {
@@ -175,13 +179,27 @@ describe('Export du reporting — URL présignée', () => {
         expect(objet?.body).toContain('revenu_total,CARD-EUR,CARD,net_minor,12000,EUR');
       });
 
-      it('écrit en français quand la demande ne porte aucune langue', async () => {
-        // Le repli d'avant le ticket : un appelant qui ne demande rien reçoit le
-        // fichier qu'il recevait.
-        await creer();
+      it('écrit en français quand la demande le demande', async () => {
+        // La forme française n'a pas disparu avec le repli : elle est désormais
+        // ce qu'on obtient en la demandant — `;` de colonnes, libellés français.
+        await creer({ from: FROM, to: TO, locale: 'fr' });
         const [objet] = [...harness.storage.objects.values()];
 
         expect(objet?.body).toContain('section;cle;libelle;mesure;valeur;devise');
+        expect(objet?.body).toContain('Rendez-vous non honorés');
+      });
+
+      it('écrit dans la langue par défaut du produit quand la demande ne porte aucune langue — #1305', async () => {
+        // `REPORT_EXPORT_FALLBACK_LOCALE` vaut `DEFAULT_LOCALE` : le fichier
+        // qu'obtient un appelant qui ne demande rien est anglais, séparateur de
+        // colonnes compris. C'est la moitié du critère qui se voit le moins en
+        // relisant la constante — le repli décide du format, pas que des mots.
+        await creer();
+        const [objet] = [...harness.storage.objects.values()];
+
+        expect(objet?.body).toContain('section,key,label,measure,value,currency');
+        expect(objet?.body).toContain('No-show appointments');
+        expect(objet?.body).not.toContain('section;cle;libelle;mesure;valeur;devise');
       });
 
       it('accepte une langue écrite en capitales', async () => {

@@ -122,10 +122,10 @@ function IsReportExportLocale(options?: ValidationOptions): PropertyDecorator {
  * d'une langue — elles rendent des chiffres, que l'écran met en forme lui-même.
  * Seul l'export écrit des mots, parce qu'il écrit un fichier.
  *
- * `locale` est **facultative**, et son absence vaut français : c'est ce que le
- * fichier contenait avant #851, donc ce qu'un appelant antérieur au ticket doit
- * continuer de recevoir. Voir `REPORT_EXPORT_FALLBACK_LOCALE` du contrat
- * partagé, qui porte ce choix pour les deux côtés du fil.
+ * `locale` est **facultative**, et son absence vaut la langue par défaut du
+ * produit — `DEFAULT_LOCALE`, donc l'anglais. Voir
+ * `REPORT_EXPORT_FALLBACK_LOCALE` du contrat partagé, qui porte ce choix pour
+ * les deux côtés du fil et dit pourquoi il a d'abord valu le français (#1305).
  *
  * `whitelist` et `forbidNonWhitelisted` étant globaux, tout autre paramètre de
  * la chaîne de requête reste refusé — en particulier un `tenantId` glissé là,
@@ -135,7 +135,7 @@ export class ReportExportQueryDto extends ReportWindowQueryDto {
   @ApiPropertyOptional({
     enum: LOCALES,
     example: 'fr',
-    description: `Langue du fichier — en-tête, libellés et séparateurs. Par défaut \`${REPORT_EXPORT_FALLBACK_LOCALE}\`, la langue dans laquelle l’export était écrit avant qu’il ne devienne traduisible. Sans effet sur les chiffres, les devises et le fuseau.`,
+    description: `Langue du fichier — en-tête, libellés et séparateurs (\`;\` avec la virgule décimale en \`fr\`, \`,\` avec le point décimal en \`en\`). Par défaut \`${REPORT_EXPORT_FALLBACK_LOCALE}\`, la langue par défaut du produit. Sans effet sur les chiffres, les devises et le fuseau.`,
   })
   @IsOptional()
   @IsReportExportLocale()

@@ -121,7 +121,7 @@ import { reportExportVocabulary, type ReportExportVocabulary } from './report-ex
  *
  * ## La langue décide des mots et des signes — #851
  *
- * Jusqu'à ce ticket, le fichier était français en dur : en-tête `section;cle;…`,
+ * Jusqu'à #851, le fichier était français en dur : en-tête `section;cle;…`,
  * libellés en français, point-virgule de colonnes. Il suit désormais la langue
  * de l'interface **au moment de l'export**, transmise dans la demande et validée
  * par `reportExportLocaleSchema` du contrat partagé.
@@ -177,9 +177,9 @@ export interface ReportExportContent {
    * La langue de l'interface au moment de l'export — #851, troisième critère.
    *
    * Facultative, et le repli est celui du contrat partagé
-   * (`REPORT_EXPORT_FALLBACK_LOCALE`, le français) : c'est ce que le fichier
-   * contenait avant ce ticket, donc ce qu'un appelant qui ne demande rien doit
-   * continuer de recevoir.
+   * (`REPORT_EXPORT_FALLBACK_LOCALE`, qui vaut `DEFAULT_LOCALE` depuis #1305) :
+   * un appelant qui ne demande aucune langue reçoit le fichier dans la langue
+   * par défaut du produit, séparateur de colonnes compris.
    *
    * Elle ne touche **ni** aux chiffres **ni** au fuseau : le fuseau de découpage
    * des journées reste celui de l'établissement, et un export anglais d'un salon

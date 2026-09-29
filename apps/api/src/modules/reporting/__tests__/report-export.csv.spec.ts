@@ -1,3 +1,5 @@
+import { DEFAULT_LOCALE } from '@spa/shared';
+
 import { netOf } from '../../payments/pos.totals';
 import {
   buildReportExportCsv,
@@ -22,6 +24,19 @@ import {
 const CONTENT: ReportExportContent = {
   window: { from: new Date('2026-08-31T22:00:00Z'), to: new Date('2026-09-30T22:00:00Z') },
   timeZone: 'Europe/Paris',
+  /**
+   * La langue est **demandée**, et non laissée au repli — #1305.
+   *
+   * Les cas qui suivent épellent la forme française : point-virgule de colonnes,
+   * virgule décimale, libellés en français, et un échappement qui se déclenche
+   * sur le `;`. C'est leur sujet, pas un effet de bord du défaut : les lire sur
+   * le chemin du repli les aurait fait rougir le jour où celui-ci a changé de
+   * langue, sans qu'aucune de ces propriétés n'ait bougé.
+   *
+   * Ce que vaut le repli, lui, se lit dans le cas qui en fait son sujet, plus
+   * bas — et dans `locale.spec.ts` du contrat partagé.
+   */
+  locale: 'fr',
   /** 20 % — le taux de l'établissement, tel que `tenants.tax_rate_bps` le porte. */
   taxRateBps: 2_000,
   revenue: {
@@ -357,11 +372,19 @@ describe('buildReportExportCsv — la langue', () => {
     );
   });
 
-  it('écrit en français quand la demande ne porte aucune langue', () => {
-    // Le repli d'avant le ticket : un appelant qui ne demande rien reçoit le
-    // fichier qu'il recevait.
-    expect(buildReportExportCsv(CONTENT)).toBe(
-      buildReportExportCsv({ ...CONTENT, locale: 'fr' }),
+  it('écrit dans la langue par défaut du produit quand la demande ne porte aucune langue — #1305', () => {
+    // `REPORT_EXPORT_FALLBACK_LOCALE` vaut `DEFAULT_LOCALE` : l'anglais. Le repli
+    // avait valu le français le temps de la transition de #851, alors que le
+    // fichier sortait français en dur — cette transition a eu lieu.
+    const { locale: _demandee, ...sansLangue } = CONTENT;
+
+    expect(buildReportExportCsv(sansLangue)).toBe(
+      buildReportExportCsv({ ...CONTENT, locale: DEFAULT_LOCALE }),
+    );
+    // Et le repli décide du **format**, pas seulement des mots : c'est la
+    // conséquence la plus facile à ne pas voir en relisant la constante seule.
+    expect(lines(buildReportExportCsv(sansLangue))[0]).toBe(
+      'section,key,label,measure,value,currency',
     );
   });
 
