@@ -1,6 +1,6 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
-import { DEFAULT_LOCALE, isLocale, type Locale } from '@spa/shared';
+import { DEFAULT_LOCALE, addressLocalityLine, isLocale, type Locale } from '@spa/shared';
 
 import { PRISMA, type ScopedPrismaClient } from '../../infrastructure/database/prisma-clients';
 import type { AppointmentCancelledBy } from '../appointments/appointment-status';
@@ -336,17 +336,42 @@ function toLocale(value: string): Locale {
  * Les quatre champs sont facultatifs au schéma. Une adresse partielle est
  * rendue telle quelle : « 12 rue des Lilas, Paris » vaut mieux qu'aucune adresse
  * du tout dans une confirmation, et le code postal manquant se voit.
+ *
+ * ## L'ordre de la localité suit le pays du salon — #1334
+ *
+ * « New York 10118 » pour un salon américain, « 75011 Paris » pour un salon
+ * français. La règle vient d'`addressLocalityLine`, le point d'écriture partagé
+ * par le front et le serveur : elle vivait dans un module du parcours public,
+ * d'où ce fichier ne pouvait pas l'atteindre, et les trois messages — confirmation,
+ * rappel J-1, avis d'annulation — gardaient donc l'ordre français pour tous.
+ *
+ * C'est aussi pour cela que `countryCode` et `region` sont désormais lus avec
+ * l'adresse : sans le premier la règle n'a rien pour décider de l'ordre, et sans
+ * le second l'e-mail écrirait « New York 10118 » là où la vitrine du même salon
+ * annonce « New York, NY 10118 » (#1335) — le même écart entre surfaces que ce
+ * ticket ferme.
+ *
+ * L'ordre suit le pays de l'établissement et **non la langue du message** (#854) :
+ * une cliente anglophone d'un salon parisien lit « 75011 Paris », parce que c'est
+ * ce qu'on écrit sur l'enveloppe qu'on lui poste.
  */
 function postalAddress(tenant: {
   addressLine1: string | null;
   addressLine2: string | null;
   postalCode: string | null;
   city: string | null;
+  region: string | null;
+  countryCode: string | null;
 }): string | null {
   const parts = [
     tenant.addressLine1,
     tenant.addressLine2,
-    [tenant.postalCode, tenant.city].filter((part) => part !== null).join(' '),
+    addressLocalityLine({
+      postalCode: tenant.postalCode,
+      city: tenant.city,
+      region: tenant.region,
+      country: tenant.countryCode,
+    }),
   ].filter((part): part is string => part !== null && part.length > 0);
 
   return parts.length === 0 ? null : parts.join(', ');
@@ -678,6 +703,14 @@ export class NotificationsRepository {
           addressLine2: true,
           postalCode: true,
           city: true,
+          // L'État, quand le salon en porte un — « New York, NY 10118 » (#1335).
+          // Sans lui, l'e-mail écrirait une adresse plus pauvre que la vitrine du
+          // même salon, ce qui est l'écart entre surfaces que #1334 ferme.
+          region: true,
+          // Le pays décide de l'ordre de la localité — « New York 10118 » contre
+          // « 75011 Paris » (#1334). Il est lu et **jamais écrit** dans le
+          // message : c'est `addressLocalityLine` qui s'en sert, pas le modèle.
+          countryCode: true,
           contactPhone: true,
         },
       }),
