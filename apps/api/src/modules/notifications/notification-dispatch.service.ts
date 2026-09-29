@@ -1,5 +1,6 @@
 import { Inject, Injectable } from '@nestjs/common';
 
+import { REDACTED } from '../../common/logging/redaction';
 import { StructuredLogger } from '../../common/logging/structured-logger';
 import { isAppointmentStatus, occupiesSlot } from '../appointments/appointment-status';
 import { NOTIFICATION_RENDERER, type NotificationRenderer } from './notification-renderer';
@@ -9,6 +10,7 @@ import {
   type NotificationReceipt,
   type NotificationSender,
 } from './notification-sender';
+import { failureReasonOf } from './notifications.errors';
 import { NotificationsRepository } from './notifications.repository';
 import type {
   DispatchOutcome,
@@ -515,18 +517,39 @@ export class NotificationDispatchService {
    * silencieusement les messages du chemin qu'elle couvre.
    *
    * Le journal ne dit ni le contenu ni le destinataire, seulement de quel envoi
-   * il s'agit et à quelle tentative (notifications §7).
+   * il s'agit, à quelle tentative, et ce qui a échoué (notifications §7).
+   *
+   * ## Deux destinataires pour un même échec (#1328)
+   *
+   * La **colonne** reçoit un code, parce que le back-office l'affiche et doit
+   * pouvoir le traduire : une phrase française y était illisible pour un salon
+   * anglophone. Le **journal** reçoit la phrase, parce que c'est là que se
+   * diagnostique une panne de fournisseur — « SES throttling » n'est pas un motif
+   * à montrer au comptoir, mais c'est exactement ce qu'il faut à qui regarde
+   * pourquoi rien ne part depuis vingt minutes. Sans cette seconde inscription,
+   * réduire la colonne à un code aurait perdu ce détail pour de bon.
+   *
+   * Ce déplacement **réduit** l'exposition, il ne l'augmente pas : cette même
+   * phrase s'écrivait jusqu'ici dans une colonne que le tiroir de rendez-vous
+   * rend à l'écran, sans rédaction d'aucune sorte. Au journal, elle traverse
+   * `redact`/`redactString`, qui masquent les adresses e-mail et les
+   * identifiants d'URL jusqu'au milieu d'un message d'erreur
+   * (`common/logging/redaction.ts`), et `describe` continue de refuser de
+   * sérialiser une charge utile de pilote (notifications §7).
    */
   private async attempt<T>(notification: NotificationRecord, run: () => Promise<T>): Promise<T> {
     try {
       return await run();
     } catch (error) {
-      await this.repository.markFailed(notification.id, describe(error));
+      const failureReason = failureReasonOf(error);
+      await this.repository.markFailed(notification.id, failureReason);
 
       this.logger.error("échec d'expédition de notification", {
         notificationId: notification.id,
         channel: notification.channel,
         attemptCount: notification.attemptCount,
+        failureReason,
+        detail: describe(error),
       });
 
       throw error;
@@ -534,16 +557,39 @@ export class NotificationDispatchService {
   }
 }
 
+/** `+33612345678` — la forme, et la seule, sous laquelle un numéro part à SNS. */
+const E164 = /\+\d{8,15}/g;
+
 /**
- * Le motif d'échec, tel qu'il s'inscrit en base.
+ * Le détail de l'échec, tel qu'il part au **journal**.
  *
- * Le **message** de l'erreur, jamais sa pile : `failure_reason` est relu par un
- * humain qui diagnostique, et une pile de 4 Ko tronquée à 500 caractères ne dit
- * rien. Une valeur levée qui n'est pas une `Error` est décrite par son type
- * plutôt que sérialisée — un objet de pilote peut porter la charge utile de la
- * requête, donc l'adresse du destinataire, et cette colonne n'a pas à la
- * recevoir (notifications §7).
+ * Le **message** de l'erreur, jamais sa pile : il est relu par un humain qui
+ * diagnostique, et une pile de 4 Ko ne dit rien. Une valeur levée qui n'est pas
+ * une `Error` est décrite par son type plutôt que sérialisée — un objet de pilote
+ * peut porter la charge utile de la requête, donc l'adresse du destinataire
+ * (notifications §7). Le logger structuré applique en outre sa rédaction sur ce
+ * qu'il reçoit.
+ *
+ * Depuis #1328 cette phrase ne va **plus en base** : `failure_reason` porte le
+ * code de `failureReasonOf`, et c'est le front qui choisit la phrase, dans sa
+ * langue.
+ *
+ * ## Le numéro de téléphone est masqué ici, parce que le logger ne le fait pas
+ *
+ * `redactString` masque les adresses e-mail et les identifiants d'URL au milieu
+ * d'une chaîne libre, mais **pas** les numéros de téléphone : la rédaction les
+ * couvre par le nom de champ, et s'interdit délibérément un motif par forme, trop
+ * large (`common/logging/redaction.ts`). Or un refus de SNS cite le numéro dans
+ * son message — « Invalid parameter: PhoneNumber Reason: +33… » —, et c'est
+ * exactement cette phrase que la ligne ci-dessus porte au journal depuis #1328.
+ * Le masque est donc posé ici, au seul endroit qui sait que ce texte vient d'un
+ * fournisseur de SMS, et sur la seule forme sous laquelle un numéro lui a été
+ * remis : E.164 (`sns-sms.gateway.ts`).
  */
 function describe(error: unknown): string {
-  return error instanceof Error ? error.message : `erreur non standard (${typeof error})`;
+  if (!(error instanceof Error)) {
+    return `erreur non standard (${typeof error})`;
+  }
+
+  return error.message.replace(E164, REDACTED);
 }

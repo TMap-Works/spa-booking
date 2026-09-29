@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { DEFAULT_LOCALE, LOCALES } from '@spa/shared';
+import { DEFAULT_LOCALE, LOCALES, NOTIFICATION_FAILURE_REASONS } from '@spa/shared';
 import { Transform } from 'class-transformer';
 import { ArrayNotEmpty, IsArray, IsIn, IsOptional, IsUUID } from 'class-validator';
 
@@ -227,8 +227,23 @@ export class NotificationDto {
   @ApiProperty({ example: 1, description: 'Nombre de tentatives, reprises comprises.' })
   public attemptCount!: number;
 
+  /**
+   * Le motif du dernier échec — un **code**, et plus une phrase, depuis #1328.
+   *
+   * L'`enum` OpenAPI est délibérément absent alors que le vocabulaire est clos :
+   * les lignes écrites avant ce ticket portent une phrase française, un générateur
+   * de client en ferait un type énuméré, et la première trace d'historique lue
+   * ferait échouer sa désérialisation. `NOTIFICATION_FAILURE_REASONS` dit le
+   * vocabulaire, la description dit le repli — c'est le même compromis que
+   * `notificationSchema` côté contrat, pour la même raison.
+   */
   @ApiPropertyOptional({
-    description: 'Motif du dernier échec, tronqué à 500 caractères. Absent si rien n’a échoué.',
+    description:
+      'Motif du dernier échec, sous forme de code (`NOTIFICATION_FAILURE_REASONS` de ' +
+      '`@spa/shared`), tronqué à 500 caractères. Absent si rien n’a échoué. Les traces ' +
+      'antérieures à #1328 portent une phrase : tout ce que le vocabulaire ne nomme pas ' +
+      's’affiche sous le motif générique `unknown`.',
+    example: NOTIFICATION_FAILURE_REASONS[0],
   })
   public failureReason?: string;
 

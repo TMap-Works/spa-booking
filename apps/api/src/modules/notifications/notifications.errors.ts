@@ -1,4 +1,8 @@
-import { NOTIFICATION_ERROR_CODES } from '@spa/shared';
+import {
+  isNotificationFailureReason,
+  NOTIFICATION_ERROR_CODES,
+  type NotificationFailureReason,
+} from '@spa/shared';
 
 import { BusinessRuleError, DomainError } from '../../common/errors';
 
@@ -22,6 +26,53 @@ import { BusinessRuleError, DomainError } from '../../common/errors';
  * s'y trouve est un identifiant de notification et un canal — rien d'autre.
  */
 export { NOTIFICATION_ERROR_CODES };
+
+/**
+ * Ce qu'une erreur de cette chaîne laisse dans `notifications.failure_reason` —
+ * #1328.
+ *
+ * ## Pourquoi un second vocabulaire à côté du `code`
+ *
+ * Le `code` est ce qu'un appelant HTTP lit ; ce motif est ce que le comptoir
+ * lit. Les deux ne se superposent pas : quatre de ces huit codes ne peuvent pas
+ * atteindre une trace — ils refusent une saisie de modèle —, et le cas le plus
+ * fréquent au comptoir, un destinataire injoignable, n'a justement **pas** de
+ * code propre (`NotificationRecipientUnreachableError` retombe sur
+ * `BUSINESS_RULE_VIOLATION`, et son commentaire dit pourquoi). Recycler le `code`
+ * aurait donc affiché « Cette action n'est pas autorisée par les règles du
+ * salon. » sur un SMS qu'aucun numéro ne pouvait recevoir.
+ *
+ * ## Une propriété portée par l'erreur, et non une table d'`instanceof`
+ *
+ * Le motif est déclaré sur la classe, à côté du `code` et du `status` : c'est le
+ * seul endroit d'où il ne peut pas se désynchroniser. Une table
+ * `error instanceof X ? … : …` tenue dans le service aurait laissé une classe
+ * ajoutée demain retomber en silence sur `unknown`, sans que `tsc` n'en dise rien
+ * — exactement la panne muette que ce ticket corrige, un étage plus bas.
+ */
+interface NotificationFailureBearer {
+  readonly failureReason: NotificationFailureReason;
+}
+
+/**
+ * Le motif à inscrire pour une valeur levée quelconque.
+ *
+ * `unknown` pour tout ce qui n'est pas une de nos erreurs : une panne du
+ * fournisseur, une erreur de pilote, une valeur levée qui n'est même pas une
+ * `Error`. Le détail de diagnostic n'est pas perdu pour autant — il part au
+ * journal structuré de l'API, où la rédaction des données personnelles
+ * s'applique, et non dans une colonne que le back-office affiche
+ * (notifications §7).
+ */
+export function failureReasonOf(error: unknown): NotificationFailureReason {
+  if (typeof error !== 'object' || error === null) {
+    return 'unknown';
+  }
+
+  const candidate = (error as Partial<NotificationFailureBearer>).failureReason;
+
+  return isNotificationFailureReason(candidate) ? candidate : 'unknown';
+}
 
 /** 503 — `DOMAIN_HTTP_STATUS` ne connaît pas les dépendances externes. */
 const SERVICE_UNAVAILABLE = 503;
@@ -50,9 +101,13 @@ const NOT_FOUND = 404;
  * qui doit se voir dans la profondeur de la DLQ, pas un message avalé en
  * silence.
  */
-export class NotificationSenderNotConfiguredError extends DomainError {
+export class NotificationSenderNotConfiguredError
+  extends DomainError
+  implements NotificationFailureBearer
+{
   public override readonly code = NOTIFICATION_ERROR_CODES.NOTIFICATION_SENDER_NOT_CONFIGURED;
   public override readonly status = SERVICE_UNAVAILABLE;
+  public readonly failureReason = 'sender_not_configured';
 
   public constructor(channel: string) {
     super("Aucun expéditeur n'est configuré pour ce canal de notification.", { channel });
@@ -71,9 +126,13 @@ export class NotificationSenderNotConfiguredError extends DomainError {
  * absent, et l'échec laisse la ligne `FAILED`, donc reprenable le jour où le
  * modèle existe.
  */
-export class UnrenderableNotificationError extends DomainError {
+export class UnrenderableNotificationError
+  extends DomainError
+  implements NotificationFailureBearer
+{
   public override readonly code = NOTIFICATION_ERROR_CODES.NOTIFICATION_NOT_RENDERABLE;
   public override readonly status = SERVICE_UNAVAILABLE;
+  public readonly failureReason = 'template_missing';
 
   /**
    * `locale` est nommée dans les détails depuis #854 : un modèle peut exister en
@@ -100,9 +159,13 @@ export class UnrenderableNotificationError extends DomainError {
  * anonymisation RGPD ou une suppression de rendez-vous, et la fenêtre entre la
  * publication et la consommation n'est bornée par rien.
  */
-export class NotificationContextGoneError extends DomainError {
+export class NotificationContextGoneError
+  extends DomainError
+  implements NotificationFailureBearer
+{
   public override readonly code = NOTIFICATION_ERROR_CODES.NOTIFICATION_CONTEXT_GONE;
   public override readonly status = 404;
+  public readonly failureReason = 'appointment_gone';
 
   public constructor(appointmentId: string) {
     super("Le rendez-vous que ce message annonce n'existe plus.", { appointmentId });
@@ -150,7 +213,18 @@ export class NotificationContextGoneError extends DomainError {
  * réponse lit le **statut**, jamais le code — la Lambda d'envoi ne désérialise
  * même pas le corps, elle l'annule pour rendre la connexion au pool.
  */
-export class NotificationRecipientUnreachableError extends BusinessRuleError {
+export class NotificationRecipientUnreachableError
+  extends BusinessRuleError
+  implements NotificationFailureBearer
+{
+  /**
+   * Elle n'a pas de code propre, mais elle a bien un **motif** propre (#1328) :
+   * c'est le seul échec de cette liste que le comptoir peut corriger lui-même, en
+   * reprenant la fiche de la cliente. L'afficher sous le message générique de
+   * `BUSINESS_RULE_VIOLATION` aurait caché la seule action utile.
+   */
+  public readonly failureReason = 'recipient_unreachable';
+
   public constructor(channel: string) {
     super("Le destinataire n'est plus joignable sur ce canal de notification.", { channel });
   }
@@ -288,9 +362,19 @@ export class NotificationTemplateTooLongError extends DomainError {
  * chaîne d'envoi et se traduit en 503 : là-bas, c'est une capacité absente qui
  * laisse la ligne reprenable ; ici, c'est une lecture qui ne trouve rien.
  */
-export class NotificationTemplateNotFoundError extends DomainError {
+export class NotificationTemplateNotFoundError
+  extends DomainError
+  implements NotificationFailureBearer
+{
   public override readonly code = NOTIFICATION_ERROR_CODES.NOTIFICATION_TEMPLATE_NOT_FOUND;
   public override readonly status = NOT_FOUND;
+  /**
+   * Le même motif qu'`UnrenderableNotificationError` : c'est le même fait — aucun
+   * modèle — vu depuis la lecture plutôt que depuis l'envoi. Elle ne traverse pas
+   * la chaîne d'expédition aujourd'hui, mais elle porte son motif pour qu'un
+   * chemin qui l'y ferait passer demain n'inscrive pas `unknown`.
+   */
+  public readonly failureReason = 'template_missing';
 
   public constructor(type: string, channel: string, locale: string) {
     super("Aucun modèle de message n'existe pour ce type, ce canal et cette langue.", {

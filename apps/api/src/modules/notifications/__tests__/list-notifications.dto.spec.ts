@@ -144,10 +144,28 @@ describe('notifications — la sérialisation d’une trace', () => {
       ...TRACE,
       status: 'FAILED',
       sentAt: null,
-      failureReason: 'SES throttling',
+      failureReason: 'sender_not_configured',
     });
 
-    expect(dto).toMatchObject({ status: 'failed', failureReason: 'SES throttling' });
+    expect(dto).toMatchObject({ status: 'failed', failureReason: 'sender_not_configured' });
+  });
+
+  it('rend tel quel un motif rédigé avant #1328, sans le traduire ni le vider', () => {
+    // La sérialisation ne juge pas le vocabulaire : le repli est un geste
+    // d'affichage, et le poser ici aurait fait perdre au diagnostic la valeur
+    // réellement en base. Ce qu'elle doit garantir, c'est qu'une phrase
+    // d'historique traverse — un `enum` OpenAPI ou un schéma fermé l'aurait
+    // refusée, et le journal du rendez-vous serait sorti vide.
+    const dto = toNotificationDto({
+      ...TRACE,
+      status: 'FAILED',
+      sentAt: null,
+      failureReason: "Aucun expéditeur n'est configuré pour ce canal de notification.",
+    });
+
+    expect(dto.failureReason).toBe(
+      "Aucun expéditeur n'est configuré pour ce canal de notification.",
+    );
   });
 
   it('annonce le plafond appliqué sur l’enveloppe', () => {

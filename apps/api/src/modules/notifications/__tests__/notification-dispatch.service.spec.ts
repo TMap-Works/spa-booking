@@ -1,4 +1,12 @@
+import { isNotificationFailureReason, type NotificationFailureReason } from '@spa/shared';
+
 import { NotificationDispatchService } from '../notification-dispatch.service';
+import {
+  NotificationContextGoneError,
+  NotificationRecipientUnreachableError,
+  NotificationSenderNotConfiguredError,
+  UnrenderableNotificationError,
+} from '../notifications.errors';
 import {
   appointmentDedupeKey,
   type NotificationMessage,
@@ -167,6 +175,7 @@ describe('notifications — l’échec de rendu', () => {
     return {
       repository,
       sender,
+      logger,
       service: new NotificationDispatchService(
         repository.repository,
         stubRenderer(error).renderer,
@@ -181,7 +190,7 @@ describe('notifications — l’échec de rendu', () => {
     // resterait vivante dans `notifications_live_once` et le rejeu que SQS
     // s'apprête à faire serait pris pour un doublon. Le message ne repartirait
     // jamais.
-    const panne = new Error('aucun modèle pour REMINDER_24H');
+    const panne = new UnrenderableNotificationError('REMINDER_24H', 'fr');
     const { service, repository, sender } = buildWithBrokenRenderer(panne);
 
     await expect(service.dispatch(message())).rejects.toThrow(panne);
@@ -189,7 +198,7 @@ describe('notifications — l’échec de rendu', () => {
     expect(sender.calls).toHaveLength(0);
     expect(repository.rows[0]).toMatchObject({
       status: 'FAILED',
-      failureReason: 'aucun modèle pour REMINDER_24H',
+      failureReason: 'template_missing',
       providerMessageId: null,
     });
   });
@@ -271,7 +280,9 @@ describe("notifications — l'échec d'expédition", () => {
 
     expect(repository.rows[0]).toMatchObject({
       status: 'FAILED',
-      failureReason: 'SES throttling',
+      // Une panne de fournisseur n'est aucun de nos motifs : elle s'inscrit sous
+      // `unknown`, et son détail part au journal (#1328).
+      failureReason: 'unknown',
       providerMessageId: null,
     });
   });
@@ -296,22 +307,73 @@ describe("notifications — l'échec d'expédition", () => {
     });
   });
 
-  it('n’inscrit pas de pile ni de charge utile en base — le message, et rien d’autre', async () => {
-    // `failure_reason` est relu par un humain qui diagnostique, et une erreur de
-    // pilote AWS porte volontiers l'adresse du destinataire dans sa charge utile.
+  it('n’inscrit aucune phrase en base — un code, et rien d’autre (#1328)', async () => {
+    // La colonne est affichée par le back-office, qui doit pouvoir la traduire :
+    // une phrase française y restait illisible pour un salon anglophone. Une
+    // charge utile de pilote AWS, qui porte volontiers l'adresse du destinataire,
+    // n'y entre pas davantage qu'avant.
+    //
+    // La troncature à 500 caractères ne se mesure plus ici : aucun code du
+    // vocabulaire ne les atteint. Elle reste garantie là où elle s'applique, sur
+    // `markFailed` (`notifications.repository.spec.ts`), et c'est elle qui
+    // protège encore la colonne d'un motif d'historique trop long.
     const { service, repository } = build([{ reject: { destinataire: 'x@y.z' } }]);
 
     await expect(service.dispatch(message())).rejects.toBeDefined();
 
-    expect(repository.rows[0]?.failureReason).toBe('erreur non standard (object)');
+    expect(repository.rows[0]?.failureReason).toBe('unknown');
   });
 
-  it('tronque un motif d’échec plus long que la colonne', async () => {
-    const { service, repository } = build([new Error('x'.repeat(900))]);
+  const PORTEURS: ReadonlyArray<readonly [NotificationFailureReason, Error]> = [
+    ['sender_not_configured', new NotificationSenderNotConfiguredError('SMS')],
+    ['template_missing', new UnrenderableNotificationError('REMINDER_24H', 'fr')],
+    ['appointment_gone', new NotificationContextGoneError(APPOINTMENT_ID)],
+    ['recipient_unreachable', new NotificationRecipientUnreachableError('SMS')],
+  ];
+
+  it.each(PORTEURS)('inscrit le motif `%s` pour l’erreur qui le porte', async (motif, panne) => {
+    // Le vocabulaire est celui du contrat partagé, et chaque classe porte le sien
+    // à côté de son `code` : c'est le seul endroit d'où il ne peut pas se
+    // désynchroniser.
+    const { service, repository } = build([panne]);
 
     await expect(service.dispatch(message())).rejects.toBeDefined();
 
-    expect(repository.rows[0]?.failureReason).toHaveLength(500);
+    expect(repository.rows[0]?.failureReason).toBe(motif);
+    expect(isNotificationFailureReason(repository.rows[0]?.failureReason)).toBe(true);
+  });
+
+  it('garde le détail du diagnostic au journal, puisqu’il quitte la base (#1328)', async () => {
+    // Sans cette ligne, réduire la colonne à un code aurait perdu pour de bon la
+    // seule information qui explique une panne de fournisseur — et personne ne
+    // saurait pourquoi rien ne part depuis vingt minutes.
+    const { service, logger } = build([new Error('SES throttling')]);
+
+    await expect(service.dispatch(message())).rejects.toBeDefined();
+
+    const echec = logger.entries.find((entry) => entry.level === 'error');
+    expect(echec?.meta).toMatchObject({ failureReason: 'unknown', detail: 'SES throttling' });
+  });
+
+  it('n’emmène pas le numéro du destinataire au journal avec ce détail', async () => {
+    // Le détail vient du fournisseur, et un refus de SNS cite le numéro dans son
+    // message. `redactString` masque les adresses e-mail au milieu d'une chaîne
+    // libre, mais pas les numéros — la rédaction s'interdit un motif par forme,
+    // trop large (`common/logging/redaction.ts`). Porter cette phrase au journal
+    // sans la masquer ici aurait donc fait entrer une donnée personnelle dans les
+    // logs, ce que notifications §7 interdit.
+    const { service, logger } = build([
+      new Error('Invalid parameter: PhoneNumber Reason: +33612345678 is not valid'),
+    ]);
+
+    await expect(service.dispatch(message())).rejects.toBeDefined();
+
+    const echec = logger.entries.find((entry) => entry.level === 'error');
+
+    expect(echec?.meta).toMatchObject({
+      detail: 'Invalid parameter: PhoneNumber Reason: [rédigé] is not valid',
+    });
+    expect(JSON.stringify(echec?.meta)).not.toContain('612345678');
   });
 });
 
