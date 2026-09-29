@@ -54,10 +54,47 @@
  * D'où des fonctions **asynchrones** : la langue se lit sur la requête. Leurs
  * appelants sont tous des actions serveur qui font `return failure(error)` — une
  * fonction `async` déballe la promesse qu'on lui rend, et aucun d'eux n'a changé.
+ *
+ * ## Ce module connaît zod, et c'est une décision — #1319
+ *
+ * #1310 a ramené ici la **phrase** du repli de validation
+ * (`validationRefusal`), mais pas la **forme d'appel** qui l'emploie le plus
+ * souvent, restée recopiée mot pour mot à cinq endroits :
+ *
+ * ```ts
+ * invalid(parsed.error.issues[0]?.message ?? validationRefusal(locale))
+ * ```
+ *
+ * Deux voies s'offraient : la replier derrière un export de ce module, au prix
+ * d'un type de zod dans sa signature, ou la laisser telle quelle au motif que
+ * trois jetons répétés coûtent moins qu'une indirection de plus. **C'est la
+ * première qui est retenue**, et voici sur quoi :
+ *
+ * - **la règle repliée est une règle de ce module.** « Le message du premier
+ *   refus quand le schéma en nomme un — c'est ce qui distingue « douze
+ *   caractères au minimum » d'un mot de passe absent — et à défaut la phrase du
+ *   code » énonce *ce que dit un refus*. C'est l'objet même de ce fichier, qui
+ *   tient déjà le code (`invalid`) et le repli (`validationRefusal`) sans tenir
+ *   leur assemblage ;
+ * - **le prix redouté n'est pas celui qu'on croyait.** La dépendance envers zod
+ *   est un `import type` : elle est effacée à la compilation, n'ajoute aucun
+ *   octet au bundle et aucun couplage d'exécution. `apps/web` déclare déjà zod
+ *   en dépendance directe et type-importe déjà `ZodIssue` dans deux formulaires
+ *   du personnel. Ce module reste ce qu'il est — des formes, importables des
+ *   deux côtés de la frontière serveur ;
+ * - **la tendance tranche.** #1234 a changé d'où venait cette phrase, #1299 la
+ *   langue dans laquelle elle se dit, #1310 son repli : trois tickets qui ont dû
+ *   visiter chaque copie. Un quatrième est plus probable qu'improbable, et ce
+ *   sont cinq visites à chaque fois.
+ *
+ * Ce qui n'a **pas** changé : le refus rendu. Même `VALIDATION_ERROR`, même
+ * phrase, même langue — `invalidFromZod` n'est que l'assemblage d'`invalid()` et
+ * du `??`, à la lettre.
  */
 
 import { ERROR_CODES, errorMessage, type Locale } from '@spa/shared';
 import { getLocale } from 'next-intl/server';
+import type { ZodError } from 'zod';
 
 import { ApiClientError } from '@/lib/api-client';
 
@@ -132,6 +169,36 @@ export function invalid(message: string): AdminActionFailure {
  */
 export function validationRefusal(locale: Locale): string {
   return errorMessage(ERROR_CODES.VALIDATION_ERROR, locale);
+}
+
+/**
+ * Le refus d'un `safeParse` en échec — la forme d'appel, et non plus seulement sa
+ * phrase de repli (#1319, voir l'en-tête de ce module).
+ *
+ * Elle dit une chose : **le message du premier refus quand le schéma en nomme
+ * un**, parce que c'est ce qui distingue « douze caractères au minimum » d'un mot
+ * de passe absent — et, à défaut, la phrase générique du code. Rien d'autre ne
+ * change : le code est celui qu'`invalid()` pose, la langue celle du paramètre.
+ *
+ * Le `??` — et non un `||` — est le comportement d'origine, conservé à la
+ * lettre : un message vide rendu par un schéma reste ce que l'action rend, et ce
+ * n'est pas à ce module d'en décider autrement.
+ *
+ * ## Pourquoi l'erreur peut être absente
+ *
+ * `undefined` n'est pas une commodité d'appel : il sert le site où le refus peut
+ * venir d'**ailleurs** que du schéma. `adminAcceptInvitationAction` juge le slug
+ * de l'URL et la charge utile d'un même `if` — un slug illisible refuse sans
+ * qu'aucune `ZodError` n'existe, et c'est alors la phrase du code qui se dit,
+ * exactement comme le repli le ferait.
+ *
+ * La langue reste un paramètre, pour la raison dite en tête de
+ * {@link validationRefusal} : tout appelant de cette fonction a déjà lu la sienne
+ * pour en faire la carte d'erreurs de son `safeParse` (#1299), et la relire ici
+ * interrogerait la requête deux fois.
+ */
+export function invalidFromZod(error: ZodError | undefined, locale: Locale): AdminActionFailure {
+  return invalid(error?.issues[0]?.message ?? validationRefusal(locale));
 }
 
 /**

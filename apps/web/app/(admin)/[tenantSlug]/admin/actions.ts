@@ -41,6 +41,11 @@
  * validation client a laissé passer quelque chose. Leur `safeParse` reçoit
  * désormais `zodErrorMap(locale)` : une carte contextuelle l'emporte sur la
  * globale, par conception de zod.
+ *
+ * Ce « premier refus du schéma, à défaut la phrase du code » est lui-même rendu
+ * par `invalidFromZod(error, locale)` depuis #1319 : la forme était recopiée à
+ * cinq sites, et sa place est auprès d'`invalid()` — voir l'en-tête
+ * d'`action-result.ts`, qui porte la décision et son motif.
  */
 
 import {
@@ -66,7 +71,13 @@ import {
   updateTenantSettings,
 } from '@/lib/api-client';
 
-import { failure, invalid, validationRefusal, type AdminActionResult } from './action-result';
+import {
+  failure,
+  invalid,
+  invalidFromZod,
+  validationRefusal,
+  type AdminActionResult,
+} from './action-result';
 import {
   clearAdminSession,
   adminActionAccess,
@@ -120,12 +131,11 @@ export async function adminAcceptInvitationAction(
   const parsed = acceptInvitationRequestSchema.safeParse(values, { errorMap: zodErrorMap(locale) });
 
   if (!slug.success || !parsed.success) {
-    const generique = validationRefusal(locale);
-
     // Le premier refus du schéma quand il en nomme un — c'est ce qui distingue
     // « douze caractères au minimum » d'un mot de passe absent. À défaut, la
-    // phrase du code, et non un littéral : voir l'en-tête de ce module.
-    return invalid(parsed.success ? generique : (parsed.error.issues[0]?.message ?? generique));
+    // phrase du code, et non un littéral. C'est le seul site où l'erreur peut
+    // manquer : un slug illisible refuse sans qu'aucun schéma n'ait parlé.
+    return invalidFromZod(parsed.success ? undefined : parsed.error, locale);
   }
 
   try {
@@ -191,7 +201,7 @@ export async function updateTenantSettingsAction(
     // se recouvrent », et l'écran n'a pas d'autre source pour le dire. Il est dit
     // dans la langue de la requête depuis #1299 — la carte contextuelle
     // ci-dessus l'emporte sur la carte globale du contrat, en français.
-    return invalid(parsed.error.issues[0]?.message ?? validationRefusal(locale));
+    return invalidFromZod(parsed.error, locale);
   }
 
   const access = await adminActionAccess(slug.data);

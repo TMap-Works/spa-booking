@@ -35,7 +35,9 @@
  *   repli ne dit que « incomplètes ou mal formées » —, le `safeParse` reçoit
  *   `zodErrorMap(locale)`. Sans elle il retombait sur la carte globale du
  *   contrat, posée en `DIAGNOSTIC_LOCALE = 'fr'` pour les journaux de l'API
- *   (#1232) : du français, quelle que soit la langue de l'écran.
+ *   (#1232) : du français, quelle que soit la langue de l'écran. Ce « premier
+ *   refus, à défaut la phrase du code » est rendu par `invalidFromZod` depuis
+ *   #1319 — la forme, comme la phrase, se tient en un seul point.
  *
  * Les `safeParse` dont le message ne remonte jamais — `uuidSchema` sur un
  * identifiant d'URL — n'en reçoivent pas : leur refus se dit par la phrase du
@@ -70,6 +72,7 @@ import {
   expired,
   failure,
   invalid,
+  invalidFromZod,
   validationRefusal,
   type AdminActionResult,
 } from '@/app/(admin)/[tenantSlug]/admin/action-result';
@@ -114,7 +117,7 @@ export async function provisionTenantAction(
   const parsed = createTenantRequestSchema.safeParse(values, { errorMap: zodErrorMap(locale) });
 
   if (!parsed.success) {
-    return invalid(parsed.error.issues[0]?.message ?? validationRefusal(locale));
+    return invalidFromZod(parsed.error, locale);
   }
   if (!/^[A-Za-z0-9-]{8,128}$/.test(idempotencyKey)) {
     return invalid(validationRefusal(locale));
@@ -177,7 +180,7 @@ export async function addTenantNoteAction(
     return invalid(validationRefusal(locale));
   }
   if (!parsed.success) {
-    return invalid(parsed.error.issues[0]?.message ?? validationRefusal(locale));
+    return invalidFromZod(parsed.error, locale);
   }
 
   const accessToken = await readPlatformAccessToken();
@@ -210,7 +213,7 @@ export async function updateTenantStatusAction(
     return invalid(validationRefusal(locale));
   }
   if (!parsed.success) {
-    return invalid(parsed.error.issues[0]?.message ?? validationRefusal(locale));
+    return invalidFromZod(parsed.error, locale);
   }
 
   const accessToken = await readPlatformAccessToken();

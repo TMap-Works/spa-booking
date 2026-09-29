@@ -1,8 +1,10 @@
 import {
   ERROR_CODES,
+  createPlatformNoteRequestSchema,
   errorMessage,
   validationMessage,
   validationPhrases,
+  zodErrorMap,
   type Locale,
 } from '@spa/shared';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -54,12 +56,19 @@ vi.mock('next/headers', () => ({
   cookies: () => Promise.resolve({ get: () => undefined, set: vi.fn() }),
 }));
 
-const { validationRefusal } = await import('@/app/(admin)/[tenantSlug]/admin/action-result');
-const { signupSalonAction } = await import('@/app/inscription/actions');
-const { updateTenantSettingsAction } = await import('@/app/(admin)/[tenantSlug]/admin/actions');
-const { provisionTenantAction, reissueTenantInvitationAction } = await import(
-  '@/app/plateforme/actions'
+const { invalidFromZod, validationRefusal } = await import(
+  '@/app/(admin)/[tenantSlug]/admin/action-result'
 );
+const { signupSalonAction } = await import('@/app/inscription/actions');
+const { adminAcceptInvitationAction, updateTenantSettingsAction } = await import(
+  '@/app/(admin)/[tenantSlug]/admin/actions'
+);
+const {
+  addTenantNoteAction,
+  provisionTenantAction,
+  reissueTenantInvitationAction,
+  updateTenantStatusAction,
+} = await import('@/app/plateforme/actions');
 
 afterEach(() => {
   fixerLangue('fr');
@@ -78,6 +87,21 @@ async function refus(action: Promise<{ ok: boolean }>): Promise<{ code: string; 
 
 /** Une charge utile de réglages dont un seul champ est fautif. */
 const CONTACT_FAUTIF = { contactEmail: 'pas-une-adresse' };
+
+/**
+ * Un identifiant de salon que `uuidSchema` accepte : il sert à dépasser le
+ * contrôle de l'URL pour atteindre celui de la charge utile, qui est l'objet du
+ * cas.
+ */
+const SALON_ID = '11111111-1111-4111-8111-111111111111';
+
+/**
+ * Une acceptation d'invitation que `acceptInvitationRequestSchema` accepte — le
+ * mot de passe dépasse les douze caractères exigés. Elle sert le cas inverse du
+ * précédent : c'est le **slug** qui doit être refusé, la charge utile étant hors
+ * de cause.
+ */
+const INVITATION_VALABLE = { token: 'jeton-de-test', password: 'mot-de-passe-de-test' };
 
 /**
  * Un salon que `createTenantRequestSchema` accepte — il sert à dépasser la
@@ -133,6 +157,57 @@ describe('le repli de validation — une seule phrase, tenue en un seul point', 
   });
 });
 
+/**
+ * La **forme d'appel**, depuis qu'elle n'est plus recopiée non plus — #1319.
+ *
+ * #1310 avait ramené la phrase de repli dans `action-result.ts` ; la forme qui
+ * l'emploie — `issues[0]?.message ?? validationRefusal(locale)` — restait
+ * recopiée à cinq sites. `invalidFromZod` l'assemble, et la décision de l'y
+ * mettre est écrite dans l'en-tête de ce module-là.
+ *
+ * Ce que cette suite protège est la promesse du ticket : **le refus rendu est
+ * inchangé**. Trois choses le composent, et chacune a son cas — le code, qui est
+ * toujours `VALIDATION_ERROR` et jamais celui que la phrase suggère ; la phrase,
+ * qui est celle du premier refus du schéma **quand il en nomme un** ; et la
+ * langue, qui est celle du paramètre. Ce dernier point se mesure à langue de
+ * requête fixe, pour la même raison que ci-dessus : une phrase anglaise ne peut
+ * alors venir que du paramètre.
+ *
+ * L'`undefined` du premier paramètre n'est pas une commodité : il sert le site
+ * où le refus peut venir d'ailleurs que du schéma — l'acceptation d'invitation
+ * juge aussi le slug de l'URL. Son cas est plus bas, sur l'action elle-même.
+ */
+describe('le refus d’un schéma — même code, même phrase, même langue', () => {
+  /** Une `ZodError` véritable, dans la langue demandée — jamais une doublure. */
+  function refusDuSchema(locale: Locale) {
+    const parsed = createPlatformNoteRequestSchema.safeParse({}, { errorMap: zodErrorMap(locale) });
+
+    expect(parsed.success).toBe(false);
+
+    return parsed.success ? undefined : parsed.error;
+  }
+
+  it.each(LANGUES)('rend le message du premier refus du schéma, en %s', (locale) => {
+    fixerLangue('fr');
+
+    expect(invalidFromZod(refusDuSchema(locale), locale)).toEqual({
+      ok: false,
+      code: ERROR_CODES.VALIDATION_ERROR,
+      message: validationPhrases(locale).required,
+    });
+  });
+
+  it.each(LANGUES)('retombe sur la phrase du code quand rien ne le nomme, en %s', (locale) => {
+    fixerLangue('fr');
+
+    expect(invalidFromZod(undefined, locale)).toEqual({
+      ok: false,
+      code: ERROR_CODES.VALIDATION_ERROR,
+      message: errorMessage(ERROR_CODES.VALIDATION_ERROR, locale),
+    });
+  });
+});
+
 describe('inscription d’un salon — le refus suit la langue de la requête', () => {
   it.each(LANGUES)('champ obligatoire vide, en %s', async (locale) => {
     fixerLangue(locale);
@@ -181,6 +256,49 @@ describe('console de l’éditeur — plus aucune phrase écrite en dur', () => 
     fixerLangue(locale);
 
     const { code, message } = await refus(reissueTenantInvitationAction('pas-un-uuid'));
+
+    expect(code).toBe(ERROR_CODES.VALIDATION_ERROR);
+    expect(message).toBe(errorMessage(ERROR_CODES.VALIDATION_ERROR, locale));
+  });
+
+  // Les deux derniers des cinq sites repliés sur `invalidFromZod` (#1319). Ils y
+  // sont pour la promesse du ticket — le refus rendu est inchangé —, et non pour
+  // éprouver une règle que les schémas portent déjà.
+  it.each(LANGUES)('note interne vide, en %s', async (locale) => {
+    fixerLangue(locale);
+
+    const { code, message } = await refus(addTenantNoteAction(SALON_ID, {}));
+
+    expect(code).toBe(ERROR_CODES.VALIDATION_ERROR);
+    expect(message).toBe(validationPhrases(locale).required);
+  });
+
+  it.each(LANGUES)('changement d’état sans motif, en %s', async (locale) => {
+    fixerLangue(locale);
+
+    const { code, message } = await refus(updateTenantStatusAction(SALON_ID, {}));
+
+    expect(code).toBe(ERROR_CODES.VALIDATION_ERROR);
+    expect(message).toBe(validationPhrases(locale).required);
+  });
+});
+
+/**
+ * Le site où le refus peut venir d'**ailleurs** que du schéma — #1319.
+ *
+ * `adminAcceptInvitationAction` juge le slug de l'URL et la charge utile d'un
+ * même `if` : une charge utile valable sur un slug illisible refuse sans qu'aucune
+ * `ZodError` n'existe. C'est ce cas-là que l'`undefined` d'`invalidFromZod` sert,
+ * et c'est ici qu'il se mesure en situation — la phrase attendue est celle du
+ * code, exactement ce que rendait le `parsed.success ? generique : …` d'avant.
+ */
+describe('acceptation d’invitation — un slug illisible se dit par la phrase du code', () => {
+  it.each(LANGUES)('charge utile valable, slug refusé, en %s', async (locale) => {
+    fixerLangue(locale);
+
+    const { code, message } = await refus(
+      adminAcceptInvitationAction('Spa Lumière', INVITATION_VALABLE),
+    );
 
     expect(code).toBe(ERROR_CODES.VALIDATION_ERROR);
     expect(message).toBe(errorMessage(ERROR_CODES.VALIDATION_ERROR, locale));
