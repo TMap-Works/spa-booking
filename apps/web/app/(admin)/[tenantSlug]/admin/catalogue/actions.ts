@@ -54,7 +54,7 @@ import {
   updateServiceCategory,
 } from '@/lib/api-client';
 
-import { failure, invalid, type AdminActionResult } from '../action-result';
+import { failure, invalid, unknownTenant, type AdminActionResult } from '../action-result';
 import { adminCatalogPath, adminServiceCategoriesPath, adminServicePath } from '../paths';
 import { adminActionAccess } from '../session';
 
@@ -64,15 +64,21 @@ import { adminActionAccess } from '../session';
  * Rendu plutôt que levé, parce qu'une exception traverserait la frontière
  * serveur en perdant son type et n'arriverait au composant que comme un message
  * générique.
+ *
+ * L'établissement illisible porte `TENANT_NOT_FOUND` depuis #1375, et non plus
+ * le `VALIDATION_ERROR` des refus de saisie : il précède **tous** les gestes du
+ * catalogue, et les écrans qui gardent le code pour réécrire la phrase au rendu
+ * (#1354) n'avaient dès lors que la tournure générique du refus de validation à
+ * en dire. La raison du choix — un code, et non un marqueur dans `details` — est
+ * en tête d'`action-result.ts`.
  */
 async function openCall(
   tenantSlug: string,
 ): Promise<{ ok: true; accessToken: string; slug: string } | { ok: false; code: string; message: string }> {
-  const t = await getTranslations('admin-catalog.actions');
   const slug = slugSchema.safeParse(tenantSlug);
 
   if (!slug.success) {
-    return invalid(t('unknownTenant'));
+    return unknownTenant();
   }
 
   const access = await adminActionAccess(slug.data);

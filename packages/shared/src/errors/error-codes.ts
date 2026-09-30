@@ -750,6 +750,13 @@ export const WEB_ACTION_ERROR_CODES = {
    * puissions nommer — le seul chemin qui l'émette aujourd'hui est un slug que
    * `slugSchema` refuse, jugé par l'action avant tout appel.
    *
+   * Ses émetteurs sont les modules d'actions serveur d'`apps/web` qui jugent ce
+   * slug : le planning et le comptoir depuis #1372, puis le catalogue, les
+   * fiches clientes, le personnel, le reporting et l'espace client depuis #1375.
+   * Ils sont nommés parce que l'invariant de ce fichier l'exige — « tout code de
+   * ce fichier a un émetteur nommé » —, et ils le restent : ce code ne vaut que
+   * pour le refus rendu par le front, jamais pour une réponse de l'API.
+   *
    * ## Il ne renseigne personne, et c'est ce qui l'autorise
    *
    * Il ne dit pas qu'un établissement existe ou non : l'action n'interroge
