@@ -8,6 +8,7 @@ import {
   type PublicTenant,
   type TimeZone,
 } from '@spa/shared';
+import type { Metadata } from 'next';
 import { getLocale, getTranslations } from 'next-intl/server';
 import Link from 'next/link';
 import type { ReactNode } from 'react';
@@ -20,6 +21,7 @@ import {
   fetchPublicTenant,
   searchCustomers,
 } from '@/lib/api-client';
+import { elisionForm } from '@/lib/elision';
 import { initialsOf } from '@/lib/initials';
 import { statusModifier, zonedFields } from '@/lib/admin/calendar-grid';
 import { appointmentOutcomeLabel } from '@/lib/appointment-status';
@@ -147,6 +149,19 @@ interface ClientsPageProps {
   }>;
 }
 
+/**
+ * Le titre de l'onglet de cet écran (#1329).
+ *
+ * Le gabarit de l'espace le situe — « … · Back-office ». Sans ce
+ * titre-ci, l'onglet portait le seul nom de l'espace, et deux écrans ouverts
+ * côte à côte étaient indiscernables.
+ */
+export async function generateMetadata(): Promise<Metadata> {
+  const t = await getTranslations('admin-clients');
+
+  return { title: t('metadata.list') };
+}
+
 export default async function ClientsPage({ params, searchParams }: ClientsPageProps) {
   const { tenantSlug } = await params;
   const { recherche, fiche, page: requestedPage } = await searchParams;
@@ -272,7 +287,12 @@ export default async function ClientsPage({ params, searchParams }: ClientsPageP
           <h2 className="spa-admin__section-title spa-visually-hidden" id="clients-fiche-titre">
             {record === null
               ? t('record.headingNone')
-              : t('record.heading', { name: fullName(record.customer) })}
+              : // `elision` porte la règle d'élision jusqu'au message — « Fiche
+                // d'Alice » et non « Fiche de Alice » (`lib/elision.ts`, #1329).
+                t('record.heading', {
+                  name: fullName(record.customer),
+                  elision: elisionForm(record.customer.firstName),
+                })}
           </h2>
 
           {missing ? (

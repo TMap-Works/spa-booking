@@ -48,6 +48,7 @@ import {
 } from '@/lib/admin/calendar-range';
 import { calendarPeriodEmptyState, calendarStartState } from '@/lib/admin/calendar-start';
 import { appointmentOutcomeLabel, appointmentStatusLabels } from '@/lib/appointment-status';
+import { elisionForm } from '@/lib/elision';
 import type { DisplayLocale } from '@/lib/format';
 import { initialsOf } from '@/lib/initials';
 
@@ -754,6 +755,7 @@ export function CalendarBoard({
         // contrat ne porte pas le genre.
         body: `${t('move.restored', {
           client: `${previous.client.firstName} ${previous.client.lastName}`,
+          elision: elisionForm(previous.client.firstName),
           moment: deskMoment(previous.startsAt, timeZone, display),
           staff: previous.staff.displayName,
         })} ${reason}`,
@@ -1536,7 +1538,14 @@ function CalendarCellView({
           >
             <span aria-hidden="true">⋯</span>
             <span className="spa-visually-hidden">
-              {t('grid.openRecord', { client: cell.clientLabel, time: cell.timeLabel })}
+              {/* `elision` porte la règle d'élision jusqu'au message, qui la
+                  décline dans sa langue : « la fiche d'Alice » en français,
+                  ignoré en anglais (`lib/elision.ts`, #1329). */}
+              {t('grid.openRecord', {
+                client: cell.clientLabel,
+                time: cell.timeLabel,
+                elision: elisionForm(cell.clientLabel),
+              })}
             </span>
           </button>
         </div>
@@ -1602,6 +1611,7 @@ function CalendarCellView({
               ? t('grid.freeHint')
               : t('grid.dropHint', {
                   client: `${dropping.client.firstName} ${dropping.client.lastName}`,
+                  elision: elisionForm(dropping.client.firstName),
                 })}
           </span>
         </button>

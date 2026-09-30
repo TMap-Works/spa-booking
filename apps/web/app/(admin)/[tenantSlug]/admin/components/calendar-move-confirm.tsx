@@ -6,6 +6,7 @@ import { useEffect, useId } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { deskMoment, type DeskMove } from '@/lib/admin/appointment-desk';
+import { elisionForm } from '@/lib/elision';
 import type { DisplayLocale } from '@/lib/format';
 
 /**
@@ -84,8 +85,11 @@ export function CalendarMoveConfirm({
   return (
     <div aria-labelledby={titleId} className="spa-admin-calendar__confirm" role="alertdialog">
       <p className="spa-admin-calendar__confirm-text" id={titleId}>
+        {/* `elision` porte la règle d'élision jusqu'au message — « le rendez-vous
+            d'Alice » et non « de Alice » (`lib/elision.ts`, #1329). */}
         {t('move.question', {
           client,
+          elision: elisionForm(move.previous.client.firstName),
           from: move.previous.staff.displayName,
           to: move.optimistic.staff.displayName,
           moment: deskMoment(move.optimistic.startsAt, timeZone, display),
