@@ -145,7 +145,7 @@ describe('StaffMemberForm — ce qu’il signale', () => {
   });
 
   it('dit « choisissez un compte » plutôt que de parler d’UUID', async () => {
-    // Le contrat ne peut dire que « identifiant attendu au format UUID v4 » : il
+    // Le contrat ne peut dire que « Identifiant attendu au format UUID v4. » : il
     // ne sait pas qu'à l'écran ce champ est un sélecteur dont la valeur vide est
     // le défaut. Ce message-là ne s'adresse à personne sous une liste déroulante.
     renderForm();

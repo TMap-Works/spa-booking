@@ -1,6 +1,6 @@
 /**
  * Les messages de validation des formulaires, dans les deux langues — #845,
- * complété par #1232 puis par #1309.
+ * complété par #1232, puis par #1309, puis par #1356 qui en a fixé le registre.
  *
  * ## Le problème que cela résout
  *
@@ -250,129 +250,156 @@ export type ValidationMessageVars = Readonly<Record<string, string | number>>;
 type ValidationPhrase = string | ((vars: ValidationMessageVars) => string);
 
 /**
- * Les phrases françaises — **reprises mot pour mot** de celles que les schémas
- * portaient avant #1232.
+ * Les phrases françaises — au **registre du glossaire** depuis #1356.
  *
- * La reprise est littérale à dessein : c'est elle qui garantit que
- * `details.violations` sert exactement le même texte qu'avant le ticket, donc
- * qu'aucune route ne change de comportement observable (troisième critère). Les
- * harmoniser avec la ponctuation de `PHRASES` ci-dessus est un autre travail,
- * qui touche aux captures de la recette et aux tests de l'API.
+ * ## Ce que #1356 change, et pourquoi c'est un ticket et non une retouche
+ *
+ * #1232 avait repris ces phrases *mot pour mot* de celles que les schémas
+ * portaient, minuscules et sans point final, pour que `details.violations` serve
+ * exactement le même texte qu'avant et qu'aucune route ne change de comportement
+ * observable. La reprise littérale a fait son office ; elle laissait un écart que
+ * le glossaire du produit (`apps/web/messages/README.md`) a ensuite nommé : **une
+ * phrase montrée à quelqu'un commence par une capitale et finit par un point,
+ * refus de validation compris**. Deux champs voisins d'un même formulaire
+ * affichaient donc deux registres — « The two passwords do not match. » sous l'un,
+ * « enter at least 12 characters » sous l'autre.
+ *
+ * Les deux tables suivent désormais la règle, dans les deux langues. C'est bien un
+ * changement de texte observable sur `details.violations` : il est délibéré, c'est
+ * l'objet du deuxième critère de #1356, et les suites qui citaient ces chaînes
+ * mot pour mot ont suivi. Aucun `code` d'erreur ne bouge — le front branche son
+ * comportement sur `code`, jamais sur la phrase (`error-codes.ts`).
+ *
+ * ## Deux formulations qui ne sont pas de simples capitalisations
+ *
+ * - `identifier.slug` ne dit plus « slug ». C'est un mot de développeur, que le
+ *   glossaire interdit à l'écran ; l'anglais disait déjà « address », et les
+ *   catalogues web disent « adresse » depuis #1329.
+ * - `time.timeZone` devient une phrase pleine — « Ce fuseau horaire IANA est
+ *   inconnu. » — plutôt que le « Fuseau horaire IANA inconnu. » qu'une simple
+ *   capitalisation aurait donné. La raison est concrète : `tenant-settings.dto`
+ *   cherche « fuseau horaire IANA » en sous-chaîne pour prouver que le refus
+ *   nomme la nature de la faute, et une capitale en tête de cette sous-chaîne
+ *   l'aurait fait disparaître. Garder le groupe nominal au milieu de la phrase
+ *   coûte un mot et laisse la garde en place.
  */
 const FR_VALIDATION: Readonly<Record<ValidationMessageKey, ValidationPhrase>> = {
-  'identifier.uuid': 'identifiant attendu au format UUID v4',
-  'identifier.slug': 'slug attendu en minuscules, chiffres et tirets simples',
-  'identifier.slugReserved': 'ce nom est réservé par la plateforme — choisissez-en un autre',
-  'identifier.email': 'adresse e-mail invalide',
-  'identifier.countryCode': 'code pays ISO 3166-1 alpha-2 attendu (« FR »)',
+  'identifier.uuid': 'Identifiant attendu au format UUID v4.',
+  'identifier.slug': 'Adresse attendue en minuscules, chiffres et tirets simples.',
+  'identifier.slugReserved': 'Ce nom est réservé par la plateforme — choisissez-en un autre.',
+  'identifier.email': 'Adresse e-mail invalide.',
+  'identifier.countryCode': 'Code pays ISO 3166-1 alpha-2 attendu (« FR »).',
   'identifier.countryCodeUnknown':
-    'ce pays n’existe pas en ISO 3166-1 alpha-2 — « FR », « US », « CA »',
-  'identifier.phone': 'numéro de téléphone invalide',
+    'Ce pays n’existe pas en ISO 3166-1 alpha-2 — « FR », « US », « CA ».',
+  'identifier.phone': 'Numéro de téléphone invalide.',
   'identifier.phoneTooShort': (vars) =>
-    `numéro de téléphone incomplet — au moins ${String(vars.min)} chiffres attendus`,
+    `Numéro de téléphone incomplet — au moins ${String(vars.min)} chiffres attendus.`,
   'identifier.phoneInternational':
-    'numéro attendu au format international, indicatif compris — par exemple +261 34 12 345 67',
+    'Numéro attendu au format international, indicatif compris — par exemple +261 34 12 345 67.',
   'identifier.phoneNational':
-    'numéro de téléphone invalide — au format national du pays de l’établissement, ' +
-    'ou au format international (+261 34 12 345 67)',
+    'Numéro de téléphone invalide — au format national du pays de l’établissement, ' +
+    'ou au format international (+261 34 12 345 67).',
 
-  'money.currencyCode': 'code devise ISO 4217 invalide',
+  'money.currencyCode': 'Code devise ISO 4217 invalide.',
 
   'time.offsetDateTime':
-    'une date-heure doit être en ISO 8601 avec offset explicite (« Z » ou « ±HH:MM »)',
-  'time.localTime': 'heure locale attendue au format HH:MM (00:00 à 23:59)',
-  'time.calendarDate': 'date attendue au format YYYY-MM-DD',
-  'time.calendarDateUnreal': 'cette date n’existe pas au calendrier',
-  'time.timeZone': 'fuseau horaire IANA inconnu',
-  'time.intervalOrder': 'la fin doit être strictement postérieure au début',
+    'Une date-heure doit être en ISO 8601 avec offset explicite (« Z » ou « ±HH:MM »).',
+  'time.localTime': 'Heure locale attendue au format HH:MM (00:00 à 23:59).',
+  'time.calendarDate': 'Date attendue au format YYYY-MM-DD.',
+  'time.calendarDateUnreal': 'Cette date n’existe pas au calendrier.',
+  'time.timeZone': 'Ce fuseau horaire IANA est inconnu.',
+  'time.intervalOrder': 'La fin doit être strictement postérieure au début.',
 
-  'tenant.closesAfterOpens': 'la fermeture doit être strictement postérieure à l’ouverture',
+  'tenant.closesAfterOpens': 'La fermeture doit être strictement postérieure à l’ouverture.',
   'tenant.openingHoursTooMany': (vars) =>
-    `au plus ${String(vars.max)} plages d’ouverture par semaine`,
-  'tenant.openingHoursOverlap': 'deux plages d’ouverture du même jour se recouvrent',
-  'tenant.receiptPrefix': 'préfixe attendu : 2 à 8 lettres majuscules ou chiffres, sans tiret',
+    `Au plus ${String(vars.max)} plages d’ouverture par semaine.`,
+  'tenant.openingHoursOverlap': 'Deux plages d’ouverture du même jour se recouvrent.',
+  'tenant.receiptPrefix': 'Préfixe attendu : 2 à 8 lettres majuscules ou chiffres, sans tiret.',
   'tenant.vatNumber':
-    'numéro de TVA attendu : deux lettres de pays puis 8 à 13 caractères ' +
-    '(la clé du numéro français est vérifiée)',
-  'tenant.legalIdPair': 'la nature et l’identifiant d’entreprise se posent ou s’effacent ensemble',
-  'tenant.legalIdInvalid': (vars) => `identifiant invalide pour la nature « ${String(vars.type)} »`,
+    'Numéro de TVA attendu : deux lettres de pays puis 8 à 13 caractères ' +
+    '(la clé du numéro français est vérifiée).',
+  'tenant.legalIdPair': 'La nature et l’identifiant d’entreprise se posent ou s’effacent ensemble.',
+  'tenant.legalIdInvalid': (vars) =>
+    `Identifiant invalide pour la nature « ${String(vars.type)} ».`,
 
-  'availability.rangeOrder': 'la fin de la plage ne peut pas précéder son début',
-  'availability.rangeTooWide': (vars) => `la plage demandée dépasse ${String(vars.max)} jours`,
+  'availability.rangeOrder': 'La fin de la plage ne peut pas précéder son début.',
+  'availability.rangeTooWide': (vars) => `La plage demandée dépasse ${String(vars.max)} jours.`,
   'availability.scheduleRangeOrder':
-    'la fin d’une plage doit être strictement postérieure à son début',
-  'availability.scheduleOverlap': 'deux plages du même jour se recouvrent',
-  'availability.weekdayDuplicate': 'un jour de semaine ne se déclare qu’une fois',
+    'La fin d’une plage doit être strictement postérieure à son début.',
+  'availability.scheduleOverlap': 'Deux plages du même jour se recouvrent.',
+  'availability.weekdayDuplicate': 'Un jour de semaine ne se déclare qu’une fois.',
   'availability.timeOffRange': (vars) =>
-    `la fin doit suivre le début, et l’absence ne peut excéder ${String(vars.max)} jours`,
+    `La fin doit suivre le début, et l’absence ne peut excéder ${String(vars.max)} jours.`,
   'availability.timeOffWindow': (vars) =>
-    `la fin de la fenêtre doit suivre son début, sans excéder ${String(vars.max)} jours`,
+    `La fin de la fenêtre doit suivre son début, sans excéder ${String(vars.max)} jours.`,
 
-  'appointment.dataConsent': 'le traitement des données doit être accepté pour réserver',
-  'identity.accountDataConsent': 'le traitement des données doit être accepté pour créer un compte',
+  'appointment.dataConsent': 'Le traitement des données doit être accepté pour réserver.',
+  'identity.accountDataConsent': 'Le traitement des données doit être accepté pour créer un compte.',
 
-  'platform.totpCode': 'six chiffres, tels que les affiche votre application',
+  'platform.totpCode': 'Six chiffres, tels que les affiche votre application.',
 };
 
 /**
  * Les mêmes refus, en anglais — la langue par défaut du système (#844).
  *
- * Même registre que le français : une phrase minuscule, sans point final. C'est
- * ce que les huit écrans concernés affichent déjà, et changer de registre dans
- * une seule des deux langues aurait fait paraître l'anglais rapporté d'ailleurs.
+ * Même registre que le français, et c'est la raison pour laquelle #1356 a bougé
+ * les deux tables d'un seul geste : capitale et point final ici aussi. Ne changer
+ * de registre que dans une des deux langues aurait fait paraître l'autre
+ * rapportée d'ailleurs — ce qui était déjà l'argument de #1232, à la ponctuation
+ * près.
  */
 const EN_VALIDATION: Readonly<Record<ValidationMessageKey, ValidationPhrase>> = {
-  'identifier.uuid': 'identifier expected in UUID v4 format',
-  'identifier.slug': 'address expected in lowercase letters, digits and single hyphens',
-  'identifier.slugReserved': 'this name is reserved by the platform — please choose another',
-  'identifier.email': 'invalid email address',
-  'identifier.countryCode': 'ISO 3166-1 alpha-2 country code expected (“FR”)',
-  'identifier.countryCodeUnknown':
-    'no such country in ISO 3166-1 alpha-2 — “FR”, “US”, “CA”',
-  'identifier.phone': 'invalid phone number',
+  'identifier.uuid': 'Identifier expected in UUID v4 format.',
+  'identifier.slug': 'Address expected in lowercase letters, digits and single hyphens.',
+  'identifier.slugReserved': 'This name is reserved by the platform — please choose another.',
+  'identifier.email': 'Invalid email address.',
+  'identifier.countryCode': 'ISO 3166-1 alpha-2 country code expected (“FR”).',
+  'identifier.countryCodeUnknown': 'No such country in ISO 3166-1 alpha-2 — “FR”, “US”, “CA”.',
+  'identifier.phone': 'Invalid phone number.',
   'identifier.phoneTooShort': (vars) =>
-    `incomplete phone number — at least ${String(vars.min)} digits expected`,
+    `Incomplete phone number — at least ${String(vars.min)} digits expected.`,
   'identifier.phoneInternational':
-    'number expected in international format, country code included — for example +261 34 12 345 67',
+    'Number expected in international format, country code included — ' +
+    'for example +261 34 12 345 67.',
   'identifier.phoneNational':
-    'invalid phone number — in the national format of the salon’s country, ' +
-    'or in international format (+261 34 12 345 67)',
+    'Invalid phone number — in the national format of the salon’s country, ' +
+    'or in international format (+261 34 12 345 67).',
 
-  'money.currencyCode': 'invalid ISO 4217 currency code',
+  'money.currencyCode': 'Invalid ISO 4217 currency code.',
 
   'time.offsetDateTime':
-    'a date and time must be ISO 8601 with an explicit offset (“Z” or “±HH:MM”)',
-  'time.localTime': 'local time expected in HH:MM format (00:00 to 23:59)',
-  'time.calendarDate': 'date expected in YYYY-MM-DD format',
-  'time.calendarDateUnreal': 'this date does not exist in the calendar',
-  'time.timeZone': 'unknown IANA time zone',
-  'time.intervalOrder': 'the end must be strictly after the start',
+    'A date and time must be ISO 8601 with an explicit offset (“Z” or “±HH:MM”).',
+  'time.localTime': 'Local time expected in HH:MM format (00:00 to 23:59).',
+  'time.calendarDate': 'Date expected in YYYY-MM-DD format.',
+  'time.calendarDateUnreal': 'This date does not exist in the calendar.',
+  'time.timeZone': 'Unknown IANA time zone.',
+  'time.intervalOrder': 'The end must be strictly after the start.',
 
-  'tenant.closesAfterOpens': 'closing time must be strictly after opening time',
-  'tenant.openingHoursTooMany': (vars) => `at most ${String(vars.max)} opening ranges per week`,
-  'tenant.openingHoursOverlap': 'two opening ranges on the same day overlap',
-  'tenant.receiptPrefix': 'prefix expected: 2 to 8 uppercase letters or digits, no hyphen',
+  'tenant.closesAfterOpens': 'Closing time must be strictly after opening time.',
+  'tenant.openingHoursTooMany': (vars) => `At most ${String(vars.max)} opening ranges per week.`,
+  'tenant.openingHoursOverlap': 'Two opening ranges on the same day overlap.',
+  'tenant.receiptPrefix': 'Prefix expected: 2 to 8 uppercase letters or digits, no hyphen.',
   'tenant.vatNumber':
     'VAT number expected: two country letters then 8 to 13 characters ' +
-    '(the checksum of French numbers is verified)',
-  'tenant.legalIdPair': 'the company identifier and its type are set or cleared together',
-  'tenant.legalIdInvalid': (vars) => `invalid identifier for type “${String(vars.type)}”`,
+    '(the checksum of French numbers is verified).',
+  'tenant.legalIdPair': 'The company identifier and its type are set or cleared together.',
+  'tenant.legalIdInvalid': (vars) => `Invalid identifier for type “${String(vars.type)}”.`,
 
-  'availability.rangeOrder': 'the end of the range cannot come before its start',
+  'availability.rangeOrder': 'The end of the range cannot come before its start.',
   'availability.rangeTooWide': (vars) =>
-    `the requested range is longer than ${String(vars.max)} days`,
-  'availability.scheduleRangeOrder': 'the end of a range must be strictly after its start',
-  'availability.scheduleOverlap': 'two ranges on the same day overlap',
-  'availability.weekdayDuplicate': 'a weekday can only be declared once',
+    `The requested range is longer than ${String(vars.max)} days.`,
+  'availability.scheduleRangeOrder': 'The end of a range must be strictly after its start.',
+  'availability.scheduleOverlap': 'Two ranges on the same day overlap.',
+  'availability.weekdayDuplicate': 'A weekday can only be declared once.',
   'availability.timeOffRange': (vars) =>
-    `the end must follow the start, and time off cannot exceed ${String(vars.max)} days`,
+    `The end must follow the start, and time off cannot exceed ${String(vars.max)} days.`,
   'availability.timeOffWindow': (vars) =>
-    `the end of the window must follow its start, and cannot exceed ${String(vars.max)} days`,
+    `The end of the window must follow its start, and cannot exceed ${String(vars.max)} days.`,
 
-  'appointment.dataConsent': 'data processing must be accepted in order to book',
-  'identity.accountDataConsent': 'data processing must be accepted in order to create an account',
+  'appointment.dataConsent': 'Data processing must be accepted in order to book.',
+  'identity.accountDataConsent': 'Data processing must be accepted in order to create an account.',
 
-  'platform.totpCode': 'six digits, as shown by your authenticator app',
+  'platform.totpCode': 'Six digits, as shown by your authenticator app.',
 };
 
 /** Les refus nommés par les schémas, par langue puis par clé. */
@@ -628,11 +655,12 @@ export function zodErrorMap(locale: Locale): z.ZodErrorMap {
  *    `TypeError` d'amorçage : basculer cette seule constante donnerait un
  *    `details` anglais sous un `message` français, ce qui est moins lisible que
  *    l'état actuel, pas plus.
- * 3. C'est ce que #1232 a gelé pour que « aucune route ne change de
- *    comportement observable », et la remettre en cause ferait basculer d'un
- *    coup la cinquantaine de phrases de `VALIDATION_MESSAGES` sur **toutes** les
- *    routes — un changement de contrat qui n'a rien à faire dans un correctif de
- *    trois lignes, et qui demanderait son propre ticket.
+ * 3. La remettre en cause ferait basculer d'un coup la cinquantaine de phrases
+ *    de `VALIDATION_MESSAGES` sur **toutes** les routes — un changement de
+ *    contrat qui n'a rien à faire dans un correctif de trois lignes, et qui
+ *    demanderait son propre ticket. #1356 a bien changé le **texte** de ces
+ *    phrases, capitale et point final compris ; il n'a pas changé leur
+ *    **langue**, et c'est cette dernière que cette constante gouverne.
  */
 export const DIAGNOSTIC_LOCALE: Locale = 'fr';
 

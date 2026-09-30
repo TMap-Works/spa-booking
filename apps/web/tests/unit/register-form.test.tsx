@@ -118,7 +118,7 @@ describe('inscription — première soumission', () => {
     expect(await screen.findByText(CHAMP_REQUIS)).toBeDefined();
     expect(messagesAffiches()).toEqual([
       CHAMP_REQUIS,
-      'adresse e-mail invalide',
+      'Adresse e-mail invalide.',
       PHONE_INCOMPLETE,
       MOT_DE_PASSE_COURT,
     ]);
@@ -155,7 +155,7 @@ describe('inscription — correction', () => {
     expect(screen.queryByText(CHAMP_REQUIS)).toBeNull();
     // Les trois autres restent signalées : corriger un champ n'absout pas les autres.
     expect(messagesAffiches()).toEqual([
-      'adresse e-mail invalide',
+      'Adresse e-mail invalide.',
       PHONE_INCOMPLETE,
       MOT_DE_PASSE_COURT,
     ]);

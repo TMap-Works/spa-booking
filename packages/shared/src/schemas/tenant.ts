@@ -577,7 +577,7 @@ export const taxRateBpsSchema = z.number().int().min(0).max(MAX_TAX_RATE_BPS);
  * `vatNumberSchema` normalisent déjà ; sans ces deux-ci, l'action serveur du
  * back-office — qui valide contre ce schéma **avant** d'appeler l'API — aurait
  * refusé une saisie que `PATCH /v1/tenant` accepte et corrige, en la déclarant
- * « identifiant invalide pour la nature ». Les deux frontières du contrat
+ * « Identifiant invalide pour la nature… ». Les deux frontières du contrat
  * doivent refuser les mêmes valeurs.
  *
  * Bornés avant la mise en majuscules, comme `legalIdSchema` : la largeur de la

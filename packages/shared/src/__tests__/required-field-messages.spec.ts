@@ -6,7 +6,7 @@
  * `nameSchema`, `displayNameSchema` et `submittedPasswordSchema` étaient des
  * `.min(1)` **sans message** : Zod rendait alors son libellé par défaut, « String
  * must contain at least 1 character(s) », sur huit écrans par ailleurs
- * entièrement français — à côté d'« adresse e-mail invalide » dans le même
+ * entièrement français — à côté d'« Adresse e-mail invalide. » dans le même
  * formulaire. Un message manquant ne se voit ni au typage ni à la compilation :
  * le schéma refuse bien ce qu'il doit refuser, seule la phrase est étrangère.
  *

@@ -105,7 +105,7 @@ describe('le code pays soumis', () => {
     // Un message écrit en dur ici aurait court-circuité la carte, et un gérant
     // anglophone aurait lu le français.
     expect(refuse(submittedCountryCodeSchema, 'ZZ', 'fr')).toContain('n’existe pas');
-    expect(refuse(submittedCountryCodeSchema, 'ZZ', 'en')).toContain('no such country');
+    expect(refuse(submittedCountryCodeSchema, 'ZZ', 'en')).toContain('No such country');
   });
 
   it('rend une chaîne, non l’union des deux cent quarante-neuf littéraux', () => {

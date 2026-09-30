@@ -98,7 +98,7 @@ describe('identity', () => {
     // Le message est celui de l'écran d'inscription, pas celui du tunnel : il
     // se lit sur la case, par la cliente.
     expect(refus.error?.issues[0]?.message).toBe(
-      'le traitement des données doit être accepté pour créer un compte',
+      'Le traitement des données doit être accepté pour créer un compte.',
     );
   });
 
