@@ -380,7 +380,7 @@ export async function connexionComptoir(page: Page, email: string): Promise<void
     // rang sous `ADMIN` recevait en « Accès réservé ». Le repère qui dit que la
     // session est posée reste le rail, présent sur toutes ces destinations.
     await expect(
-      page.getByRole('navigation', { name: 'Sections du tableau de bord' }),
+      page.getByRole('navigation', { name: 'Sections du back-office' }),
     ).toBeVisible({ timeout: 20_000 });
   });
 }
