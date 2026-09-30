@@ -167,7 +167,7 @@ describe('la frontière de POST /public/:tenantSlug/appointments', () => {
     expect(caught).toBeInstanceOf(BadRequestException);
     expect((caught as BadRequestException).getResponse()).toMatchObject({
       statusCode: 400,
-      message: ['serviceId : identifiant attendu au format UUID v4'],
+      message: ['serviceId : Identifiant attendu au format UUID v4.'],
     });
   });
 });
