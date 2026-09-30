@@ -1,4 +1,4 @@
-import { LOCALES, validationPhrases, type Locale } from '@spa/shared';
+import { LOCALES, VALIDATION_MESSAGES, validationPhrases, type Locale } from '@spa/shared';
 import { describe, expect, it } from 'vitest';
 
 import { loadMessages, type MessageTree } from '@/i18n/messages';
@@ -44,6 +44,15 @@ import { loadMessages, type MessageTree } from '@/i18n/messages';
  * en-tête de colonne, une entrée de menu ne sont pas des phrases et n'en
  * prennent pas la ponctuation. Elle porte donc sur le sous-ensemble que
  * `messages/README.md` **nomme** — voir {@link estUnRefus}.
+ *
+ * ## La source unique d'un refus, depuis #1373
+ *
+ * S'y ajoutent enfin deux règles qui ne jugent pas un texte mais sa **provenance** :
+ * une feuille de catalogue ne redit pas une phrase que le contrat partagé porte
+ * déjà. Elles regardent les deux tables de `zod-messages.ts`, chacune avec sa
+ * propre dispense — `validationPhrases` depuis #1373 et #1376, `VALIDATION_MESSAGES`
+ * depuis #1387. Voir {@link phrasesFixesDuContrat} et
+ * {@link phrasesNommeesParLeContrat}.
  */
 
 /** Les feuilles d'un catalogue, par clé aplatie. */
@@ -620,6 +629,184 @@ describe('un refus du contrat n’a qu’une source (#1373, #1376)', () => {
       survivantes,
       'dispenses devenues inutiles — la copie a été reprise, retirer la clé ' +
         `de COPIES_DE_PHRASES_TOLEREES :\n${survivantes.join('\n')}`,
+    ).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Les refus que le contrat **nomme** n'ont qu'une source non plus — #1387
+// ---------------------------------------------------------------------------
+
+/**
+ * Les phrases de `VALIDATION_MESSAGES[locale]` qui sont des **chaînes**, par clé.
+ *
+ * ## Pourquoi cette seconde table, et pourquoi elle manquait
+ *
+ * `phrasesFixesDuContrat` ci-dessus ne regarde que `validationPhrases(locale)` —
+ * les dix tournures **génériques** que `zodErrorMap` rend sur un code d'`issue`
+ * (champ vide, adresse mal formée, choix hors liste…). C'est ce que les critères
+ * de #1373 et de #1376 nommaient, et c'est tout ce qu'ils nommaient.
+ *
+ * Le contrat porte une seconde table, et c'est même la plus grande : les refus que
+ * les **schémas** nomment eux-mêmes par `messageKey(…)` — `identifier.slug`,
+ * `identifier.phone`, `platform.totpCode`, `availability.scheduleOverlap`… Une
+ * feuille de catalogue qui redit une de celles-là crée exactement la même paire de
+ * sources non reliées, avec un risque supérieur : ces phrases-là sont **plus
+ * spécifiques**, donc plus tentantes à recopier dans le catalogue d'un écran.
+ *
+ * Et le défaut était déjà réalisé, plusieurs fois, sans que rien ne le signale.
+ * `platform.login.fieldErrors.totpCode` redisait `platform.totpCode` mot pour mot
+ * en français, et en **divergeait** en anglais : « as your authenticator app shows
+ * them » au catalogue contre « as shown by your authenticator app » au contrat.
+ * C'est le constat de #1387, et la clé n'existe plus.
+ *
+ * ## Les phrases paramétrées en sont dehors, pour la raison déjà écrite
+ *
+ * Six des trente-quatre clés de `VALIDATION_MESSAGES` sont des fonctions —
+ * `identifier.phoneTooShort`, `availability.rangeTooWide`, `tenant.legalIdInvalid`…
+ * Elles interpolent une borne ou une nature d'identifiant, là où un catalogue écrit
+ * la même chose avec un argument ICU (`{max}`) : les deux textes ne s'égalisent
+ * pour aucune valeur, et la comparaison littérale ne dirait rien. C'est la limite
+ * déjà écrite à {@link phrasesFixesDuContrat}, et elle vaut mot pour mot ici.
+ */
+function phrasesNommeesParLeContrat(locale: Locale): ReadonlyMap<string, string> {
+  return new Map(
+    Object.entries(VALIDATION_MESSAGES[locale]).filter(
+      (entree): entree is [string, string] => typeof entree[1] === 'string',
+    ),
+  );
+}
+
+/**
+ * Les copies d'une phrase **nommée** par le contrat que la garde laisse passer,
+ * avec le motif de chacune — une dispense se justifie ou n'existe pas.
+ *
+ * **Elle n'est pas vide, et c'est délibéré.** #1387 a refermé la copie de son
+ * empreinte — `contracts:shared, web/identity` — et le recensement qu'il a mené
+ * en a trouvé huit autres, sur quatre catalogues qu'il ne pouvait pas toucher :
+ * trois écrans du back-office et l'inscription. Les inscrire ici plutôt que de les
+ * corriger au passage est le même arbitrage que celui de #1373, qui avait laissé
+ * `booking.tunnel.contactStep.errors.required` en dispense le temps qu'un ticket
+ * vienne reprendre le tunnel public — et #1376 l'a effectivement reprise, du même
+ * geste que la dispense.
+ *
+ * Le motif n'est pas « c'est long » : chacune de ces huit clés demande de reprendre
+ * le **formulaire** qui l'affiche et la suite de rendu qui la cite, pas seulement
+ * une ligne de JSON. Poser la garde maintenant et nommer ce qui reste vaut mieux
+ * que de ne rien poser : une copie écrite demain rougit ici, et les huit restantes
+ * sont écrites noir sur blanc plutôt que découvertes par un recensement de plus.
+ *
+ * **Cinq d'entre elles ont déjà divergé**, exactement comme `platform.totpCode` :
+ * les quatre clés d'adresse du catalogue des prestations et celle de l'inscription
+ * sont identiques au contrat en français et en divergent en anglais. C'est la
+ * mesure du risque, et c'est ce que porte **#1388**, qui écoule cette liste.
+ *
+ * Ce qui la fait maigrir est le régime, et non la chance : un écran qui a besoin
+ * d'y inscrire une clé est un écran qui redit une phrase que `zodErrorMap(locale)`
+ * sait déjà dire. Le remède est de laisser la carte répondre.
+ */
+const COPIES_DE_MESSAGES_TOLEREES: ReadonlyMap<string, string> = new Map([
+  [
+    'admin-catalog.form.errors.slug',
+    'redit identifier.slug en fr, en diverge en en — hors empreinte de #1387, repris par #1388',
+  ],
+  [
+    'admin-catalog.form.errors.slugReserved',
+    'redit identifier.slugReserved en fr, en diverge en en — hors empreinte de #1387, repris par #1388',
+  ],
+  [
+    'admin-catalog.categoryForm.errors.slug',
+    'redit identifier.slug en fr, en diverge en en — hors empreinte de #1387, repris par #1388',
+  ],
+  [
+    'admin-catalog.categoryForm.errors.slugReserved',
+    'redit identifier.slugReserved en fr, en diverge en en — hors empreinte de #1387, repris par #1388',
+  ],
+  [
+    'admin-settings.address.countryFormat',
+    'redit identifier.countryCode dans les deux langues — hors empreinte de #1387, repris par #1388',
+  ],
+  [
+    'admin-staff.invite.phoneInvalid',
+    'redit identifier.phone dans les deux langues — hors empreinte de #1387, repris par #1388',
+  ],
+  [
+    'admin-staff.schedule.overlap',
+    'redit availability.scheduleOverlap dans les deux langues — hors empreinte de #1387, repris par #1388',
+  ],
+  [
+    'signup.fieldErrors.slugReserved',
+    'redit identifier.slugReserved en fr, en diverge en en — hors empreinte de #1387, repris par #1388',
+  ],
+]);
+
+describe('un refus nommé par le contrat n’a qu’une source (#1387)', () => {
+  for (const locale of LOCALES) {
+    it(`n’en laisse aucune copie non dispensée au catalogue en « ${locale} »`, () => {
+      const contrat = phrasesNommeesParLeContrat(locale);
+      const copies: string[] = [];
+
+      for (const [cle, message] of valeurs(locale)) {
+        if (COPIES_DE_MESSAGES_TOLEREES.has(cle)) {
+          continue;
+        }
+
+        for (const [nom, phrase] of contrat) {
+          if (message === phrase) {
+            copies.push(`${cle} redit VALIDATION_MESSAGES.${locale}['${nom}'] — « ${phrase} »`);
+          }
+        }
+      }
+
+      // Même garde qu'au-dessus contre le pire échec possible : une règle qui ne
+      // juge plus rien et reste verte. La table en porte vingt-huit de fixes.
+      expect(contrat.size).toBeGreaterThanOrEqual(20);
+
+      expect(
+        copies,
+        'clés qui redisent un refus que le contrat nomme déjà — poser ' +
+          `messageKey(…) sur le schéma et retirer la clé, ou justifier la dispense ` +
+          `(voir messages/README.md) :\n${copies.join('\n')}`,
+      ).toEqual([]);
+    });
+  }
+
+  /**
+   * La dispense s'éteint d'elle-même le jour où la copie est reprise.
+   *
+   * **Une** langue suffit à la justifier, là où la garde de #1376 les exige
+   * toutes : c'est précisément ce que le recensement de #1387 a montré. Cinq de
+   * ces huit clés sont identiques au contrat en français et en divergent en
+   * anglais — exiger les deux langues rendrait la dispense « inutile » alors que
+   * la copie est bien là, et le cas rougirait pour la mauvaise raison.
+   */
+  it('ne garde de dispense que pour une copie qui existe encore', () => {
+    const inutiles: string[] = [];
+
+    // Les catalogues et les phrases sont lus **une fois par langue** : `valeurs`
+    // relit le disque namespace par namespace hors production, et l'appeler sous
+    // deux boucles imbriquées aurait relu vingt-deux fichiers par dispense.
+    const lecture = LOCALES.map((locale) => ({
+      catalogue: valeurs(locale),
+      phrases: new Set(phrasesNommeesParLeContrat(locale).values()),
+    }));
+
+    for (const [cle, motif] of COPIES_DE_MESSAGES_TOLEREES) {
+      const encoreCopiee = lecture.some(({ catalogue, phrases }) => {
+        const message = catalogue.get(cle);
+
+        return message !== undefined && phrases.has(message);
+      });
+
+      if (!encoreCopiee) {
+        inutiles.push(`${cle} — « ${motif} »`);
+      }
+    }
+
+    expect(
+      inutiles,
+      'dispenses devenues inutiles — la copie a été reprise dans les deux langues, ' +
+        `retirer la clé de COPIES_DE_MESSAGES_TOLEREES :\n${inutiles.join('\n')}`,
     ).toEqual([]);
   });
 });
