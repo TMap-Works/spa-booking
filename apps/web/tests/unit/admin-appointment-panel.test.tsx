@@ -1,4 +1,4 @@
-import { errorMessage, type Appointment, type Service } from '@spa/shared';
+import { ERROR_CODES, errorMessage, type Appointment, type Service } from '@spa/shared';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -670,6 +670,127 @@ describe('la dégradation, tant que l’API ne sert pas l’écriture', () => {
 
     expect(screen.getByText('Le catalogue est vide')).toBeDefined();
     expect(screen.queryByRole('button', { name: 'Créer le rendez-vous' })).toBeNull();
+  });
+});
+
+/**
+ * Chaque geste dit **sa** phrase du refus qu'il oppose lui-même — #1367.
+ *
+ * Les trois écritures du tiroir refusent leur saisie avant tout appel — la fiche,
+ * le report, le motif d'annulation (`calendrier/actions.ts`) — et toutes portent
+ * `VALIDATION_ERROR`. #1354 a fait garder le **code** au bandeau : les trois se
+ * fondaient donc en une seule tournure générique du contrat, qui ne dit plus
+ * laquelle des trois saisies est en cause. Le discriminant est le **geste**, et
+ * non le code : celui qui n'oppose rien de lui-même — le constat honoré /
+ * non honoré, dont le statut vient d'une liste fermée de boutons — garde la
+ * phrase du contrat, sous peine de mal-nommer un 400 de l'API.
+ */
+describe('#1367 — le refus de saisie de chaque geste garde sa phrase', () => {
+  const REFUS_DE_SAISIE = { ok: false, code: ERROR_CODES.VALIDATION_ERROR, message: '' } as const;
+  /** La tournure générique du contrat, celle qui avalait les trois phrases. */
+  const GENERIQUE = errorMessage(ERROR_CODES.VALIDATION_ERROR, 'fr');
+
+  it('nomme la fiche saisie quand la création est refusée', async () => {
+    const user = userEvent.setup();
+    createDeskAppointmentAction.mockResolvedValue(REFUS_DE_SAISIE);
+
+    renderPanel(CREATION);
+
+    await user.type(screen.getByLabelText(/^Client/), 'Rina');
+    await user.click(await screen.findByRole('button', { name: /Rina Andriamana/ }));
+    await user.click(screen.getByRole('button', { name: 'Créer le rendez-vous' }));
+
+    expect(await screen.findByText(MOTS.actions.invalidAppointment)).toBeDefined();
+    expect(screen.queryByText(GENERIQUE)).toBeNull();
+  });
+
+  it('nomme le report saisi quand le report est refusé', async () => {
+    const user = userEvent.setup();
+    rescheduleDeskAppointmentAction.mockResolvedValue(REFUS_DE_SAISIE);
+
+    renderPanel({ kind: 'edit', appointment: CONFIRME });
+    await user.click(await enregistrerArme('Enregistrer'));
+
+    expect(await screen.findByText(MOTS.actions.invalidReschedule)).toBeDefined();
+    expect(screen.queryByText(GENERIQUE)).toBeNull();
+  });
+
+  it('nomme le motif d’annulation quand l’annulation est refusée', async () => {
+    const user = userEvent.setup();
+    cancelDeskAppointmentAction.mockResolvedValue(REFUS_DE_SAISIE);
+
+    renderPanel({ kind: 'edit', appointment: CONFIRME });
+
+    await user.click(screen.getByRole('button', { name: 'Annuler le rendez-vous' }));
+    await user.type(screen.getByLabelText(/Motif de l’annulation/), 'Fermeture exceptionnelle');
+    await user.click(screen.getByRole('button', { name: 'Confirmer l’annulation' }));
+
+    expect(await screen.findByText(MOTS.actions.invalidCancelReason)).toBeDefined();
+    expect(screen.queryByText(GENERIQUE)).toBeNull();
+    // La question reste posée, motif compris : le refus se lit au-dessus de ce
+    // qu'on vient d'écrire, et se renvoie sans le ressaisir.
+    expect(screen.getByLabelText<HTMLTextAreaElement>(/Motif de l’annulation/).value).toBe(
+      'Fermeture exceptionnelle',
+    );
+  });
+
+  it('garde la phrase du contrat pour un geste qui n’oppose aucun refus', async () => {
+    const user = userEvent.setup();
+    markDeskAppointmentStatusAction.mockResolvedValue(REFUS_DE_SAISIE);
+
+    renderPanel({ kind: 'edit', appointment: CONFIRME });
+
+    await user.click(screen.getByRole('button', { name: 'Marquer non honoré' }));
+
+    // Le statut vient d'une liste fermée de boutons : un `VALIDATION_ERROR` ici
+    // ne peut venir que du serveur, et lui prêter une phrase de l'écran
+    // enverrait corriger une saisie que personne n'a faite.
+    expect(await screen.findByText(GENERIQUE)).toBeDefined();
+    expect(screen.queryByText(MOTS.actions.invalidAppointment)).toBeNull();
+    expect(screen.queryByText(MOTS.actions.invalidReschedule)).toBeNull();
+  });
+
+  /**
+   * Le geste dit **laquelle** des trois phrases ; il ne dit pas que le refus est
+   * bien celui de l'action. Les deux écritures reçoivent aussi les 400 de l'API,
+   * sous le même code — et c'est le `details` qui les sépare : `invalid()` n'en
+   * pose aucun, `failure()` transporte toujours celui du corps d'erreur de l'API
+   * (`action-result.ts`). Sans cette garde, un 400 rendu par l'API se serait dit
+   * « La fiche saisie est invalide », et aurait caché ce que l'API reprochait.
+   */
+  const REFUS_DE_L_API = {
+    ok: false,
+    code: ERROR_CODES.VALIDATION_ERROR,
+    message: GENERIQUE,
+    details: { violations: ['startsAt : date attendue'] },
+  } as const;
+
+  it('garde la phrase du contrat pour un 400 rendu par l’API à la création', async () => {
+    const user = userEvent.setup();
+    createDeskAppointmentAction.mockResolvedValue(REFUS_DE_L_API);
+
+    renderPanel(CREATION);
+
+    await user.type(screen.getByLabelText(/^Client/), 'Rina');
+    await user.click(await screen.findByRole('button', { name: /Rina Andriamana/ }));
+    await user.click(screen.getByRole('button', { name: 'Créer le rendez-vous' }));
+
+    expect(await screen.findByText(GENERIQUE)).toBeDefined();
+    expect(screen.queryByText(MOTS.actions.invalidAppointment)).toBeNull();
+  });
+
+  it('garde la phrase du contrat pour un 400 rendu par l’API à l’annulation', async () => {
+    const user = userEvent.setup();
+    cancelDeskAppointmentAction.mockResolvedValue(REFUS_DE_L_API);
+
+    renderPanel({ kind: 'edit', appointment: CONFIRME });
+
+    await user.click(screen.getByRole('button', { name: 'Annuler le rendez-vous' }));
+    await user.type(screen.getByLabelText(/Motif de l’annulation/), 'Fermeture exceptionnelle');
+    await user.click(screen.getByRole('button', { name: 'Confirmer l’annulation' }));
+
+    expect(await screen.findByText(GENERIQUE)).toBeDefined();
+    expect(screen.queryByText(MOTS.actions.invalidCancelReason)).toBeNull();
   });
 });
 

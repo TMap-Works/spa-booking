@@ -168,6 +168,30 @@ import { BEFORE_ANY_HOUR, useAppointmentClock } from './use-appointment-clock';
  */
 
 /**
+ * La phrase qu'un **geste** du tiroir dit de son propre refus de saisie — #1367.
+ *
+ * Les trois écritures du tiroir opposent chacune le sien **avant tout appel**
+ * (`calendrier/actions.ts`), et tous portent `VALIDATION_ERROR` : les traduire
+ * par leur code les fondait en une seule tournure générique du contrat,
+ * « certaines informations sont incomplètes », là où l'action disait laquelle des
+ * trois saisies elle n'avait pas su lire.
+ *
+ * Un `own` posé sur le seul code aurait mal-nommé les vrais 400 de l'API, qui
+ * portent exactement le même — et le geste seul ne les en sépare pas, puisqu'il
+ * reçoit les deux. Ce qui les sépare est le `details` : `invalid()` n'en pose
+ * aucun, `failure()` transporte toujours celui du corps d'erreur de l'API
+ * (`action-result.ts`). Le geste ne dit donc que **laquelle** des trois phrases,
+ * une fois su que le refus est bien celui de l'action ; et les gestes qui
+ * n'opposent rien d'eux-mêmes passent `null` — voir `mark`, dont le statut vient
+ * d'une liste fermée de boutons, si bien qu'un `VALIDATION_ERROR` n'y peut venir
+ * que du serveur.
+ */
+type DeskOwnRefusalKey =
+  | 'actions.invalidAppointment'
+  | 'actions.invalidReschedule'
+  | 'actions.invalidCancelReason';
+
+/**
  * Ce que le bandeau d'échec du tiroir garde — un **motif**, jamais sa phrase
  * (#1354).
  *
@@ -183,9 +207,12 @@ import { BEFORE_ANY_HOUR, useAppointmentClock } from './use-appointment-clock';
  *
  * - la **clé de catalogue** de ce que cet écran dit de mieux que le contrat : la
  *   route absente, le constat qui attend l'heure du soin, l'annulation
- *   concurrente. Ces trois-là sont choisis par le site d'appel — le même `409`
- *   est un créneau perdu sur un report et une annulation concurrente sur une
- *   annulation (#754) —, et le code seul ne saurait pas les départager ;
+ *   concurrente — et, depuis #1367, le refus de saisie que chaque geste oppose
+ *   lui-même avant tout appel (`DeskOwnRefusalKey`). Toutes sont choisies par le
+ *   site d'appel — le même `409` est un créneau perdu sur un report et une
+ *   annulation concurrente sur une annulation (#754), le même `VALIDATION_ERROR`
+ *   est une fiche, un report ou un motif d'annulation illisibles —, et le code
+ *   seul ne saurait pas les départager ;
  * - le **code** du refus pour tout le reste, dont `refusalMessage` tire la
  *   phrase du contrat partagé.
  *
@@ -197,7 +224,11 @@ import { BEFORE_ANY_HOUR, useAppointmentClock } from './use-appointment-clock';
 type DeskFailure =
   | {
       readonly kind: 'key';
-      readonly key: 'desk.routeMissing' | 'desk.notStarted' | 'desk.cancelConflict';
+      readonly key:
+        | 'desk.routeMissing'
+        | 'desk.notStarted'
+        | 'desk.cancelConflict'
+        | DeskOwnRefusalKey;
     }
   | { readonly kind: 'refusal'; readonly code: string };
 
@@ -217,10 +248,17 @@ type DeskFailure =
  * motif, et n'a donc plus besoin du traducteur de l'écran. Le créneau perdu,
  * lui, ne passe pas par ici — il a son propre bandeau, voir `conflict`.
  */
-function deskFailureOf(code: string): DeskFailure {
-  return code === ERROR_CODES.NOT_FOUND || code === 'HTTP_404'
-    ? { kind: 'key', key: 'desk.routeMissing' }
-    : { kind: 'refusal', code };
+function deskFailureOf(code: string, own: DeskOwnRefusalKey | null): DeskFailure {
+  if (code === ERROR_CODES.NOT_FOUND || code === 'HTTP_404') {
+    return { kind: 'key', key: 'desk.routeMissing' };
+  }
+
+  // Le refus que ce geste-ci a opposé lui-même, avant tout appel (#1367).
+  if (own !== null && code === ERROR_CODES.VALIDATION_ERROR) {
+    return { kind: 'key', key: own };
+  }
+
+  return { kind: 'refusal', code };
 }
 
 /** Ce qu'un clic sur le planning ouvre. */
@@ -628,7 +666,7 @@ export function AppointmentPanel({
    * (`messages/admin-planning.d.ts`).
    */
   const refuse = useCallback(
-    (code: string): void => {
+    (code: string, own: DeskOwnRefusalKey | null): void => {
       if (code === ERROR_CODES.UNAUTHORIZED) {
         onExpired();
         return;
@@ -648,7 +686,7 @@ export function AppointmentPanel({
       }
 
       setConflict(false);
-      setFailure(deskFailureOf(code));
+      setFailure(deskFailureOf(code, own));
     },
     [onExpired, onReload],
   );
@@ -693,7 +731,19 @@ export function AppointmentPanel({
       return;
     }
 
-    refuse(result.code);
+    // Le geste porte sa propre phrase (#1367) : `createDeskAppointmentAction`
+    // refuse la fiche saisie, `rescheduleDeskAppointmentAction` le report — deux
+    // refus que l'action oppose avant tout appel, sous le même code. L'absence
+    // de `details` est ce qui les distingue d'un vrai 400 de l'API, qui n'est ni
+    // l'un ni l'autre et garde la phrase du contrat.
+    refuse(
+      result.code,
+      result.details !== undefined
+        ? null
+        : editing === null
+          ? 'actions.invalidAppointment'
+          : 'actions.invalidReschedule',
+    );
   }, [
     confirmingCancel,
     chosen,
@@ -741,7 +791,11 @@ export function AppointmentPanel({
         return;
       }
 
-      refuse(result.code);
+      // `null` : le statut vient d'une liste fermée de boutons et
+      // `markDeskAppointmentStatusAction` le revalide contre le contrat, si bien
+      // qu'un `VALIDATION_ERROR` sur ce geste-ci ne peut venir que du serveur —
+      // lui donner la phrase de l'écran le mal-nommerait (#1367).
+      refuse(result.code, null);
     },
     [editing, tenantSlug, onReload, onClose, refuse],
   );
@@ -799,11 +853,19 @@ export function AppointmentPanel({
     // `INVALID_STATE_TRANSITION` compris. Un motif et non une phrase depuis
     // #1354 : la question reste posée, donc le tiroir reste ouvert, donc la
     // bascule de langue doit réécrire ce qu'il affiche.
+    //
+    // Le motif d'annulation illisible est la troisième phrase que le tiroir
+    // oppose lui-même (#1367) : `cancelDeskAppointmentAction` la rend avant tout
+    // appel, et la tournure générique de `VALIDATION_ERROR` ne dit pas que c'est
+    // le motif qu'on vient d'écrire qui est en cause. Le `details` absent est ce
+    // qui dit que le refus est bien le sien : un 400 rendu par l'API en porte un.
     setConflict(false);
     setFailure(
       result.code === ERROR_CODES.CONFLICT
         ? { kind: 'key', key: 'desk.cancelConflict' }
-        : { kind: 'refusal', code: result.code },
+        : result.code === ERROR_CODES.VALIDATION_ERROR && result.details === undefined
+          ? { kind: 'key', key: 'actions.invalidCancelReason' }
+          : { kind: 'refusal', code: result.code },
     );
   }, [editing, cancelReason, tenantSlug, onReload, onClose, onExpired]);
 
