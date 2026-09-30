@@ -108,8 +108,8 @@
     "saving": "Enregistrement…",
     "cancel": "Annuler",
     "errors": {
-      "required": "ce champ est obligatoire",
-      "tooLong": "ce champ fait au plus {max} caractères"
+      "required": "Ce champ est obligatoire.",
+      "tooLong": "Ce champ fait au plus {max} caractères."
     }
   },
   "note": {

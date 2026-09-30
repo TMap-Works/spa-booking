@@ -20,8 +20,8 @@
     "regionHint": "NY, QC… ou le nom complet. Facultatif.",
     "country": "Pays",
     "countryHint": "Code à deux lettres : FR, BE, MG…",
-    "countryFormat": "code pays ISO 3166-1 alpha-2 attendu (« FR »)",
-    "incomplete": "renseignez la rue, la ville et le pays, ou laissez l’adresse entièrement vide",
+    "countryFormat": "Code pays ISO 3166-1 alpha-2 attendu (« FR »).",
+    "incomplete": "Renseignez la rue, la ville et le pays, ou laissez l’adresse entièrement vide.",
     "invalid": "L’adresse saisie est invalide."
   },
   "hours": {
@@ -34,10 +34,10 @@
     "closesAt": "Fermeture {rank}",
     "fieldOn": "{field} du {day}",
     "timezone": "Heures écrites dans le fuseau du salon ({timezone}), stockées en UTC.",
-    "format": "heure attendue au format HH:MM (« 24:00 » pour minuit)",
-    "pair": "renseignez l’ouverture et la fermeture, ou laissez les deux vides",
-    "order": "la fermeture doit être postérieure à l’ouverture",
-    "emptyDay": "renseignez une plage, ou décochez « Ouvert » pour fermer la journée",
+    "format": "Heure attendue au format HH:MM (« 24:00 » pour minuit).",
+    "pair": "Renseignez l’ouverture et la fermeture, ou laissez les deux vides.",
+    "order": "La fermeture doit être postérieure à l’ouverture.",
+    "emptyDay": "Renseignez une plage, ou décochez « Ouvert » pour fermer la journée.",
     "invalid": "Les horaires saisis sont invalides."
   },
   "contact": {
