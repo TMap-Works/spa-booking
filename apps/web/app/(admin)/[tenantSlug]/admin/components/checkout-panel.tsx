@@ -9,6 +9,7 @@ import type {
   SettleSaleRequest,
   TimeZone,
 } from '@spa/shared';
+import { ERROR_CODES } from '@spa/shared';
 import { useLocale, useTranslations } from 'next-intl';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
@@ -173,14 +174,41 @@ interface FieldIssue {
 }
 
 /**
+ * Le **geste** dont le refus vient — #1367.
+ *
+ * Le discriminant que #1354 avait laissé de côté ici. Les deux écritures du
+ * comptoir opposent chacune un refus **avant tout appel** — cible illisible,
+ * corps ou clé d'idempotence hors bornes (`encaissement/actions.ts`) — et il
+ * porte `VALIDATION_ERROR` : le traduire par son code écrasait la phrase du
+ * comptoir sous la tournure générique du contrat, « certaines informations sont
+ * incomplètes », qui ne dit ni ce qui est illisible ni quoi en faire.
+ *
+ * Un `own` posé sur le seul code aurait mal-nommé un vrai 400 de l'API, qui
+ * porte exactement le même — et le geste seul ne l'en sépare pas davantage : les
+ * deux écritures reçoivent l'un comme l'autre. Ce qui les sépare est le
+ * `details` : `invalid()` n'en pose aucun, `failure()` transporte toujours celui
+ * du corps d'erreur de l'API (`action-result.ts`). Le geste ne dit donc que
+ * **quelle** phrase, une fois su que le refus est bien celui de l'action — et
+ * les gestes qui n'opposent rien d'eux-mêmes n'entrent pas dans cette union, si
+ * bien qu'un moyen de règlement ajouté plus tard n'héritera pas en silence d'une
+ * phrase qui n'est pas la sienne.
+ */
+type CheckoutGesture = 'ticket' | 'reglement';
+
+/**
  * Ce que la ligne rouge sous le bouton a à dire — un **motif** (#1354).
  *
  * Trois origines, et aucune ne se range en phrase : le refus rendu par l'API, par
- * son **code** ; la caisse qui n'a pas répondu du tout ; et le paiement que
- * l'opérateur déclare refusé au terminal, que l'écran dit en propre.
+ * son **code** et par le geste qui l'a opposé lui-même (#1367) ; la caisse qui
+ * n'a pas répondu du tout ; et le paiement que l'opérateur déclare refusé au
+ * terminal, que l'écran dit en propre.
+ *
+ * `gesture` vaut `null` quand le refus **vient de l'API** : l'écran n'a alors
+ * aucune phrase propre à opposer, et le contrat partagé dit mieux que lui un 400
+ * qu'il n'a pas produit.
  */
 type CheckoutFailure =
-  | ({ readonly kind: 'refus' } & Refusal)
+  | ({ readonly kind: 'refus'; readonly gesture: CheckoutGesture | null } & Refusal)
   | { readonly kind: 'injoignable' }
   | { readonly kind: 'tpe-refuse' };
 
@@ -346,7 +374,34 @@ export function CheckoutPanel({
       return t('terminal.declinedNotice');
     }
 
-    return checkoutFailureMessage(failed.code, refusalMessage(failed, locale), locale);
+    /**
+     * Ce que **ce geste-ci** dit du refus qu'il oppose lui-même — #1367.
+     *
+     * La table reprend, geste par geste, la clé que l'action serveur emploie
+     * avant tout appel (`encaissement/actions.ts`) : les deux écritures du
+     * comptoir refusent une cible illisible sous la même phrase, et c'est cette
+     * correspondance-là qui doit rester vraie. Un geste ajouté sans la sienne
+     * n'héritera pas de celle du voisin.
+     *
+     * Un vrai 400 de l'API ne passe pas par là : `explainFailure` ne retient le
+     * geste que sur un refus sans `details`, c'est-à-dire opposé avant tout
+     * appel. La route en oppose d'autres que celui du numéro du TPE — tout champ
+     * du corps, et la clé d'idempotence de l'en-tête (`sales.controller.ts`) —,
+     * et leur donner « Rendez-vous ou établissement inconnu » aurait nommé faux.
+     */
+    const gesture = failed.gesture;
+    const own: Readonly<Record<CheckoutGesture, string>> = {
+      ticket: t('failure.unknownTarget'),
+      reglement: t('failure.unknownTarget'),
+    };
+
+    return checkoutFailureMessage(
+      failed.code,
+      refusalMessage(failed, locale, (code) =>
+        gesture !== null && code === ERROR_CODES.VALIDATION_ERROR ? own[gesture] : null,
+      ),
+      locale,
+    );
   }
 
   /**
@@ -444,7 +499,7 @@ export function CheckoutPanel({
    * message générique de la validation ne lui aurait pas dit lequel des champs
    * reprendre (troisième critère de #1025, `web-frontend` §4).
    */
-  function explainFailure(result: AdminActionResult<unknown>): void {
+  function explainFailure(result: AdminActionResult<unknown>, gesture: CheckoutGesture): void {
     if (result.ok || renewIfExpired(result)) {
       return;
     }
@@ -461,7 +516,17 @@ export function CheckoutPanel({
       return;
     }
 
-    setFailure({ kind: 'refus', code: result.code });
+    // Le geste part avec le code (#1367), mais **seulement** si l'action a
+    // opposé ce refus d'elle-même : `invalid()` ne pose aucun `details`, quand
+    // `failure()` transporte toujours celui du corps d'erreur de l'API
+    // (`action-result.ts`). Sans cette garde, un vrai 400 de l'API — un champ du
+    // corps, la clé d'idempotence — se serait dit « Rendez-vous ou
+    // établissement inconnu », ce qu'il n'est pas.
+    setFailure({
+      kind: 'refus',
+      gesture: result.details === undefined ? gesture : null,
+      code: result.code,
+    });
   }
 
   /**
@@ -501,7 +566,7 @@ export function CheckoutPanel({
         );
 
         if (!opened.ok) {
-          explainFailure(opened);
+          explainFailure(opened, 'ticket');
           return;
         }
 
@@ -517,7 +582,7 @@ export function CheckoutPanel({
       );
 
       if (!result.ok) {
-        explainFailure(result);
+        explainFailure(result, 'reglement');
         return;
       }
 

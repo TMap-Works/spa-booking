@@ -171,8 +171,10 @@ describe('les clés du catalogue d’encaissement', () => {
   });
 
   it('branche le refus du n° de ticket TPE, que le générique remplaçait', () => {
-    // Troisième critère de #1240, livré par #1241 : la clé est lue par
-    // `terminalReferenceRefusal`, et le panneau la pose **sur le champ**.
+    // Troisième critère de #1240, livré par #1241 : le panneau pose ce refus
+    // **sur le champ**, et depuis #1367 il lit la clé directement par
+    // `useTranslations` — `terminalReferenceRefusal`, qui la composait pour lui,
+    // n'avait plus d'appelant de production et a été retirée.
     expect(isRead('failure.terminalReferenceRefused')).toBe(true);
   });
 

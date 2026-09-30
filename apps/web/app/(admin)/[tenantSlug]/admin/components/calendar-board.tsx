@@ -299,6 +299,36 @@ const NOW_REFRESH_MS = 60_000;
  */
 const EMPTY_OPENING_HOURS: readonly OpeningHoursEntry[] = [];
 
+/**
+ * D'où vient le refus qui empêche d'afficher la période — #1367.
+ *
+ * Le discriminant que #1354 avait laissé de côté ici, et sans lequel la phrase
+ * propre du planning se perdait. Les deux chemins qui alimentent la bannière ne
+ * refusent pas de la même main :
+ *
+ * - `api` — le refus que **l'API** a rendu. Le premier rendu côté serveur n'en
+ *   connaît pas d'autre (`calendrier/page.tsx` appelle l'API directement et ne
+ *   passe que le code du corps d'erreur, `loadErrorCode`), et l'action serveur en
+ *   rend autant, dès que l'appel a eu lieu. Sa phrase se tire du contrat partagé ;
+ * - `periode` — le refus que l'**action serveur** oppose d'elle-même, **avant
+ *   tout appel** (`loadCalendarRangeAction`). Ceux-là portent `VALIDATION_ERROR` :
+ *   les traduire par le code écrasait la phrase du planning sous la tournure
+ *   générique du contrat — « Certaines informations sont incomplètes » là où le
+ *   planning disait quelle date il n'avait pas su lire.
+ *
+ * Un `own` posé sur le seul code aurait mal-nommé les vrais 400 de l'API, qui
+ * portent exactement le même ; le chemin emprunté ne les en sépare pas davantage,
+ * puisque l'action en rend aussi. Ce qui les sépare est le `details` :
+ * `invalid()` n'en pose aucun, `failure()` transporte toujours celui du corps
+ * d'erreur de l'API (`action-result.ts`).
+ */
+type CalendarFailureOrigin = 'api' | 'periode';
+
+/** Ce que la bannière du planning garde d'un refus : son code, et d'où il vient. */
+interface CalendarFailure extends Refusal {
+  readonly origin: CalendarFailureOrigin;
+}
+
 /** Les deux replis de #1158, hissés hors du composant pour la même raison. */
 const EMPTY_SCHEDULES: readonly StaffSchedule[] = [];
 const EMPTY_TIME_OFF: readonly StaffTimeOff[] = [];
@@ -351,10 +381,12 @@ export function CalendarBoard({
    * phrase se compose désormais au rendu, par le même module que le premier rendu
    * serveur (`lib/admin/calendar-failure.ts`).
    *
-   * Amorcée par `loadErrorCode`, qui est le code du refus du premier chargement.
+   * Amorcée par `loadErrorCode`, qui est le code du refus du premier chargement —
+   * donc d'**origine API** : ce chemin-là n'oppose aucun refus de lui-même
+   * (#1367, voir `CalendarFailureOrigin`).
    */
-  const [failure, setFailure] = useState<Refusal | null>(() =>
-    loadErrorCode === null ? null : { code: loadErrorCode },
+  const [failure, setFailure] = useState<CalendarFailure | null>(() =>
+    loadErrorCode === null ? null : { origin: 'api', code: loadErrorCode },
   );
   const [now, setNow] = useState<Date | null>(null);
   const [visible, setVisible] = useState<SlotWindow>({ first: 0, last: 0 });
@@ -644,7 +676,16 @@ export function CalendarBoard({
         // Le `message` du refus ne remonte plus, et rien ne s'y perd : depuis
         // #1234 il vaut déjà `errorMessage(code, locale)` (`action-result.ts`),
         // c'est-à-dire ce que `calendarApiFailureMessage` écrit du code.
-        setFailure({ code: result.code });
+        //
+        // L'**origine** part avec lui depuis #1367, et elle se lit au `details`
+        // : l'action oppose deux refus de son propre chef avant tout appel, et
+        // `invalid()` n'y pose aucun `details`, quand `failure()` transporte
+        // toujours celui du corps d'erreur de l'API. C'est ce qui permet au rendu
+        // de rendre sa phrase au premier sans toucher à celle d'un vrai 400.
+        setFailure({
+          origin: result.details === undefined ? 'periode' : 'api',
+          code: result.code,
+        });
       }
     },
     [renewSession, tenantSlug, weekStart, timeZone],
@@ -1148,6 +1189,32 @@ export function CalendarBoard({
    */
   const moveNotice = refusal === null ? null : refusalOf(refusal.previous, refusal.code);
 
+  /**
+   * La phrase de la bannière de période, écrite **à ce rendu-ci** — #1367.
+   *
+   * Un seul code garde une phrase de cet écran, et seulement sur l'origine
+   * `periode` : `VALIDATION_ERROR`. C'est le refus que
+   * `loadCalendarRangeAction` oppose **avant tout appel**, quand l'ancrage qu'on
+   * lui a passé n'est pas une date lisible (`invalid(t('actions.invalidDate'))`)
+   * — et la phrase générique du contrat, « certaines informations sont
+   * incomplètes », ne dit plus que c'est la date qui a été refusée.
+   *
+   * `actions.invalidDate` et non `actions.unknownTenant`, bien que l'action
+   * oppose les deux sous ce code : l'établissement est déjà résolu quand ce
+   * planning se monte — `calendrier/page.tsx` lit sa vitrine publique par ce même
+   * slug avant de rendre la grille, et retombe sur `adminLoadFailure` s'il ne le
+   * connaît pas. Le seul paramètre que ce composant puisse rendre illisible est
+   * donc l'ancrage, et c'est de lui que la phrase parle.
+   *
+   * Tout le reste — 404 de route absente, fenêtre trop large, session refusée,
+   * panne de l'API — passe par `calendarApiFailureMessage`, exactement comme le
+   * premier rendu côté serveur.
+   */
+  const failureMessage = (banner: CalendarFailure): string =>
+    banner.origin === 'periode' && banner.code === ERROR_CODES.VALIDATION_ERROR
+      ? t('actions.invalidDate')
+      : calendarApiFailureMessage(banner.code, locale);
+
   const classes = [
     'spa-admin-calendar',
     view === 'semaine' ? 'spa-admin-calendar--week' : null,
@@ -1223,9 +1290,10 @@ export function CalendarBoard({
       {failure === null ? null : (
         <Notification tone="danger" title={t('failure.title')}>
           {/* La phrase est écrite ici, dans la langue de ce rendu (#1354) : le
-              404 garde son diagnostic propre, tout le reste se dit par la table
+              404 garde son diagnostic propre, le refus que le planning oppose
+              lui-même garde le sien (#1367), tout le reste se dit par la table
               bilingue du contrat partagé. */}
-          <p>{calendarApiFailureMessage(failure.code, locale)}</p>
+          <p>{failureMessage(failure)}</p>
         </Notification>
       )}
 

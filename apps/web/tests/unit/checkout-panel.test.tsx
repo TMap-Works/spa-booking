@@ -1,4 +1,5 @@
 import type { Appointment, AppointmentStatus, SaleSettlement } from '@spa/shared';
+import { ERROR_CODES, errorMessage } from '@spa/shared';
 import { cleanup, render, screen, waitFor, within, type RenderResult } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { ReactElement } from 'react';
@@ -7,6 +8,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { CheckoutPanel } from '@/app/(admin)/[tenantSlug]/admin/components/checkout-panel';
 import type { SettlementState } from '@/lib/admin/checkout-summary';
 import type { SaleSummary } from '@/lib/admin/payment-contract';
+// La phrase du comptoir est **lue** dans son catalogue, jamais recopiée.
+import checkoutFr from '@/messages/fr/admin-checkout.json';
 
 /**
  * Le panneau d'encaissement tel qu'il se manipule (#59, repris par #835).
@@ -545,6 +548,70 @@ describe('le règlement par carte au TPE', () => {
     expect(settleTicketAction).not.toHaveBeenCalled();
     expect(screen.getAllByRole('radio')).toHaveLength(2);
     expect((await screen.findByRole('alert')).textContent).toMatch(/refusé sur le terminal/i);
+  });
+});
+
+/**
+ * La cible illisible garde la phrase du comptoir — #1367.
+ *
+ * Les deux écritures de cet écran refusent leur cible **avant tout appel**
+ * (`encaissement/actions.ts`), par `invalid(t('failure.unknownTarget'))`. #1354 a
+ * fait garder le **code** à la ligne rouge, et ce code est `VALIDATION_ERROR` :
+ * la tournure générique du contrat avalait donc la phrase, alors que c'est la
+ * seule que l'opérateur puisse atteindre. Le discriminant est le **geste** qui a
+ * reçu le refus, pas son code — le 400 que l'API oppose à la référence du TPE
+ * part, lui, sur son champ (voir le cas de #1025, critère 3).
+ */
+describe('#1367 — la cible illisible garde la phrase du comptoir', () => {
+  const REFUS_DE_SAISIE = {
+    ok: false,
+    code: ERROR_CODES.VALIDATION_ERROR,
+    message: errorMessage(ERROR_CODES.VALIDATION_ERROR, 'fr'),
+  } as const;
+  /** La tournure générique du contrat, celle qui avalait la phrase du comptoir. */
+  const GENERIQUE = errorMessage(ERROR_CODES.VALIDATION_ERROR, 'fr');
+
+  it('nomme la cible quand la composition du ticket est refusée', async () => {
+    openCheckoutTicketAction.mockResolvedValue(REFUS_DE_SAISIE);
+    renderPanel();
+
+    await userEvent.click(screen.getByRole('button', { name: CASH_BUTTON }));
+
+    expect((await screen.findByRole('alert')).textContent).toBe(checkoutFr.failure.unknownTarget);
+    expect(screen.queryByText(GENERIQUE)).toBeNull();
+    expect(settleTicketAction).not.toHaveBeenCalled();
+  });
+
+  it('la nomme aussi quand c’est le règlement qui est refusé', async () => {
+    openCheckoutTicketAction.mockResolvedValue({ ok: true, data: sale() });
+    settleTicketAction.mockResolvedValue(REFUS_DE_SAISIE);
+    renderPanel();
+
+    await userEvent.click(screen.getByRole('button', { name: CASH_BUTTON }));
+
+    expect((await screen.findByRole('alert')).textContent).toBe(checkoutFr.failure.unknownTarget);
+    expect(screen.queryByText(GENERIQUE)).toBeNull();
+  });
+
+  /**
+   * …et **seulement** la cible illisible : le geste dit quelle phrase, il ne dit
+   * pas que le refus est celui de l'action. La route en oppose d'autres sous le
+   * même code — tout champ du corps, la clé d'idempotence de l'en-tête —, et
+   * c'est le `details` qui les sépare : `invalid()` n'en pose aucun, `failure()`
+   * transporte toujours celui du corps d'erreur de l'API (`action-result.ts`).
+   */
+  it('garde la phrase du contrat pour un 400 que l’API a rendu', async () => {
+    openCheckoutTicketAction.mockResolvedValue({ ok: true, data: sale() });
+    settleTicketAction.mockResolvedValue({
+      ...REFUS_DE_SAISIE,
+      details: { violations: ['idempotencyKey : 16 caractères au moins'] },
+    });
+    renderPanel();
+
+    await userEvent.click(screen.getByRole('button', { name: CASH_BUTTON }));
+
+    expect((await screen.findByRole('alert')).textContent).toBe(GENERIQUE);
+    expect(screen.queryByText(checkoutFr.failure.unknownTarget)).toBeNull();
   });
 });
 

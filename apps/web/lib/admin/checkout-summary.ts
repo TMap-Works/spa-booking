@@ -880,23 +880,21 @@ export function isMalformedTerminalReference(value: string): boolean {
   return trimmed !== '' && !terminalReferenceSchema.safeParse(trimmed).success;
 }
 
-/**
- * Le même verdict, **suivi de sa phrase** — `null` quand la référence est
- * recevable.
+/*
+ * ## Il n'y a plus de forme « verdict **suivi de sa phrase** » — #1367
  *
- * Deux formes depuis #1354, et c'est le verdict seul que l'écran lit : il range un
- * motif et n'écrit la phrase qu'au rendu, dans la langue de ce rendu-là. Une
- * phrase rangée en état restait écrite dans la langue d'avant, le sélecteur de
- * langue rejouant la route sans démonter le panneau (`lib/refusal.ts`).
+ * `terminalReferenceIssue` doublait `isMalformedTerminalReference` en y ajoutant
+ * la phrase du catalogue, et `terminalReferenceRefusal` doublait de même
+ * `isTerminalReferenceRefusal`. Les deux ont perdu leur dernier appelant de
+ * production à #1354, qui a fait du panneau un écran qui range un **motif** et
+ * n'écrit la phrase qu'au rendu : `faultMessage` lit `terminal.referenceInvalid`
+ * et `failure.terminalReferenceRefused` directement au catalogue de l'écran, par
+ * `useTranslations`, et n'a donc plus besoin qu'un module pur les lui compose.
+ *
+ * Ne restaient que des tests, qui éprouvaient une composition que plus personne
+ * ne demandait. Les verdicts, eux, sont exercés sur leurs deux fonctions
+ * d'origine, juste au-dessus et juste en dessous — c'est là qu'est la règle.
  */
-export function terminalReferenceIssue(
-  value: string,
-  locale: Locale = CHECKOUT_FALLBACK_LOCALE,
-): string | null {
-  return isMalformedTerminalReference(value)
-    ? checkoutWords(locale).terminal.referenceInvalid
-    : null;
-}
 
 /** Ce que le corps porte pour `terminalReference` — la clé absente quand rien n'est saisi. */
 export function terminalReferenceField(
@@ -989,23 +987,6 @@ export function isTerminalReferenceRefusal(
   // repart vers le bloc, où un refus qu'aucun champ ne porte doit rester
   // visible plutôt que de disparaître sous un `input` sans rapport.
   return parsed.success && parsed.data.violations.some(namesTerminalReference);
-}
-
-/**
- * Le même refus, **suivi de sa phrase** — `null` quand il parle d'autre chose.
- *
- * Deux formes depuis #1354, pour la raison dite sur {@link terminalReferenceIssue}
- * : le panneau lit le verdict et range un motif, la phrase s'écrivant au rendu
- * dans la langue de ce rendu-là.
- */
-export function terminalReferenceRefusal(
-  code: string,
-  details: Record<string, unknown> | undefined,
-  locale: Locale = CHECKOUT_FALLBACK_LOCALE,
-): string | null {
-  return isTerminalReferenceRefusal(code, details)
-    ? checkoutWords(locale).failure.terminalReferenceRefused
-    : null;
 }
 
 // ---------------------------------------------------------------------------

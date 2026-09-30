@@ -2,8 +2,8 @@
 
 import { zodResolver } from '@hookform/resolvers/zod';
 import {
+  CATALOG_ERROR_CODES,
   DISPLAY_NAME_MAX_LENGTH,
-  ERROR_CODES,
   SLUG_MAX_LENGTH,
   longTextSchema,
   resourceSlugSchema,
@@ -365,8 +365,11 @@ export function CategoryForm({
     trigger,
     setError,
     // Le conflit ne peut venir que de l'adresse : c'est la seule unicité que
-    // porte la table, et cet écran la nomme mieux que le contrat.
-    own: (code) => (code === ERROR_CODES.CONFLICT ? t('slugTaken') : null),
+    // porte la table, et cet écran la nomme mieux que le contrat. Le code lu est
+    // celui que l'API rend réellement — `SERVICE_CATEGORY_SLUG_TAKEN`, et non le
+    // `CONFLICT` générique qu'elle ne sert pas ici (#1367).
+    own: (code) =>
+      code === CATALOG_ERROR_CODES.SERVICE_CATEGORY_SLUG_TAKEN ? t('slugTaken') : null,
   });
 
   const submit = handleSubmit(
@@ -394,10 +397,16 @@ export function CategoryForm({
         if (renewIfExpired(result)) {
           return;
         }
-        if (result.code === ERROR_CODES.CONFLICT) {
+        if (result.code === CATALOG_ERROR_CODES.SERVICE_CATEGORY_SLUG_TAKEN) {
           // Le conflit ne peut venir que de l'adresse : le message se pose donc
           // sur le champ qui se corrige, et par son **code**, pour qu'il suive la
           // langue comme le reste (#1354).
+          //
+          // Le code testé est celui que l'API **rend** :
+          // `ServiceCategorySlugTakenError` pose `SERVICE_CATEGORY_SLUG_TAKEN` en
+          // 409 (`catalog.errors.ts`), et rien sur ces deux routes ne sert le
+          // `CONFLICT` générique qu'on lisait jusqu'ici — le refus partait donc au
+          // bandeau, comme sur `service-form.tsx` (#1367).
           postFieldRefusal('slug', result.code);
           return;
         }

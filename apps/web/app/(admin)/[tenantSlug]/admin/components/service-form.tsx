@@ -2,8 +2,8 @@
 
 import { zodResolver } from '@hookform/resolvers/zod';
 import {
+  CATALOG_ERROR_CODES,
   DISPLAY_NAME_MAX_LENGTH,
-  ERROR_CODES,
   SLUG_MAX_LENGTH,
   longTextSchema,
   resourceSlugSchema,
@@ -463,8 +463,11 @@ export function ServiceForm({
     trigger,
     setError,
     // Le conflit ne peut venir que de l'adresse : c'est la seule unicité que
-    // porte la table, et cet écran la nomme mieux que le contrat.
-    own: (code) => (code === ERROR_CODES.CONFLICT ? t('errors.slugTaken') : null),
+    // porte la table, et cet écran la nomme mieux que le contrat. Le code lu est
+    // celui que l'API rend réellement — `SERVICE_SLUG_TAKEN`, et non le
+    // `CONFLICT` générique qu'elle ne sert pas ici (#1367).
+    own: (code) =>
+      code === CATALOG_ERROR_CODES.SERVICE_SLUG_TAKEN ? t('errors.slugTaken') : null,
   });
 
   // Recalculée à chaque frappe : c'est la durée que l'agenda bloquera, et la
@@ -524,11 +527,18 @@ export function ServiceForm({
       if (renewIfExpired(result)) {
         return;
       }
-      if (result.code === ERROR_CODES.CONFLICT) {
+      if (result.code === CATALOG_ERROR_CODES.SERVICE_SLUG_TAKEN) {
         // Le conflit ne peut venir que du slug : c'est la seule unicité que
         // porte la table. Le message se pose donc sur le champ qui se corrige,
         // pas en bandeau au-dessus du formulaire — et par son **code**, pour
         // qu'il suive la langue comme le reste (#1354).
+        //
+        // Le code testé est celui que l'API **rend** : `ServiceSlugTakenError`
+        // pose `SERVICE_SLUG_TAKEN` en 409 (`catalog.errors.ts`), et rien sur ces
+        // deux routes ne sert le `CONFLICT` générique qu'on lisait jusqu'ici. Le
+        // refus partait donc au bandeau, et le champ `Adresse publique` restait
+        // muet — avec lui, le chemin `postFieldRefusal` de #1354 n'était pas
+        // atteint en production sur cet écran (#1367).
         postFieldRefusal('slug', result.code);
         return;
       }

@@ -8,12 +8,16 @@ import type {
   StaffSchedule,
   StaffTimeOff,
 } from '@spa/shared';
-import { errorMessage } from '@spa/shared';
+import { ERROR_CODES, errorMessage } from '@spa/shared';
 import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { CalendarBoard } from '@/app/(admin)/[tenantSlug]/admin/components/calendar-board';
+// La phrase du planning est **lue** dans son catalogue, jamais recopiée : une
+// suite qui citerait le littéral resterait verte le jour où l'écran cesserait de
+// consulter la table.
+import planningFr from '@/messages/fr/admin-planning.json';
 
 import { deskSlots } from './admin-desk-fixtures';
 
@@ -458,6 +462,76 @@ describe('états', () => {
 
     expect(alerte.textContent).toContain('Planning indisponible');
     expect(alerte.textContent).toContain(errorMessage('INTERNAL_ERROR', 'fr'));
+  });
+
+  /**
+   * La phrase que le planning oppose **lui-même** lui revient — #1367.
+   *
+   * `loadCalendarRangeAction` refuse un ancrage illisible avant tout appel, par
+   * `invalid(t('actions.invalidDate'))`. #1354 a fait garder le **code** à cette
+   * bannière, et ce code est `VALIDATION_ERROR` : la phrase générique du contrat
+   * — « certaines informations sont incomplètes » — avalait le diagnostic, qui
+   * disait quelle date n'avait pas pu être lue. Le discriminant est l'**origine**
+   * du refus, pas son code.
+   */
+  it('rend au refus de la période la phrase que le planning a écrite', async () => {
+    const user = userEvent.setup();
+    loadCalendarRangeAction.mockResolvedValue({
+      ok: false,
+      code: ERROR_CODES.VALIDATION_ERROR,
+      message: planningFr.actions.invalidDate,
+    });
+    renderBoard({ periods: { 'jour:2026-08-26': [matin] } });
+
+    await user.click(screen.getByRole('button', { name: 'Jour suivant' }));
+
+    await waitFor(() => {
+      expect(screen.getByRole('alert').textContent).toContain(planningFr.actions.invalidDate);
+    });
+    expect(screen.getByRole('alert').textContent).not.toContain(
+      errorMessage(ERROR_CODES.VALIDATION_ERROR, 'fr'),
+    );
+  });
+
+  /**
+   * …et **seulement** à celui-là : un 400 de l'API porte le même code, et il
+   * arrive par le premier rendu, qui appelle l'API en direct et n'oppose aucun
+   * refus de son propre chef. Le nommer « date de planning invalide » enverrait
+   * chercher une date que personne n'a saisie.
+   */
+  it('ne prête pas cette phrase à un 400 rendu par l’API', () => {
+    renderBoard({ loadErrorCode: ERROR_CODES.VALIDATION_ERROR });
+
+    const alerte = screen.getByRole('alert');
+
+    expect(alerte.textContent).toContain(errorMessage(ERROR_CODES.VALIDATION_ERROR, 'fr'));
+    expect(alerte.textContent).not.toContain(planningFr.actions.invalidDate);
+  });
+
+  /**
+   * L'action serveur, elle, rend les deux : le refus qu'elle oppose avant tout
+   * appel **et** celui que l'API lui a renvoyé. Le chemin ne les sépare donc pas
+   * — c'est le `details` qui le fait, `invalid()` n'en posant aucun quand
+   * `failure()` transporte toujours celui du corps d'erreur (`action-result.ts`).
+   */
+  it('ne la prête pas davantage à un 400 que l’action a rapporté de l’API', async () => {
+    const user = userEvent.setup();
+    loadCalendarRangeAction.mockResolvedValue({
+      ok: false,
+      code: ERROR_CODES.VALIDATION_ERROR,
+      message: errorMessage(ERROR_CODES.VALIDATION_ERROR, 'fr'),
+      details: { violations: ['from : date attendue'] },
+    });
+    renderBoard({ periods: { 'jour:2026-08-26': [matin] } });
+
+    await user.click(screen.getByRole('button', { name: 'Jour suivant' }));
+
+    await waitFor(() => {
+      expect(screen.getByRole('alert').textContent).toContain(
+        errorMessage(ERROR_CODES.VALIDATION_ERROR, 'fr'),
+      );
+    });
+    expect(screen.getByRole('alert').textContent).not.toContain(planningFr.actions.invalidDate);
   });
 
   it('dit la route manquante en français, pas le refus brut du cadre HTTP', async () => {
