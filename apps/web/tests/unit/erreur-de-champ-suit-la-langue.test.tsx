@@ -1,4 +1,5 @@
 import {
+  CATALOG_ERROR_CODES,
   ERROR_CODES,
   PASSWORD_MIN_LENGTH,
   errorMessage,
@@ -344,8 +345,10 @@ describe('fiche d’une prestation', () => {
   it('traduit le conflit d’adresse rendu par l’API, sans l’effacer', async () => {
     updateServiceAction.mockResolvedValue({
       ok: false,
-      code: ERROR_CODES.CONFLICT,
-      message: errorMessage(ERROR_CODES.CONFLICT, 'fr'),
+      // Le code que l'API **rend** : `ServiceSlugTakenError` pose
+      // `SERVICE_SLUG_TAKEN` en 409, et jamais le `CONFLICT` générique (#1367).
+      code: CATALOG_ERROR_CODES.SERVICE_SLUG_TAKEN,
+      message: errorMessage(CATALOG_ERROR_CODES.SERVICE_SLUG_TAKEN, 'fr'),
     });
 
     const user = userEvent.setup();
@@ -380,8 +383,10 @@ describe('fiche d’une prestation', () => {
   it('laisse le refus de forme parler quand l’adresse est reprise mal écrite', async () => {
     updateServiceAction.mockResolvedValue({
       ok: false,
-      code: ERROR_CODES.CONFLICT,
-      message: errorMessage(ERROR_CODES.CONFLICT, 'fr'),
+      // Le code que l'API **rend** : `ServiceSlugTakenError` pose
+      // `SERVICE_SLUG_TAKEN` en 409, et jamais le `CONFLICT` générique (#1367).
+      code: CATALOG_ERROR_CODES.SERVICE_SLUG_TAKEN,
+      message: errorMessage(CATALOG_ERROR_CODES.SERVICE_SLUG_TAKEN, 'fr'),
     });
 
     const user = userEvent.setup();
@@ -421,8 +426,10 @@ describe('fiche d’une prestation', () => {
   it('traduit un refus de saisie et un refus de l’API posés sur deux champs', async () => {
     updateServiceAction.mockResolvedValue({
       ok: false,
-      code: ERROR_CODES.CONFLICT,
-      message: errorMessage(ERROR_CODES.CONFLICT, 'fr'),
+      // Le code que l'API **rend** : `ServiceSlugTakenError` pose
+      // `SERVICE_SLUG_TAKEN` en 409, et jamais le `CONFLICT` générique (#1367).
+      code: CATALOG_ERROR_CODES.SERVICE_SLUG_TAKEN,
+      message: errorMessage(CATALOG_ERROR_CODES.SERVICE_SLUG_TAKEN, 'fr'),
     });
 
     const user = userEvent.setup();
@@ -448,6 +455,47 @@ describe('fiche d’une prestation', () => {
     });
     expect(messageDuChamp('service-slug')).toBe(adminCatalogEn.form.errors.slugTaken);
     expect(nombreDeMessages()).toBe(2);
+  });
+
+  /**
+   * Le code lu est celui que l'API **rend**, et non le `CONFLICT` générique —
+   * #1367.
+   *
+   * L'écran branchait `postFieldRefusal('slug', …)` sur `ERROR_CODES.CONFLICT`,
+   * que ces routes ne servent jamais : le conflit d'adresse partait donc au
+   * bandeau, le champ restait muet, et le chemin que les trois cas ci-dessus
+   * éprouvent n'était pas atteint en production. Ce cas-ci le fige dans les deux
+   * sens — `SERVICE_SLUG_TAKEN` se pose sur le champ (au-dessus), un `CONFLICT`
+   * qui arriverait malgré tout reste au bandeau.
+   */
+  it('laisse au bandeau un conflit qui ne nomme pas l’adresse', async () => {
+    updateServiceAction.mockResolvedValue({
+      ok: false,
+      code: ERROR_CODES.CONFLICT,
+      message: errorMessage(ERROR_CODES.CONFLICT, 'fr'),
+    });
+
+    const user = userEvent.setup();
+    const { enAnglais } = monter(fiche);
+
+    await user.click(screen.getByRole('button', { name: adminCatalogFr.form.save }));
+
+    await waitFor(() => {
+      expect(document.querySelector('.spa-notification--danger')?.textContent).toContain(
+        errorMessage(ERROR_CODES.CONFLICT, 'fr'),
+      );
+    });
+    // Rien sous le champ : ce refus ne dit pas que l'adresse est prise, et
+    // l'y poser aurait envoyé corriger une saisie qui n'a rien de fautif.
+    expect(messageDuChamp('service-slug')).toBeNull();
+
+    enAnglais();
+
+    await waitFor(() => {
+      expect(document.querySelector('.spa-notification--danger')?.textContent).toContain(
+        errorMessage(ERROR_CODES.CONFLICT, 'en'),
+      );
+    });
   });
 });
 

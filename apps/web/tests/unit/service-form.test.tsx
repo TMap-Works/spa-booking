@@ -1,4 +1,10 @@
-import { ERROR_CODES, errorMessage, type Service, type ServiceCategory } from '@spa/shared';
+import {
+  CATALOG_ERROR_CODES,
+  ERROR_CODES,
+  errorMessage,
+  type Service,
+  type ServiceCategory,
+} from '@spa/shared';
 import { cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -238,9 +244,14 @@ describe('prestation — soumission', () => {
   it('pose le conflit de slug sur le champ d’adresse, pas en bandeau', async () => {
     // Le slug est la seule unicité que porte la table : un 409 ne peut venir que
     // de lui, et le message doit se poser là où la saisie se corrige.
+    //
+    // Le code est celui que l'API rend réellement — `ServiceSlugTakenError` pose
+    // `SERVICE_SLUG_TAKEN`, jamais le `CONFLICT` générique que l'écran lisait
+    // jusqu'à #1367, et sur lequel ce cas-ci passait au vert sans que le champ
+    // porte quoi que ce soit en production.
     updateServiceAction.mockResolvedValue({
       ok: false,
-      code: 'CONFLICT',
+      code: CATALOG_ERROR_CODES.SERVICE_SLUG_TAKEN,
       message: 'Une prestation de cet établissement porte déjà ce slug.',
     });
     const user = userEvent.setup();

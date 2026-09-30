@@ -1,4 +1,9 @@
-import { ERROR_CODES, errorMessage, type ServiceCategory } from '@spa/shared';
+import {
+  CATALOG_ERROR_CODES,
+  ERROR_CODES,
+  errorMessage,
+  type ServiceCategory,
+} from '@spa/shared';
 import { cleanup, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -237,9 +242,12 @@ describe('rubriques — création', () => {
   });
 
   it('pose le conflit de slug sur le champ d’adresse', async () => {
+    // Le code que l'API rend réellement — `ServiceCategorySlugTakenError` pose
+    // `SERVICE_CATEGORY_SLUG_TAKEN` en 409, jamais le `CONFLICT` générique que
+    // l'écran lisait jusqu'à #1367 (même défaut que `service-form.tsx`).
     createServiceCategoryAction.mockResolvedValue({
       ok: false,
-      code: 'CONFLICT',
+      code: CATALOG_ERROR_CODES.SERVICE_CATEGORY_SLUG_TAKEN,
       message: 'Une rubrique de cet établissement porte déjà ce slug.',
     });
     const user = userEvent.setup();
