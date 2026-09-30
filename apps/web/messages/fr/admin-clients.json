@@ -123,7 +123,6 @@
     "saving": "Enregistrement…"
   },
   "actions": {
-    "unknownTenant": "Établissement inconnu.",
     "unknownCustomer": "Fiche client inconnue.",
     "invalidInput": "Les informations saisies sont invalides."
   },

@@ -123,7 +123,6 @@
     "saving": "Saving…"
   },
   "actions": {
-    "unknownTenant": "Unknown salon.",
     "unknownCustomer": "Unknown client record.",
     "invalidInput": "The information entered is invalid."
   },

@@ -190,7 +190,6 @@
   "errors": {
     "credentialsRequired": "Renseignez votre adresse e-mail et votre mot de passe.",
     "registrationIncomplete": "Les informations d’inscription sont incomplètes.",
-    "unknownTenant": "Établissement inconnu.",
     "invalidProfile": "Les coordonnées saisies sont invalides.",
     "invalidCancellation": "La demande d’annulation est incomplète.",
     "invalidReschedule": "La demande de report est incomplète.",
