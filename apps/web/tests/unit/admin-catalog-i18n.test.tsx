@@ -280,7 +280,7 @@ describe('le formulaire de prestation, rendu en anglais', () => {
 
   /**
    * Les deux refus que le **contrat partagé** écrit lui-même — « ce champ est
-   * obligatoire », « slug attendu en minuscules… ».
+   * obligatoire », « Adresse attendue en minuscules… » (#1356).
    *
    * `zodErrorMap` ne les traduit pas, par conception (`zod-messages.ts`) : ils
    * s'affichaient en français sous un formulaire anglais, constat fait au
@@ -316,7 +316,7 @@ describe('le formulaire de prestation, rendu en anglais', () => {
         'an address in lowercase letters, digits and single hyphens is expected',
       ),
     ).toBeDefined();
-    expect(screen.queryByText(/slug attendu en minuscules/)).toBeNull();
+    expect(screen.queryByText(/Adresse attendue en minuscules/)).toBeNull();
     expect(createServiceAction).not.toHaveBeenCalled();
   });
 

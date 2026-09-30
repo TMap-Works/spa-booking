@@ -118,7 +118,7 @@ describe('slugSchema — le slug d’un établissement', () => {
     expect(parsed.success).toBe(false);
     if (!parsed.success) {
       expect(parsed.error.issues[0]?.message).toBe(
-        'ce nom est réservé par la plateforme — choisissez-en un autre',
+        'Ce nom est réservé par la plateforme — choisissez-en un autre.',
       );
     }
   });

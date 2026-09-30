@@ -124,7 +124,7 @@ describe('guestContactSchema', () => {
    * `.email()` et le motif de partie locale sont deux checks du même schéma :
    * sur une chaîne sans `@`, un motif qui exigerait le `@` échouerait avec le
    * premier et poserait deux `issues` de même message. Un formulaire qui rend
-   * toutes les erreurs du champ afficherait alors « adresse e-mail invalide »
+   * toutes les erreurs du champ afficherait alors « Adresse e-mail invalide. »
    * deux fois sous la même saisie.
    */
   it('ne pose qu’une erreur sur une adresse sans arobase', () => {

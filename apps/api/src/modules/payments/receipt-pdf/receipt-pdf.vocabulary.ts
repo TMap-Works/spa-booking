@@ -125,7 +125,7 @@ const FRENCH: ReceiptVocabulary = {
   billedTo: 'Facturé à',
   cashier: 'Caissier',
   practitioner: 'Praticien',
-  client: 'Cliente',
+  client: 'Client',
 
   subtotalExcludingTax: 'Total HT',
   tax: 'TVA',

@@ -58,7 +58,7 @@ describe('uuidSchema', () => {
     // C'est la raison pour laquelle le motif remplace `.uuid()` au lieu de s'y
     // ajouter — même conduite que l'alternative `[^@]*$` d'`emailSchema`.
     expect(refused.error?.issues).toHaveLength(1);
-    expect(refused.error?.issues[0]?.message).toBe('identifiant attendu au format UUID v4');
+    expect(refused.error?.issues[0]?.message).toBe('Identifiant attendu au format UUID v4.');
   });
 
   it('expose son motif, pour les surfaces qui valident sans Zod', () => {

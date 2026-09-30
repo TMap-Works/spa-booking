@@ -71,7 +71,7 @@ export const UUID_V4_PATTERN =
  * Le motif remplace `.uuid()` au lieu de s'y ajouter, pour la raison qui a
  * dicté l'alternative `[^@]*$` d'`emailSchema` : deux vérifications qui échouent
  * ensemble produisent deux `issues` de même message, et un formulaire qui les
- * rend toutes afficherait « identifiant attendu au format UUID v4 » deux fois
+ * rend toutes afficherait « Identifiant attendu au format UUID v4. » deux fois
  * sous le même champ. Le motif de la v4 est de toute façon plus strict que celui
  * de `.uuid()` — il n'y a rien qu'il laisserait passer.
  */
@@ -182,7 +182,7 @@ export type Slug = z.infer<typeof slugSchema>;
  * vont dans le même sens : une `issue` `custom` est la seule que zod laisse
  * porter une clé de message traduisible (`messageKey`), et une seule `issue`
  * est de toute façon ce qu'il faut — deux checks qui échouent ensemble
- * affichaient « adresse e-mail invalide » deux fois sous le même champ, ce que
+ * affichaient « Adresse e-mail invalide. » deux fois sous le même champ, ce que
  * l'alternative `[^@]*$` du motif s'employait déjà à éviter.
  *
  * Ce que ces bornes ne couvrent **pas**, et qui reste à l'avantage de l'API :

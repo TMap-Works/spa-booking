@@ -873,12 +873,12 @@ const CANCELLATION_TEXT_SUMMARY_EN = [
  * un praticien y serait renvoyé vers un espace qui n'est pas son agenda.
  */
 const CANCELLATION_EMAIL_EN: NotificationTemplateSource = {
-  subject: 'Appointment on {{date}} cancelled — {{salon}}',
+  subject: 'Appointment on {{date}} canceled — {{salon}}',
   html: [
     '<!DOCTYPE html>',
     '<html lang="en"><body>',
     '<p>Hello,</p>',
-    '<p>The appointment below at {{salon}} has been cancelled{{#origine}} {{origine}}{{/origine}}.</p>',
+    '<p>The appointment below at {{salon}} has been canceled{{#origine}} {{origine}}{{/origine}}.</p>',
     `<table role="presentation">${CANCELLATION_HTML_SUMMARY_EN}</table>`,
     '<p>Times are shown in {{fuseau}} time. The slot is available again.</p>',
     '{{#destinataire_client}}<p><a href="{{lien_annulation}}">Book a new appointment</a></p>{{/destinataire_client}}',
@@ -888,7 +888,7 @@ const CANCELLATION_EMAIL_EN: NotificationTemplateSource = {
   text: [
     'Hello,',
     '',
-    'The appointment below at {{salon}} has been cancelled{{#origine}} {{origine}}{{/origine}}.',
+    'The appointment below at {{salon}} has been canceled{{#origine}} {{origine}}{{/origine}}.',
     '',
     CANCELLATION_TEXT_SUMMARY_EN,
     'Times are shown in {{fuseau}} time. The slot is available again.',
@@ -913,7 +913,7 @@ const CANCELLATION_EMAIL_EN: NotificationTemplateSource = {
 const CANCELLATION_SMS_EN: NotificationTemplateSource = {
   subject: '',
   html: '',
-  text: '{{salon}}: appointment on {{date}} ({{fuseau}}) cancelled{{#origine}} {{origine}}{{/origine}}.',
+  text: '{{salon}}: appointment on {{date}} ({{fuseau}}) canceled{{#origine}} {{origine}}{{/origine}}.',
 };
 
 /**

@@ -117,7 +117,7 @@ describe('espace client — inscription rendue en anglais', () => {
 
     // Les trois phrases que cet écran affichait en français avant #1232.
     expect(screen.queryByText(/ce champ est obligatoire/)).toBeNull();
-    expect(screen.queryByText(/adresse e-mail invalide/)).toBeNull();
+    expect(screen.queryByText(/Adresse e-mail invalide\./)).toBeNull();
     expect(screen.queryByText(/le mot de passe fait au moins/)).toBeNull();
     // Ni le libellé brut de zod, que #613 avait chassé de ces écrans.
     expect(screen.queryByText(/String must contain/)).toBeNull();
