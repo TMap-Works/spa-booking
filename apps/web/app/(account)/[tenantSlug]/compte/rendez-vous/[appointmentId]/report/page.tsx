@@ -1,4 +1,6 @@
 import { MY_APPOINTMENTS_MAX_LIMIT, uuidSchema } from '@spa/shared';
+import type { Metadata } from 'next';
+import { getTranslations } from 'next-intl/server';
 import { notFound } from 'next/navigation';
 
 import { calendarDateInTimeZone } from '@/lib/booking/calendar';
@@ -88,6 +90,19 @@ interface ReschedulePageProps {
     readonly appointmentId: string;
   }>;
   readonly searchParams: Promise<Record<string, string | string[] | undefined>>;
+}
+
+/**
+ * Le titre de l'onglet de cet écran (#1329).
+ *
+ * Le gabarit de l'espace le situe — « … · Mon compte ». Sans ce
+ * titre-ci, l'onglet portait le seul nom de l'espace, et deux écrans ouverts
+ * côte à côte étaient indiscernables.
+ */
+export async function generateMetadata(): Promise<Metadata> {
+  const t = await getTranslations('account');
+
+  return { title: t('metadata.reschedule') };
 }
 
 export default async function ReschedulePage({ params, searchParams }: ReschedulePageProps) {

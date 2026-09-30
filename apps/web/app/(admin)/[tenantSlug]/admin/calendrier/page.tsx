@@ -7,6 +7,7 @@ import type {
   StaffSchedule,
   StaffTimeOff,
 } from '@spa/shared';
+import type { Metadata } from 'next';
 import { getLocale, getTranslations } from 'next-intl/server';
 import { redirect } from 'next/navigation';
 
@@ -155,6 +156,19 @@ interface CalendarPageProps {
     /** Le marqueur de renouvellement — lu par `RENEWAL_PARAM`, jamais écrit ici (#861). */
     readonly session?: string | readonly string[];
   }>;
+}
+
+/**
+ * Le titre de l'onglet de cet écran (#1329).
+ *
+ * Le gabarit de l'espace le situe — « … · Back-office ». Sans ce
+ * titre-ci, l'onglet portait le seul nom de l'espace, et deux écrans ouverts
+ * côte à côte étaient indiscernables.
+ */
+export async function generateMetadata(): Promise<Metadata> {
+  const t = await getTranslations('admin-planning');
+
+  return { title: t('metadata.title') };
 }
 
 export default async function CalendarPage({ params, searchParams }: CalendarPageProps) {

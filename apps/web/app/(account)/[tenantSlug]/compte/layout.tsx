@@ -99,12 +99,17 @@ import { accountTenant } from './tenant';
  *
  * `generateMetadata` et non un objet constant : un littéral ne peut pas lire la
  * requête, et le titre d'un espace doit se dire dans la langue de qui l'ouvre.
+ *
+ * `default` et `template` plutôt qu'un titre nu (#1329) : les six écrans de
+ * l'espace portaient le même « Mon compte », si bien qu'un onglet ne disait pas
+ * si l'on était sur ses rendez-vous, son historique ou ses coordonnées. Le
+ * gabarit situe le titre que chaque page pose, « Historique · Mon compte ».
  */
 export async function generateMetadata(): Promise<Metadata> {
   const t = await getTranslations('shell.account');
 
   return {
-    title: t('metadataTitle'),
+    title: { default: t('metadataTitle'), template: t('metadataTemplate') },
     // L'espace client n'a rien à faire dans un index de recherche : ses pages ne
     // rendent rien sans session, et une URL de compte indexée n'apporte que du
     // trafic qui rebondit sur un écran de connexion.

@@ -1,6 +1,7 @@
 import type { Appointment, CalendarDate, Locale, PublicTenant, TimeZone } from '@spa/shared';
-import Link from 'next/link';
+import type { Metadata } from 'next';
 import { getLocale, getTranslations } from 'next-intl/server';
+import Link from 'next/link';
 
 import { Notification } from '@/components/ui/notification';
 import { fetchAppointments, fetchPublicTenant } from '@/lib/api-client';
@@ -118,6 +119,19 @@ type CheckoutTranslator = Awaited<ReturnType<typeof getTranslations<'admin-check
 interface CheckoutPageProps {
   readonly params: Promise<{ readonly tenantSlug: string }>;
   readonly searchParams: Promise<{ readonly date?: string; readonly rdv?: string }>;
+}
+
+/**
+ * Le titre de l'onglet de cet écran (#1329).
+ *
+ * Le gabarit de l'espace le situe — « … · Back-office ». Sans ce
+ * titre-ci, l'onglet portait le seul nom de l'espace, et deux écrans ouverts
+ * côte à côte étaient indiscernables.
+ */
+export async function generateMetadata(): Promise<Metadata> {
+  const t = await getTranslations('admin-checkout');
+
+  return { title: t('metadata.title') };
 }
 
 export default async function CheckoutPage({ params, searchParams }: CheckoutPageProps) {

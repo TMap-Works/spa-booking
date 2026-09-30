@@ -1,4 +1,5 @@
 import { hasAtLeastRole, type SessionUser } from '@spa/shared';
+import type { Metadata } from 'next';
 import { getTranslations } from 'next-intl/server';
 import Link from 'next/link';
 
@@ -34,6 +35,19 @@ export const dynamic = 'force-dynamic';
 
 interface InviteStaffPageProps {
   readonly params: Promise<{ readonly tenantSlug: string }>;
+}
+
+/**
+ * Le titre de l'onglet de cet écran (#1329).
+ *
+ * Le gabarit de l'espace le situe — « … · Back-office ». Sans ce
+ * titre-ci, l'onglet portait le seul nom de l'espace, et deux écrans ouverts
+ * côte à côte étaient indiscernables.
+ */
+export async function generateMetadata(): Promise<Metadata> {
+  const t = await getTranslations('admin-staff');
+
+  return { title: t('metadata.invite') };
 }
 
 export default async function InviteStaffPage({ params }: InviteStaffPageProps) {
