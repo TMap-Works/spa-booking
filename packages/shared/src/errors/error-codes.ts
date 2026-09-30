@@ -22,8 +22,10 @@
  *
  * Depuis #536, les familles suivent **exactement** le découpage modulaire
  * d'`apps/api` — `identity`, `catalog`, `availability`, `appointments`, `crm`,
- * `payments`, `notifications`, `reporting` — plus les deux familles qui
- * n'appartiennent à aucun module : le transport HTTP et les refus transverses.
+ * `payments`, `notifications`, `reporting` — plus les familles qui
+ * n'appartiennent à aucun module : le transport HTTP, les refus transverses, et
+ * depuis #1372 les refus que les actions serveur d'`apps/web` opposent
+ * elles-mêmes avant tout appel (`WEB_ACTION_ERROR_CODES`).
  *
  * C'est ce découpage qui rend le rapatriement possible. Tant que le contrat
  * mêlait les codes de deux modules dans un même `BOOKING_ERROR_CODES`, un module
@@ -95,6 +97,30 @@
  * L'ordre importe, et il est l'inverse de celui qui avait produit la divergence :
  * le lecteur d'abord, la déclaration ensuite. Retirer la ligne du contrat en
  * premier n'aurait rien assaini — cela aurait cassé la compilation du front.
+ *
+ * ### La règle précisée : « que personne n'émet », et non « que l'API n'émet pas » — #1372
+ *
+ * La phrase ci-dessus est gardée telle quelle parce qu'elle a été vraie tant que
+ * l'API était le seul émetteur. Elle ne l'est plus : `WEB_ACTION_ERROR_CODES`
+ * porte un code qu'**`apps/web` émet lui-même**, depuis ses actions serveur et
+ * avant tout appel à l'API.
+ *
+ * Ce n'est pas un relâchement, parce que ce n'est pas le même danger. Ce que #536
+ * et #546 ont chassé est un code que **personne** n'émet : le front écrit une
+ * branche de comportement, elle ne se déclenche jamais, et le refus réel tombe
+ * dans la branche générique — c'est exactement le cas de
+ * `PAYMENT_ALREADY_CAPTURED`, lu pendant des mois par un `case` du comptoir que
+ * rien n'atteignait. Un code dont l'émetteur est nommé et vérifiable n'a pas
+ * cette propriété : sa branche se déclenche, et le test qui la couvre échoue
+ * quand elle cesse de l'être.
+ *
+ * La règle se lit donc : **tout code de ce fichier a un émetteur nommé**. Pour
+ * les dix familles de domaine, c'est une sous-classe de `DomainError` d'`apps/api`,
+ * et `api-error-codes.spec.ts` le vérifie en relisant les sources. Pour la
+ * onzième, c'est une action serveur d'`apps/web`, nommée dans la documentation du
+ * code — le garde ne peut pas la vérifier de la même façon, puisqu'il chasse
+ * précisément les littéraux de codes dans `apps/web` et n'y trouvera donc jamais
+ * qu'une lecture de cette constante.
  *
  * ## Le garde qui empêche la divergence de se rouvrir
  *
@@ -670,6 +696,91 @@ export const REPORTING_ERROR_CODES = {
 } as const;
 
 /**
+ * Les refus que les **actions serveur d'`apps/web`** opposent d'elles-mêmes,
+ * avant tout appel à l'API — #1372.
+ *
+ * La onzième famille, et la seule dont l'émetteur n'est pas `apps/api`. Elle
+ * existe pour une raison précise, et c'est le quatrième critère de #1372 que de
+ * l'écrire ici : **le refus d'établissement inconnu se distingue par un code
+ * propre, et non par un marqueur dans `details`.**
+ *
+ * ## Ce que le défaut était
+ *
+ * Les actions du back-office jugent le slug d'établissement qu'on leur passe —
+ * il vient de l'URL, et une action serveur est un point d'entrée public — avant
+ * de faire quoi que ce soit (`calendrier/actions.ts`, `deskToken`). Ce refus
+ * portait `VALIDATION_ERROR`, le même code que celui du **geste** : la fiche
+ * cliente illisible, le report illisible, la date de planning illisible, le
+ * motif d'annulation illisible. Les quatre écrans du planning et du comptoir
+ * séparaient les deux par la seule propriété qui les séparait alors —
+ * `details === undefined`, puisqu'`invalid()` n'en pose aucun quand `failure()`
+ * transporte toujours celui du corps d'erreur de l'API (#1367, #1369). Cette
+ * garde sépare bien l'action de l'API ; elle ne sépare pas deux refus que **la
+ * même action** oppose d'elle-même. « Établissement inconnu » s'affichait donc
+ * « Recherche invalide. », « Le report saisi est invalide. », « Date de planning
+ * invalide. » — la phrase d'un geste dont il n'était pas le refus.
+ *
+ * ## Pourquoi un code, et non un marqueur dans `details`
+ *
+ * Les deux voies étaient ouvertes, et c'est le code qui est retenu :
+ *
+ * - **les écrans trient déjà sur le code** (`web-frontend` §2), et ils réservent
+ *   la phrase de leur geste au seul `VALIDATION_ERROR`. Un code distinct les
+ *   corrige donc tous les quatre d'un seul geste, sans toucher à leur logique de
+ *   tri : leur repli est `errorMessage(code, locale)`, c'est-à-dire la phrase
+ *   bilingue déclarée juste à côté de ce code. C'est le « une seule fois pour les
+ *   quatre » que le ticket demande, obtenu en un point plutôt qu'en quatre ;
+ * - **le marqueur aurait cassé la garde qui vient d'être posée.** Un `details`
+ *   sur un refus d'`invalid()` fait exactement ce que `details === undefined`
+ *   sert à exclure : le refus d'établissement inconnu se serait mis à passer pour
+ *   un refus de l'API sur les quatre écrans, et il aurait fallu lire le marqueur
+ *   *avant* la garde, dans un ordre que rien n'imposerait au cinquième écran ;
+ * - **il aurait contredit l'invariant de `details`** — « ce que `details` porte
+ *   vient de l'API et d'elle seule » (`apps/web/…/admin/action-result.ts`), qui
+ *   est ce qui rend ce report sûr du point de vue de l'isolation : le contrat
+ *   d'erreur interdit déjà toute donnée d'établissement dans ce corps
+ *   (`tenant-isolation` §4).
+ *
+ * Le prix est celui qui est instruit en tête de ce fichier : un code que l'API
+ * n'émet pas. Il est assumé, et il est borné à ce que cette famille déclare.
+ */
+export const WEB_ACTION_ERROR_CODES = {
+  /**
+   * L'établissement désigné par l'URL n'est pas un établissement que nous
+   * puissions nommer — le seul chemin qui l'émette aujourd'hui est un slug que
+   * `slugSchema` refuse, jugé par l'action avant tout appel.
+   *
+   * ## Il ne renseigne personne, et c'est ce qui l'autorise
+   *
+   * Il ne dit pas qu'un établissement existe ou non : l'action n'interroge
+   * l'API sur rien pour le rendre, elle constate que le segment d'URL n'a pas la
+   * forme d'une adresse de salon. Aucun oracle, donc, et rien de ce que
+   * `tenant-isolation` §4 interdit. La frontière d'établissement, elle, reste
+   * gardée par l'API et par elle seule, qui refuse la ressource du voisin en
+   * `NOT_FOUND` sans jamais la distinguer d'une ressource inexistante.
+   *
+   * ## Pourquoi il ne réemploie pas `NOT_FOUND`
+   *
+   * Parce que les écrans en ont déjà fait autre chose, et à raison : sur les
+   * écritures du planning, `NOT_FOUND` dit « la route n'est pas servie »
+   * (`appointment-panel.tsx`, `lib/admin/calendar-failure.ts`) ; au comptoir, il
+   * dit « ce rendez-vous est introuvable » (`lib/admin/checkout-summary.ts`).
+   * Les confondre aurait remplacé une phrase fausse par une autre.
+   *
+   * ## Pourquoi il n'est pas non plus le code de l'API
+   *
+   * `apps/api/src/common/tenant/tenant-scope.middleware.ts` refuse bien
+   * l'établissement inconnu des pages publiques, sous le message
+   * « Établissement introuvable. » — mais il le fait par un `NotFoundError`,
+   * donc sous le code `NOT_FOUND`, et **délibérément** : quatre refus distincts y
+   * sont fondus en un seul pour ne pas renseigner celui qui sonde des noms de
+   * salons. Ce code-ci ne vaut donc que pour le refus rendu par `apps/web`, et
+   * l'API n'a rien à changer pour lui.
+   */
+  TENANT_NOT_FOUND: 'TENANT_NOT_FOUND',
+} as const;
+
+/**
  * L'ensemble des codes stables du contrat, tous domaines confondus.
  *
  * L'objet est figé à l'exécution : un module qui écrirait dedans changerait le
@@ -686,6 +797,7 @@ export const ERROR_CODES = Object.freeze({
   ...PAYMENT_ERROR_CODES,
   ...NOTIFICATION_ERROR_CODES,
   ...REPORTING_ERROR_CODES,
+  ...WEB_ACTION_ERROR_CODES,
 });
 
 export type ErrorCode = (typeof ERROR_CODES)[keyof typeof ERROR_CODES];

@@ -25,15 +25,17 @@ import {
   PAYMENT_ERROR_CODES,
   REPORTING_ERROR_CODES,
   TRANSPORT_ERROR_CODES,
+  WEB_ACTION_ERROR_CODES,
   isKnownErrorCode,
 } from '../errors/error-codes';
 
 /**
- * Les dix familles qui composent `ERROR_CODES` — une par module du CDC §2.3,
- * plus le transport HTTP et les refus transverses (#536). Les énumérer ici
- * plutôt que de les recopier dans chaque test : une famille oubliée dans l'une
- * des listes rendrait le test de doublon aveugle à ses codes — c'est exactement
- * la collision silencieuse que le `spread` de `ERROR_CODES` produirait.
+ * Les onze familles qui composent `ERROR_CODES` — une par module du CDC §2.3,
+ * plus le transport HTTP, les refus transverses (#536) et ceux que les actions
+ * serveur d'`apps/web` opposent elles-mêmes (#1372). Les énumérer ici plutôt que
+ * de les recopier dans chaque test : une famille oubliée dans l'une des listes
+ * rendrait le test de doublon aveugle à ses codes — c'est exactement la
+ * collision silencieuse que le `spread` de `ERROR_CODES` produirait.
  */
 const ERROR_CODE_FAMILIES = [
   TRANSPORT_ERROR_CODES,
@@ -46,6 +48,7 @@ const ERROR_CODE_FAMILIES = [
   PAYMENT_ERROR_CODES,
   NOTIFICATION_ERROR_CODES,
   REPORTING_ERROR_CODES,
+  WEB_ACTION_ERROR_CODES,
 ] as const;
 
 describe('codes d’erreur', () => {
