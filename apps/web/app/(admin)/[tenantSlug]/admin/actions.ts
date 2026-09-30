@@ -46,6 +46,22 @@
  * par `invalidFromZod(error, locale)` depuis #1319 : la forme était recopiée à
  * cinq sites, et sa place est auprès d'`invalid()` — voir l'en-tête
  * d'`action-result.ts`, qui porte la décision et son motif.
+ *
+ * ## Et l'établissement inconnu se dit par son code — #1379
+ *
+ * Les cinq sites de ce module qui jugent le slug de l'URL le refusaient sous
+ * `VALIDATION_ERROR`, c'est-à-dire sous la tournure générique du refus de
+ * saisie — « Certaines informations sont incomplètes ou mal formées. » pour un
+ * segment d'URL que personne n'a tapé. Ils rendent `unknownTenant()` désormais,
+ * comme les sept autres modules d'actions du produit depuis #1372 et #1375.
+ *
+ * **Le slug se juge d'abord, et seul.** Trois de ces cinq sites le jugeaient du
+ * même `if` que leur charge utile, si bien que le refus rendu dépendait de
+ * l'ordre des tests d'un `||`. Ils sont scindés, et l'ordre est partout le même :
+ * l'établissement, puis la saisie. C'est l'ordre juste, et non une commodité —
+ * un slug qui ne désigne aucun établissement rend la saisie sans objet, et
+ * reprocher un mot de passe sur une adresse qui ne mène nulle part envoie
+ * chercher une faute qui n'est pas celle qu'on a commise.
  */
 
 import {
@@ -75,6 +91,7 @@ import {
   failure,
   invalid,
   invalidFromZod,
+  unknownTenant,
   validationRefusal,
   type AdminActionResult,
 } from './action-result';
@@ -102,7 +119,16 @@ export async function adminLoginAction(
   const slug = slugSchema.safeParse(tenantSlug);
   const parsed = loginRequestSchema.safeParse(credentials);
 
-  if (!slug.success || !parsed.success) {
+  // L'établissement d'abord, et seul : l'écran de connexion retombe sur
+  // `errorMessage(code, locale)` pour tout code qu'il ne nomme pas
+  // (`admin-login-form.tsx`, table `FAILURE_KEYS`), et c'est donc la phrase qui
+  // nomme l'établissement qui s'affiche, sous le titre neutre « Connexion
+  // impossible » — et non « Renseignez votre adresse e-mail et votre mot de
+  // passe. » sur une adresse qui ne mène nulle part (#1379).
+  if (!slug.success) {
+    return unknownTenant();
+  }
+  if (!parsed.success) {
     return invalid(validationRefusal(await getLocale()));
   }
 
@@ -130,12 +156,25 @@ export async function adminAcceptInvitationAction(
   const slug = slugSchema.safeParse(tenantSlug);
   const parsed = acceptInvitationRequestSchema.safeParse(values, { errorMap: zodErrorMap(locale) });
 
-  if (!slug.success || !parsed.success) {
+  // Le cas que #1319 avait laissé à part, et que #1379 tranche : ces deux refus
+  // se jugeaient d'un même `if`, et l'`undefined` d'`invalidFromZod` servait
+  // exactement le slug illisible — un refus sans qu'aucune `ZodError` n'existe.
+  //
+  // C'est l'établissement qui l'emporte. Deux raisons, et la seconde est la
+  // décisive : l'ordre est celui des quatre autres sites de ce module, et l'écran
+  // d'invitation reconduirait sinon le défaut que tout ce fil corrige — « douze
+  // caractères au minimum » là où il n'y a aucun établissement dans lequel
+  // accepter l'invitation, donc rien à corriger sur cet écran. La saisie, elle,
+  // ne perd rien : elle est jugée juste après, et son refus nomme toujours le
+  // champ fautif.
+  if (!slug.success) {
+    return unknownTenant();
+  }
+  if (!parsed.success) {
     // Le premier refus du schéma quand il en nomme un — c'est ce qui distingue
     // « douze caractères au minimum » d'un mot de passe absent. À défaut, la
-    // phrase du code, et non un littéral. C'est le seul site où l'erreur peut
-    // manquer : un slug illisible refuse sans qu'aucun schéma n'ait parlé.
-    return invalidFromZod(parsed.success ? undefined : parsed.error, locale);
+    // phrase du code, et non un littéral.
+    return invalidFromZod(parsed.error, locale);
   }
 
   try {
@@ -158,7 +197,7 @@ export async function adminLogoutAction(tenantSlug: string): Promise<AdminAction
   const slug = slugSchema.safeParse(tenantSlug);
 
   if (!slug.success) {
-    return invalid(validationRefusal(await getLocale()));
+    return unknownTenant();
   }
 
   const refreshToken = await readAdminRefreshToken();
@@ -193,7 +232,7 @@ export async function updateTenantSettingsAction(
   const parsed = updateTenantRequestSchema.safeParse(changes, { errorMap: zodErrorMap(locale) });
 
   if (!slug.success) {
-    return invalid(validationRefusal(locale));
+    return unknownTenant();
   }
   if (!parsed.success) {
     // Le message du premier refus, et non un « formulaire invalide » générique :
@@ -260,10 +299,16 @@ async function billingRedirect(
   const slug = slugSchema.safeParse(tenantSlug);
   const submitted = submittedLocaleSchema.safeParse(locale);
 
-  if (!slug.success || !submitted.success) {
-    // Le slug et la langue sont deux entrées de cette action : un slug illisible
-    // est un refus de validation au même titre qu'une langue hors contrat, et
-    // c'est le code qu'`invalid` pose de toute façon.
+  // Le slug et la langue sont deux entrées de cette action, et elles ne se
+  // refusent plus du même code depuis #1379 : une langue hors contrat est un
+  // refus de saisie — le panneau d'abonnement l'a envoyée —, un slug illisible
+  // n'en est pas un. Le panneau range le seul `code` du refus et en réécrit la
+  // phrase au rendu (`billing-panel.tsx`, repli `errorMessage`) : il nomme donc
+  // l'établissement sans rien changer à sa table de codes.
+  if (!slug.success) {
+    return unknownTenant();
+  }
+  if (!submitted.success) {
     return invalid(validationRefusal(await getLocale()));
   }
 

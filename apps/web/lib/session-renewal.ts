@@ -35,7 +35,18 @@ export interface ActionRefusal {
   readonly code: string;
 }
 
-/** `true` si le refus veut dire « la session est à renouveler ». */
+/**
+ * `true` si le refus veut dire « la session est à renouveler ».
+ *
+ * Un seul code, et c'est ce qui rend ce départ **sûr quand le contrat en gagne
+ * un** : `TENANT_NOT_FOUND`, que les actions du back-office opposent depuis #1372
+ * sans jamais atteindre l'API, ne peut pas passer pour un refus de session, et un
+ * refus de session ne peut pas passer pour lui. La vérification est écrite en tête
+ * d'`(admin)/[tenantSlug]/admin/action-result.ts`, section #1379, avec l'autre
+ * moitié de l'argument — l'ordre des gardes des actions, qui jugent le slug avant
+ * d'ouvrir la session. Une liste de codes ici, ou un `code !== …`, l'aurait au
+ * contraire rendu faux à chaque code ajouté.
+ */
 export function isSessionExpired(refusal: ActionRefusal): boolean {
   return refusal.code === ERROR_CODES.UNAUTHORIZED;
 }

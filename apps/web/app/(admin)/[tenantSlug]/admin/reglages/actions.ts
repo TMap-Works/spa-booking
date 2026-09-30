@@ -29,7 +29,13 @@ import { cookies } from 'next/headers';
 import { attachProfileLocaleCookies } from '@/app/(account)/[tenantSlug]/compte/account-locale';
 import { updateOwnProfile } from '@/lib/api-client';
 
-import { failure, invalid, validationRefusal, type AdminActionResult } from '../action-result';
+import {
+  failure,
+  invalid,
+  unknownTenant,
+  validationRefusal,
+  type AdminActionResult,
+} from '../action-result';
 import { adminActionAccess } from '../session';
 
 /**
@@ -49,7 +55,16 @@ export async function saveMemberLocaleAction(
     locale: chosen === '' ? null : chosen,
   });
 
-  if (!slug.success || !parsed.success) {
+  // L'établissement d'abord, et seul — #1379. Les deux se jugeaient d'un même
+  // `if`, si bien qu'un slug illisible se disait « Certaines informations sont
+  // incomplètes ou mal formées. » pour un segment d'URL que personne n'a tapé.
+  // `member-locale-form.tsx` range le seul `code` du refus et en réécrit la
+  // phrase au rendu par `refusalMessage`, sans table de codes à lui : la phrase
+  // qui nomme l'établissement y arrive sans qu'il change d'une ligne.
+  if (!slug.success) {
+    return unknownTenant();
+  }
+  if (!parsed.success) {
     // La phrase vient du contrat et non d'un littéral : elle existe dans les
     // deux langues, et l'écran n'a pas à en réécrire une (#845). Elle est lue
     // par `validationRefusal` d'`action-result.ts`, qui la tient pour toutes les

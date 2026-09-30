@@ -149,17 +149,65 @@
  * résultat qui compte : le repli d'`refusalMessage` est `errorMessage(code,
  * locale)`, et il nomme l'établissement dès lors que le code le nomme.
  *
- * Deux modules restent à reprendre, et il faut le dire plutôt que de laisser
- * croire au compte rond : `admin/actions.ts` (connexion, déconnexion, réglages
- * de l'établissement, langue de l'équipe) et `reglages/actions.ts` jugent encore
- * le slug sous `invalid(validationRefusal(…))`. Le symptôme y est moindre — ils
- * ne calculaient aucune phrase d'établissement à perdre en chemin, ils posaient
- * déjà celle du contrat pour `VALIDATION_ERROR` —, mais l'écart est le même :
- * « Certaines informations sont incomplètes ou mal formées. » pour un segment
- * d'URL que personne n'a tapé. Deux de leurs écrans sont ceux de la **session**,
- * dont le refus passe par `useAdminSessionRenewal` avant d'être affiché : leur
- * reprise demande de vérifier ce chemin-là, ce qui est plus qu'un changement de
- * code. D'où **#1379**, et non une rallonge du diff de #1375.
+ * ## …et les deux derniers ferment la classe des surfaces authentifiées — #1379
+ *
+ * `admin/actions.ts` (connexion, déconnexion, réglages de l'établissement,
+ * pages hébergées de l'abonnement) et `reglages/actions.ts` (langue du compte
+ * connecté) jugeaient encore le slug sous `invalid(validationRefusal(…))`. Le
+ * symptôme y était moindre — ils ne calculaient aucune phrase d'établissement à
+ * perdre en chemin, ils posaient déjà celle du contrat pour `VALIDATION_ERROR` —,
+ * mais l'écart était le même : « Certaines informations sont incomplètes ou mal
+ * formées. » pour un segment d'URL que personne n'a tapé. Leurs six sites portent
+ * `TENANT_NOT_FOUND` désormais, et **plus aucun module d'actions d'une surface
+ * authentifiée — back-office ou espace client — ne refuse l'établissement inconnu
+ * sous le code du refus de saisie**.
+ *
+ * Ce qui reste en dehors, et le dire vaut mieux que de laisser croire au compte
+ * rond : le tunnel public de réservation
+ * (`app/(booking)/[tenantSlug]/reservation/actions.ts`, `loadAvailabilityAction`)
+ * juge toujours le slug du même `if` que sa charge utile et rend
+ * `VALIDATION_ERROR`. Il n'emploie ni ce module-ci ni `refusalMessage` — il écrit
+ * la phrase de son refus depuis son propre catalogue —, si bien que sa reprise est
+ * un autre geste que celui-ci, et non une rallonge de ce diff.
+ *
+ * Trois choses s'y sont décidées, et elles se disent ici parce qu'elles valent
+ * pour tout appelant de {@link unknownTenant} :
+ *
+ * - **le slug se juge seul, et en premier.** Quatre de ces six sites le jugeaient
+ *   du même `if` que leur charge utile : le refus rendu dépendait de l'ordre des
+ *   tests d'un `||`. L'ordre est désormais partout le même, et il est celui-ci
+ *   parce qu'un slug qui ne désigne aucun établissement rend la saisie sans
+ *   objet — reprocher un champ sur une adresse qui ne mène nulle part envoie
+ *   chercher une faute qu'on n'a pas commise ;
+ * - **`adminAcceptInvitationAction` est reprise**, et non laissée sous
+ *   `invalidFromZod`. C'était le cas que #1319 avait mis à part, parce qu'il
+ *   fallait trancher ce qui l'emporte quand le slug et la charge utile refusent
+ *   ensemble. C'est l'établissement, pour la raison ci-dessus ; la saisie ne perd
+ *   rien, jugée juste après et nommant toujours son champ fautif. Conséquence
+ *   directe : plus aucun appelant d'`invalidFromZod` n'a de `ZodError` absente à
+ *   lui passer, et sa signature ne la tolère plus — voir {@link invalidFromZod} ;
+ * - **le chemin de renouvellement de session ne s'y trompe pas**, et cela a été
+ *   vérifié plutôt que supposé. `isSessionExpired` de `lib/session-renewal.ts`
+ *   compare le code à `UNAUTHORIZED` **et à lui seul** : un code nouveau ne peut
+ *   donc pas faire prendre un refus d'établissement pour un refus de session.
+ *   L'inverse ne peut pas non plus arriver, et c'est l'ordre des gardes qui
+ *   l'assure : chacun de ces six sites juge le slug **avant** d'ouvrir la session
+ *   (`adminActionAccess`), si bien qu'un `UNAUTHORIZED` ne peut sortir que d'un
+ *   slug déjà jugé lisible.
+ *
+ * Les deux écrans de session sont vérifiés un par un, puisque c'est ce que le
+ * ticket demandait : l'écran de connexion n'appelle pas `useAdminSessionRenewal`
+ * du tout — il *est* le bout de ce chemin, et son encart nomme le refus par le
+ * repli de sa table de codes (`admin-login-form.tsx`) ; le bouton de déconnexion
+ * ne lit pas le résultat de son action et part vers la connexion quoi qu'il
+ * arrive (`admin-logout-button.tsx`), ce qui est le comportement d'avant ce
+ * ticket comme d'après — il n'affiche aucune phrase, ni l'ancienne ni la
+ * nouvelle. Des trois autres écrans, deux passent par `renewIfExpired(result)` —
+ * les réglages de l'établissement et la langue du compte —, qui rend `false` sur
+ * `TENANT_NOT_FOUND` et leur laisse écrire la phrase ; le panneau d'abonnement,
+ * lui, n'appelle pas le crochet et range `UNAUTHORIZED` dans sa propre table de
+ * codes, ce que ce ticket ne touche pas. L'écran d'invitation, enfin, ne renouvelle
+ * rien non plus : la session n'y est pas encore ouverte.
  */
 
 import { ERROR_CODES, errorMessage, type Locale } from '@spa/shared';
@@ -278,21 +326,28 @@ export function validationRefusal(locale: Locale): string {
  * lettre : un message vide rendu par un schéma reste ce que l'action rend, et ce
  * n'est pas à ce module d'en décider autrement.
  *
- * ## Pourquoi l'erreur peut être absente
+ * ## L'erreur ne peut plus être absente — #1379
  *
- * `undefined` n'est pas une commodité d'appel : il sert le site où le refus peut
- * venir d'**ailleurs** que du schéma. `adminAcceptInvitationAction` juge le slug
- * de l'URL et la charge utile d'un même `if` — un slug illisible refuse sans
- * qu'aucune `ZodError` n'existe, et c'est alors la phrase du code qui se dit,
- * exactement comme le repli le ferait.
+ * Elle l'a pu, et pour un seul site : `adminAcceptInvitationAction` jugeait le
+ * slug de l'URL et la charge utile d'un même `if`, si bien qu'un slug illisible
+ * refusait sans qu'aucune `ZodError` n'existe. `undefined` n'était donc pas une
+ * commodité d'appel, il servait ce site-là — et ce site a été repris : le slug s'y
+ * juge seul et rend {@link unknownTenant}, pour la raison écrite en tête de ce
+ * module. Plus aucun appelant n'a d'erreur absente à passer, et la signature ne la
+ * tolère plus : la garder aurait laissé un paramètre facultatif dont la
+ * justification venait d'être retirée, c'est-à-dire un commentaire faux à échéance.
+ *
+ * Le repli, lui, **reste** : `issues` peut être vide — une `ZodError` construite
+ * sans issue, une carte d'erreurs qui n'en rend aucune —, et c'est alors la phrase
+ * générique du code qui se dit, exactement comme sur une erreur absente.
  *
  * La langue reste un paramètre, pour la raison dite en tête de
  * {@link validationRefusal} : tout appelant de cette fonction a déjà lu la sienne
  * pour en faire la carte d'erreurs de son `safeParse` (#1299), et la relire ici
  * interrogerait la requête deux fois.
  */
-export function invalidFromZod(error: ZodError | undefined, locale: Locale): AdminActionFailure {
-  return invalid(error?.issues[0]?.message ?? validationRefusal(locale));
+export function invalidFromZod(error: ZodError, locale: Locale): AdminActionFailure {
+  return invalid(error.issues[0]?.message ?? validationRefusal(locale));
 }
 
 /**
