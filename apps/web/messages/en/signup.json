@@ -60,7 +60,6 @@
     "defaultLocale": "Choose the language your salon opens in.",
     "firstName": "Enter your first name.",
     "lastName": "Enter your last name.",
-    "email": "Enter a valid email address.",
     "password": "Your password must be at least twelve characters."
   },
   "errors": {

@@ -436,10 +436,7 @@
       "noteHint": "Allergy, preference, running late — optional.",
       "submit": "Review my booking",
       "errors": {
-        "required": "This field is required.",
-        "tooLong": "This field is {max} characters at most.",
-        "email": "Enter a valid email address.",
-        "invalid": "This value is not valid."
+        "tooLong": "This field is {max} characters at most."
       }
     },
     "consent": {

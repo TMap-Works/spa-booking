@@ -45,7 +45,6 @@
     "submit": "Se connecter",
     "submitting": "Connexion en cours…",
     "fieldErrors": {
-      "email": "Saisissez une adresse e-mail valide.",
       "password": "Le mot de passe fait au moins {min} caractères.",
       "totpCode": "Six chiffres, tels que les affiche votre application."
     },
@@ -333,8 +332,7 @@
       "defaultCurrency": "Choisissez la devise.",
       "defaultLocale": "Choisissez la langue.",
       "adminFirstName": "Indiquez le prénom du gérant.",
-      "adminLastName": "Indiquez le nom du gérant.",
-      "adminEmail": "Saisissez une adresse e-mail valide."
+      "adminLastName": "Indiquez le nom du gérant."
     },
     "errors": {
       "emailTaken": "Cette adresse a déjà un compte."
