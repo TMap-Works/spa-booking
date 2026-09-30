@@ -51,7 +51,7 @@ import { getTranslations } from 'next-intl/server';
 
 import { ApiClientError } from '@/lib/api-client';
 
-import { failure, invalid, type AdminActionResult } from '../action-result';
+import { failure, invalid, unknownTenant, type AdminActionResult } from '../action-result';
 import { adminActionAccess } from '../session';
 
 /** La fenêtre demandée, telle que l'écran l'a calculée dans le fuseau du salon. */
@@ -68,19 +68,25 @@ export interface ReportExportWindow {
  * 422 si elle est inversée ou trop large. Ce qui est vérifié ici est ce qu'un
  * appel d'action peut porter d'inattendu — un slug d'établissement forgé, deux
  * bornes qui ne sont pas des chaînes.
+ *
+ * L'établissement illisible porte `TENANT_NOT_FOUND` depuis #1375 ; la fenêtre et
+ * la langue gardent `VALIDATION_ERROR`. Le bouton d'export enveloppe tout refus
+ * dans « L'export n'a pas pu être produit : {message} », et ce `{message}` est la
+ * phrase du **code** (#1354) : les trois refus se disaient donc d'une seule
+ * tournure générique, là où le premier a maintenant la sienne.
  */
 export async function createReportExportAction(
   tenantSlug: string,
   window: unknown,
   locale: unknown,
 ): Promise<AdminActionResult<ReportExport>> {
-  const t = await getTranslations('admin-reporting');
   const slug = slugSchema.safeParse(tenantSlug);
 
   if (!slug.success) {
-    return invalid(t('actions.unknownTenant'));
+    return unknownTenant();
   }
 
+  const t = await getTranslations('admin-reporting');
   const parsed = parseWindow(window);
 
   if (parsed === null) {
@@ -135,12 +141,13 @@ export async function refreshReportExportAction(
   tenantSlug: string,
   exportId: unknown,
 ): Promise<AdminActionResult<ReportExport>> {
-  const t = await getTranslations('admin-reporting');
   const slug = slugSchema.safeParse(tenantSlug);
 
   if (!slug.success) {
-    return invalid(t('actions.unknownTenant'));
+    return unknownTenant();
   }
+
+  const t = await getTranslations('admin-reporting');
 
   if (typeof exportId !== 'string' || !UUID_PATTERN.test(exportId)) {
     return invalid(t('actions.unknownExport'));

@@ -92,7 +92,6 @@
     "failed": "L’export n’a pas pu être produit : {message}"
   },
   "actions": {
-    "unknownTenant": "Établissement inconnu.",
     "invalidWindow": "La période à exporter est invalide.",
     "invalidLocale": "La langue demandée pour l’export n’est pas prise en charge.",
     "unknownExport": "Export inconnu.",

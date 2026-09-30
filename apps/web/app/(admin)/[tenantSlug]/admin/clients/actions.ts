@@ -45,7 +45,7 @@ import { revalidatePath } from 'next/cache';
 
 import { updateCustomer } from '@/lib/api-client';
 
-import { failure, invalid, type AdminActionResult } from '../action-result';
+import { failure, invalid, unknownTenant, type AdminActionResult } from '../action-result';
 import { adminActionAccess } from '../session';
 import { adminClientsPath } from './paths';
 
@@ -64,13 +64,13 @@ async function openCall(
   const slug = slugSchema.safeParse(tenantSlug);
 
   if (!slug.success) {
-    // `getTranslations` et non un littéral : ce refus s'affiche dans le
-    // formulaire, dans la langue de la session (#852). Il est lu ici et non passé
-    // par l'appelant, pour que les deux formulaires de l'écran ne puissent pas
-    // le dire de deux façons.
-    const t = await getTranslations('admin-clients.actions');
-
-    return invalid(t('unknownTenant'));
+    // `TENANT_NOT_FOUND` et non plus la phrase du catalogue de cet écran
+    // (#1375) : les deux formulaires gardent le code du refus et réécrivent la
+    // phrase à chaque rendu (#1354), si bien qu'un `VALIDATION_ERROR` sans
+    // `details` ne leur laissait que la tournure générique du refus de saisie.
+    // Le code du contrat leur rend la phrase qui nomme l'établissement, et il la
+    // leur rend dans la langue du rendu plutôt que dans celle de l'appel.
+    return unknownTenant();
   }
 
   const access = await adminActionAccess(slug.data);

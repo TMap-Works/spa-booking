@@ -14,7 +14,6 @@
     "category": "Rubrique indisponible"
   },
   "actions": {
-    "unknownTenant": "Établissement inconnu.",
     "unknownService": "Prestation inconnue.",
     "unknownCategory": "Rubrique inconnue.",
     "unknownAssignment": "Affectation inconnue.",

@@ -190,7 +190,6 @@
   "errors": {
     "credentialsRequired": "Enter your email address and your password.",
     "registrationIncomplete": "The sign-up details are incomplete.",
-    "unknownTenant": "Unknown salon.",
     "invalidProfile": "The details you entered are invalid.",
     "invalidCancellation": "The cancellation request is incomplete.",
     "invalidReschedule": "The reschedule request is incomplete.",

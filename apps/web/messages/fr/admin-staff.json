@@ -238,7 +238,6 @@
     "saving": "Enregistrement…"
   },
   "actions": {
-    "unknownTenant": "Établissement inconnu.",
     "invalid": "Les informations saisies sont invalides.",
     "unknownStaff": "Praticien inconnu.",
     "unknownService": "Prestation inconnue.",

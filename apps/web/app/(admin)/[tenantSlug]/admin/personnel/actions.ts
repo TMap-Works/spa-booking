@@ -66,7 +66,7 @@ import {
   type StaffInvitation,
 } from '@/lib/admin/staff-contract';
 
-import { failure, invalid, type AdminActionResult } from '../action-result';
+import { failure, invalid, unknownTenant, type AdminActionResult } from '../action-result';
 import { adminCalendarPath } from '../paths';
 import { adminActionAccess } from '../session';
 import { adminStaffMemberPath, adminStaffPath } from './paths';
@@ -77,17 +77,23 @@ import { adminStaffMemberPath, adminStaffPath } from './paths';
  * Rendu plutôt que levé, parce qu'une exception traverserait la frontière
  * serveur en perdant son type et n'arriverait au composant que comme un message
  * générique.
+ *
+ * L'établissement illisible porte `TENANT_NOT_FOUND` depuis #1375, et non plus
+ * le `VALIDATION_ERROR` des refus de saisie : il précède les onze gestes du
+ * personnel, et les sept écrans qui les déclenchent gardent le code pour
+ * réécrire la phrase au rendu (#1354) — la tournure générique du refus de
+ * validation était donc tout ce qu'ils savaient en dire. La raison du choix — un
+ * code, et non un marqueur dans `details` — est en tête d'`action-result.ts`.
  */
 async function openCall(
   tenantSlug: string,
 ): Promise<
   { ok: true; accessToken: string; slug: string } | { ok: false; code: string; message: string }
 > {
-  const t = await getTranslations('admin-staff');
   const slug = slugSchema.safeParse(tenantSlug);
 
   if (!slug.success) {
-    return invalid(t('actions.unknownTenant'));
+    return unknownTenant();
   }
 
   const access = await adminActionAccess(slug.data);

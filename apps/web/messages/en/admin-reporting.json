@@ -92,7 +92,6 @@
     "failed": "The export could not be produced: {message}"
   },
   "actions": {
-    "unknownTenant": "Unknown salon.",
     "invalidWindow": "The period to export is invalid.",
     "invalidLocale": "The language requested for the export is not supported.",
     "unknownExport": "Unknown export.",

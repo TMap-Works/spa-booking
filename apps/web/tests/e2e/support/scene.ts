@@ -151,6 +151,88 @@ export interface OptionsTunnel {
 }
 
 /**
+ * Retenir une journée de la bande, puis son premier créneau — l'étape 3 du
+ * tunnel.
+ *
+ * Exporté parce que deux scénarios le font : la traversée complète ci-dessous, et
+ * `parcours-bilingue.e2e.ts`, qui s'arrête au milieu du tunnel pour basculer de
+ * langue. Les deux en tenaient leur propre copie, annotées « mêmes repères que
+ * `scene.ts`, pour la même raison » — et c'est ainsi qu'elles ont divergé quand
+ * l'une a été corrigée (#1381). Un seul geste, donc, à un seul endroit.
+ *
+ * ## Une journée « libre », et non une journée « non désactivée »
+ *
+ * La journée qu'on retient doit avoir des créneaux à montrer, et la bande le dit
+ * elle-même : la cellule porte `data-state` (`components/booking/date-band.tsx`),
+ * dont seul « libre » promet une grille d'heures non vide. C'est l'attribut et
+ * non le décompte en toutes lettres qui ferme leur nom accessible : ce décompte
+ * est une forme plurielle du catalogue, donc une chaîne différente dans chaque
+ * langue, là où l'attribut est le même.
+ *
+ * `aria-disabled` ne suffisait pas, et la remarque qui tenait ici affirmait
+ * l'inverse du code : `isSelectableState` retient aussi « chargement »
+ * (`lib/booking/day-state.ts`), donc une journée dont les décomptes ne sont pas
+ * arrivés n'est **pas** désactivée — et c'est voulu, le choix de la date restant
+ * opérable pendant le chargement. La scène cliquait la première journée non
+ * désactivée avant que la bande se prononce, puis attendait trente secondes des
+ * créneaux qui n'existeraient jamais.
+ *
+ * ## Et le mois se franchit, parce que la bande s'arrête au mois chargé
+ *
+ * `bandDates` (`lib/booking/day-band.ts`) ne tient que les journées du mois
+ * chargé, rognées aux bornes réservables — « la bande ne peut pas montrer une
+ * journée dont personne n'a demandé les créneaux ». Le dernier jour du mois elle
+ * n'en tient donc qu'une, et passé l'heure du dernier créneau cette journée est
+ * complète : il n'y a rien à retenir, et attendre un état stable ne ferait
+ * qu'échouer proprement. On franchit alors le mois par le chevron — le geste
+ * qu'une visiteuse ferait, celui que `step(1)` sert (#1084).
+ */
+export async function retenirJourEtCreneau(etape: Locator, langue: Locale): Promise<void> {
+  // Le choix de la date est une **bande de jours** depuis #1049, le mois complet
+  // ne s'ouvrant qu'à la demande dans un panneau (`BM-CRENEAU-01`). Deux `grid`
+  // cohabitent donc dans l'étape, et chacune se désigne par son nom accessible
+  // plutôt que par son rang : la bande s'appelle « Jour du rendez-vous —
+  // <mois> », la grille d'heures « Créneaux du <jour> ».
+  const bande = etape.getByRole('grid', {
+    name: debuteParLibelle(langue, 'booking.tunnel.dateBand.gridLabel'),
+  });
+  await expect(bande).toBeVisible({ timeout: 20_000 });
+
+  const jourLibre = bande.locator('[data-state="libre"] button').first();
+  const joursSuivants = etape.getByRole('button', {
+    name: libelle(langue, 'booking.tunnel.dateBand.nextDays'),
+  });
+
+  // Deux franchissements suffisent : le jeu d'essai ouvre les journées à venir,
+  // la première du mois suivant en a toujours.
+  for (let franchissements = 0; franchissements < 2; franchissements += 1) {
+    const trouvee = await jourLibre
+      .waitFor({ state: 'visible', timeout: 15_000 })
+      .then(() => true)
+      .catch(() => false);
+
+    if (trouvee) {
+      break;
+    }
+
+    await joursSuivants.click();
+  }
+
+  await expect(jourLibre).toBeVisible({ timeout: 20_000 });
+  await jourLibre.click();
+
+  // La grille d'heures, elle, se nomme par la journée qu'elle détaille : seule sa
+  // tête est un libellé, la date qui suit vient d'`Intl`.
+  const creneau = etape
+    .getByRole('grid', { name: debuteParLibelle(langue, 'booking.tunnel.slotPicker.dayHeading') })
+    .getByRole('gridcell')
+    .locator('button')
+    .first();
+  await expect(creneau).toBeVisible();
+  await creneau.click();
+}
+
+/**
  * Le tunnel client, de la vitrine à la confirmation — sans aucun raccourci.
  *
  * Chaque écran est franchi comme le ferait une cliente : c'est la partie du
@@ -224,34 +306,7 @@ export async function reserverParLeTunnel(
     });
     await expect(etape).toBeVisible();
 
-    // Le choix de la date est une **bande de jours** depuis #1049, le mois
-    // complet ne s'ouvrant qu'à la demande dans un panneau (`BM-CRENEAU-01`).
-    // Deux `grid` cohabitent donc dans l'étape, et chacune se désigne par son nom
-    // accessible plutôt que par son rang : la bande s'appelle « Jour du
-    // rendez-vous — <mois> », la grille d'heures « Créneaux du <jour> ».
-    const bande = etape.getByRole('grid', {
-      name: debuteParLibelle(langue, 'booking.tunnel.dateBand.gridLabel'),
-    });
-    await expect(bande).toBeVisible({ timeout: 20_000 });
-
-    // Les journées pleines, hors fenêtre ou encore en chargement portent
-    // `aria-disabled` (`components/booking/date-band.tsx`). C'est ce qui les
-    // écarte ici — et non plus le décompte en toutes lettres qui fermait leur
-    // nom accessible : ce décompte est une forme plurielle du catalogue, donc
-    // une chaîne différente dans chaque langue, là où l'attribut est le même.
-    const jourOuvert = bande.locator('button:not([aria-disabled="true"])').first();
-    await expect(jourOuvert).toBeVisible({ timeout: 20_000 });
-    await jourOuvert.click();
-
-    // La grille d'heures, elle, se nomme par la journée qu'elle détaille : seule
-    // sa tête est un libellé, la date qui suit vient d'`Intl`.
-    const creneau = etape
-      .getByRole('grid', { name: debuteParLibelle(langue, 'booking.tunnel.slotPicker.dayHeading') })
-      .getByRole('gridcell')
-      .locator('button')
-      .first();
-    await expect(creneau).toBeVisible();
-    await creneau.click();
+    await retenirJourEtCreneau(etape, langue);
   });
 
   if (options.sessionOuverte === true) {

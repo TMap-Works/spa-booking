@@ -125,6 +125,41 @@
  *
  * Ce que `details` dit n'a donc pas changé d'un mot, et c'est voulu : ce ticket
  * ajoute un code, il ne redéfinit pas la garde des quatre écrans.
+ *
+ * ## …et cinq autres modules d'actions le portent — #1375
+ *
+ * #1372 n'avait appliqué le remède qu'au planning et au comptoir, faute de quoi
+ * son ticket aurait débordé. Cinq autres modules d'actions jugeaient le même
+ * slug de la même façon et rendaient encore `invalid(t('…unknownTenant'))` :
+ * `catalogue`, `clients`, `personnel`, `reporting`, et l'espace client. Ils
+ * portent tous `TENANT_NOT_FOUND` désormais, par {@link unknownTenant} pour les
+ * quatre premiers, par un jumeau local pour l'espace client — qui a son propre
+ * fabricant de refus (`app/(account)/[tenantSlug]/compte/actions.ts`), pour la
+ * raison écrite en tête de ce module-là.
+ *
+ * Le symptôme n'y était pas celui du comptoir, et c'est ce qui l'avait laissé
+ * passer. Ces écrans-là ne prêtent la phrase d'aucun geste : ils gardent le code
+ * et réécrivent la phrase au rendu (`lib/refusal.ts`, #1327 et #1354), si bien
+ * qu'un `VALIDATION_ERROR` leur rendait la tournure générique du refus de
+ * saisie — « Certaines informations sont incomplètes ou mal formées. » pour un
+ * segment d'URL que personne n'avait tapé. Même cause, même remède, autre
+ * symptôme.
+ *
+ * Aucun des dix-neuf écrans concernés n'a changé d'une ligne, et c'est le
+ * résultat qui compte : le repli d'`refusalMessage` est `errorMessage(code,
+ * locale)`, et il nomme l'établissement dès lors que le code le nomme.
+ *
+ * Deux modules restent à reprendre, et il faut le dire plutôt que de laisser
+ * croire au compte rond : `admin/actions.ts` (connexion, déconnexion, réglages
+ * de l'établissement, langue de l'équipe) et `reglages/actions.ts` jugent encore
+ * le slug sous `invalid(validationRefusal(…))`. Le symptôme y est moindre — ils
+ * ne calculaient aucune phrase d'établissement à perdre en chemin, ils posaient
+ * déjà celle du contrat pour `VALIDATION_ERROR` —, mais l'écart est le même :
+ * « Certaines informations sont incomplètes ou mal formées. » pour un segment
+ * d'URL que personne n'a tapé. Deux de leurs écrans sont ceux de la **session**,
+ * dont le refus passe par `useAdminSessionRenewal` avant d'être affiché : leur
+ * reprise demande de vérifier ce chemin-là, ce qui est plus qu'un changement de
+ * code. D'où **#1379**, et non une rallonge du diff de #1375.
  */
 
 import { ERROR_CODES, errorMessage, type Locale } from '@spa/shared';

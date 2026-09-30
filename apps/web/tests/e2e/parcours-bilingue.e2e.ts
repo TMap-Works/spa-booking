@@ -56,8 +56,8 @@ import type { Page } from '@playwright/test';
 
 import { connecter, trouverRendezVous } from './support/api';
 import { COMPTES, chemins } from './support/environnement';
-import { debuteParLibelle, libelle } from './support/libelles';
-import { expect, reserverParLeTunnel, test } from './support/scene';
+import { libelle } from './support/libelles';
+import { expect, reserverParLeTunnel, retenirJourEtCreneau, test } from './support/scene';
 import { SESSION_CLIENTE } from './support/sessions';
 
 test.describe('Le parcours public servi en anglais', () => {
@@ -142,26 +142,13 @@ test.describe('Changer de langue au milieu du tunnel', () => {
     const etape = page.getByRole('region', {
       name: libelle('fr', 'booking.tunnel.slotStep.label'),
     });
-    // Les deux grilles de l'étape se désignent par leur nom accessible, et les
-    // journées fermées par `aria-disabled` — mêmes repères que `scene.ts`, pour
-    // la même raison : ni le rang ni un décompte pluriel ne survivent au
-    // changement de langue.
-    const bande = etape.getByRole('grid', {
-      name: debuteParLibelle('fr', 'booking.tunnel.dateBand.gridLabel'),
-    });
-    await expect(bande).toBeVisible({ timeout: 20_000 });
-
-    const jourOuvert = bande.locator('button:not([aria-disabled="true"])').first();
-    await expect(jourOuvert).toBeVisible({ timeout: 20_000 });
-    await jourOuvert.click();
-
-    const creneau = etape
-      .getByRole('grid', { name: debuteParLibelle('fr', 'booking.tunnel.slotPicker.dayHeading') })
-      .getByRole('gridcell')
-      .locator('button')
-      .first();
-    await expect(creneau).toBeVisible();
-    await creneau.click();
+    // Le geste est celui de `scene.ts`, et il en vient maintenant : cette copie
+    // en tenait sa propre version, annotée « mêmes repères que `scene.ts`, pour
+    // la même raison », et c'est ainsi qu'elle a survécu à la correction de
+    // l'autre (#1381). Ni le rang ni un décompte pluriel ne survivent au
+    // changement de langue ; une journée « libre » et le franchissement du mois,
+    // si.
+    await retenirJourEtCreneau(etape, 'fr');
 
     // L'écran qui suit rappelle les choix : c'est lui qu'on va relire après la
     // bascule. L'adresse, elle, porte l'étape et les trois choix (#733).

@@ -238,7 +238,6 @@
     "saving": "Saving…"
   },
   "actions": {
-    "unknownTenant": "Unknown establishment.",
     "invalid": "The information entered is invalid.",
     "unknownStaff": "Unknown practitioner.",
     "unknownService": "Unknown service.",

@@ -28,6 +28,10 @@
  * - ce que **ces actions** refusent d'elles-mêmes — un corps que le schéma ne
  *   lit pas — vient du catalogue `account.errors`, comme n'importe quel autre
  *   texte de cet espace.
+ *
+ * Une exception depuis #1375, et elle est motivée : l'**établissement** que le
+ * slug de l'URL ne désigne pas n'est pas un corps mal saisi, et il a son propre
+ * code du contrat partagé. Voir {@link unknownTenant}.
  */
 
 import {
@@ -92,6 +96,43 @@ function failure(error: unknown, locale: Locale): Failure {
 /** Refus de validation : l'appel n'a même pas atteint l'API. */
 function invalid(message: string): Failure {
   return { ok: false, code: ERROR_CODES.VALIDATION_ERROR, message };
+}
+
+/**
+ * Refus faute d'établissement : le slug de l'URL n'en désigne aucun — #1375.
+ *
+ * ## Ce qu'il sépare, et pourquoi il est distinct d'`invalid()`
+ *
+ * Six des sept actions de cet espace jugeaient le slug **dans le même `if`** que
+ * le corps qu'on leur soumet, sous un seul `VALIDATION_ERROR` et sous la phrase
+ * du geste : « Renseignez votre adresse e-mail et votre mot de passe. » pour un
+ * segment d'URL que personne n'avait tapé. Ce n'est pas la même cause, ce n'est
+ * pas le même remède, et ce n'est pas au corps du formulaire que la visiteuse
+ * doit revenir.
+ *
+ * Le remède est celui de #1372 au comptoir : un **code** propre du contrat
+ * partagé, `TENANT_NOT_FOUND`, et non un marqueur dans un `details` que ces
+ * refus n'ont pas. La décision et ses trois raisons sont écrites en tête de
+ * `packages/shared/src/errors/error-codes.ts` (`WEB_ACTION_ERROR_CODES`) et
+ * d'`app/(admin)/[tenantSlug]/admin/action-result.ts` — il n'y a rien à
+ * rejuger ici, seulement à l'appliquer à cette seconde surface.
+ *
+ * Les cinq écrans de l'espace client gardent le **code** d'un refus et en
+ * réécrivent la phrase à chaque rendu (`lib/refusal.ts`, #1327 et #1354) : le
+ * code suffit donc à leur faire dire la bonne phrase, dans la langue du rendu,
+ * sans qu'aucun ait à reconnaître quoi que ce soit de particulier.
+ *
+ * La phrase posée ici est celle du contrat, comme `failure()` le fait : elle
+ * n'est presque jamais affichée telle quelle, mais elle reste ce que le contrat
+ * d'une action promet, et un appelant qui n'aurait que le résultat doit y
+ * trouver une phrase déjà dans sa langue.
+ */
+function unknownTenant(locale: Locale): Failure {
+  return {
+    ok: false,
+    code: ERROR_CODES.TENANT_NOT_FOUND,
+    message: errorMessage(ERROR_CODES.TENANT_NOT_FOUND, locale),
+  };
 }
 
 /**
@@ -175,9 +216,14 @@ export async function loginAction(
 ): Promise<ActionResult<SessionUser>> {
   const locale = await actionLocale();
   const slug = slugSchema.safeParse(tenantSlug);
+
+  if (!slug.success) {
+    return unknownTenant(locale);
+  }
+
   const parsed = loginRequestSchema.safeParse(credentials);
 
-  if (!slug.success || !parsed.success) {
+  if (!parsed.success) {
     const t = await getTranslations('account.errors');
     return invalid(t('credentialsRequired'));
   }
@@ -202,6 +248,11 @@ export async function registerAction(
 ): Promise<ActionResult<SessionUser>> {
   const locale = await actionLocale();
   const slug = slugSchema.safeParse(tenantSlug);
+
+  if (!slug.success) {
+    return unknownTenant(locale);
+  }
+
   /*
    * La langue de lecture part avec l'inscription — `registerRequestSchema.locale`,
    * huitième critère d'acceptation de #844 : *« elle ne décrit pas ce que la
@@ -219,7 +270,7 @@ export async function registerAction(
       : body,
   );
 
-  if (!slug.success || !parsed.success) {
+  if (!parsed.success) {
     const t = await getTranslations('account.errors');
     return invalid(t('registrationIncomplete'));
   }
@@ -247,8 +298,7 @@ export async function logoutAction(tenantSlug: string): Promise<ActionResult<nul
   const slug = slugSchema.safeParse(tenantSlug);
 
   if (!slug.success) {
-    const t = await getTranslations('account.errors');
-    return invalid(t('unknownTenant'));
+    return unknownTenant(await actionLocale());
   }
 
   const refreshToken = await readRefreshToken();
@@ -272,9 +322,14 @@ export async function updateProfileAction(
 ): Promise<ActionResult<SessionUser>> {
   const locale = await actionLocale();
   const slug = slugSchema.safeParse(tenantSlug);
+
+  if (!slug.success) {
+    return unknownTenant(locale);
+  }
+
   const parsed = updateProfileRequestSchema.safeParse(changes);
 
-  if (!slug.success || !parsed.success) {
+  if (!parsed.success) {
     const t = await getTranslations('account.errors');
     return invalid(t('invalidProfile'));
   }
@@ -340,9 +395,14 @@ export async function saveAccountLocaleAction(
 ): Promise<ActionResult<SessionUser>> {
   const currentLocale = await actionLocale();
   const slug = slugSchema.safeParse(tenantSlug);
+
+  if (!slug.success) {
+    return unknownTenant(currentLocale);
+  }
+
   const parsed = localeSchema.safeParse(chosen);
 
-  if (!slug.success || !parsed.success) {
+  if (!parsed.success) {
     const t = await getTranslations('account.errors');
     return invalid(t('invalidLocale'));
   }
@@ -382,12 +442,17 @@ export async function cancelOwnAppointmentAction(
 ): Promise<ActionResult<BookedAppointment>> {
   const locale = await actionLocale();
   const slug = slugSchema.safeParse(tenantSlug);
+
+  if (!slug.success) {
+    return unknownTenant(locale);
+  }
+
   const id = uuidSchema.safeParse(appointmentId);
   const body = cancelAppointmentRequestSchema.safeParse(
     reason === undefined || reason.trim() === '' ? {} : { reason },
   );
 
-  if (!slug.success || !id.success || !body.success) {
+  if (!id.success || !body.success) {
     const t = await getTranslations('account.errors');
     return invalid(t('invalidCancellation'));
   }
@@ -418,10 +483,15 @@ export async function rescheduleOwnAppointmentAction(
 ): Promise<ActionResult<BookedAppointment>> {
   const locale = await actionLocale();
   const slug = slugSchema.safeParse(tenantSlug);
+
+  if (!slug.success) {
+    return unknownTenant(locale);
+  }
+
   const id = uuidSchema.safeParse(appointmentId);
   const body = rescheduleAppointmentRequestSchema.safeParse(request);
 
-  if (!slug.success || !id.success || !body.success) {
+  if (!id.success || !body.success) {
     const t = await getTranslations('account.errors');
     return invalid(t('invalidReschedule'));
   }
