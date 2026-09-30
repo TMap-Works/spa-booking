@@ -340,7 +340,7 @@ describe('la liste des salons, en anglais', () => {
 
     for (const head of [
       'Salon',
-      'Address',
+      'Page address',
       'Time zone · currency',
       'Opened on',
       'Billing',

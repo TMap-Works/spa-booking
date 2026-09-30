@@ -183,7 +183,7 @@ describe('le ticket de caisse imprimé', () => {
       'TVA intracom. FR12345678901',
       'Client',
       'Praticien',
-      'Caisse',
+      'Caissier',
       'Lignes du reçu',
       'Article',
       'Qté',

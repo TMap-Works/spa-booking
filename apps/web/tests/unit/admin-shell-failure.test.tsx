@@ -121,7 +121,7 @@ describe('coquille du back-office — une panne ne retire plus le rail', () => {
       `/${SLUG}/admin/calendrier`,
     );
     expect(screen.getByRole('button', { name: 'Se déconnecter' })).toBeTruthy();
-    expect(screen.getByRole('navigation', { name: 'Sections du tableau de bord' })).toBeTruthy();
+    expect(screen.getByRole('navigation', { name: 'Sections du back-office' })).toBeTruthy();
     // Et le contenu de la page reste rendu : la coquille ne s'y substitue pas.
     expect(screen.getByText('contenu de l’écran')).toBeTruthy();
   });
@@ -178,7 +178,7 @@ describe('coquille du back-office — un refus n’est pas une panne', () => {
 
     render(await ouvrirLaCoquille());
 
-    expect(screen.queryByRole('navigation', { name: 'Sections du tableau de bord' })).toBeNull();
+    expect(screen.queryByRole('navigation', { name: 'Sections du back-office' })).toBeNull();
     expect(screen.getByText('contenu de l’écran')).toBeTruthy();
   });
 
@@ -187,7 +187,7 @@ describe('coquille du back-office — un refus n’est pas une panne', () => {
 
     render(await ouvrirLaCoquille());
 
-    expect(screen.queryByRole('navigation', { name: 'Sections du tableau de bord' })).toBeNull();
+    expect(screen.queryByRole('navigation', { name: 'Sections du back-office' })).toBeNull();
     expect(fetchOwnProfile).not.toHaveBeenCalled();
   });
 
@@ -204,7 +204,7 @@ describe('coquille du back-office — un refus n’est pas une panne', () => {
 
     render(await ouvrirLaCoquille());
 
-    expect(screen.queryByRole('navigation', { name: 'Sections du tableau de bord' })).toBeNull();
+    expect(screen.queryByRole('navigation', { name: 'Sections du back-office' })).toBeNull();
   });
 });
 

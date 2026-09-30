@@ -202,7 +202,7 @@ describe('le consentement est bloquant', () => {
 
     const message = await screen.findByRole('alert');
 
-    expect(message.textContent).toMatch(/cochez cette case/);
+    expect(message.textContent).toMatch(/Cochez cette case/);
     // Sur la case, jamais en bloc en haut de page (web-frontend §4).
     const case_ = screen.getByRole('checkbox');
     expect(case_.getAttribute('aria-describedby')).toContain(message.id);
@@ -238,7 +238,7 @@ describe('le consentement est bloquant', () => {
     await user.type(screen.getByLabelText(/Mot de passe/), 'correct horse battery');
     await user.click(screen.getByRole('button', { name: /Créer mon compte/ }));
 
-    expect(await screen.findByText(/cochez cette case/)).toBeDefined();
+    expect(await screen.findByText(/Cochez cette case/)).toBeDefined();
     expect(registerAction).not.toHaveBeenCalled();
 
     await user.click(screen.getByRole('checkbox'));

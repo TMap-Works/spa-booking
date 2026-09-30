@@ -80,7 +80,7 @@ describe('le filtre de l’historique (#1054)', () => {
     expect(historyFilters('en').map((item) => item.label)).toEqual([
       'All',
       'Completed',
-      'Cancelled',
+      'Canceled',
     ]);
     expect(historyFilters('en').map((item) => item.id)).toEqual([...HISTORY_FILTER_IDS]);
   });

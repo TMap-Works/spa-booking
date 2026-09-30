@@ -295,7 +295,7 @@ describe('les états vides et les refus parlent la langue de la session', () => 
     expect(calendarStartState({ serviceCount: 0, staffCount: 0 }, paths, 'en')).toMatchObject({
       title: 'This salon is not set up yet',
       links: [
-        { key: 'catalogue', label: 'Open the service catalogue' },
+        { key: 'catalogue', label: 'Open the service catalog' },
         { key: 'personnel', label: 'Open the staff list' },
       ],
     });

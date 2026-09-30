@@ -163,7 +163,7 @@ describe('back-office — le sujet des annonces du temps réel suit la langue (#
 
     expect(lu).toContain(moment('en-FR'));
     expect(lu).not.toContain(moment('fr-FR'));
-    expect(lu).toContain('cancelled by the client');
+    expect(lu).toContain('canceled by the client');
   });
 
   it('ne change rien sur une session française', () => {

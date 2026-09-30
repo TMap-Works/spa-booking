@@ -324,7 +324,7 @@ describe('les messages de validation suivent la langue de l’écran (#1105)', (
     await user.type(champ(LABELS.en.confirmation), 'autre-mot-de-passe');
     await user.click(screen.getByRole('button', { name: LABELS.en.submit }));
 
-    expect(await screen.findByText('the two passwords do not match')).toBeDefined();
+    expect(await screen.findByText('The two passwords do not match.')).toBeDefined();
   });
 });
 

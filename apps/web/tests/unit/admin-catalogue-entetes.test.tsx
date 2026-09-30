@@ -30,7 +30,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
  * 4. **les mots viennent des écrans voisins**, et la suite le vérifie au
  *    **catalogue de messages** depuis que le module est bilingue (#849) :
  *    « Tampon avant / après » est le vocabulaire du formulaire de prestation,
- *    « Durée bloquée » celui de la fiche — « Bloque 1 h 25 sur l'agenda, tampons
+ *    « Durée bloquée » celui de la fiche — « Bloque 1 h 25 sur le planning, tampons
  *    compris. » Trois écrans qui nomment le même temps de trois façons, c'est
  *    l'écart `ds:coherence` que ce ticket referme, pas un qu'il rouvre.
  */
@@ -192,14 +192,14 @@ describe('catalogue — les en-têtes reprennent le vocabulaire des écrans vois
       bufferAfter: 'Tampon après (minutes)',
       buffers: 'Tampons avant / après',
       occupied: 'Durée bloquée',
-      occupiedHint: /^Bloque .* sur l’agenda, tampons compris\.$/,
+      occupiedHint: /^Bloque .* sur le planning, tampons compris\.$/,
     },
     en: {
       bufferBefore: 'Buffer before (minutes)',
       bufferAfter: 'Buffer after (minutes)',
       buffers: 'Buffers before / after',
       occupied: 'Time blocked',
-      occupiedHint: /^Blocks .* on the agenda, buffers included\.$/,
+      occupiedHint: /^Blocks .* on the schedule, buffers included\.$/,
     },
   } as const;
 

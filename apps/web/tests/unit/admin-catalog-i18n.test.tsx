@@ -171,7 +171,7 @@ describe('la liste du catalogue, rendue en anglais', () => {
   it('nomme l’écran, ses filtres et ses huit colonnes dans la langue de la session', async () => {
     render(await openCatalog());
 
-    expect(screen.getByRole('heading', { name: 'Service catalogue' })).toBeDefined();
+    expect(screen.getByRole('heading', { name: 'Service catalog' })).toBeDefined();
     expect(screen.getByRole('link', { name: 'Active only' })).toBeDefined();
     expect(screen.getByRole('link', { name: 'New service' })).toBeDefined();
     expect(screen.getByRole('columnheader', { name: 'Buffers before / after' })).toBeDefined();
@@ -182,10 +182,10 @@ describe('la liste du catalogue, rendue en anglais', () => {
   it('met durées et prix en forme selon la langue, sans changer le montant', async () => {
     render(await openCatalog());
 
-    // « 1 h » en français, « 1 hr » en anglais : les mots de la durée viennent de
-    // `messages/<langue>/format.json`.
+    // « 1 h 15 » en français, « 1 hr 15 min » en anglais : les mots de la durée
+    // viennent de `messages/<langue>/format.json`, unité comprise (#1329).
     expect(screen.getByText('1 hr')).toBeDefined();
-    expect(screen.getByText('1 hr 15')).toBeDefined();
+    expect(screen.getByText('1 hr 15 min')).toBeDefined();
     // 3500 centimes d'euro, mis en forme en `en-US` — le montant n'a pas bougé,
     // seule son écriture suit la langue.
     expect(screen.getByText('€35.00')).toBeDefined();
@@ -216,7 +216,7 @@ describe('la liste du catalogue, rendue en anglais', () => {
     fetchServices.mockResolvedValue([]);
     render(await openCatalog());
 
-    expect(screen.getByText('Empty catalogue')).toBeDefined();
+    expect(screen.getByText('Empty catalog')).toBeDefined();
     expect(
       screen.getByText(/Create your first service so the salon’s public page/),
     ).toBeDefined();
@@ -246,8 +246,8 @@ describe('le formulaire de prestation, rendu en anglais', () => {
     );
 
     // 60 + 10 + 5 minutes, dites avec les mots de l'anglais.
-    expect(screen.getByText('1 hr 15')).toBeDefined();
-    expect(screen.getByText(/Time blocked on the agenda/)).toBeDefined();
+    expect(screen.getByText('1 hr 15 min')).toBeDefined();
+    expect(screen.getByText(/Time blocked on the schedule/)).toBeDefined();
   });
 
   it('propose les rubriques du salon sous leur nom saisi, jamais traduit', () => {

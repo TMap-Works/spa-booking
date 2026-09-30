@@ -324,7 +324,7 @@ describe('les moyens de paiement et leurs états', () => {
 
   it('explique dans les deux langues pourquoi un moyen est fermé', () => {
     expect(checkoutBlocker('cancelled', { kind: 'du' }, 'fr')).toMatch(/annulé/i);
-    expect(checkoutBlocker('cancelled', { kind: 'du' }, 'en')).toMatch(/cancelled/i);
+    expect(checkoutBlocker('cancelled', { kind: 'du' }, 'en')).toMatch(/canceled/i);
     expect(
       checkoutBlocker('confirmed', { kind: 'ouvert', payment: CASH_TRANSACTION }, 'en'),
     ).toMatch(/online payment is still in flight/i);
@@ -611,7 +611,7 @@ describe('le reçu remis à la cliente', () => {
     );
 
     expect(screen.getByText('Settlement recorded — €35.00')).toBeDefined();
-    expect(screen.getByRole('heading', { name: 'Till receipt' })).toBeDefined();
+    expect(screen.getByRole('heading', { name: 'Register receipt' })).toBeDefined();
   });
 
   it('ne promet plus de confirmation par webhook — le comptoir n’attend personne', () => {

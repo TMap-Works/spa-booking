@@ -281,7 +281,7 @@ describe('les phrases de statut de l’espace client (#847)', () => {
     expect(pendingHoldNote('en')).toBe('Your slot is held; there is nothing for you to do.');
     expect(rescheduledNote('fr')).toBe('Ce créneau a été libéré au profit d’un autre rendez-vous.');
     expect(rescheduledNote('en')).toBe(
-      'This slot was released in favour of another appointment.',
+      'This slot was released in favor of another appointment.',
     );
   });
 

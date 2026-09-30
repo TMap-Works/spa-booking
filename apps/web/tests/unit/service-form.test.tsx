@@ -94,7 +94,7 @@ describe('prestation — pré-remplissage', () => {
     expect(valueOf(/Tampon après/)).toBe('5');
   });
 
-  it('affiche la durée réellement bloquée sur l’agenda', () => {
+  it('affiche la durée réellement bloquée sur le planning', () => {
     renderEdition();
 
     // 60 + 10 + 5 — c'est ce qui explique pourquoi le créneau suivant n'est pas
