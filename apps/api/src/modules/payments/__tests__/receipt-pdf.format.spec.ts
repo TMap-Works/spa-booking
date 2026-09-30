@@ -457,7 +457,16 @@ describe('receiptVocabulary', () => {
    * chaque clé soit **présente, non vide, et distincte** de son homologue, à
    * l'exception des quelques-unes qui sont les mêmes dans les deux langues.
    */
-  const IDENTICAL_BY_DESIGN = new Set(['total']);
+  /*
+   * `client` a rejoint `total` avec #1356. Le PDF français disait « Cliente » là
+   * où l'écran du même reçu disait « Client » ; le glossaire du produit tranche
+   * pour « cliente / client » en français et « client » en anglais
+   * (`apps/web/messages/README.md`), et c'est la forme masculine que le reçu
+   * porte, comme l'écran. Les deux tables disent donc le même mot — non parce
+   * qu'une traduction manque, mais parce que le mot est le même dans les deux
+   * langues.
+   */
+  const IDENTICAL_BY_DESIGN = new Set(['total', 'client']);
 
   it('traduit chaque clé, sans en laisser une en français sur la pièce anglaise', () => {
     const fr = receiptVocabulary('fr');
