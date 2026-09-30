@@ -1,4 +1,4 @@
-import type { StaffTimeOff } from '@spa/shared';
+import { ERROR_CODES, errorMessage, type StaffTimeOff } from '@spa/shared';
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -195,7 +195,10 @@ describe('le retrait d’une absence — quand l’API refuse', () => {
     const user = userEvent.setup();
     deleteStaffTimeOffAction.mockResolvedValue({
       ok: false,
-      code: 'CONFLICT',
+      code: ERROR_CODES.CONFLICT,
+      // Le message de l'action serveur est écrit dans la langue de la requête :
+      // le panneau ne le range plus (#1354), il garde le **code** et écrit la
+      // phrase du contrat partagé au rendu, dans la langue lue.
       message: 'Cette absence a déjà été modifiée.',
     });
     renderPanel();
@@ -204,7 +207,8 @@ describe('le retrait d’une absence — quand l’API refuse', () => {
     await user.click(screen.getByRole('button', { name: 'Retirer définitivement' }));
 
     expect(screen.getByText('Absence non retirée')).toBeDefined();
-    expect(screen.getByText('Cette absence a déjà été modifiée.')).toBeDefined();
+    expect(screen.getByText(errorMessage(ERROR_CODES.CONFLICT, 'fr'))).toBeDefined();
+    expect(screen.queryByText('Cette absence a déjà été modifiée.')).toBeNull();
     expect(screen.getByRole('alertdialog')).toBeDefined();
     expect(refresh).not.toHaveBeenCalled();
     expect(replace).not.toHaveBeenCalled();

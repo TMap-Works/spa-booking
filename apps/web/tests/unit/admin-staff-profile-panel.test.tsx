@@ -1,4 +1,9 @@
-import { DISPLAY_NAME_MAX_LENGTH, type StaffMember } from '@spa/shared';
+import {
+  DISPLAY_NAME_MAX_LENGTH,
+  ERROR_CODES,
+  errorMessage,
+  type StaffMember,
+} from '@spa/shared';
 import { cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -262,14 +267,18 @@ describe('StaffProfilePanel — suspendre et réactiver', () => {
   it('affiche le refus de l’API sans prétendre que la fiche a changé', async () => {
     updateStaffMemberAction.mockResolvedValue({
       ok: false,
-      code: 'NOT_FOUND',
+      code: ERROR_CODES.NOT_FOUND,
+      // Le message de l'action serveur est écrit dans la langue de la requête :
+      // le panneau ne le range plus (#1354), il garde le **code** et écrit la
+      // phrase du contrat partagé au rendu, dans la langue lue.
       message: 'Praticien introuvable.',
     });
 
     renderPanel();
     await userEvent.click(screen.getByRole('button', { name: /Suspendre la fiche de Léa/ }));
 
-    expect(screen.getByText('Praticien introuvable.')).toBeDefined();
+    expect(screen.getByText(errorMessage(ERROR_CODES.NOT_FOUND, 'fr'))).toBeDefined();
+    expect(screen.queryByText('Praticien introuvable.')).toBeNull();
     expect(screen.getByRole('button', { name: /Suspendre la fiche de Léa/ })).toBeDefined();
     expect(refresh).not.toHaveBeenCalled();
   });

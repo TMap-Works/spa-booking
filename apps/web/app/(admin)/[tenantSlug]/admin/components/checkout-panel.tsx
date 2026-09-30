@@ -22,7 +22,9 @@ import {
   completionUnavailableMessage,
   firstSettlementCeiling,
   isAlreadySettledRefusal,
+  isMalformedTerminalReference,
   isSettleable,
+  isTerminalReferenceRefusal,
   meanHint,
   meanLabel,
   methodLabel,
@@ -31,8 +33,6 @@ import {
   priceDriftOf,
   providerUnreachableMessage,
   terminalReferenceField,
-  terminalReferenceIssue,
-  terminalReferenceRefusal,
   type SettlementState,
 } from '@/lib/admin/checkout-summary';
 import type { PaymentTransaction, SaleSummary } from '@/lib/admin/payment-contract';
@@ -42,6 +42,7 @@ import {
   parseAmountInput,
   type DisplayLocale,
 } from '@/lib/format';
+import { refusalMessage, type Refusal } from '@/lib/refusal';
 
 import type { AdminActionResult } from '../action-result';
 import { openCheckoutTicketAction, settleTicketAction } from '../encaissement/actions';
@@ -118,6 +119,16 @@ import { useAdminSessionRenewal } from './use-admin-session-renewal';
  * disposition. Les deux lisent **le même catalogue**. Le `countryCode` ne donne
  * que la région de la mise en forme, et `formatMoney` reste le seul point où la
  * langue touche un chiffre.
+ *
+ * ## Et la langue **change** sans que ce panneau soit démonté (#1354)
+ *
+ * Le sélecteur de langue du rail pose un cookie et laisse Next rejouer la route
+ * **sans navigation** (`i18n/actions.ts`) : ce panneau se rend à nouveau, son état
+ * ne bouge pas. Aucune des trois places où il retenait un refus ne garde donc plus
+ * de phrase — la bascule « déjà soldé », la marque d'un champ, la ligne rouge sous
+ * le bouton portent un **motif**, et la phrase s'écrit au rendu, dans la langue de
+ * ce rendu-là. Ce qui n'est pas du texte reste une donnée : le champ visé, et les
+ * deux montants que `formatMoney` met en forme.
  */
 type Phase =
   | { readonly kind: 'choix' }
@@ -125,8 +136,53 @@ type Phase =
   | { readonly kind: 'tpe' }
   /** Le ticket est soldé : le reçu prend toute la place. */
   | { readonly kind: 'regle'; readonly saleId: string }
-  /** Le refus 409 : la pièce est déjà soldée, et ce n'est pas par ce geste-ci. */
-  | { readonly kind: 'deja-regle'; readonly message: string };
+  /**
+   * Le refus 409 : la pièce est déjà soldée, et ce n'est pas par ce geste-ci.
+   *
+   * Sans rien à porter depuis #1354 : la phrase de cet état est la même pour tous
+   * les codes que `isAlreadySettledRefusal` rassemble — c'est la définition même
+   * de cette liste (`checkout-summary.ts`) —, et l'écran la lit au rendu.
+   */
+  | { readonly kind: 'deja-regle' };
+
+/** Le champ de saisie qu'un refus vise — une **donnée**, pas un texte. */
+type SettlementField = 'amount' | 'tendered' | 'reference';
+
+/**
+ * Ce qu'un champ a de fautif — un **motif**, jamais sa phrase (#1354).
+ *
+ * Les deux montants sont des données au même titre que le champ visé : c'est le
+ * reste dû du ticket et le règlement qu'un billet doit couvrir, et `formatMoney`
+ * les écrit au rendu dans la langue lue. Les retenir plutôt que de les relire à
+ * l'affichage garde la phrase exacte du refus — celui qui a été opposé au clic, et
+ * non celui qu'un ticket entre-temps modifié produirait.
+ */
+type FieldFault =
+  | { readonly kind: 'illisible' }
+  | { readonly kind: 'trop-haut'; readonly ceiling: Money }
+  | { readonly kind: 'remis-insuffisant'; readonly due: Money }
+  /** La forme refusée à l'écran — 32 caractères alphanumériques au plus. */
+  | { readonly kind: 'reference-mal-formee' }
+  /** Le 400 de l'API, qui juge seule la clé de Luhn (#1025, critère 3). */
+  | { readonly kind: 'reference-refusee' };
+
+/** La marque portée par un champ : lequel, et pourquoi. */
+interface FieldIssue {
+  readonly field: SettlementField;
+  readonly fault: FieldFault;
+}
+
+/**
+ * Ce que la ligne rouge sous le bouton a à dire — un **motif** (#1354).
+ *
+ * Trois origines, et aucune ne se range en phrase : le refus rendu par l'API, par
+ * son **code** ; la caisse qui n'a pas répondu du tout ; et le paiement que
+ * l'opérateur déclare refusé au terminal, que l'écran dit en propre.
+ */
+type CheckoutFailure =
+  | ({ readonly kind: 'refus' } & Refusal)
+  | { readonly kind: 'injoignable' }
+  | { readonly kind: 'tpe-refuse' };
 
 /**
  * Une clé d'idempotence neuve — 32 caractères hexadécimaux tirés au sort.
@@ -185,16 +241,13 @@ export function CheckoutPanel({
   const [amountText, setAmountText] = useState('');
   const [tenderedText, setTenderedText] = useState('');
   const [reference, setReference] = useState('');
-  const [fieldIssue, setFieldIssue] = useState<{
-    readonly field: 'amount' | 'tendered' | 'reference';
-    readonly message: string;
-  } | null>(null);
+  const [fieldIssue, setFieldIssue] = useState<FieldIssue | null>(null);
   /** Les règlements inscrits **par ce poste**, dans l'ordre où ils ont été pris. */
   const [taken, setTaken] = useState<readonly PaymentTransaction[]>([]);
   const [change, setChange] = useState<Money | null>(null);
   const [replayed, setReplayed] = useState(false);
   const [pending, setPending] = useState(false);
-  const [failure, setFailure] = useState<string | null>(null);
+  const [failure, setFailure] = useState<CheckoutFailure | null>(null);
   const [reprinting, setReprinting] = useState(false);
   const [gestureKey, setGestureKey] = useState(newGestureKey);
   const router = useRouter();
@@ -252,6 +305,51 @@ export function CheckoutPanel({
   }
 
   /**
+   * La phrase d'un refus de champ, écrite **au rendu** dans la langue lue (#1354).
+   *
+   * Les cinq motifs lisent le catalogue de cet écran : ce sont ses propres phrases
+   * — « Montant illisible », « 32 caractères alphanumériques au plus » —, et non
+   * celles du contrat partagé, qui ne connaît ni le reste dû d'un ticket ni le
+   * numéro qu'un terminal imprime.
+   */
+  function faultMessage(fault: FieldFault): string {
+    switch (fault.kind) {
+      case 'trop-haut':
+        return t('amount.tooHigh', { amount: formatMoney(fault.ceiling, display) });
+      case 'remis-insuffisant':
+        return t('amount.tenderedTooLow', { amount: formatMoney(fault.due, display) });
+      case 'reference-mal-formee':
+        return t('terminal.referenceInvalid');
+      case 'reference-refusee':
+        return t('failure.terminalReferenceRefused');
+      default:
+        return t('amount.invalid');
+    }
+  }
+
+  /**
+   * La phrase de la ligne rouge, écrite **au rendu** dans la langue lue (#1354).
+   *
+   * Le refus de l'API passe par la table du comptoir — celle qui nomme un
+   * dépassement du reste dû ou une caisse injoignable — et retombe sur la phrase du
+   * **contrat partagé** pour un code qu'elle ne nomme pas. C'est la même phrase que
+   * l'action serveur composait dans son `message`, puisqu'elle la lit à la même
+   * table (`action-result.ts`, #1234) ; elle est simplement écrite dans la langue
+   * de ce rendu-ci plutôt que dans celle de la requête d'alors.
+   */
+  function failureMessage(failed: CheckoutFailure): string {
+    if (failed.kind === 'injoignable') {
+      return providerUnreachableMessage(locale);
+    }
+
+    if (failed.kind === 'tpe-refuse') {
+      return t('terminal.declinedNotice');
+    }
+
+    return checkoutFailureMessage(failed.code, refusalMessage(failed, locale), locale);
+  }
+
+  /**
    * Ce que le corps portera, ou le champ fautif.
    *
    * Le front borne pour le confort, l'API pour la sécurité (web-frontend §4) :
@@ -260,26 +358,27 @@ export function CheckoutPanel({
    */
   function composeRequest():
     | { readonly ok: true; readonly body: SettleSaleRequest }
-    | { readonly ok: false; readonly field: 'amount' | 'tendered' | 'reference'; readonly message: string } {
+    | ({ readonly ok: false } & FieldIssue) {
     const amount = plannedAmount();
 
     if (amount === null || amount.amountMinor <= 0) {
-      return { ok: false, field: 'amount', message: t('amount.invalid') };
+      return { ok: false, field: 'amount', fault: { kind: 'illisible' } };
     }
 
     if (amount.amountMinor > outstanding.amountMinor) {
       return {
         ok: false,
         field: 'amount',
-        message: t('amount.tooHigh', { amount: formatMoney(outstanding, display) }),
+        fault: { kind: 'trop-haut', ceiling: outstanding },
       };
     }
 
     if (mean === 'CARD_TERMINAL') {
-      const issue = terminalReferenceIssue(reference, locale);
-
-      if (issue !== null) {
-        return { ok: false, field: 'reference', message: issue };
+      // Le **verdict** du contrat, pas sa phrase : celle-ci s'écrit au rendu
+      // (#1354). C'est la forme du numéro qui est jugée ici ; la clé de Luhn ne
+      // vit que côté API, et son refus arrive plus bas.
+      if (isMalformedTerminalReference(reference)) {
+        return { ok: false, field: 'reference', fault: { kind: 'reference-mal-formee' } };
       }
 
       return {
@@ -299,14 +398,14 @@ export function CheckoutPanel({
     const tendered = tenderable ? parseAmountInput(tenderedText, currency, display) : null;
 
     if (tenderable && tendered === null) {
-      return { ok: false, field: 'tendered', message: t('amount.invalid') };
+      return { ok: false, field: 'tendered', fault: { kind: 'illisible' } };
     }
 
     if (tendered !== null && tendered.amountMinor < amount.amountMinor) {
       return {
         ok: false,
         field: 'tendered',
-        message: t('amount.tenderedTooLow', { amount: formatMoney(amount, display) }),
+        fault: { kind: 'remis-insuffisant', due: amount },
       };
     }
 
@@ -350,21 +449,19 @@ export function CheckoutPanel({
       return;
     }
 
-    const refused = terminalReferenceRefusal(result.code, result.details, locale);
-
-    if (refused !== null) {
-      setFieldIssue({ field: 'reference', message: refused });
+    // Les deux verdicts, et non leurs phrases : ce qui est rangé est le motif, et
+    // la phrase s'écrit au rendu (#1354).
+    if (isTerminalReferenceRefusal(result.code, result.details)) {
+      setFieldIssue({ field: 'reference', fault: { kind: 'reference-refusee' } });
       return;
     }
-
-    const explained = checkoutFailureMessage(result.code, result.message, locale);
 
     if (isAlreadySettledRefusal(result.code)) {
-      setPhase({ kind: 'deja-regle', message: explained });
+      setPhase({ kind: 'deja-regle' });
       return;
     }
 
-    setFailure(explained);
+    setFailure({ kind: 'refus', code: result.code });
   }
 
   /**
@@ -385,7 +482,7 @@ export function CheckoutPanel({
     const composed = composeRequest();
 
     if (!composed.ok) {
-      setFieldIssue({ field: composed.field, message: composed.message });
+      setFieldIssue({ field: composed.field, fault: composed.fault });
       return;
     }
 
@@ -428,7 +525,7 @@ export function CheckoutPanel({
     } catch {
       // L'action n'a pas répondu du tout : rien n'a été encaissé, et le message
       // le dit plutôt que de laisser le comptoir deviner.
-      setFailure(providerUnreachableMessage(locale));
+      setFailure({ kind: 'injoignable' });
     } finally {
       setPending(false);
     }
@@ -575,7 +672,10 @@ export function CheckoutPanel({
     return (
       <div className="spa-admin-checkout__payment">
         <Notification tone="warning" title={t('settlement.alreadySettledTitle')}>
-          <p>{phase.message}</p>
+          {/* La phrase est écrite ici, dans la langue de ce rendu (#1354) — et
+              c'est bien celle du refus : tous les codes de
+              `isAlreadySettledRefusal` disent cette même chose, au mot près. */}
+          <p>{t('failure.alreadySettled')}</p>
         </Notification>
       </div>
     );
@@ -722,7 +822,7 @@ export function CheckoutPanel({
             />
             {fieldIssue?.field === 'reference' ? (
               <p className="spa-field__error" id="tpe-reference-erreur" role="alert">
-                {fieldIssue.message}
+                {faultMessage(fieldIssue.fault)}
               </p>
             ) : (
               <p className="spa-field__hint" id="tpe-reference-aide">
@@ -733,7 +833,7 @@ export function CheckoutPanel({
 
           {failure === null ? null : (
             <p className="spa-field__error" role="alert">
-              {failure}
+              {failureMessage(failure)}
             </p>
           )}
 
@@ -755,7 +855,9 @@ export function CheckoutPanel({
             onClick={() => {
               setReference('');
               setFieldIssue(null);
-              setFailure(t('terminal.declinedNotice'));
+              // Le motif, et non la phrase : celle-ci s'écrit au rendu, dans la
+              // langue de ce rendu-là (#1354).
+              setFailure({ kind: 'tpe-refuse' });
               setPhase({ kind: 'choix' });
             }}
             variant="neutral"
@@ -852,7 +954,7 @@ export function CheckoutPanel({
               />
               {fieldIssue?.field === 'amount' ? (
                 <p className="spa-field__error" id="montant-regle-erreur" role="alert">
-                  {fieldIssue.message}
+                  {faultMessage(fieldIssue.fault)}
                 </p>
               ) : null}
             </div>
@@ -885,7 +987,7 @@ export function CheckoutPanel({
               />
               {fieldIssue?.field === 'tendered' ? (
                 <p className="spa-field__error" id="montant-remis-erreur" role="alert">
-                  {fieldIssue.message}
+                  {faultMessage(fieldIssue.fault)}
                 </p>
               ) : (
                 <p className="spa-field__hint" id="montant-remis-aide">
@@ -897,7 +999,7 @@ export function CheckoutPanel({
 
           {failure === null ? null : (
             <p className="spa-field__error" role="alert">
-              {failure}
+              {failureMessage(failure)}
             </p>
           )}
 
@@ -926,7 +1028,7 @@ export function CheckoutPanel({
                   const composed = composeRequest();
 
                   if (!composed.ok) {
-                    setFieldIssue({ field: composed.field, message: composed.message });
+                    setFieldIssue({ field: composed.field, fault: composed.fault });
                     return;
                   }
 

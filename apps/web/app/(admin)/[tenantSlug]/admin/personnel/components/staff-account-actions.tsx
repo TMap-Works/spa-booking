@@ -1,6 +1,11 @@
 'use client';
 
-import { STAFF_ROLES, type StaffAccountState, type StaffRole } from '@spa/shared';
+import {
+  STAFF_ROLES,
+  type StaffAccountState,
+  type StaffRole,
+  type UserRole,
+} from '@spa/shared';
 import { useLocale, useTranslations } from 'next-intl';
 import { useRouter } from 'next/navigation';
 import { useState, useTransition } from 'react';
@@ -8,6 +13,7 @@ import { useState, useTransition } from 'react';
 import { Button } from '@/components/ui/button';
 import { Notification } from '@/components/ui/notification';
 import { Select } from '@/components/ui/select';
+import { refusalMessage } from '@/lib/refusal';
 
 import { roleLabel } from '../../components/navigation';
 import { adminInvitationPath } from '../../invitation/paths';
@@ -49,6 +55,34 @@ import { InvitationLink } from './invitation-link';
  * son libellé d'avant pendant la revalidation.
  */
 
+/**
+ * Ce que le bandeau a à dire, gardé en **motif** — #1354.
+ *
+ * Il rangeait une phrase : les confirmations du catalogue et le `message` rendu
+ * par l'action serveur. Le sélecteur de langue rejoue la route sans démonter
+ * cette ligne de tableau, si bien que « Rôle enregistré : Gérant. » restait en
+ * français sous un titre « Account updated » qui, lui, suivait le rendu. Voir
+ * `lib/refusal.ts`.
+ *
+ * Le **ton** reste une donnée, comme le rôle enregistré et l'état d'activation :
+ * ce sont eux qui décident du titre et de la phrase, et aucun ne se démode quand
+ * la langue change.
+ */
+type AccountNotice =
+  /**
+   * Rôle enregistré — le rôle est la donnée, `roleLabel` le nomme au rendu.
+   *
+   * `UserRole` et non `StaffRole` : c'est le rôle **que l'API a confirmé**, et le
+   * contrat de lecture le déclare élargi (`staff-contract.ts`). Le restreindre ici
+   * obligerait à décider quoi faire d'un rôle que la réponse porterait quand même.
+   */
+  | { readonly tone: 'success'; readonly kind: 'role'; readonly role: UserRole }
+  /** Compte réactivé ou désactivé, selon ce que l'API a confirmé. */
+  | { readonly tone: 'success'; readonly kind: 'status'; readonly active: boolean }
+  /** Invitation réémise — l'adresse vient des props, pas de l'état. */
+  | { readonly tone: 'success'; readonly kind: 'invitation' }
+  | { readonly tone: 'danger'; readonly kind: 'refusal'; readonly code: string };
+
 export function StaffAccountActions({
   tenantSlug,
   account,
@@ -81,7 +115,7 @@ export function StaffAccountActions({
   }
   const [pending, setPending] = useState<string | null>(null);
   const [refreshing, startRefresh] = useTransition();
-  const [notice, setNotice] = useState<{ tone: 'success' | 'danger'; message: string } | null>(null);
+  const [notice, setNotice] = useState<AccountNotice | null>(null);
   /**
    * Le **lien** d'une invitation réémise, tenu à part du message.
    *
@@ -113,14 +147,13 @@ export function StaffAccountActions({
       if (renewIfExpired(result)) {
         return;
       }
-      setNotice({ tone: 'danger', message: result.message });
+      // Le code, pas la phrase (#1354) : c'est `refusalMessage` qui l'écrit au
+      // rendu, dans la langue lue.
+      setNotice({ tone: 'danger', kind: 'refusal', code: result.code });
       return;
     }
 
-    setNotice({
-      tone: 'success',
-      message: t('accountActions.roleSaved', { role: roleLabel(result.data.role, locale) }),
-    });
+    setNotice({ tone: 'success', kind: 'role', role: result.data.role });
     startRefresh(() => {
       router.refresh();
     });
@@ -141,17 +174,13 @@ export function StaffAccountActions({
       if (renewIfExpired(result)) {
         return;
       }
-      setNotice({ tone: 'danger', message: result.message });
+      // Le code, pas la phrase (#1354) — voir `applyRole` ci-dessus.
+      setNotice({ tone: 'danger', kind: 'refusal', code: result.code });
       return;
     }
 
     setActive(result.data.isActive);
-    setNotice({
-      tone: 'success',
-      message: result.data.isActive
-        ? t('accountActions.reactivated')
-        : t('accountActions.deactivated'),
-    });
+    setNotice({ tone: 'success', kind: 'status', active: result.data.isActive });
     startRefresh(() => {
       router.refresh();
     });
@@ -170,7 +199,8 @@ export function StaffAccountActions({
       if (renewIfExpired(result)) {
         return;
       }
-      setNotice({ tone: 'danger', message: result.message });
+      // Le code, pas la phrase (#1354) — voir `applyRole` ci-dessus.
+      setNotice({ tone: 'danger', kind: 'refusal', code: result.code });
       return;
     }
 
@@ -180,10 +210,23 @@ export function StaffAccountActions({
     setInvitationUrl(
       `${window.location.origin}${adminInvitationPath(tenantSlug, result.data.invitationToken)}`,
     );
-    setNotice({
-      tone: 'success',
-      message: t('accountActions.newToken', { email: account.email }),
-    });
+    setNotice({ tone: 'success', kind: 'invitation' });
+  }
+
+  /** La phrase du bandeau, écrite dans la langue de ce rendu (#1354). */
+  function noticeMessage(current: AccountNotice): string {
+    switch (current.kind) {
+      case 'role':
+        return t('accountActions.roleSaved', { role: roleLabel(current.role, locale) });
+      case 'status':
+        return current.active
+          ? t('accountActions.reactivated')
+          : t('accountActions.deactivated');
+      case 'invitation':
+        return t('accountActions.newToken', { email: account.email });
+      default:
+        return refusalMessage(current, locale);
+    }
   }
 
   return (
@@ -259,7 +302,8 @@ export function StaffAccountActions({
           }
           tone={notice.tone}
         >
-          <p>{notice.message}</p>
+          {/* La phrase est écrite ici, dans la langue de ce rendu (#1354). */}
+          <p>{noticeMessage(notice)}</p>
           {invitationUrl === null ? null : (
             <InvitationLink id={`invitation-${account.id}`} url={invitationUrl} />
           )}

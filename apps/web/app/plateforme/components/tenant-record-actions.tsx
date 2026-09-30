@@ -39,14 +39,36 @@ import { AccessLinks } from './access-links';
  * **code**, avec un message qui dit ce que *ce* geste a refusé : un
  * `VALIDATION_ERROR` sur la suspension parle du motif manquant, le même code sur
  * une note parle de la note.
+ *
+ * ## Et ce qu'ils gardent est la **clé**, pas la phrase (#1354)
+ *
+ * La clé était calculée puis traduite aussitôt, et c'est la phrase qui allait en
+ * état — `t('errors.tooManyRequests')`. Or le sélecteur de langue pose un cookie
+ * et laisse Next rejouer la route **sans navigation** (`i18n/actions.ts`) : ces
+ * trois panneaux ne sont pas démontés, leur état ne bouge pas, et la phrase
+ * restait écrite dans la langue d'avant sous un titre qui, lui, suivait le rendu.
+ * Ce qui va en état est donc la clé du catalogue, et `t()` l'écrit au rendu — le
+ * précédent est `tenant-table.tsx` (#1106), dans le même dossier.
  */
 
-type GenericErrorKey = 'tooManyRequests' | 'unavailable' | 'unexpected';
+/**
+ * Les clés du catalogue `platform` qu'un refus peut désigner.
+ *
+ * Deux familles, et le type le dit : celles que **tout** geste peut rendre, sous
+ * `errors.`, et celles que **ce** geste-là nomme en propre, sous `actions.` —
+ * « aucun administrateur à qui renvoyer les liens », « le motif est
+ * obligatoire ». `t()` les accepte l'une comme l'autre : ce sont des clés
+ * littérales du catalogue.
+ */
+type GenericErrorKey =
+  | 'errors.tooManyRequests'
+  | 'errors.unavailable'
+  | 'errors.unexpected';
 
 /** Les refus qui ne dépendent pas du geste, et ce qu'ils disent. */
 const GENERIC_ERROR_KEYS: Readonly<Record<string, GenericErrorKey>> = {
-  [ERROR_CODES.TOO_MANY_REQUESTS]: 'tooManyRequests',
-  [ERROR_CODES.SERVICE_UNAVAILABLE]: 'unavailable',
+  [ERROR_CODES.TOO_MANY_REQUESTS]: 'errors.tooManyRequests',
+  [ERROR_CODES.SERVICE_UNAVAILABLE]: 'errors.unavailable',
 };
 
 /**
@@ -67,7 +89,7 @@ function useRefusal(): (result: PlatformActionResult<unknown>) => GenericErrorKe
       router.replace(PLATFORM_SESSION_END_PATH);
       return null;
     }
-    return GENERIC_ERROR_KEYS[result.code] ?? 'unexpected';
+    return GENERIC_ERROR_KEYS[result.code] ?? 'errors.unexpected';
   };
 }
 
@@ -81,7 +103,8 @@ export function TenantAccessPanel({ tenantId }: { readonly tenantId: string }) {
   const refusal = useRefusal();
   const [pending, setPending] = useState(false);
   const [links, setLinks] = useState<{ links: TenantAccessLinks; email: string } | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  /** La **clé** du refus, pas sa phrase (#1354) — voir l'en-tête de ce module. */
+  const [error, setError] = useState<GenericErrorKey | 'actions.noAdmin' | null>(null);
 
   const reissue = async (): Promise<void> => {
     setPending(true);
@@ -94,11 +117,10 @@ export function TenantAccessPanel({ tenantId }: { readonly tenantId: string }) {
         return;
       }
       if (result.code === ERROR_CODES.TENANT_ADMIN_MISSING) {
-        setError(t('actions.noAdmin'));
+        setError('actions.noAdmin');
         return;
       }
-      const key = refusal(result);
-      setError(key === null ? null : t(`errors.${key}`));
+      setError(refusal(result));
     } finally {
       setPending(false);
     }
@@ -117,7 +139,8 @@ export function TenantAccessPanel({ tenantId }: { readonly tenantId: string }) {
       </Button>
       {error === null ? null : (
         <Notification tone="danger" title={t('actions.linksUnavailable')}>
-          <p>{error}</p>
+          {/* La phrase est écrite ici, dans la langue de ce rendu (#1354). */}
+          <p>{t(error)}</p>
         </Notification>
       )}
       {links === null ? null : (
@@ -152,12 +175,13 @@ export function TenantStatusPanel({
   const [open, setOpen] = useState(false);
   const [reason, setReason] = useState('');
   const [pending, setPending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  /** La **clé** du refus, pas sa phrase (#1354) — voir l'en-tête de ce module. */
+  const [error, setError] = useState<GenericErrorKey | 'actions.reasonRequired' | null>(null);
 
   const submit = async (event: FormEvent<HTMLFormElement>): Promise<void> => {
     event.preventDefault();
     if (reason.trim().length < PLATFORM_STATUS_REASON_MIN_LENGTH) {
-      setError(t('actions.reasonRequired'));
+      setError('actions.reasonRequired');
       return;
     }
     setPending(true);
@@ -174,11 +198,10 @@ export function TenantStatusPanel({
         return;
       }
       if (result.code === ERROR_CODES.VALIDATION_ERROR) {
-        setError(t('actions.reasonRequired'));
+        setError('actions.reasonRequired');
         return;
       }
-      const key = refusal(result);
-      setError(key === null ? null : t(`errors.${key}`));
+      setError(refusal(result));
     } finally {
       setPending(false);
     }
@@ -204,8 +227,9 @@ export function TenantStatusPanel({
 
   return (
     <form className="spa-console-record__stack" noValidate onSubmit={(event) => void submit(event)}>
+      {/* La phrase est écrite ici, dans la langue de ce rendu (#1354). */}
       <TextArea
-        error={error ?? undefined}
+        error={error === null ? undefined : t(error)}
         hint={t('actions.reasonHint')}
         id={`statut-motif-${tenantId}`}
         label={isActive ? t('actions.suspendReason') : t('actions.reactivateReason')}
@@ -248,12 +272,15 @@ export function TenantNoteForm({ tenantId }: { readonly tenantId: string }) {
   const refusal = useRefusal();
   const [body, setBody] = useState('');
   const [pending, setPending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  /** La **clé** du refus, pas sa phrase (#1354) — voir l'en-tête de ce module. */
+  const [error, setError] = useState<
+    GenericErrorKey | 'actions.noteEmpty' | 'actions.noteInvalid' | null
+  >(null);
 
   const submit = async (event: FormEvent<HTMLFormElement>): Promise<void> => {
     event.preventDefault();
     if (body.trim() === '') {
-      setError(t('actions.noteEmpty'));
+      setError('actions.noteEmpty');
       return;
     }
     setPending(true);
@@ -266,11 +293,10 @@ export function TenantNoteForm({ tenantId }: { readonly tenantId: string }) {
         return;
       }
       if (result.code === ERROR_CODES.VALIDATION_ERROR) {
-        setError(t('actions.noteInvalid'));
+        setError('actions.noteInvalid');
         return;
       }
-      const key = refusal(result);
-      setError(key === null ? null : t(`errors.${key}`));
+      setError(refusal(result));
     } finally {
       setPending(false);
     }
@@ -278,8 +304,9 @@ export function TenantNoteForm({ tenantId }: { readonly tenantId: string }) {
 
   return (
     <form className="spa-console-record__stack" noValidate onSubmit={(event) => void submit(event)}>
+      {/* La phrase est écrite ici, dans la langue de ce rendu (#1354). */}
       <TextArea
-        error={error ?? undefined}
+        error={error === null ? undefined : t(error)}
         hint={t('actions.noteHint')}
         id={`note-${tenantId}`}
         label={t('actions.noteLabel')}

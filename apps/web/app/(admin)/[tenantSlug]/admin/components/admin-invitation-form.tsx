@@ -1,13 +1,7 @@
 'use client';
 
 import { zodResolver } from '@hookform/resolvers/zod';
-import {
-  ERROR_CODES,
-  errorMessage,
-  passwordSchema,
-  zodErrorMap,
-  type Locale,
-} from '@spa/shared';
+import { ERROR_CODES, passwordSchema, zodErrorMap, type Locale } from '@spa/shared';
 import { useLocale, useTranslations } from 'next-intl';
 import Link from 'next/link';
 import { useMemo, useState } from 'react';
@@ -17,6 +11,12 @@ import { z } from 'zod';
 import { Button } from '@/components/ui/button';
 import { Field } from '@/components/ui/field';
 import { Notification } from '@/components/ui/notification';
+import {
+  fieldRefusalMessage,
+  useLocalizedFieldErrors,
+  type FieldRefusal,
+} from '@/lib/field-refusal';
+import { refusalMessage, type Refusal } from '@/lib/refusal';
 import { useNavigateAfterAuth } from '@/lib/use-navigate-after-auth';
 
 import { adminAcceptInvitationAction } from '../actions';
@@ -42,6 +42,10 @@ import { adminLandingPath } from './navigation';
  *
  * Tout autre refus vient de `errorMessage(code, locale)` du contrat partagé et
  * non du `message` de l'API, qui n'est pas traduit (voir `admin-login-form.tsx`).
+ * Et il n'y vient plus qu'**au rendu** depuis #1354 : ce que l'écran garde est le
+ * code du refus, jamais la phrase qu'il en avait tirée — le sélecteur de langue
+ * du rail rejoue la route sans démonter ce formulaire, et un « ce lien n'est plus
+ * valable » restait sinon écrit dans la langue d'avant (`lib/refusal.ts`).
  *
  * ## L'écran sans jeton n'est plus une impasse (#1143)
  *
@@ -79,6 +83,16 @@ const SPENT_LINK_CODES: ReadonlySet<string> = new Set<string>([
   ERROR_CODES.INVITATION_ALREADY_ACCEPTED,
 ]);
 
+/**
+ * La seule phrase que cet écran dise en propre sous le champ de collage —
+ * rangée par sa **clé**, et traduite au rendu (#1354).
+ *
+ * Une clé plutôt qu'un marqueur nu, comme dans `staff-invite-form.tsx` : le jour
+ * où ce champ refusera un collage pour une seconde raison, l'état sait déjà
+ * laquelle des deux il porte.
+ */
+const PASTE_INVALID_KEY = 'missingToken.invalid';
+
 interface AdminInvitationFormProps {
   readonly tenantSlug: string;
   /** Le jeton porté par l'adresse, `null` quand elle n'en porte pas. */
@@ -89,10 +103,12 @@ export function AdminInvitationForm({ tenantSlug, token }: AdminInvitationFormPr
   const t = useTranslations('admin-auth.invitation');
   const locale = useLocale() as Locale;
   const { navigating, navigate } = useNavigateAfterAuth();
-  const [failure, setFailure] = useState<string | null>(null);
+  /** Le **code** du refus, pas sa phrase (#1354) — voir `lib/refusal.ts`. */
+  const [failure, setFailure] = useState<Refusal | null>(null);
   /** Ce que la personne a collé, et ce qu'on a su en tirer. */
   const [pasted, setPasted] = useState('');
-  const [pasteError, setPasteError] = useState<string | undefined>(undefined);
+  /** Le **motif** du refus de collage, pas sa phrase (#1354). */
+  const [pasteRefusal, setPasteRefusal] = useState<FieldRefusal | undefined>(undefined);
   const [pastedToken, setPastedToken] = useState<string | null>(null);
   /** Le jeton retenu : celui de l'adresse d'abord, celui du champ ensuite. */
   const activationToken = token ?? pastedToken;
@@ -113,12 +129,27 @@ export function AdminInvitationForm({ tenantSlug, token }: AdminInvitationFormPr
   const {
     register,
     handleSubmit,
+    setError,
+    trigger,
     formState: { errors, isSubmitting },
   } = useForm<InvitationFormValues>({
     resolver,
     defaultValues: { password: '', confirmation: '' },
     mode: 'onTouched',
   });
+
+  /**
+   * Les messages **des deux champs** suivent la langue — #1354.
+   *
+   * Le résolveur est refabriqué à la bascule, mais rien ne rejouait la
+   * validation de ce qui était déjà fautif : « les deux mots de passe ne
+   * correspondent pas » et « au moins 12 caractères » restaient en français sous
+   * un écran d'activation passé en anglais. Seuls les champs **déjà fautifs**
+   * sont rejoués — un mot de passe qu'on n'a pas encore tapé ne se fait pas
+   * reprocher son absence parce qu'on a changé de langue. Aucun `own` : l'API ne
+   * refuse rien sur un champ ici, ses refus vont au bandeau.
+   */
+  useLocalizedFieldErrors({ locale, errors, trigger, setError });
 
   /**
    * Retient le jeton de ce qui vient d'être collé, ou dit pourquoi il n'y en a
@@ -130,11 +161,11 @@ export function AdminInvitationForm({ tenantSlug, token }: AdminInvitationFormPr
 
     if (extracted === null) {
       setPastedToken(null);
-      setPasteError(t('missingToken.invalid'));
+      setPasteRefusal({ kind: 'key', key: PASTE_INVALID_KEY });
       return;
     }
 
-    setPasteError(undefined);
+    setPasteRefusal(undefined);
     setPastedToken(extracted);
   }
 
@@ -149,11 +180,10 @@ export function AdminInvitationForm({ tenantSlug, token }: AdminInvitationFormPr
     });
 
     if (!result.ok) {
-      setFailure(
-        SPENT_LINK_CODES.has(result.code)
-          ? t('expiredLink')
-          : errorMessage(result.code, locale),
-      );
+      // Le code, pas la phrase (#1354) : c'est `refusalMessage` qui l'écrit au
+      // rendu, avec la table des liens périmés de cet écran pour `own` et la
+      // phrase du contrat partagé pour tout le reste.
+      setFailure({ code: result.code });
       // Le jeton venait du champ de collage et l'API vient de le refuser : on
       // rend le champ, sans quoi l'écran redeviendrait l'impasse que #1143
       // ferme — un code bien formé mais périmé, recopié de travers ou pris dans
@@ -195,13 +225,16 @@ export function AdminInvitationForm({ tenantSlug, token }: AdminInvitationFormPr
                   pouvoir relire pour vérifier qu'elle est entière. */}
               <Field
                 autoComplete="off"
-                error={pasteError}
+                /* La phrase est écrite ici, dans la langue de ce rendu (#1354). */
+                error={fieldRefusalMessage(pasteRefusal, locale, (key) =>
+                  t(key as typeof PASTE_INVALID_KEY),
+                )}
                 hint={t('missingToken.hint')}
                 id="invitation-lien-colle"
                 label={t('missingToken.field')}
                 onChange={(event) => {
                   setPasted(event.target.value);
-                  setPasteError(undefined);
+                  setPasteRefusal(undefined);
                 }}
                 onKeyDown={(event) => {
                   // Entrée dans ce champ vaut « Continuer » et non « Activer » :
@@ -225,7 +258,14 @@ export function AdminInvitationForm({ tenantSlug, token }: AdminInvitationFormPr
 
       {failure === null ? null : (
         <Notification tone="danger" title={t('failureTitle')}>
-          <p>{failure}</p>
+          {/* La phrase est écrite ici, dans la langue de ce rendu (#1354) : les
+              trois codes qui disent « ce lien ne vaut plus » par la phrase de cet
+              écran, tous les autres par celle du contrat partagé. */}
+          <p>
+            {refusalMessage(failure, locale, (code) =>
+              SPENT_LINK_CODES.has(code) ? t('expiredLink') : null,
+            )}
+          </p>
           <p>
             <Link href={adminLoginPath(tenantSlug)}>{t('goToLogin')}</Link>
           </p>

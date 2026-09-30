@@ -5,6 +5,7 @@ import {
   ISO_WEEKDAYS,
   newScheduleRow,
   rowsFromEntries,
+  scheduleRefusalMessage,
   validateScheduleRows,
   weekdayLabel,
   type ScheduleRow,
@@ -81,13 +82,14 @@ describe('le verdict rendu avant l’appel', () => {
         { weekday: 1, startsAt: '09:00', endsAt: '13:00' },
         { weekday: 1, startsAt: '12:00', endsAt: '18:00' },
       ),
-      FR,
     );
 
     expect(verdict.ok).toBe(false);
     if (!verdict.ok) {
       expect(verdict.rowId).toBeNull();
-      expect(verdict.message).toMatch(/recouvrent/i);
+      // Le verdict porte le **motif** depuis #1354 ; la phrase s'écrit à part,
+      // dans la langue qu'on lui demande.
+      expect(scheduleRefusalMessage(verdict.refusalKey, FR)).toMatch(/recouvrent/i);
     }
   });
 
@@ -125,12 +127,12 @@ describe('le verdict rendu avant l’appel', () => {
   it('refuse une ligne à demi remplie en la désignant', () => {
     // Zod ne saurait la rattacher à personne : `''` échoue au motif `HH:MM` sans
     // dire qu'il s'agit d'un champ resté vide.
-    const verdict = validateScheduleRows(rows({ weekday: 4, startsAt: '09:00', endsAt: '' }), FR);
+    const verdict = validateScheduleRows(rows({ weekday: 4, startsAt: '09:00', endsAt: '' }));
 
     expect(verdict.ok).toBe(false);
     if (!verdict.ok) {
       expect(verdict.rowId).toBe('ligne-0');
-      expect(verdict.message).toMatch(/deux bornes/i);
+      expect(scheduleRefusalMessage(verdict.refusalKey, FR)).toMatch(/deux bornes/i);
     }
   });
 

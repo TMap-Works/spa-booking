@@ -163,8 +163,27 @@ export function rowsFromEntries(entries: readonly StaffScheduleEntry[]): Schedul
 }
 
 /**
+ * Ce qu'une grille refusée **nomme** — une clé du catalogue `admin-staff`, sous
+ * `schedule.`, et jamais sa phrase (#1354).
+ *
+ * Le verdict rangeait le texte du refus, et l'éditeur le gardait tel quel dans
+ * son état. Or le sélecteur de langue rejoue la route **sans navigation**
+ * (`i18n/actions.ts`) : le composant se rend à nouveau, son état ne bouge pas, et
+ * « deux plages du même jour se recouvrent » restait écrit en français sous un
+ * titre « Week not saved ». Ce qui se retourne est donc le **motif**, et la
+ * phrase s'écrit au rendu par `scheduleRefusalMessage` — la règle de
+ * `lib/refusal.ts`, appliquée à un validateur pur.
+ */
+export type ScheduleRefusalKey =
+  | 'incomplete'
+  | 'tooMany'
+  | 'overlap'
+  | 'endBeforeStart'
+  | 'invalid';
+
+/**
  * Ce qui se retourne d'une validation de grille — un corps prêt à partir, ou le
- * message à afficher **sur la ligne fautive**.
+ * motif du refus et la ligne à marquer.
  *
  * `rowId` est ce qui permet au composant de poser l'erreur sous le champ
  * concerné plutôt qu'en bloc en haut de page (web-frontend §4). `null` quand la
@@ -173,7 +192,29 @@ export function rowsFromEntries(entries: readonly StaffScheduleEntry[]): Schedul
  */
 export type ScheduleValidation =
   | { readonly ok: true; readonly request: SetStaffScheduleRequest }
-  | { readonly ok: false; readonly rowId: string | null; readonly message: string };
+  | {
+      readonly ok: false;
+      readonly rowId: string | null;
+      readonly refusalKey: ScheduleRefusalKey;
+    };
+
+/**
+ * La phrase d'un refus de grille, écrite **au rendu** dans la langue lue (#1354).
+ *
+ * Le plafond de plages est **inséré** ici et non rangé avec le motif : c'est une
+ * constante du contrat, que celui qui écrit la phrase lit aussi bien que celui
+ * qui l'a refusée.
+ */
+export function scheduleRefusalMessage(
+  key: ScheduleRefusalKey,
+  locale: Locale = STAFF_FALLBACK_LOCALE,
+): string {
+  const words = staffWords(locale).schedule;
+
+  return key === 'tooMany'
+    ? fillMessage(words.tooMany, { max: String(MAX_STAFF_SCHEDULE_ENTRIES) })
+    : words[key];
+}
 
 /**
  * La grille saisie, jugée par **le schéma du contrat partagé** — jamais par une
@@ -181,27 +222,22 @@ export type ScheduleValidation =
  *
  * `setStaffScheduleRequestSchema` porte déjà le non-recouvrement, le plafond de
  * plages et l'ordre des bornes ; l'API rejouera exactement le même verdict. Ce
- * qui reste à faire côté écran est de traduire le premier refus en message posé
- * au bon endroit — et de repérer, avant Zod, la ligne restée vide, que le schéma
+ * qui reste à faire côté écran est de **nommer** le premier refus et la ligne
+ * qui le porte — et de repérer, avant Zod, la ligne restée vide, que le schéma
  * ne saurait rattacher à personne.
+ *
+ * Aucune langue en paramètre depuis #1354 : le verdict ne porte plus de phrase,
+ * et rien de ce qu'il décide n'en dépendait.
  */
-export function validateScheduleRows(
-  rows: readonly ScheduleRow[],
-  locale: Locale = STAFF_FALLBACK_LOCALE,
-): ScheduleValidation {
-  const words = staffWords(locale).schedule;
+export function validateScheduleRows(rows: readonly ScheduleRow[]): ScheduleValidation {
   const incomplete = rows.find((row) => row.startsAt === '' || row.endsAt === '');
 
   if (incomplete !== undefined) {
-    return { ok: false, rowId: incomplete.id, message: words.incomplete };
+    return { ok: false, rowId: incomplete.id, refusalKey: 'incomplete' };
   }
 
   if (rows.length > MAX_STAFF_SCHEDULE_ENTRIES) {
-    return {
-      ok: false,
-      rowId: null,
-      message: fillMessage(words.tooMany, { max: String(MAX_STAFF_SCHEDULE_ENTRIES) }),
-    };
+    return { ok: false, rowId: null, refusalKey: 'tooMany' };
   }
 
   const entries = rows.map((row) => ({
@@ -211,8 +247,8 @@ export function validateScheduleRows(
   }));
 
   /*
-   * Le verdict est **celui du schéma**, et lui seul — la phrase vient du
-   * catalogue.
+   * Le verdict est **celui du schéma**, et lui seul — le nom de son refus vient
+   * du catalogue, et sa phrase du rendu (#1354).
    *
    * `setStaffScheduleRequestSchema` porte les deux règles qui restent : une
    * plage finit après avoir commencé, et deux plages du même jour ne se
@@ -242,12 +278,12 @@ export function validateScheduleRows(
   return {
     ok: false,
     rowId: index === null ? null : (rows[index]?.id ?? null),
-    message: scheduleIssueMessage(issue, words),
+    refusalKey: scheduleRefusalKeyOf(issue),
   };
 }
 
 /**
- * La phrase du catalogue qui dit **ce que** le schéma vient de refuser.
+ * La clé du catalogue qui dit **ce que** le schéma vient de refuser.
  *
  * Les deux règles métier du contrat sont nommées par une **clé de message**
  * (`messageKey`, #1232), et c'est cette clé qu'on lit : celle de la ligne dit
@@ -260,17 +296,14 @@ export function validateScheduleRows(
  * est lui aussi un `refine`, donc une issue `custom`, et une heure illisible se
  * serait vu reprocher une fin antérieure à son début.
  */
-function scheduleIssueMessage(
-  issue: ZodIssue | undefined,
-  words: ReturnType<typeof staffWords>['schedule'],
-): string {
+function scheduleRefusalKeyOf(issue: ZodIssue | undefined): ScheduleRefusalKey {
   switch (validationKeyOf(issue)) {
     case 'availability.scheduleOverlap':
-      return words.overlap;
+      return 'overlap';
     case 'availability.scheduleRangeOrder':
-      return words.endBeforeStart;
+      return 'endBeforeStart';
     default:
-      return words.invalid;
+      return 'invalid';
   }
 }
 

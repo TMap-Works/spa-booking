@@ -10,10 +10,12 @@ import { Select } from '@/components/ui/select';
 import type { ReportFilterOption, ReportScope } from '@/lib/admin/reporting-view';
 import {
   REPORT_PERIODS,
-  rangeRefusal,
+  rangeRefusalMessage,
+  rangeRefusalOf,
   reportPeriodLabels,
   type ReportPeriod,
   type ReportRange,
+  type ReportRangeRefusal,
 } from '@/lib/admin/reporting-window';
 
 import { adminReportingPath } from '../paths';
@@ -81,6 +83,17 @@ import { adminReportingPath } from '../paths';
  * `t('…')` : la clé est la valeur d'URL, connue à l'exécution seulement, et un
  * accès dynamique dans un traducteur typé n'aurait plus rien garanti. La table
  * vit donc là où vivent les périodes.
+ *
+ * ## Et le refus d'une plage impossible la suit aussi — #1354
+ *
+ * Il était rangé en phrase : `rangeRefusal({ from, to }, locale)` calculait le
+ * texte à la soumission, et l'état le gardait le temps que la gérante corrige.
+ * Or le sélecteur de langue du rail pose un cookie et laisse Next rejouer la
+ * route **sans navigation** (`i18n/actions.ts`) : ce composant n'est pas
+ * démonté, son état ne bouge pas, et « La date de fin précède la date de
+ * début. » restait sous des étiquettes passées à l'anglais. Ce qui va en état est
+ * donc le **motif** — `ReportRangeRefusal`, où le nombre de journées est une
+ * donnée —, et la phrase s'écrit au rendu.
  */
 
 interface ReportFiltersProps {
@@ -128,7 +141,8 @@ export function ReportFilters({
   const [from, setFrom] = useState(range.from);
   const [to, setTo] = useState(range.to);
   const [selectedScope, setSelectedScope] = useState(scopeValue(scope));
-  const [error, setError] = useState<string | null>(null);
+  /** Le **motif** du refus, pas sa phrase (#1354) — voir l'en-tête. */
+  const [error, setError] = useState<ReportRangeRefusal | null>(null);
   // Ce que l'URL disait au rendu précédent — la seule chose qui permette de
   // distinguer « on a navigué » de « la gérante est en train de saisir ».
   const [lastFromUrl, setLastFromUrl] = useState(() => urlState(period, range, scope));
@@ -150,9 +164,10 @@ export function ReportFilters({
   const isCustom = selectedPeriod === 'personnalisee';
 
   const submit = (): void => {
-    // Les deux refus sont ceux de l'API (422). Les dire ici évite un
-    // aller-retour, et le message se pose sur le champ (web-frontend §4).
-    const refusal = isCustom ? rangeRefusal({ from, to }, locale) : null;
+    // Les refus sont ceux de l'API (422). Les dire ici évite un aller-retour, et
+    // le message se pose sur le champ (web-frontend §4) — par son **motif**,
+    // pour qu'il suive la langue tant qu'il est affiché (#1354).
+    const refusal = isCustom ? rangeRefusalOf({ from, to }) : null;
 
     if (refusal !== null) {
       setError(refusal);
@@ -215,7 +230,10 @@ export function ReportFilters({
             type="date"
             value={to}
             hint={t('filters.timeZoneHint', { timeZone })}
-            {...(error === null ? {} : { error })}
+            {...(error === null
+              ? {}
+              : // La phrase est écrite ici, dans la langue de ce rendu (#1354).
+                { error: rangeRefusalMessage(error, locale) })}
             onChange={(event) => {
               setTo(event.target.value);
               setError(null);

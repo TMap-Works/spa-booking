@@ -17,6 +17,7 @@ import { useForm } from 'react-hook-form';
 import { Button } from '@/components/ui/button';
 import { Field } from '@/components/ui/field';
 import { Notification, type NotificationTone } from '@/components/ui/notification';
+import { useLocalizedFieldErrors } from '@/lib/field-refusal';
 import type { SessionNotice } from '@/lib/session-refresh';
 import { useNavigateAfterAuth } from '@/lib/use-navigate-after-auth';
 
@@ -102,13 +103,37 @@ import { adminLandingPath } from './navigation';
  * par code et par langue — c'est la règle que l'espace client suit depuis #847,
  * et celle qu'énonce `errors/error-codes.ts` : *« le front réagit sur `code`,
  * jamais sur `message` »*.
+ *
+ * ## Et la lecture se fait **au rendu** (#1354)
+ *
+ * L'écran rangeait pourtant le résultat de cette lecture : le titre **et** le
+ * corps, écrits une fois pour toutes dans la langue du refus. Le sélecteur de
+ * langue du rail pose un cookie et laisse Next rejouer la route **sans
+ * navigation** (`i18n/actions.ts`) : ce formulaire n'est pas démonté, et l'encart
+ * entier restait donc en français sous un écran passé en anglais — le libellé des
+ * champs et le bouton suivaient le rendu, lui non. Ce qui va en état est la
+ * **cause** de l'échec ; ses deux phrases se calculent à chaque rendu.
  */
 
 /** Ce qu'un échec affiche : un titre **et** son explication, jamais l'un sans l'autre. */
-interface AdminLoginFailure {
+interface AdminLoginNotice {
   readonly title: string;
   readonly message: string;
 }
+
+/**
+ * Ce que l'écran **garde** d'un échec : sa cause, et rien de textuel (#1354).
+ *
+ * Deux causes, parce qu'elles ne se lisent pas au même endroit : le refus rendu
+ * par l'action serveur, qui se nomme par son `code`, et le compte sans
+ * destination, dont la seule variable est de savoir si la session qu'on venait
+ * d'ouvrir a bien pu être refermée. `sessionClosed` est une **donnée** — un fait
+ * sur ce qui a eu lieu —, et c'est ce qui lui permet de rester en état : une
+ * donnée ne se démode pas quand la langue change, une phrase si.
+ */
+type AdminLoginFailure =
+  | { readonly kind: 'refusal'; readonly code: string }
+  | { readonly kind: 'no-access'; readonly sessionClosed: boolean };
 
 /**
  * Les causes d'échec que cet écran sait nommer, et la clé de catalogue de
@@ -238,6 +263,8 @@ export function AdminLoginForm({ tenantSlug, notice }: AdminLoginFormProps) {
   const {
     register,
     handleSubmit,
+    setError,
+    trigger,
     formState: { errors, isSubmitting },
   } = useForm<LoginRequest>({
     resolver,
@@ -245,12 +272,38 @@ export function AdminLoginForm({ tenantSlug, notice }: AdminLoginFormProps) {
     mode: 'onTouched',
   });
 
-  /** L'encart à afficher pour ce refus — titre et texte décidés du même geste. */
-  function failureNotice(code: string): AdminLoginFailure {
-    const key = FAILURE_KEYS.get(code);
+  /**
+   * Les messages **des champs** suivent la langue, eux aussi — #1354.
+   *
+   * Le résolveur est refabriqué à la bascule (juste au-dessus), mais rien ne
+   * rejouait la validation de ce qui était déjà fautif : « adresse e-mail
+   * attendue » restait en français sous un écran de connexion passé en anglais.
+   * Seuls les champs **déjà fautifs** sont rejoués — changer de langue ne fait
+   * pas reprocher un mot de passe qu'on n'a pas encore tapé. Aucun `own` :
+   * l'action ne refuse rien sur un champ ici, ses refus vont à l'encart.
+   */
+  useLocalizedFieldErrors({ locale, errors, trigger, setError });
+
+  /**
+   * L'encart à afficher pour cet échec — titre et texte décidés du même geste,
+   * et écrits dans la langue de **ce rendu** (#1354).
+   */
+  function failureNotice(cause: AdminLoginFailure): AdminLoginNotice {
+    if (cause.kind === 'no-access') {
+      // Le mot de passe était bon : ce n'est pas un refus d'identité, et le dire
+      // comme tel enverrait chercher une faute de frappe qui n'existe pas. Le
+      // corps dit ensuite laquelle des deux choses a eu lieu — promettre une
+      // fermeture qui a échoué serait retomber dans le même travers.
+      return {
+        title: t('noAccess.title'),
+        message: cause.sessionClosed ? t('noAccess.closed') : t('noAccess.stillOpen'),
+      };
+    }
+
+    const key = FAILURE_KEYS.get(cause.code);
 
     if (key === undefined) {
-      return { title: t('failures.unknownTitle'), message: errorMessage(code, locale) };
+      return { title: t('failures.unknownTitle'), message: errorMessage(cause.code, locale) };
     }
 
     return {
@@ -264,7 +317,9 @@ export function AdminLoginForm({ tenantSlug, notice }: AdminLoginFormProps) {
     const result = await adminLoginAction(tenantSlug, values);
 
     if (!result.ok) {
-      setFailure(failureNotice(result.code));
+      // Le code, pas ses deux phrases (#1354) : c'est `failureNotice` qui les
+      // écrit au rendu, dans la langue lue.
+      setFailure({ kind: 'refusal', code: result.code });
       return;
     }
 
@@ -281,17 +336,18 @@ export function AdminLoginForm({ tenantSlug, notice }: AdminLoginFormProps) {
         () => false,
       );
 
-      // Le mot de passe était bon : ce n'est pas un refus d'identité, et le dire
-      // comme tel enverrait chercher une faute de frappe qui n'existe pas.
-      setFailure({
-        title: t('noAccess.title'),
-        message: closed ? t('noAccess.closed') : t('noAccess.stillOpen'),
-      });
+      // Ce qui va en état est le **fait** — la session a-t-elle été refermée —
+      // et non les deux phrases qui s'en déduisent (#1354). Pourquoi ce n'est
+      // pas un refus d'identité : voir `failureNotice`.
+      setFailure({ kind: 'no-access', sessionClosed: closed });
       return;
     }
 
     navigate(landing);
   });
+
+  /** L'encart d'échec tel que ce rendu-ci l'écrit — #1354. */
+  const shownFailure = failure === null ? null : failureNotice(failure);
 
   return (
     <form
@@ -326,9 +382,9 @@ export function AdminLoginForm({ tenantSlug, notice }: AdminLoginFormProps) {
         </Notification>
       )}
 
-      {failure === null ? null : (
-        <Notification tone="danger" title={failure.title}>
-          <p>{failure.message}</p>
+      {shownFailure === null ? null : (
+        <Notification tone="danger" title={shownFailure.title}>
+          <p>{shownFailure.message}</p>
         </Notification>
       )}
 

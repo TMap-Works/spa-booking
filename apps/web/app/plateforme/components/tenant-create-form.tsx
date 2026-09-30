@@ -22,6 +22,7 @@ import { Field } from '@/components/ui/field';
 import { Notification } from '@/components/ui/notification';
 import { Select } from '@/components/ui/select';
 import { SUPPORTED_LOCALES } from '@/i18n/resolve';
+import { useLocalizedFieldErrors } from '@/lib/field-refusal';
 
 import { provisionTenantAction } from '../actions';
 import { PLATFORM_TENANTS_PATH, platformTenantPath } from '../paths';
@@ -73,6 +74,17 @@ import {
  * traduit donc par champ, et les refus de l'API par code — jamais en recopiant
  * `result.message`, qui rendrait un écran anglais bilingue à la première erreur.
  *
+ * ## Et ce qu'il garde est la **clé**, pas la phrase (#1354)
+ *
+ * La clé était lue dans {@link ERROR_KEYS} puis traduite aussitôt, et c'est la
+ * phrase qui allait en état. Or le sélecteur de langue pose un cookie et laisse
+ * Next rejouer la route **sans navigation** (`i18n/actions.ts`) : ce formulaire
+ * n'est pas démonté, son état ne bouge pas, et la phrase restait écrite dans la
+ * langue d'avant sous un titre qui, lui, suivait le rendu. Même défaut sous les
+ * champs, pour les deux refus que l'API pose en propre — `useLocalizedFieldErrors`
+ * les réécrit depuis leur code (`lib/field-refusal.ts`). Le précédent du bandeau
+ * est `platform-login-form.tsx` (#1106), dans le même dossier.
+ *
  * ## Une clé d'idempotence par salon
  *
  * Tirée au montage et renouvelée seulement quand on ouvre un autre salon : un
@@ -106,15 +118,6 @@ const EMPTY_VALUES: CreateTenantRequest = {
   adminLastName: '',
   adminEmail: '',
 };
-
-/**
- * Le type dont l'écran marque un refus venu de l'**API**.
- *
- * Il le distingue d'un refus de schéma, dont le type est le code d'erreur de
- * Zod : le premier porte déjà son message traduit, le second se traduit par
- * {@link FIELD_ERROR_KEYS}.
- */
-const SERVER_FIELD_ERROR = 'server';
 
 /**
  * Le type dont Zod marque un `refine`.
@@ -192,7 +195,8 @@ export function TenantCreateForm() {
   const router = useRouter();
   const [idempotencyKey, setIdempotencyKey] = useState(() => crypto.randomUUID());
   const [slugTouched, setSlugTouched] = useState(false);
-  const [failure, setFailure] = useState<string | null>(null);
+  /** La **clé** du refus, pas sa phrase (#1354) — voir l'en-tête de ce module. */
+  const [failure, setFailure] = useState<CreateErrorKey | null>(null);
   const [opened, setOpened] = useState<ProvisionedTenant | null>(null);
 
   const countries = useMemo(() => countryChoices(locale), [locale]);
@@ -203,6 +207,7 @@ export function TenantCreateForm() {
     setValue,
     setError,
     reset,
+    trigger,
     watch,
     formState: { errors, isSubmitting },
   } = useForm<CreateTenantRequest, unknown, z.output<typeof createTenantRequestSchema>>({
@@ -212,10 +217,32 @@ export function TenantCreateForm() {
   });
 
   /**
+   * Les deux refus que l'API pose **sur un champ** suivent la langue — #1354.
+   *
+   * Ils étaient posés avec leur phrase, et rien ne la recalculait : « Cette
+   * adresse web est déjà prise. » restait sous un champ « Web address » après une
+   * bascule. Ils sont donc posés par leur **code**, et le crochet les réécrit —
+   * ce qui les exclut aussi du rejeu de validation, sans quoi le schéma
+   * trouverait l'adresse valable et effacerait le refus.
+   */
+  const { postFieldRefusal, clearFieldRefusals } = useLocalizedFieldErrors({
+    locale,
+    errors,
+    trigger,
+    setError,
+    own: (code) =>
+      code === ERROR_CODES.TENANT_SLUG_TAKEN
+        ? t('create.fieldErrors.slugTaken')
+        : code === ERROR_CODES.EMAIL_ALREADY_REGISTERED
+          ? t('create.errors.emailTaken')
+          : null,
+  });
+
+  /**
    * Ce qu'affiche un champ refusé — rien s'il ne l'est pas.
    *
-   * Un refus de l'API garde son propre message, déjà traduit ; un refus de schéma
-   * prend celui du catalogue.
+   * Un refus de l'API garde son propre message ; un refus de schéma prend celui
+   * du catalogue.
    */
   const fieldError = (name: CreateFieldName): string | undefined => {
     const error = errors[name];
@@ -223,12 +250,25 @@ export function TenantCreateForm() {
     if (error === undefined) {
       return undefined;
     }
-    if (error.type === SERVER_FIELD_ERROR) {
+    /*
+     * Un refus **posé par l'API** n'a pas de `type` : `postFieldRefusal` appelle
+     * `setError(name, { message })`, quand le résolveur de Zod marque chacun des
+     * siens du code de l'issue (`{ message, type: issue.code }`). Sa phrase est
+     * déjà celle du catalogue, et `useLocalizedFieldErrors` la réécrit à chaque
+     * changement de langue — on la rend telle quelle.
+     *
+     * La lecture est élargie parce que `FieldError` déclare `type` obligatoire :
+     * une comparaison directe à `undefined` serait refusée par `tsc` alors que
+     * c'est exactement ce que `setError` laisse.
+     */
+    const refusedBy: string | undefined = (error as { type?: string }).type;
+
+    if (refusedBy === undefined) {
       return error.message;
     }
     // Le slug a deux façons d'être refusé — sa forme, et sa disponibilité. Les
     // confondre demanderait des minuscules et des tirets à qui en a déjà mis.
-    if (name === 'slug' && error.type === CUSTOM_FIELD_ERROR && slugReserved(watch('slug'))) {
+    if (name === 'slug' && refusedBy === CUSTOM_FIELD_ERROR && slugReserved(watch('slug'))) {
       return t('create.fieldErrors.slugReserved');
     }
 
@@ -237,6 +277,7 @@ export function TenantCreateForm() {
 
   const submit = handleSubmit(async (values) => {
     setFailure(null);
+    clearFieldRefusals();
     const result = await provisionTenantAction(idempotencyKey, values);
 
     if (result.ok) {
@@ -249,22 +290,17 @@ export function TenantCreateForm() {
       return;
     }
     // Un refus qui désigne un champ s'affiche **sur** ce champ, jamais en bloc
-    // en haut de page (web-frontend §4).
+    // en haut de page (web-frontend §4) — et par son **code**, pour qu'il suive
+    // la langue comme le reste (#1354).
     if (result.code === ERROR_CODES.TENANT_SLUG_TAKEN) {
-      setError('slug', {
-        type: SERVER_FIELD_ERROR,
-        message: t('create.fieldErrors.slugTaken'),
-      });
+      postFieldRefusal('slug', result.code);
       return;
     }
     if (result.code === ERROR_CODES.EMAIL_ALREADY_REGISTERED) {
-      setError('adminEmail', {
-        type: SERVER_FIELD_ERROR,
-        message: t('create.errors.emailTaken'),
-      });
+      postFieldRefusal('adminEmail', result.code);
       return;
     }
-    setFailure(t(ERROR_KEYS[result.code] ?? 'errors.unexpected'));
+    setFailure(ERROR_KEYS[result.code] ?? 'errors.unexpected');
   });
 
   const openAnother = (): void => {
@@ -334,7 +370,8 @@ export function TenantCreateForm() {
     <form className="spa-platform-form" onSubmit={(event) => void submit(event)} noValidate>
       {failure === null ? null : (
         <Notification tone="danger" title={t('create.failureTitle')}>
-          <p>{failure}</p>
+          {/* La phrase est écrite ici, dans la langue de ce rendu (#1354). */}
+          <p>{t(failure)}</p>
         </Notification>
       )}
 

@@ -10,13 +10,15 @@
  * réponse, pas le transport.
  */
 
-import type {
-  AvailabilityResponse,
-  AvailabilitySlot,
-  CalendarDate,
-  PublicService,
-  TimeZone,
-  UtcInstant,
+import {
+  ERROR_CODES,
+  errorMessage,
+  type AvailabilityResponse,
+  type AvailabilitySlot,
+  type CalendarDate,
+  type PublicService,
+  type TimeZone,
+  type UtcInstant,
 } from '@spa/shared';
 import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -101,6 +103,20 @@ const MERCREDI = '2026-09-03' as CalendarDate;
 
 const HERY = service.staff[0]?.id ?? '';
 const NIVO = '55555555-5555-4555-8555-555555555555';
+
+/**
+ * Le refus de chargement **tel que l'écran l'écrit** — #1354.
+ *
+ * L'étape ne range plus le `message` de l'action mais son `code`, et écrit la
+ * phrase au rendu pour que le sélecteur de langue l'emporte avec le reste. Les
+ * doubles ci-dessous gardent donc un `message` que rien n'affiche : il prouve, à
+ * chaque cas, que la phrase du serveur n'atteint pas l'écran.
+ *
+ * Lu dans la table du contrat et non recopié : un littéral resterait vert le
+ * jour où l'écran cesserait de la consulter. La langue des suites est `fr`
+ * (`tests/support/next-intl.ts`).
+ */
+const REFUS_AFFICHE = errorMessage(ERROR_CODES.INTERNAL_ERROR, 'fr');
 
 /** Une prestation tenue par deux praticiens — le cas où le sélecteur a un sens. */
 const deuxPraticiens: PublicService = {
@@ -461,7 +477,7 @@ describe('états de chargement et état vide', () => {
     });
     renderStep();
 
-    expect(await screen.findByText('Service indisponible.')).toBeDefined();
+    expect(await screen.findByText(REFUS_AFFICHE)).toBeDefined();
     // Conseiller de changer de prestation n'y changerait rien.
     expect(screen.queryByText(/Aucun créneau/)).toBeNull();
   });
@@ -489,7 +505,7 @@ describe('états de chargement et état vide', () => {
     // lève la préférence de praticien — la seule sortie de cet écran.
     expect(screen.getByText(/Aucun créneau avec Nivo/)).toBeDefined();
     expect(screen.getByRole('button', { name: 'Voir tous les praticiens' })).toBeDefined();
-    expect(screen.getByText('Service indisponible.')).toBeDefined();
+    expect(screen.getByText(REFUS_AFFICHE)).toBeDefined();
   });
 
   it('offre de réessayer sans attendre la revalidation', async () => {
@@ -503,13 +519,13 @@ describe('états de chargement et état vide', () => {
     });
     const user = renderStep();
 
-    expect(await screen.findByText('Service indisponible.')).toBeDefined();
+    expect(await screen.findByText(REFUS_AFFICHE)).toBeDefined();
 
     loadAvailabilityAction.mockResolvedValue({ ok: true, data: journeeOrdinaire });
     await user.click(screen.getByRole('button', { name: 'Réessayer' }));
 
     expect(await screen.findByRole('button', { name: '09 h 00' })).toBeDefined();
-    expect(screen.queryByText('Service indisponible.')).toBeNull();
+    expect(screen.queryByText(REFUS_AFFICHE)).toBeNull();
   });
 
   it('ne demande au serveur que le mois visible, rogné sur aujourd’hui', async () => {
@@ -727,7 +743,7 @@ describe('rafraîchissement des disponibilités', () => {
     // La panne est passagère ; les créneaux affichés restent la meilleure
     // information disponible, et l'avis dit qu'ils peuvent avoir vieilli.
     expect(screen.getByRole('button', { name: '09 h 00' })).toBeDefined();
-    expect(screen.getByText('Service indisponible.')).toBeDefined();
+    expect(screen.getByText(REFUS_AFFICHE)).toBeDefined();
   });
 });
 

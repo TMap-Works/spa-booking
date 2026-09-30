@@ -14,6 +14,8 @@ import { Button } from '@/components/ui/button';
 import { Field } from '@/components/ui/field';
 import { Notification } from '@/components/ui/notification';
 import { TextArea } from '@/components/ui/textarea';
+import { fieldRefusalMessage, type FieldRefusal } from '@/lib/field-refusal';
+import { refusalMessage } from '@/lib/refusal';
 
 import { updateStaffMemberAction } from '../actions';
 import { useAdminSessionRenewal } from '../../components/use-admin-session-renewal';
@@ -87,7 +89,41 @@ import { useAdminSessionRenewal } from '../../components/use-admin-session-renew
 /** Les champs de saisie de ce panneau — `isActive` a son propre bouton. */
 type ProfileField = 'displayName' | 'bio';
 
-type ProfileFieldErrors = Partial<Record<ProfileField, string>>;
+/**
+ * Ce que porte chaque champ fautif — un **motif**, jamais sa phrase (#1354).
+ *
+ * Ce panneau n'emploie pas `react-hook-form` : il `safeParse` lui-même et
+ * rangeait les phrases écrites par `zodErrorMap(locale)` au moment du parse. Le
+ * sélecteur de langue rejoue la route sans démonter la fiche, si bien qu'elles
+ * restaient dans la langue d'avant sous des étiquettes qui, elles, suivaient le
+ * rendu. Ce qui va en état est donc l'`issue` elle-même — un code, un chemin,
+ * des bornes : des **données** —, et `fieldRefusalMessage` l'écrit au rendu.
+ * Même conduite que `staff-invite-form.tsx`.
+ */
+type ProfileFieldErrors = Partial<Record<ProfileField, FieldRefusal>>;
+
+/**
+ * Ce que le bandeau a à dire, gardé en **motif** — #1354.
+ *
+ * Il rangeait une phrase : celle du catalogue pour une saisie refusée, celle des
+ * succès, et le `message` rendu par l'action serveur. Le sélecteur de langue
+ * rejoue la route sans démonter ce panneau, si bien que « Fiche enregistrée. »
+ * restait en français sous un titre « Profile updated » qui, lui, suivait le
+ * rendu. Voir `lib/refusal.ts`.
+ *
+ * Le **ton** reste une donnée : il décide du titre et de la couleur, et ne se
+ * démode pas quand la langue change. Seul le texte devient une clé ou un code.
+ */
+type ProfileNotice =
+  | { readonly tone: 'success' | 'danger'; readonly kind: 'key'; readonly key: ProfileNoticeKey }
+  | { readonly tone: 'danger'; readonly kind: 'refusal'; readonly code: string };
+
+/** Les phrases que ce panneau écrit en propre, par leur clé de catalogue. */
+type ProfileNoticeKey =
+  | 'profile.invalid'
+  | 'profile.saved'
+  | 'profile.reactivated'
+  | 'profile.suspended';
 
 function isProfileField(value: unknown): value is ProfileField {
   return value === 'displayName' || value === 'bio';
@@ -147,7 +183,7 @@ export function StaffProfilePanel({
   const [pending, setPending] = useState<'profil' | 'statut' | null>(null);
   const [refreshing, startRefresh] = useTransition();
   const [fieldErrors, setFieldErrors] = useState<ProfileFieldErrors>({});
-  const [notice, setNotice] = useState<{ tone: 'success' | 'danger'; message: string } | null>(null);
+  const [notice, setNotice] = useState<ProfileNotice | null>(null);
 
   const trimmedName = displayName.trim();
   const trimmedBio = bio.trim();
@@ -215,25 +251,28 @@ export function StaffProfilePanel({
 
     if (!parsed.success) {
       const errors: ProfileFieldErrors = {};
-      let form: string | null = null;
+      // Un refus qui ne désigne aucun champ — le `.strict()` du contrat, par
+      // exemple. Un booléen suffit : ce qui remonte au bandeau est la phrase du
+      // catalogue, jamais celle de l'issue.
+      let beyondFields = false;
 
       for (const issue of parsed.error.issues) {
         const field = issue.path[0];
 
         if (isProfileField(field)) {
-          errors[field] ??= issue.message;
+          errors[field] ??= { kind: 'issue', issue };
         } else {
-          form ??= issue.message;
+          beyondFields = true;
         }
       }
 
       setFieldErrors(errors);
       setNotice(
-        form === null && Object.keys(errors).length > 0
+        !beyondFields && Object.keys(errors).length > 0
           ? null
           // Le message du contrat partagé est un littéral français : il ne
           // remonte plus à l'écran depuis #848, seul le champ fautif en vient.
-          : { tone: 'danger', message: t('profile.invalid') },
+          : { tone: 'danger', kind: 'key', key: 'profile.invalid' },
       );
       return;
     }
@@ -250,13 +289,15 @@ export function StaffProfilePanel({
       if (renewIfExpired(result)) {
         return;
       }
-      setNotice({ tone: 'danger', message: result.message });
+      // Le code, pas la phrase (#1354) : c'est `refusalMessage` qui l'écrit au
+      // rendu, dans la langue lue.
+      setNotice({ tone: 'danger', kind: 'refusal', code: result.code });
       return;
     }
 
     setDisplayName(result.data.displayName);
     setBio(result.data.bio ?? '');
-    setNotice({ tone: 'success', message: t('profile.saved') });
+    setNotice({ tone: 'success', kind: 'key', key: 'profile.saved' });
     startRefresh(() => {
       router.refresh();
     });
@@ -276,19 +317,25 @@ export function StaffProfilePanel({
       if (renewIfExpired(result)) {
         return;
       }
-      setNotice({ tone: 'danger', message: result.message });
+      // Le code, pas la phrase (#1354) — voir `save` juste au-dessus.
+      setNotice({ tone: 'danger', kind: 'refusal', code: result.code });
       return;
     }
 
     setActive(result.data.isActive);
     setNotice({
       tone: 'success',
-      message: result.data.isActive ? t('profile.reactivated') : t('profile.suspended'),
+      kind: 'key',
+      key: result.data.isActive ? 'profile.reactivated' : 'profile.suspended',
     });
     startRefresh(() => {
       router.refresh();
     });
   }
+
+  /** La phrase d'un refus de champ, dans la langue de ce rendu (#1354). */
+  const fieldMessage = (field: ProfileField): string | undefined =>
+    fieldRefusalMessage(fieldErrors[field], locale);
 
   // `spa-admin-form` borne la colonne de saisie, comme les formulaires de la
   // liste du personnel (#630).
@@ -306,13 +353,14 @@ export function StaffProfilePanel({
           }
           tone={notice.tone}
         >
-          <p>{notice.message}</p>
+          {/* La phrase est écrite ici, dans la langue de ce rendu (#1354). */}
+          <p>{notice.kind === 'key' ? t(notice.key) : refusalMessage(notice, locale)}</p>
         </Notification>
       )}
 
       <Field
         disabled={!canManage || locked}
-        error={fieldErrors.displayName}
+        error={fieldMessage('displayName')}
         hint={t('profile.displayNameHint')}
         id="fiche-nom"
         label={t('profile.displayName')}
@@ -326,7 +374,7 @@ export function StaffProfilePanel({
 
       <TextArea
         disabled={!canManage || locked}
-        error={fieldErrors.bio}
+        error={fieldMessage('bio')}
         /*
          * Ce que cette phrase dit, et ce qu'elle se garde de promettre.
          *

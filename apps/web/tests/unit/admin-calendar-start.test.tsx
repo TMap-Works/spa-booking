@@ -104,13 +104,13 @@ function renderBoard(options: {
   readonly services: readonly Service[];
   readonly staff: readonly StaffMemberSummary[];
   readonly setupKnown?: boolean;
-  readonly loadError?: string | null;
+  readonly loadErrorCode?: string | null;
 }): void {
   render(
     <CalendarBoard
       date="2026-08-26"
       initialPeriods={{ 'jour:2026-08-26': [] }}
-      loadError={options.loadError ?? null}
+      loadErrorCode={options.loadErrorCode ?? null}
       services={options.services}
       setupKnown={options.setupKnown ?? true}
       staff={options.staff}
@@ -198,7 +198,9 @@ describe('le planning d’un salon neuf', () => {
   });
 
   it('ne diagnostique rien non plus quand la période elle-même a échoué', () => {
-    renderBoard({ services: [], staff: [], loadError: 'L’agenda n’a pas répondu.' });
+    // Le **code** du refus, pas sa phrase : c'est ce que la page passe depuis
+    // #1354, et le planning la compose au rendu.
+    renderBoard({ services: [], staff: [], loadErrorCode: 'INTERNAL_ERROR' });
 
     expect(screen.queryByText('Ce salon n’est pas encore installé')).toBeNull();
     expect(screen.getByText('Aucun rendez-vous sur cette période')).toBeDefined();

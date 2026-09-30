@@ -43,13 +43,18 @@ vi.mock('next/navigation', () => ({
 
 import { StaffServicesPanel } from '@/app/(admin)/[tenantSlug]/admin/personnel/components/staff-services-panel';
 import {
+  scheduleRefusalMessage,
   validateScheduleRows,
   weekdayLabel,
   weekdayLabelInSentence,
   weekdaysForRegion,
   type ScheduleRow,
 } from '@/lib/admin/staff-schedule';
-import { formatTimeOff, validateTimeOffDraft } from '@/lib/admin/staff-time-off';
+import {
+  formatTimeOff,
+  timeOffRefusalMessage,
+  validateTimeOffDraft,
+} from '@/lib/admin/staff-time-off';
 import { sortStaffMembers, staffInitials } from '@/lib/admin/staff-directory';
 
 /** UTC+3 : le fuseau du salon de référence de ces suites. */
@@ -94,6 +99,12 @@ describe('les jours de la semaine de travail', () => {
   });
 });
 
+/*
+ * Le verdict porte le **motif** depuis #1354, non sa phrase : le composant le
+ * garde en état, et une phrase figée y serait restée dans la langue du parse. Ce
+ * que ces cas éprouvent est donc inchangé — la même faute se dit dans les deux
+ * langues —, à ceci près que la phrase est demandée au rendu.
+ */
 describe('le verdict rendu sur la grille d’horaires', () => {
   it('dit le recouvrement dans la langue de la session, et non dans celle du contrat', () => {
     const recouvrement = lignes(
@@ -101,30 +112,28 @@ describe('le verdict rendu sur la grille d’horaires', () => {
       { weekday: 1, startsAt: '12:00', endsAt: '18:00' },
     );
 
-    const fr = validateScheduleRows(recouvrement, 'fr');
-    const en = validateScheduleRows(recouvrement, 'en');
+    const verdict = validateScheduleRows(recouvrement);
 
-    expect(fr.ok).toBe(false);
-    expect(en.ok).toBe(false);
-    if (!fr.ok && !en.ok) {
+    expect(verdict.ok).toBe(false);
+    if (!verdict.ok) {
       // La faute porte sur la paire : aucune des deux lignes n'est désignée.
-      expect(fr.rowId).toBeNull();
-      expect(en.rowId).toBeNull();
-      expect(fr.message).toMatch(/recouvrent/i);
-      expect(en.message).toBe('two ranges on the same day overlap');
+      expect(verdict.rowId).toBeNull();
+      expect(scheduleRefusalMessage(verdict.refusalKey, 'fr')).toMatch(/recouvrent/i);
+      expect(scheduleRefusalMessage(verdict.refusalKey, 'en')).toBe(
+        'two ranges on the same day overlap',
+      );
     }
   });
 
   it('désigne la ligne restée à demi remplie, dans les deux langues', () => {
-    const fr = validateScheduleRows(lignes({ weekday: 4, startsAt: '09:00', endsAt: '' }), 'fr');
-    const en = validateScheduleRows(lignes({ weekday: 4, startsAt: '09:00', endsAt: '' }), 'en');
+    const verdict = validateScheduleRows(lignes({ weekday: 4, startsAt: '09:00', endsAt: '' }));
 
-    expect(fr.ok).toBe(false);
-    expect(en.ok).toBe(false);
-    if (!fr.ok && !en.ok) {
-      expect(fr.rowId).toBe('ligne-0');
-      expect(en.rowId).toBe('ligne-0');
-      expect(en.message).toBe('Fill in both ends of the range, or remove it.');
+    expect(verdict.ok).toBe(false);
+    if (!verdict.ok) {
+      expect(verdict.rowId).toBe('ligne-0');
+      expect(scheduleRefusalMessage(verdict.refusalKey, 'en')).toBe(
+        'Fill in both ends of the range, or remove it.',
+      );
     }
   });
 
@@ -134,17 +143,16 @@ describe('le verdict rendu sur la grille d’horaires', () => {
     // schéma du contrat de trancher, et à l'écran de nommer **sa** faute.
     const inversee = lignes({ weekday: 2, startsAt: '12:00', endsAt: '10:00' });
 
-    const fr = validateScheduleRows(inversee, 'fr');
-    const en = validateScheduleRows(inversee, 'en');
+    const verdict = validateScheduleRows(inversee);
 
-    expect(fr.ok).toBe(false);
-    expect(en.ok).toBe(false);
-    if (!fr.ok && !en.ok) {
+    expect(verdict.ok).toBe(false);
+    if (!verdict.ok) {
       // La faute porte sur **une** ligne : c'est elle qui est désignée.
-      expect(fr.rowId).toBe('ligne-0');
-      expect(en.rowId).toBe('ligne-0');
-      expect(fr.message).toMatch(/doit suivre son début/);
-      expect(en.message).toBe('A range must end after it starts.');
+      expect(verdict.rowId).toBe('ligne-0');
+      expect(scheduleRefusalMessage(verdict.refusalKey, 'fr')).toMatch(/doit suivre son début/);
+      expect(scheduleRefusalMessage(verdict.refusalKey, 'en')).toBe(
+        'A range must end after it starts.',
+      );
     }
   });
 
@@ -155,7 +163,6 @@ describe('le verdict rendu sur la grille d’horaires', () => {
           { weekday: 1, startsAt: '09:00', endsAt: '12:00' },
           { weekday: 1, startsAt: '12:00', endsAt: '18:00' },
         ),
-        'en',
       ).ok,
     ).toBe(true);
   });
@@ -200,18 +207,19 @@ describe('une absence s’écrit dans la langue, sans changer de journée', () =
       reason: '',
     };
 
-    const fr = validateTimeOffDraft(brouillon, TIME_ZONE, 'fr');
-    const en = validateTimeOffDraft(brouillon, TIME_ZONE, 'en');
+    const verdict = validateTimeOffDraft(brouillon, TIME_ZONE);
 
-    expect(fr.ok).toBe(false);
-    expect(en.ok).toBe(false);
-    if (!fr.ok && !en.ok) {
-      expect(fr.field).toBe('toDate');
-      expect(en.field).toBe('toDate');
-      expect(fr.message).toMatch(/jour de reprise/);
-      expect(en.message).toMatch(/^The day back at work must come after the first day off/);
+    expect(verdict.ok).toBe(false);
+    if (!verdict.ok) {
+      expect(verdict.field).toBe('toDate');
+
+      // Le verdict porte le **motif** depuis #1354 ; la phrase s'écrit à part.
+      const anglais = timeOffRefusalMessage(verdict.refusalKey, 'en');
+
+      expect(timeOffRefusalMessage(verdict.refusalKey, 'fr')).toMatch(/jour de reprise/);
+      expect(anglais).toMatch(/^The day back at work must come after the first day off/);
       // Le plafond du contrat est **inséré**, jamais recopié dans la phrase.
-      expect(en.message).not.toContain('{max}');
+      expect(anglais).not.toContain('{max}');
     }
   });
 });

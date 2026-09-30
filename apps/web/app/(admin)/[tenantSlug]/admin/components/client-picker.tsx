@@ -5,14 +5,16 @@ import {
   e164PhoneSchema,
   ERROR_CODES,
   type CustomerSummary,
+  type Locale,
 } from '@spa/shared';
-import { useTranslations } from 'next-intl';
+import { useLocale, useTranslations } from 'next-intl';
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { Field } from '@/components/ui/field';
 import { PhoneField } from '@/components/ui/phone-field';
 import { formatPhoneForDisplay } from '@/lib/phone';
+import { refusalMessage, type Refusal } from '@/lib/refusal';
 
 import { createDeskClientAction, searchDeskClientsAction } from '../calendrier/actions';
 
@@ -51,6 +53,27 @@ import { createDeskClientAction, searchDeskClientsAction } from '../calendrier/a
 /** Délai d'inactivité avant qu'une frappe devienne une requête. */
 const SEARCH_DEBOUNCE_MS = 300;
 
+/**
+ * Ce qu'un refus laisse en état : son **code**, et d'où il vient — jamais sa
+ * phrase (#1354).
+ *
+ * Le sélecteur de langue du rail pose un cookie et laisse Next rejouer la route
+ * **sans navigation** (`i18n/actions.ts`) : ce composant n'est pas démonté, et la
+ * phrase rangée ici restait écrite dans la langue d'avant, sous une étiquette
+ * « Client » qui, elle, suivait le rendu.
+ *
+ * `origin` est une **donnée** et non un texte : les deux gestes de ce composant
+ * partagent un seul emplacement d'erreur — celle de la recherche s'affiche sur le
+ * même champ que celle de la création — et leurs refus de saisie portent tous
+ * deux `VALIDATION_ERROR`. Sans lui, « La fiche client saisie est invalide. »
+ * serait devenue la phrase générique du code, alors que c'est la seule que
+ * l'opérateur puisse atteindre en cliquant « Enregistrer » sur une fiche
+ * incomplète (`calendrier/actions.ts`).
+ */
+interface PickerRefusal extends Refusal {
+  readonly origin: 'search' | 'create';
+}
+
 interface ClientPickerProps {
   readonly tenantSlug: string;
   readonly selected: CustomerSummary | null;
@@ -61,11 +84,13 @@ interface ClientPickerProps {
 
 export function ClientPicker({ tenantSlug, selected, onSelect, onExpired }: ClientPickerProps) {
   const t = useTranslations('admin-planning');
+  const locale = useLocale() as Locale;
   const fieldId = useId();
   const [term, setTerm] = useState('');
   const [results, setResults] = useState<readonly CustomerSummary[] | null>(null);
   const [searching, setSearching] = useState(false);
-  const [failure, setFailure] = useState<string | null>(null);
+  /** Le **motif** du refus, pas sa phrase (#1354) — voir `PickerRefusal`. */
+  const [failure, setFailure] = useState<PickerRefusal | null>(null);
   const [creating, setCreating] = useState(false);
   const [draft, setDraft] = useState({ firstName: '', lastName: '', email: '', phone: '' });
   const [saving, setSaving] = useState(false);
@@ -104,7 +129,7 @@ export function ClientPicker({ tenantSlug, selected, onSelect, onExpired }: Clie
       }
 
       setResults(null);
-      setFailure(result.message);
+      setFailure({ origin: 'search', code: result.code });
     },
     [tenantSlug, onExpired],
   );
@@ -154,8 +179,18 @@ export function ClientPicker({ tenantSlug, selected, onSelect, onExpired }: Clie
       return;
     }
 
-    setFailure(result.message);
+    setFailure({ origin: 'create', code: result.code });
   }, [tenantSlug, draft, fieldId, onSelect, onExpired]);
+
+  /** La phrase d'un refus, écrite **au rendu** dans la langue de ce rendu (#1354). */
+  const failureMessage = (refusal: PickerRefusal): string =>
+    refusalMessage(refusal, locale, (code) =>
+      // La seule phrase que cet écran dise de mieux que le contrat : le refus de
+      // la saisie, qui n'est pas le même selon le geste qui l'a produite.
+      code === ERROR_CODES.VALIDATION_ERROR
+        ? t(refusal.origin === 'search' ? 'actions.invalidSearch' : 'actions.invalidClient')
+        : null,
+    );
 
   if (selected !== null) {
     return (
@@ -188,7 +223,7 @@ export function ClientPicker({ tenantSlug, selected, onSelect, onExpired }: Clie
         type="search"
         value={term}
         hint={t('client.searchHint', { min: String(CUSTOMER_SEARCH_MIN_LENGTH) })}
-        {...(failure === null ? {} : { error: failure })}
+        {...(failure === null ? {} : { error: failureMessage(failure) })}
         onChange={(event) => {
           setTerm(event.target.value);
         }}

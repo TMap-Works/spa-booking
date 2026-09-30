@@ -11,6 +11,8 @@ import { z } from 'zod';
 import { Button } from '@/components/ui/button';
 import { Notification } from '@/components/ui/notification';
 import { TextArea } from '@/components/ui/textarea';
+import { useLocalizedFieldErrors } from '@/lib/field-refusal';
+import { refusalMessage, type Refusal } from '@/lib/refusal';
 
 import { updateCustomerAction } from '../actions';
 import { useAdminSessionRenewal } from '../../components/use-admin-session-renewal';
@@ -83,7 +85,8 @@ export function ClientNoteForm({ tenantSlug, customerId, internalNote }: ClientN
   const router = useRouter();
   const { renewIfExpired } = useAdminSessionRenewal(tenantSlug);
   const [saved, setSaved] = useState(false);
-  const [failure, setFailure] = useState<string | null>(null);
+  /** Le **code** du refus, pas sa phrase (#1354) — voir `lib/refusal.ts`. */
+  const [failure, setFailure] = useState<Refusal | null>(null);
 
   // La seule borne de ce formulaire est celle de `longTextSchema`, et c'est
   // `zodErrorMap(locale)` qui la dit — « au plus 2 000 caractères » et non
@@ -97,12 +100,25 @@ export function ClientNoteForm({ tenantSlug, customerId, internalNote }: ClientN
   const {
     register,
     handleSubmit,
+    setError,
+    trigger,
     formState: { errors, isSubmitting },
   } = useForm<NoteFormValues, unknown, z.output<typeof noteFormSchema>>({
     resolver,
     defaultValues: { internalNote: internalNote ?? '' },
     mode: 'onTouched',
   });
+
+  /**
+   * Et le message **du champ** suit la langue — #1354.
+   *
+   * Le résolveur est refabriqué à la bascule, mais rien ne rejouait la
+   * validation d'une note déjà refusée : « au plus 2 000 caractères » restait en
+   * français sous une fiche passée en anglais. Le rejeu ne touche que les champs
+   * **déjà fautifs**, et cet écran n'en a qu'un. Aucun `own` : l'API ne refuse
+   * rien sur ce champ, son refus va au bandeau.
+   */
+  useLocalizedFieldErrors({ locale, errors, trigger, setError });
 
   const submit = handleSubmit(async (values) => {
     setFailure(null);
@@ -119,7 +135,11 @@ export function ClientNoteForm({ tenantSlug, customerId, internalNote }: ClientN
       if (renewIfExpired(result)) {
         return;
       }
-      setFailure(result.message);
+      // Le `code`, jamais le `message` (#1354) : celui de l'API est écrit pour un
+      // journal, dans une langue qui n'est pas négociée, et il restait en état —
+      // donc figé — jusqu'au prochain rechargement de la fiche. C'est
+      // `refusalMessage` qui écrit la phrase au rendu, depuis le contrat partagé.
+      setFailure({ code: result.code });
       return;
     }
 
@@ -143,7 +163,8 @@ export function ClientNoteForm({ tenantSlug, customerId, internalNote }: ClientN
 
       {failure === null ? null : (
         <Notification tone="danger" title={t('failureTitle')}>
-          <p>{failure}</p>
+          {/* La phrase est écrite ici, dans la langue de ce rendu (#1354). */}
+          <p>{refusalMessage(failure, locale)}</p>
         </Notification>
       )}
 

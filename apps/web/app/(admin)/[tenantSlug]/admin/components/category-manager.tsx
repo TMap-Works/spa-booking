@@ -23,6 +23,8 @@ import { Button } from '@/components/ui/button';
 import { Field } from '@/components/ui/field';
 import { Notification } from '@/components/ui/notification';
 import { TextArea } from '@/components/ui/textarea';
+import { useLocalizedFieldErrors } from '@/lib/field-refusal';
+import { refusalMessage, type Refusal } from '@/lib/refusal';
 
 import { createServiceCategoryAction, updateServiceCategoryAction } from '../catalogue/actions';
 import { adminServiceCategoryPath } from '../catalogue/paths';
@@ -270,6 +272,16 @@ type CategoryOutcome =
  * L'échec, lui, reste hors de la région : son `role="alert"` est *assertif* par
  * nature — il interrompt — et l'enfermer dans une région polie reviendrait à le
  * faire attendre une pause.
+ *
+ * ## Les refus sont gardés par leur code (#1354)
+ *
+ * Le sélecteur de langue du rail pose un cookie et laisse Next rejouer la route
+ * **sans navigation** (`i18n/actions.ts`) : ce formulaire n'est pas démonté, et
+ * une phrase rangée en état y restait écrite dans la langue d'avant, sous un titre
+ * « Enregistrement impossible » qui, lui, suivait le rendu. Ce qui va en état est
+ * donc un **code** — pour le bandeau comme pour le conflit d'adresse posé sur son
+ * champ —, et la phrase s'écrit au rendu (`lib/refusal.ts`,
+ * `lib/field-refusal.ts`), exactement comme sur la fiche d'une prestation.
  */
 export function CategoryForm({
   tenantSlug,
@@ -292,7 +304,8 @@ export function CategoryForm({
   const router = useRouter();
   const { renewIfExpired } = useAdminSessionRenewal(tenantSlug);
   const [outcome, setOutcome] = useState<CategoryOutcome | null>(null);
-  const [failure, setFailure] = useState<string | null>(null);
+  /** Le **code** du refus, pas sa phrase (#1354) — voir l'en-tête. */
+  const [failure, setFailure] = useState<Refusal | null>(null);
   const suffix = category?.id ?? 'nouvelle';
   /*
    * Deux sources de refus, et les deux sont dans la langue de l'écran (#849) :
@@ -324,6 +337,7 @@ export function CategoryForm({
     handleSubmit,
     reset,
     setError,
+    trigger,
     formState: { errors, isSubmitting },
   } = useForm<CategoryFormValues, unknown, z.output<CategoryFormSchema>>({
     resolver,
@@ -335,9 +349,30 @@ export function CategoryForm({
     mode: 'onTouched',
   });
 
+  /**
+   * Les messages de **champ** suivent la langue — #1354.
+   *
+   * Le crochet rejoue la validation des champs **déjà fautifs**, et de ceux-là
+   * seulement : un formulaire ne se met pas à reprocher un champ jamais rempli
+   * parce qu'on a changé de langue. Le conflit d'adresse est l'autre moitié —
+   * c'est un refus de l'API, qu'aucune validation locale ne saurait retrouver : il
+   * est posé par son **code**, ce qui l'exclut du rejeu et le fait réécrire à
+   * chaque bascule. Même écriture que `service-form.tsx`.
+   */
+  const { postFieldRefusal, clearFieldRefusals } = useLocalizedFieldErrors({
+    locale,
+    errors,
+    trigger,
+    setError,
+    // Le conflit ne peut venir que de l'adresse : c'est la seule unicité que
+    // porte la table, et cet écran la nomme mieux que le contrat.
+    own: (code) => (code === ERROR_CODES.CONFLICT ? t('slugTaken') : null),
+  });
+
   const submit = handleSubmit(
     async (values) => {
       setFailure(null);
+      clearFieldRefusals();
       setOutcome(null);
 
       const result =
@@ -360,10 +395,13 @@ export function CategoryForm({
           return;
         }
         if (result.code === ERROR_CODES.CONFLICT) {
-          setError('slug', { message: t('slugTaken') });
+          // Le conflit ne peut venir que de l'adresse : le message se pose donc
+          // sur le champ qui se corrige, et par son **code**, pour qu'il suive la
+          // langue comme le reste (#1354).
+          postFieldRefusal('slug', result.code);
           return;
         }
-        setFailure(result.message);
+        setFailure({ code: result.code });
         return;
       }
 
@@ -444,7 +482,10 @@ export function CategoryForm({
 
       {failure === null ? null : (
         <Notification tone="danger" title={t('failureTitle')}>
-          <p>{failure}</p>
+          {/* La phrase est écrite ici, dans la langue de ce rendu (#1354). Le
+              seul refus que cet écran nomme lui-même — le conflit d'adresse — se
+              pose sur son champ, pas dans ce bandeau. */}
+          <p>{refusalMessage(failure, locale)}</p>
         </Notification>
       )}
 
@@ -496,6 +537,10 @@ export function CategoryForm({
  * `useTransition` compris : `router.refresh()` ne remonte pas ce composant, et un
  * drapeau posé avant l'appel sans être rendu laisserait le bouton désactivé pour
  * toujours.
+ *
+ * Le refus, lui, est gardé par son **code** et non par sa phrase, pour la raison
+ * même qui impose la transition : ce bouton n'est jamais démonté, et une phrase
+ * rangée en état survivait au changement de langue (#1354).
  */
 function CategoryActivationButton({
   tenantSlug,
@@ -505,11 +550,13 @@ function CategoryActivationButton({
   readonly category: ServiceCategory;
 }) {
   const t = useTranslations('admin-catalog.activation');
+  const locale = useLocale() as Locale;
   const router = useRouter();
   const { renewIfExpired } = useAdminSessionRenewal(tenantSlug);
   const [saving, setSaving] = useState(false);
   const [refreshing, startRefresh] = useTransition();
-  const [failure, setFailure] = useState<string | null>(null);
+  /** Le **code** du refus, pas sa phrase (#1354). */
+  const [failure, setFailure] = useState<Refusal | null>(null);
 
   async function toggle(): Promise<void> {
     setSaving(true);
@@ -524,7 +571,7 @@ function CategoryActivationButton({
         setSaving(false);
         return;
       }
-      setFailure(result.message);
+      setFailure({ code: result.code });
       setSaving(false);
       return;
     }
@@ -550,7 +597,8 @@ function CategoryActivationButton({
       </Button>
       {failure === null ? null : (
         <p className="spa-field__error" role="alert">
-          {failure}
+          {/* La phrase est écrite ici, dans la langue de ce rendu (#1354). */}
+          {refusalMessage(failure, locale)}
         </p>
       )}
     </>

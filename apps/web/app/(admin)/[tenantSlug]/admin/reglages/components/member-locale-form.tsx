@@ -1,6 +1,6 @@
 'use client';
 
-import { errorMessage, localeSchema, type Locale, type SessionUser } from '@spa/shared';
+import { localeSchema, type Locale, type SessionUser } from '@spa/shared';
 import { useLocale, useTranslations } from 'next-intl';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/button';
 import { Notification } from '@/components/ui/notification';
 import { Select } from '@/components/ui/select';
 import { SUPPORTED_LOCALES } from '@/i18n/resolve';
+import { refusalMessage, type Refusal } from '@/lib/refusal';
 
 import { useAdminSessionRenewal } from '../../components/use-admin-session-renewal';
 import { saveMemberLocaleAction } from '../actions';
@@ -76,7 +77,8 @@ export function MemberLocaleForm({ profile, tenantSlug }: MemberLocaleFormProps)
   const [known, setKnown] = useState<LocaleChoice>(stored);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
-  const [failure, setFailure] = useState<string | null>(null);
+  /** Le **code** du refus, pas sa phrase (#1354) — voir `lib/refusal.ts`. */
+  const [failure, setFailure] = useState<Refusal | null>(null);
 
   /*
    * La préférence enregistrée peut arriver **après** le premier rendu : un
@@ -114,8 +116,11 @@ export function MemberLocaleForm({ profile, tenantSlug }: MemberLocaleFormProps)
         // Une session à renouveler part vers la route de renouvellement, qui
         // rend la main sur cette page ; le message n'aurait été qu'un cul-de-sac.
         if (!renewIfExpired(result)) {
-          // Le `code` et non le `message` : celui de l'API n'est pas traduit.
-          setFailure(errorMessage(result.code, locale));
+          // Le `code` et non le `message` : celui de l'API n'est pas traduit. Et
+          // c'est bien le **code** qui va en état, pas la phrase qu'il produit
+          // (#1354) : celle-ci s'écrit au rendu, dans la langue lue — le
+          // sélecteur de langue rejoue la route sans démonter cette carte.
+          setFailure({ code: result.code });
         }
         return;
       }
@@ -149,7 +154,8 @@ export function MemberLocaleForm({ profile, tenantSlug }: MemberLocaleFormProps)
 
           {failure === null ? null : (
             <Notification tone="danger" title={t('failureTitle')}>
-              <p>{failure}</p>
+              {/* La phrase est écrite ici, dans la langue de ce rendu (#1354). */}
+              <p>{refusalMessage(failure, locale)}</p>
             </Notification>
           )}
 

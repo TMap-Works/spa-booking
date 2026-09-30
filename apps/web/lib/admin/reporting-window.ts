@@ -213,34 +213,77 @@ export function daysInRange(range: ReportRange): number {
 }
 
 /**
- * Ce qui empêche une plage d'être demandée, ou `null` si elle est demandable.
+ * Ce qui empêche une plage d'être demandée — le **motif**, jamais sa phrase
+ * (#1354).
  *
- * Les deux refus sont ceux de l'API — 422 sur une fenêtre inversée ou de plus
- * d'un an —, dits ici pour que l'opérateur les voie **sur le champ fautif**
- * plutôt qu'en retour d'un aller-retour (web-frontend §4). La garde qui compte
- * reste celle du serveur ; celle-ci n'est qu'un confort.
+ * Les trois refus sont ceux de l'API — 422 sur une borne illisible, une fenêtre
+ * inversée ou de plus d'un an —, dits ici pour que l'opérateur les voie **sur le
+ * champ fautif** plutôt qu'en retour d'un aller-retour (web-frontend §4). La
+ * garde qui compte reste celle du serveur ; celle-ci n'est qu'un confort.
+ *
+ * ## Pourquoi un motif, et non plus seulement la phrase
+ *
+ * La barre de filtres est un Client Component, et elle **range** le refus dans
+ * son état le temps que la gérante corrige sa saisie. Le sélecteur de langue du
+ * rail pose un cookie et laisse Next rejouer la route sans navigation
+ * (`i18n/actions.ts`) : le composant se rend à nouveau, son état ne bouge pas —
+ * et « La date de fin précède la date de début. » restait donc écrit en
+ * français sous un formulaire passé à l'anglais. Ce qui va en état est désormais
+ * ce motif, et {@link rangeRefusalMessage} écrit la phrase au rendu.
+ *
+ * Le nombre de journées voyage **avec** le motif : c'est une donnée, elle ne se
+ * démode pas quand la langue change, et la recalculer au rendu aurait supposé
+ * que les bornes n'aient pas bougé entre-temps.
  */
-export function rangeRefusal(range: ReportRange, locale: Locale = FALLBACK_LOCALE): string | null {
-  const words = CATALOG[locale].window.refusal;
+export type ReportRangeRefusal =
+  | { readonly reason: 'bounds' }
+  | { readonly reason: 'inverted' }
+  | { readonly reason: 'tooWide'; readonly days: number };
 
+/** Le motif qui empêche cette plage, ou `null` si elle est demandable. */
+export function rangeRefusalOf(range: ReportRange): ReportRangeRefusal | null {
   // Une borne vidée n'est pas une borne : un champ de date rendu vide donne
   // `''`, dont la comparaison et le comptage de journées ne disent rien
   // (`NaN > 366` est faux). Sans ce refus, la saisie partait telle quelle,
   // l'URL portait `du=`, et l'écran retombait en silence sur les trente
   // derniers jours — en affichant toujours « Période personnalisée ».
   if (parseReportDate(range.from) === null || parseReportDate(range.to) === null) {
-    return words.bounds;
+    return { reason: 'bounds' };
   }
 
   if (range.to < range.from) {
-    return words.inverted;
+    return { reason: 'inverted' };
   }
 
   const days = daysInRange(range);
 
-  return days > MAX_REPORT_WINDOW_DAYS
-    ? fill(words.tooWide, { max: String(MAX_REPORT_WINDOW_DAYS), days: String(days) })
-    : null;
+  return days > MAX_REPORT_WINDOW_DAYS ? { reason: 'tooWide', days } : null;
+}
+
+/** La phrase d'un refus de plage, écrite dans la langue de ce rendu (#1354). */
+export function rangeRefusalMessage(
+  refusal: ReportRangeRefusal,
+  locale: Locale = FALLBACK_LOCALE,
+): string {
+  const words = CATALOG[locale].window.refusal;
+
+  return refusal.reason === 'tooWide'
+    ? fill(words.tooWide, { max: String(MAX_REPORT_WINDOW_DAYS), days: String(refusal.days) })
+    : words[refusal.reason];
+}
+
+/**
+ * Le refus d'une plage, motif et phrase d'un seul geste.
+ *
+ * C'est la forme que consomme l'écran de reporting rendu **côté serveur**
+ * (`reporting/page.tsx`) : il n'a pas d'état, il peint le refus dans la langue
+ * de la requête et n'y revient pas. Les surfaces qui **gardent** le refus, elles,
+ * rangent le motif et écrivent la phrase au rendu — voir ci-dessus.
+ */
+export function rangeRefusal(range: ReportRange, locale: Locale = FALLBACK_LOCALE): string | null {
+  const refusal = rangeRefusalOf(range);
+
+  return refusal === null ? null : rangeRefusalMessage(refusal, locale);
 }
 
 /**

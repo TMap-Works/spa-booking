@@ -237,29 +237,65 @@ export interface TimeOffDraft {
   readonly reason: string;
 }
 
+/**
+ * Ce qu'une absence refusée **nomme** — une clé du catalogue `admin-staff`, sous
+ * `timeOff.`, et jamais sa phrase (#1354).
+ *
+ * Le verdict rangeait le texte du refus, et le panneau le gardait tel quel dans
+ * son état. Or le sélecteur de langue rejoue la route **sans navigation**
+ * (`i18n/actions.ts`) : le composant se rend à nouveau, son état ne bouge pas, et
+ * « Indiquez le jour de reprise. » restait écrit en français sous un champ
+ * « Day back at work ». Ce qui se retourne est donc le **motif**, et la phrase
+ * s'écrit au rendu par `timeOffRefusalMessage` — la règle de `lib/refusal.ts`,
+ * appliquée à un validateur pur.
+ */
+export type TimeOffRefusalKey = 'missingFrom' | 'missingTo' | 'rangeInvalid' | 'invalid';
+
 export type TimeOffValidation =
   | { readonly ok: true; readonly request: CreateStaffTimeOffRequest }
-  | { readonly ok: false; readonly field: keyof TimeOffDraft | null; readonly message: string };
+  | {
+      readonly ok: false;
+      readonly field: keyof TimeOffDraft | null;
+      readonly refusalKey: TimeOffRefusalKey;
+    };
+
+/**
+ * La phrase d'un refus d'absence, écrite **au rendu** dans la langue lue (#1354).
+ *
+ * Le plafond du contrat est **inséré** ici et non rangé avec le motif : c'est une
+ * constante, que celui qui écrit la phrase lit aussi bien que celui qui a refusé
+ * la fenêtre.
+ */
+export function timeOffRefusalMessage(
+  key: TimeOffRefusalKey,
+  locale: Locale = STAFF_FALLBACK_LOCALE,
+): string {
+  const words = staffWords(locale).timeOff;
+
+  return key === 'rangeInvalid'
+    ? fillMessage(words.rangeInvalid, { max: String(MAX_TIME_OFF_RANGE_DAYS) })
+    : words[key];
+}
 
 /**
  * La saisie convertie en corps d'API, jugée par **le schéma du contrat** — la
  * même règle des deux côtés, écrite une fois (web-frontend §4).
  *
- * Le champ fautif est rendu avec le message pour que l'écran le pose sous le
- * contrôle concerné, jamais en bloc en haut de page.
+ * Le champ fautif est rendu avec le motif du refus pour que l'écran le pose sous
+ * le contrôle concerné, jamais en bloc en haut de page.
+ *
+ * Aucune langue en paramètre depuis #1354 : le verdict ne porte plus de phrase,
+ * et rien de ce qu'il décide n'en dépendait.
  */
 export function validateTimeOffDraft(
   draft: TimeOffDraft,
   timeZone: TimeZone,
-  locale: Locale = STAFF_FALLBACK_LOCALE,
 ): TimeOffValidation {
-  const words = staffWords(locale).timeOff;
-
   if (draft.fromDate === '') {
-    return { ok: false, field: 'fromDate', message: words.missingFrom };
+    return { ok: false, field: 'fromDate', refusalKey: 'missingFrom' };
   }
   if (draft.toDate === '') {
-    return { ok: false, field: 'toDate', message: words.missingTo };
+    return { ok: false, field: 'toDate', refusalKey: 'missingTo' };
   }
 
   const startsAt = offsetDateTimeAt(
@@ -291,9 +327,10 @@ export function validateTimeOffDraft(
     field: path === 'endsAt' ? 'toDate' : path === 'startsAt' ? 'fromDate' : path === 'reason' ? 'reason' : null,
     /*
      * Le message du contrat partagé est un littéral français : le laisser
-     * remonter poserait une phrase française sous un champ anglais. Le champ
-     * fautif, lui, vient bien du schéma — c'est ce qui compte pour poser
-     * l'erreur au bon endroit (web-frontend §4).
+     * remonter poserait une phrase française sous un champ anglais — et le
+     * ranger dans l'état du panneau la figerait dans la langue du parse
+     * (#1354). Le champ fautif, lui, vient bien du schéma — c'est ce qui compte
+     * pour poser l'erreur au bon endroit (web-frontend §4).
      *
      * La règle métier du contrat est un `refine`, donc une issue `custom` :
      * c'est la fenêtre elle-même qui est refusée — reprise avant le départ, ou
@@ -310,10 +347,10 @@ export function validateTimeOffDraft(
      * les voir toutes deux lisibles est donc la preuve que l'issue `custom`
      * vient bien d'elle.
      */
-    message:
+    refusalKey:
       issue?.code === 'custom' && readableInstants(startsAt, endsAt)
-        ? fillMessage(words.rangeInvalid, { max: String(MAX_TIME_OFF_RANGE_DAYS) })
-        : words.invalid,
+        ? 'rangeInvalid'
+        : 'invalid',
   };
 }
 

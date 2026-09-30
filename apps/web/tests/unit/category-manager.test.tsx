@@ -1,4 +1,4 @@
-import type { ServiceCategory } from '@spa/shared';
+import { ERROR_CODES, errorMessage, type ServiceCategory } from '@spa/shared';
 import { cleanup, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -211,10 +211,13 @@ describe('rubriques — création', () => {
     // `Notification` rend le ton `danger` en `role="alert"`, assertif par nature.
     // L'enfermer dans une région `aria-live="polite"` reviendrait à le faire
     // attendre une pause du lecteur d'écran.
+    // La phrase attendue est celle du **contrat partagé** pour ce code, et non le
+    // `message` de l'action : le formulaire ne range plus qu'un code et écrit la
+    // phrase au rendu, dans la langue de ce rendu-là (#1354).
     createServiceCategoryAction.mockResolvedValue({
       ok: false,
-      code: 'INTERNAL',
-      message: 'Le service est indisponible.',
+      code: ERROR_CODES.INTERNAL_ERROR,
+      message: errorMessage(ERROR_CODES.INTERNAL_ERROR, 'fr'),
     });
     const user = userEvent.setup();
     const { container } = render(
@@ -227,7 +230,7 @@ describe('rubriques — création', () => {
     const alerte = await screen.findByRole('alert');
     const region = container.querySelector<HTMLElement>('[aria-live="polite"]');
 
-    expect(alerte.textContent).toContain('Le service est indisponible.');
+    expect(alerte.textContent).toContain(errorMessage(ERROR_CODES.INTERNAL_ERROR, 'fr'));
     expect(region?.contains(alerte)).toBe(false);
     // Et la région reste vide : un échec n'annonce aucun succès.
     expect(region?.textContent).toBe('');

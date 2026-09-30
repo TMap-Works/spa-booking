@@ -22,6 +22,8 @@ import { Notification } from '@/components/ui/notification';
 import { PhoneField } from '@/components/ui/phone-field';
 import { Select } from '@/components/ui/select';
 import { SUPPORTED_LOCALES } from '@/i18n/resolve';
+import { useLocalizedFieldErrors } from '@/lib/field-refusal';
+import { refusalMessage, type Refusal } from '@/lib/refusal';
 
 import { updateProfileAction } from '../actions';
 import { useAccountSessionRenewal } from './use-account-session-renewal';
@@ -118,7 +120,8 @@ export function ProfileForm({ tenantSlug, profile }: ProfileFormProps) {
   const router = useRouter();
   const { renewIfExpired } = useAccountSessionRenewal(tenantSlug);
   const [saved, setSaved] = useState(false);
-  const [failure, setFailure] = useState<string | null>(null);
+  /** Le **code** du refus, pas sa phrase (#1354) — voir `lib/refusal.ts`. */
+  const [failure, setFailure] = useState<Refusal | null>(null);
 
   /*
    * Les refus des champs viennent du contrat, donc de `zodErrorMap(locale)` :
@@ -136,6 +139,8 @@ export function ProfileForm({ tenantSlug, profile }: ProfileFormProps) {
     control,
     handleSubmit,
     reset,
+    setError,
+    trigger,
     formState: { errors, isSubmitting, isDirty },
   } = useForm<ProfileFormValues, unknown, z.output<typeof profileFormSchema>>({
     resolver,
@@ -147,6 +152,14 @@ export function ProfileForm({ tenantSlug, profile }: ProfileFormProps) {
     },
     mode: 'onTouched',
   });
+
+  /*
+   * Et les messages **des champs** la suivent aussi (#1354) : le résolveur
+   * ci-dessus est refabriqué à la bascule, mais rien ne rejouait la validation
+   * des champs déjà fautifs — « Numéro de téléphone incomplet… » restait en
+   * français sous un profil consulté en anglais. Voir `lib/field-refusal.ts`.
+   */
+  useLocalizedFieldErrors({ locale, errors, trigger, setError });
 
   const submit = handleSubmit(async (values) => {
     setFailure(null);
@@ -166,7 +179,7 @@ export function ProfileForm({ tenantSlug, profile }: ProfileFormProps) {
       // Une session à renouveler part vers la route de renouvellement, qui rend
       // la main sur cette page ; le message n'aurait été qu'un cul-de-sac.
       if (!renewIfExpired(result)) {
-        setFailure(result.message);
+        setFailure({ code: result.code });
       }
       return;
     }
@@ -195,7 +208,8 @@ export function ProfileForm({ tenantSlug, profile }: ProfileFormProps) {
 
       {failure === null ? null : (
         <Notification tone="danger" title={t('failureTitle')}>
-          <p>{failure}</p>
+          {/* La phrase est écrite ici, dans la langue de ce rendu (#1354). */}
+          <p>{refusalMessage(failure, locale)}</p>
         </Notification>
       )}
 

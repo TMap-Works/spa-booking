@@ -66,6 +66,27 @@ import { adminClientsPath } from '../paths';
  * change `term`.
  */
 
+/**
+ * Ce que l'état garde d'une borne franchie — un **motif**, jamais sa phrase
+ * (#1354).
+ *
+ * Le refus ne vient d'aucune API : il est calculé ici, contre les bornes du
+ * contrat. Il n'en restait pas moins une phrase en état, et le sélecteur de
+ * langue du rail rejoue la route **sans démonter** ce formulaire
+ * (`i18n/actions.ts`) : « Il faut au moins 2 caractères pour chercher » restait
+ * donc écrit en français sous une liste passée en anglais, sur le champ même
+ * qu'on venait de corriger.
+ *
+ * La clé de catalogue et la **borne qu'elle interpole** sont des données ; la
+ * phrase s'écrit au rendu. La borne est rangée plutôt que relue d'une constante
+ * parce que c'est elle qui donne son sens au motif — le jour où le contrat en
+ * changera, le message affiché dira la borne qui a réellement refusé la saisie,
+ * et non celle du rendu courant.
+ */
+type SearchRefusal =
+  | { readonly key: 'tooShort'; readonly min: number }
+  | { readonly key: 'tooLong'; readonly max: number };
+
 interface ClientSearchFormProps {
   readonly tenantSlug: string;
   /** Le terme que la page a retenu de l'URL — jamais la saisie brute. */
@@ -79,7 +100,8 @@ export function ClientSearchForm({ tenantSlug, term, hint }: ClientSearchFormPro
   const router = useRouter();
   const fieldId = useId();
   const [value, setValue] = useState(term);
-  const [error, setError] = useState<string | null>(null);
+  /** Le **motif** du refus, pas sa phrase (#1354) — voir `SearchRefusal`. */
+  const [error, setError] = useState<SearchRefusal | null>(null);
   const [pending, startTransition] = useTransition();
   // Le `term` du rendu précédent — la seule chose qui permette de distinguer
   // « l'URL a changé » de « l'opérateur a tapé ».
@@ -112,7 +134,7 @@ export function ClientSearchForm({ tenantSlug, term, hint }: ClientSearchFormPro
     // évite un aller-retour qui reviendrait en 400 — et le message est posé
     // **sur le champ**, pas en bloc en haut de l'écran (web-frontend §4).
     if (trimmed.length < CUSTOMER_SEARCH_MIN_LENGTH) {
-      setError(t('tooShort', { min: CUSTOMER_SEARCH_MIN_LENGTH }));
+      setError({ key: 'tooShort', min: CUSTOMER_SEARCH_MIN_LENGTH });
       return;
     }
 
@@ -121,7 +143,7 @@ export function ClientSearchForm({ tenantSlug, term, hint }: ClientSearchFormPro
     // `parseSearchTerm` le rejetait en silence, la page affichait le fichier
     // entier — et le champ, remis à l'URL, effaçait la saisie sans rien dire.
     if (trimmed.length > CUSTOMER_SEARCH_MAX_LENGTH) {
-      setError(t('tooLong', { max: CUSTOMER_SEARCH_MAX_LENGTH }));
+      setError({ key: 'tooLong', max: CUSTOMER_SEARCH_MAX_LENGTH });
       return;
     }
 
@@ -130,6 +152,21 @@ export function ClientSearchForm({ tenantSlug, term, hint }: ClientSearchFormPro
       router.push(adminClientsPath(tenantSlug, { term: trimmed }));
     });
   };
+
+  /**
+   * La phrase du refus, écrite **ici**, dans la langue de ce rendu (#1354).
+   *
+   * Deux clés et deux noms d'argument distincts : la borne basse s'interpole en
+   * `min`, la haute en `max`, et les confondre laisserait un `{min}` nu au
+   * milieu de la phrase de la borne haute. Le branchement les tient séparées, et
+   * `next-intl` vérifie les deux clés sans cast — elles sont littérales.
+   */
+  const refusalText =
+    error === null
+      ? null
+      : error.key === 'tooShort'
+        ? t('tooShort', { min: error.min })
+        : t('tooLong', { max: error.max });
 
   return (
     <form
@@ -146,7 +183,7 @@ export function ClientSearchForm({ tenantSlug, term, hint }: ClientSearchFormPro
         value={value}
         hint={hint}
         autoComplete="off"
-        {...(error === null ? {} : { error })}
+        {...(refusalText === null ? {} : { error: refusalText })}
         onChange={(event) => {
           setValue(event.target.value);
         }}

@@ -8,6 +8,7 @@ import type {
   StaffSchedule,
   StaffTimeOff,
 } from '@spa/shared';
+import { errorMessage } from '@spa/shared';
 import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -191,7 +192,7 @@ function renderBoard(
     readonly periods?: Readonly<Record<string, readonly Appointment[]>>;
     readonly date?: string;
     readonly view?: 'jour' | 'semaine';
-    readonly loadError?: string | null;
+    readonly loadErrorCode?: string | null;
     readonly services?: readonly Service[];
     readonly staff?: readonly StaffMemberSummary[];
     readonly setupKnown?: boolean;
@@ -205,7 +206,7 @@ function renderBoard(
       date={overrides.date ?? '2026-08-26'}
       initialPeriods={overrides.periods ?? amorce}
       initialTimeOff={overrides.timeOff ?? {}}
-      loadError={overrides.loadError ?? null}
+      loadErrorCode={overrides.loadErrorCode ?? null}
       openingHours={overrides.openingHours ?? []}
       services={overrides.services ?? CATALOGUE}
       setupKnown={overrides.setupKnown ?? true}
@@ -448,12 +449,15 @@ describe('virtualisation — troisième critère', () => {
 
 describe('états', () => {
   it('dit ce qui manque quand le chargement a échoué', () => {
-    renderBoard({ loadError: 'L’agenda n’est pas encore servi par l’API.' });
+    // La page passe le **code** du refus, pas sa phrase (#1354) : le planning la
+    // compose au rendu, ce qui la fait suivre le sélecteur de langue. La phrase
+    // attendue est donc lue dans la table du contrat partagé, jamais recopiée.
+    renderBoard({ loadErrorCode: 'INTERNAL_ERROR' });
 
     const alerte = screen.getByRole('alert');
 
     expect(alerte.textContent).toContain('Planning indisponible');
-    expect(alerte.textContent).toContain('L’agenda n’est pas encore servi par l’API.');
+    expect(alerte.textContent).toContain(errorMessage('INTERNAL_ERROR', 'fr'));
   });
 
   it('dit la route manquante en français, pas le refus brut du cadre HTTP', async () => {

@@ -1,12 +1,13 @@
 'use client';
 
-import { ERROR_CODES } from '@spa/shared';
-import { useTranslations } from 'next-intl';
+import { ERROR_CODES, type Locale } from '@spa/shared';
+import { useLocale, useTranslations } from 'next-intl';
 import { useRouter } from 'next/navigation';
 import { useState, useTransition } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { Notification } from '@/components/ui/notification';
+import { refusalMessage, type Refusal } from '@/lib/refusal';
 
 import { assignServiceStaffAction, removeServiceStaffAction } from '../catalogue/actions';
 import { useAdminSessionRenewal } from './use-admin-session-renewal';
@@ -72,6 +73,16 @@ import { useAdminSessionRenewal } from './use-admin-session-renewal';
  * `DELETE /v1/services/{id}/staff` sont `@AuthAtLeast('MANAGER')`. Les bascules
  * disparaissent pour ce rôle, une mention dit pourquoi, et la liste reste
  * lisible — c'est une information dont une praticienne se sert (#619).
+ *
+ * ## Le refus est gardé par son code (#1354)
+ *
+ * `router.refresh()` ne remonte pas ce panneau, et le sélecteur de langue du rail
+ * ne le remonte pas davantage : il pose un cookie et laisse Next rejouer la route
+ * **sans navigation** (`i18n/actions.ts`). Une phrase rangée en état y restait
+ * donc écrite dans la langue d'avant, sous un titre « Affectation impossible »
+ * qui, lui, suivait le rendu. Ce qui va en état est le **code**, et la phrase
+ * s'écrit au rendu — celle que ce panneau dit de mieux que le contrat pour le 409
+ * comprise (`refusalMessage` et son `own`, `lib/refusal.ts`).
  */
 
 /**
@@ -106,6 +117,7 @@ export function ServiceStaffPanel({
   readonly canManage?: boolean;
 }) {
   const t = useTranslations('admin-catalog.staffPanel');
+  const locale = useLocale() as Locale;
   const router = useRouter();
   const { renewIfExpired } = useAdminSessionRenewal(tenantSlug);
   const [pending, setPending] = useState<string | null>(null);
@@ -114,7 +126,8 @@ export function ServiceStaffPanel({
   // ce que la liste rendue par le serveur soit arrivée. Sans elle, un second
   // clic partirait sur une liste déjà périmée — et se heurterait au 409.
   const [refreshing, startRefresh] = useTransition();
-  const [failure, setFailure] = useState<string | null>(null);
+  /** Le **code** du refus, pas sa phrase (#1354) — voir l'en-tête. */
+  const [failure, setFailure] = useState<Refusal | null>(null);
 
   async function toggle(member: ServiceStaffChoice): Promise<void> {
     setPending(member.id);
@@ -133,10 +146,11 @@ export function ServiceStaffPanel({
       // Un 409 n'est pas une panne : quelqu'un a posé la même affectation entre
       // le rendu de la page et le clic. On le dit, et le rafraîchissement remet
       // la liste d'aplomb.
-      // Le message de l'action serveur, lui, arrive déjà dans la langue de la
-      // requête : les actions du catalogue le lisent sur le catalogue de
-      // messages, jamais en dur (`catalogue/actions.ts`).
-      setFailure(result.code === ERROR_CODES.CONFLICT ? t('alreadyAssigned') : result.message);
+      //
+      // Le code, et lui seul (#1354) : c'est au rendu que se choisit entre la
+      // phrase de ce panneau pour le 409 et celle du contrat partagé pour le
+      // reste, dans la langue de ce rendu-là.
+      setFailure({ code: result.code });
     }
 
     startRefresh(() => {
@@ -153,7 +167,15 @@ export function ServiceStaffPanel({
 
       {failure === null ? null : (
         <Notification tone="danger" title={t('failureTitle')}>
-          <p>{failure}</p>
+          {/* La phrase est écrite ici, dans la langue de ce rendu (#1354). Le
+              seul refus que ce panneau nomme lui-même est le 409 — « déjà
+              affecté » —, que le contrat ne saurait dire de cette relation ; le
+              repli est sa phrase du contrat partagé. */}
+          <p>
+            {refusalMessage(failure, locale, (code) =>
+              code === ERROR_CODES.CONFLICT ? t('alreadyAssigned') : null,
+            )}
+          </p>
         </Notification>
       )}
 
