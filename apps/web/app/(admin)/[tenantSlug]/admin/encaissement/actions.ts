@@ -39,6 +39,27 @@
  * cible, sous la même phrase. Il a désormais son propre refus,
  * `unknownTenant()` — voir {@link checkTenant} et l'en-tête d'`action-result.ts`
  * pour le choix qui le porte.
+ *
+ * ## Une cause, une phrase — #1378
+ *
+ * #1372 avait sorti l'établissement de ces `if` ; ce qui restait dedans y était
+ * toujours **plusieurs choses sous une seule phrase**. « Rendez-vous inconnu. »
+ * refusait aussi bien un identifiant de prestation, un ticket de caisse, un
+ * règlement illisible que la clé d'idempotence d'un geste — c'est-à-dire trois
+ * objets que cette action ne confond jamais ailleurs, et un rendez-vous dont
+ * `settleTicketAction` ne reçoit même pas l'identifiant.
+ *
+ * Chaque `safeParse` en échec a désormais sa phrase, et le refus reste ce qu'il
+ * était : `VALIDATION_ERROR`, sans `details`, opposé avant tout appel. Ce ticket
+ * ne touche donc ni le code rendu ni la garde `details === undefined` par
+ * laquelle les quatre écrans du comptoir et du planning reconnaissent « le refus
+ * que l'action a opposé elle-même » (#1367, #1369) — il précise ce que ce refus
+ * **dit**, et rien d'autre.
+ *
+ * Ce que l'écran en montre est plus grossier, et c'est voulu : le panneau ne
+ * reçoit que le code, jamais la cause, et il ne peut donc nommer que le **geste**
+ * qu'il n'a pas pu mener. La table `own` de `checkout-panel.tsx` porte cette
+ * moitié-là, et dit pourquoi elle s'arrête au geste.
  */
 
 import {
@@ -129,7 +150,15 @@ export async function openCheckoutTicketAction(
   const service = uuidSchema.safeParse(serviceId);
 
   if (!target.success || !service.success) {
-    return invalid((await getTranslations('admin-checkout'))('failure.unknownTarget'));
+    const words = await getTranslations('admin-checkout');
+
+    // Deux cibles, deux phrases (#1378) : le rendez-vous qu'on met en caisse, et
+    // la prestation qu'on y porte. « Rendez-vous inconnu » pour un identifiant
+    // de prestation illisible nommait le mauvais objet — celui des deux qui
+    // était lisible.
+    return invalid(
+      target.success ? words('failure.unknownServiceTarget') : words('failure.unknownTarget'),
+    );
   }
 
   const access = await adminActionAccess(slug);
@@ -219,7 +248,25 @@ export async function settleTicketAction(
     .safeParse(idempotencyKey);
 
   if (!sale.success || !body.success || !key.success) {
-    return invalid((await getTranslations('admin-checkout'))('failure.unknownTarget'));
+    const words = await getTranslations('admin-checkout');
+
+    // Trois causes, trois phrases (#1378). Elles partageaient « Rendez-vous
+    // inconnu. », qui n'en nommait aucune : ce qui est refusé ici est un ticket
+    // de caisse, un règlement, ou la clé d'un geste — jamais un rendez-vous,
+    // dont cette action ne reçoit même pas l'identifiant.
+    //
+    // La clé est à part : elle n'est saisie par personne — l'écran l'engendre au
+    // montage (#835) —, et sa phrase ne demande donc rien à corriger à la main.
+    // Elle dit la seule chose qui débloque, recharger l'écran.
+    if (!sale.success) {
+      return invalid(words('failure.unknownSaleTarget'));
+    }
+
+    if (!body.success) {
+      return invalid(words('failure.unreadableSettlement'));
+    }
+
+    return invalid(words('failure.unusableGestureKey'));
   }
 
   const access = await adminActionAccess(slug);
@@ -245,6 +292,14 @@ export async function settleTicketAction(
  * ne recalcule ni taxe ni total, il met en page ce qu'on lui rend — et c'est
  * elle qui porte **tous** les règlements du ticket, dans l'ordre où ils ont été
  * pris (quatrième critère de #835).
+ *
+ * ## Son `if` n'a pas été repris, et voici pourquoi — #1378
+ *
+ * C'est le seul des trois à ne juger qu'**une** chose après l'établissement : le
+ * ticket dont on demande la pièce. Il n'y a donc aucune cause à séparer, et
+ * `failure.unknownReceiptTarget` — « Ticket inconnu. » — nomme déjà l'objet en
+ * cause, là où les deux autres nommaient un rendez-vous. Le reprendre aurait
+ * consisté à réécrire une phrase juste.
  */
 export async function loadReceiptAction(
   tenantSlug: string,
