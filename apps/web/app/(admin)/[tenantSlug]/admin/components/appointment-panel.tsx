@@ -185,6 +185,20 @@ import { BEFORE_ANY_HOUR, useAppointmentClock } from './use-appointment-clock';
  * n'opposent rien d'eux-mêmes passent `null` — voir `mark`, dont le statut vient
  * d'une liste fermée de boutons, si bien qu'un `VALIDATION_ERROR` n'y peut venir
  * que du serveur.
+ *
+ * ## Un quatrième refus, que le `details` ne séparait pas — #1372
+ *
+ * `deskToken` précède les quatre écritures de ce tiroir et refuse un slug
+ * d'établissement illisible **avant tout appel**, lui aussi. Il portait donc le
+ * même code et le même `details` absent que les trois refus de saisie
+ * ci-dessus : « Le rendez-vous saisi est invalide. » ou « Le report saisi est
+ * invalide. » s'affichait pour un établissement que personne n'avait saisi.
+ *
+ * Il ne porte plus `VALIDATION_ERROR` mais `TENANT_NOT_FOUND`
+ * (voir l'en-tête d'`action-result.ts`), et `deskFailureOf` le laisse donc
+ * passer jusqu'à `{ kind: 'refusal' }`, dont la phrase est celle du contrat
+ * partagé — celle qui nomme l'établissement. Aucune des trois clés ci-dessus n'a
+ * eu à bouger, et c'est le signe que le refus était mal formé, non mal lu.
  */
 type DeskOwnRefusalKey =
   | 'actions.invalidAppointment'

@@ -85,6 +85,18 @@ const SEARCH_DEBOUNCE_MS = 300;
  * celui du corps d'erreur de l'API (`action-result.ts`, `ApiClientError.details`
  * vaut `{}` par défaut). Même garde que `calendar-board.tsx`,
  * `checkout-panel.tsx` et `appointment-panel.tsx` depuis #1367.
+ *
+ * ## Ce que cette garde ne sépare pas, et qui se règle ailleurs — #1372
+ *
+ * Deux refus que la **même** action oppose d'elle-même. Les deux gestes passent
+ * par `deskToken`, qui refusait l'établissement inconnu sous ce même
+ * `VALIDATION_ERROR` et sans `details` : « Recherche invalide. » s'affichait pour
+ * un slug d'URL que personne n'avait tapé. Le remède n'est pas ici — il est dans
+ * le **code** que l'action rend désormais (`TENANT_NOT_FOUND`, voir l'en-tête
+ * d'`action-result.ts`), et le `own` ci-dessous, qui ne parle que de
+ * `VALIDATION_ERROR`, le laisse donc retomber sur la phrase du contrat partagé,
+ * qui nomme l'établissement. `origin` reste ce qu'il est : il dit **laquelle**
+ * des deux phrases, jamais qu'il faut en dire une.
  */
 type PickerFailureOrigin = 'search' | 'create' | 'api';
 

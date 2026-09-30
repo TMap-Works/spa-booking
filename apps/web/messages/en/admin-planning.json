@@ -187,7 +187,6 @@
     }
   },
   "actions": {
-    "unknownTenant": "Unknown establishment.",
     "invalidDate": "Invalid schedule date.",
     "invalidSearch": "Invalid search.",
     "invalidClient": "The client record entered is invalid.",

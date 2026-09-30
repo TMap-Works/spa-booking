@@ -76,7 +76,7 @@ import {
 } from '@/lib/admin/calendar-range';
 import { calendarTimeOffWindow } from '@/lib/admin/calendar-time-off';
 
-import { failure, invalid, type AdminActionResult } from '../action-result';
+import { failure, invalid, unknownTenant, type AdminActionResult } from '../action-result';
 import { adminActionAccess } from '../session';
 
 /**
@@ -131,17 +131,24 @@ export async function loadCalendarRangeAction(
     readonly timeOff: readonly StaffTimeOff[];
   }>
 > {
-  const t = await getTranslations('admin-planning');
   const slug = slugSchema.safeParse(tenantSlug);
 
+  // Deux refus que cette action oppose d'elle-même, et qui ne disent pas la même
+  // chose : l'établissement introuvable porte son propre code depuis #1372,
+  // l'ancrage illisible reste un refus de saisie. La bannière du planning
+  // n'écrit « Date de planning invalide. » que sur le second.
   if (!slug.success) {
-    return invalid(t('actions.unknownTenant'));
+    return unknownTenant();
   }
 
   const anchor = parseCalendarDate(date);
 
+  // Le catalogue n'est lu que par celui qui s'en sert : `unknownTenant()` tire sa
+  // phrase du contrat partagé, et le charger avant la garde ci-dessus faisait un
+  // aller-retour de traduction pour un refus qui ne l'emploie pas — c'est la même
+  // raison qui l'a retiré de `deskToken`.
   if (anchor === null) {
-    return invalid(t('actions.invalidDate'));
+    return invalid((await getTranslations('admin-planning'))('actions.invalidDate'));
   }
 
   const access = await adminActionAccess(slug.data);
@@ -180,13 +187,22 @@ export async function loadCalendarRangeAction(
  * partout — c'est lui, et lui seul, que les écrans traduisent par un passage à
  * la route de renouvellement. Un cookie d'accès expiré ne le produit plus : il
  * est renouvelé sur place (#856), et seul un renouvellement impossible remonte.
+ *
+ * ## Son refus d'établissement a son propre code — #1372
+ *
+ * Il précède **tous** les gestes du planning et du tiroir, et il portait
+ * `VALIDATION_ERROR` sans `details` : les quatre écrans du comptoir le lisaient
+ * donc comme le refus de saisie du geste qui venait de le recevoir, et lui
+ * prêtaient la phrase de ce geste — « Recherche invalide. », « Le report saisi
+ * est invalide. ». `unknownTenant()` lui donne la forme que les écrans
+ * distinguent déjà sans rien apprendre de neuf : un code qui n'est pas celui de
+ * la saisie (voir l'en-tête d'`action-result.ts`).
  */
 async function deskToken(
   tenantSlug: string,
 ): Promise<{ readonly token: string } | { readonly refusal: AdminActionResult<never> }> {
-  const t = await getTranslations('admin-planning');
   if (!slugSchema.safeParse(tenantSlug).success) {
-    return { refusal: invalid(t('actions.unknownTenant')) };
+    return { refusal: await unknownTenant() };
   }
 
   const access = await adminActionAccess(tenantSlug);

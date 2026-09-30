@@ -1199,16 +1199,25 @@ export function CalendarBoard({
    * — et la phrase générique du contrat, « certaines informations sont
    * incomplètes », ne dit plus que c'est la date qui a été refusée.
    *
-   * `actions.invalidDate` et non `actions.unknownTenant`, bien que l'action
-   * oppose les deux sous ce code : l'établissement est déjà résolu quand ce
-   * planning se monte — `calendrier/page.tsx` lit sa vitrine publique par ce même
-   * slug avant de rendre la grille, et retombe sur `adminLoadFailure` s'il ne le
-   * connaît pas. Le seul paramètre que ce composant puisse rendre illisible est
-   * donc l'ancrage, et c'est de lui que la phrase parle.
+   * ## Ce que ce commentaire affirmait, et pourquoi c'était faux — #1372
    *
-   * Tout le reste — 404 de route absente, fenêtre trop large, session refusée,
-   * panne de l'API — passe par `calendarApiFailureMessage`, exactement comme le
-   * premier rendu côté serveur.
+   * Il justifiait de ne parler que de la date par un raisonnement de contexte :
+   * « l'établissement est déjà résolu quand ce planning se monte », `page.tsx`
+   * ayant lu sa vitrine publique par ce même slug avant de rendre la grille.
+   * C'est vrai du **premier rendu**, et de lui seul. Ce n'est pas vrai d'une
+   * action serveur appelée plus tard — « jour suivant », « aujourd'hui » —, qui
+   * rejuge le slug à chaque fois et le refusait sous ce même `VALIDATION_ERROR` :
+   * un établissement inconnu s'affichait donc « Date de planning invalide. ».
+   *
+   * La condition ne se lève plus par un raisonnement mais par le **code** :
+   * `loadCalendarRangeAction` rend `TENANT_NOT_FOUND` pour l'établissement et
+   * garde `VALIDATION_ERROR` pour l'ancrage. La ligne ci-dessous n'a pas changé
+   * d'un caractère, et c'est le signe que le remède est au bon endroit.
+   *
+   * Tout le reste — établissement inconnu compris, 404 de route absente, fenêtre
+   * trop large, session refusée, panne de l'API — passe par
+   * `calendarApiFailureMessage`, exactement comme le premier rendu côté serveur :
+   * la phrase vient du contrat partagé, qui nomme le refus de son code.
    */
   const failureMessage = (banner: CalendarFailure): string =>
     banner.origin === 'periode' && banner.code === ERROR_CODES.VALIDATION_ERROR

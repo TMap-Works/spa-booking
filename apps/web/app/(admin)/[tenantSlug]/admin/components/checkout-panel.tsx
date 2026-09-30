@@ -192,6 +192,19 @@ interface FieldIssue {
  * les gestes qui n'opposent rien d'eux-mêmes n'entrent pas dans cette union, si
  * bien qu'un moyen de règlement ajouté plus tard n'héritera pas en silence d'une
  * phrase qui n'est pas la sienne.
+ *
+ * ## « Rendez-vous ou établissement inconnu » ne dit plus les deux — #1372
+ *
+ * Les deux écritures du comptoir jugeaient le slug d'établissement et la cible
+ * dans un seul `if`, sous un seul code et cette seule phrase. Elle tombait juste
+ * par construction, puisqu'elle nommait les deux — c'était le seul des quatre
+ * écrans du comptoir dans ce cas, et par coïncidence. Elle ne disait pas lequel
+ * des deux était en cause, et cet écran n'avait aucun moyen de le dire.
+ *
+ * `encaissement/actions.ts` les sépare désormais : l'établissement inconnu porte
+ * `TENANT_NOT_FOUND` et retombe donc sur la phrase du contrat partagé, qui le
+ * nomme ; la cible illisible garde `VALIDATION_ERROR` et la phrase du geste,
+ * ci-dessous. Le geste ne dit toujours que **quelle** phrase.
  */
 type CheckoutGesture = 'ticket' | 'reglement';
 
