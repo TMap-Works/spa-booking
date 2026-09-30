@@ -555,12 +555,25 @@ describe('le règlement par carte au TPE', () => {
  * La cible illisible garde la phrase du comptoir — #1367.
  *
  * Les deux écritures de cet écran refusent leur cible **avant tout appel**
- * (`encaissement/actions.ts`), par `invalid(t('failure.unknownTarget'))`. #1354 a
- * fait garder le **code** à la ligne rouge, et ce code est `VALIDATION_ERROR` :
- * la tournure générique du contrat avalait donc la phrase, alors que c'est la
- * seule que l'opérateur puisse atteindre. Le discriminant est le **geste** qui a
- * reçu le refus, pas son code — le 400 que l'API oppose à la référence du TPE
- * part, lui, sur son champ (voir le cas de #1025, critère 3).
+ * (`encaissement/actions.ts`), par un `invalid()` dont la phrase vient du
+ * catalogue du comptoir. #1354 a fait garder le **code** à la ligne rouge, et ce
+ * code est `VALIDATION_ERROR` : la tournure générique du contrat avalait donc la
+ * phrase, alors que c'est la seule que l'opérateur puisse atteindre. Le
+ * discriminant est le **geste** qui a reçu le refus, pas son code — le 400 que
+ * l'API oppose à la référence du TPE part, lui, sur son champ (voir le cas de
+ * #1025, critère 3).
+ *
+ * ## Et les deux gestes ne disent plus la même phrase — #1378
+ *
+ * Ils partageaient « Rendez-vous inconnu. » Composer le ticket vise bien un
+ * rendez-vous ; inscrire un règlement n'en reçoit même pas l'identifiant, et ce
+ * que l'action y refuse est un ticket de caisse, un règlement, ou la clé du
+ * geste. Les deux cas ci-dessous éprouvent donc **deux** phrases, et c'est ce
+ * qui empêche la table `own` de retomber sur une seule.
+ *
+ * Que l'action rende bien ces phrases-là — cause par cause, dans les deux
+ * langues — est l'autre moitié, et elle s'éprouve sur les vraies actions :
+ * `admin-checkout-refus-de-saisie.test.ts`.
  */
 describe('#1367 — la cible illisible garde la phrase du comptoir', () => {
   const REFUS_DE_SAISIE = {
@@ -582,15 +595,20 @@ describe('#1367 — la cible illisible garde la phrase du comptoir', () => {
     expect(settleTicketAction).not.toHaveBeenCalled();
   });
 
-  it('la nomme aussi quand c’est le règlement qui est refusé', async () => {
+  it('nomme le règlement, et non le rendez-vous, quand c’est lui qui est refusé', async () => {
     openCheckoutTicketAction.mockResolvedValue({ ok: true, data: sale() });
     settleTicketAction.mockResolvedValue(REFUS_DE_SAISIE);
     renderPanel();
 
     await userEvent.click(screen.getByRole('button', { name: CASH_BUTTON }));
 
-    expect((await screen.findByRole('alert')).textContent).toBe(checkoutFr.failure.unknownTarget);
+    expect((await screen.findByRole('alert')).textContent).toBe(
+      checkoutFr.failure.unreadableSettlement,
+    );
     expect(screen.queryByText(GENERIQUE)).toBeNull();
+    // Le défaut de #1378, pris par son symptôme : cette écriture ne reçoit aucun
+    // identifiant de rendez-vous, et n'a donc rien à en dire.
+    expect(screen.queryByText(checkoutFr.failure.unknownTarget)).toBeNull();
   });
 
   /**
@@ -611,6 +629,7 @@ describe('#1367 — la cible illisible garde la phrase du comptoir', () => {
     await userEvent.click(screen.getByRole('button', { name: CASH_BUTTON }));
 
     expect((await screen.findByRole('alert')).textContent).toBe(GENERIQUE);
+    expect(screen.queryByText(checkoutFr.failure.unreadableSettlement)).toBeNull();
     expect(screen.queryByText(checkoutFr.failure.unknownTarget)).toBeNull();
   });
 });

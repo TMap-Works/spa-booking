@@ -176,6 +176,10 @@
     "notFound": "Ce rendez-vous est introuvable dans cet établissement.",
     "forbidden": "Votre compte n’a pas le droit d’encaisser. Demandez l’accès à l’administrateur du salon.",
     "unknownTarget": "Rendez-vous inconnu.",
+    "unknownServiceTarget": "Prestation inconnue.",
+    "unknownSaleTarget": "Ticket de caisse inconnu.",
+    "unreadableSettlement": "Ce règlement a été refusé : le moyen ou le montant est illisible. Rien n’a été encaissé — reprenez la saisie, ou rechargez l’écran si le refus revient.",
+    "unusableGestureKey": "L’écran n’a pas su identifier ce règlement. Rien n’a été encaissé : rechargez la page, puis reprenez le règlement.",
     "unknownReceiptTarget": "Ticket inconnu."
   },
   "sale": {

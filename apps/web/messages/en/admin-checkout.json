@@ -176,6 +176,10 @@
     "notFound": "This appointment cannot be found in this salon.",
     "forbidden": "Your account is not allowed to take payments. Ask the salon administrator for access.",
     "unknownTarget": "Unknown appointment.",
+    "unknownServiceTarget": "Unknown service.",
+    "unknownSaleTarget": "Unknown register receipt.",
+    "unreadableSettlement": "This settlement was refused: the method or the amount is unreadable. Nothing was taken — enter it again, or reload the screen if it is refused once more.",
+    "unusableGestureKey": "The screen could not identify this settlement. Nothing was taken: reload the page, then take the settlement again.",
     "unknownReceiptTarget": "Unknown receipt."
   },
   "sale": {
