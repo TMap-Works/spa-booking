@@ -1,6 +1,12 @@
 {
   "meta": {
-    "title": "Platform console"
+    "title": "Platform console",
+    "template": "%s · Platform console",
+    "dashboard": "Overview",
+    "tenants": "Salons",
+    "create": "Open a salon",
+    "record": "Salon record",
+    "login": "Sign in"
   },
   "shell": {
     "title": "Platform console",
@@ -150,7 +156,7 @@
     },
     "table": {
       "name": "Salon",
-      "address": "Address",
+      "address": "Page address",
       "zoneCurrency": "Time zone · currency",
       "openedOn": "Opened on",
       "billing": "Billing",
@@ -185,9 +191,9 @@
       "clients": "{count, plural, =0 {no client account} one {# client account} other {# client accounts}}",
       "created": "Bookings taken",
       "upcoming": "Upcoming",
-      "completed": "Honoured",
-      "noShow": "Not honoured",
-      "cancelled": "Cancelled",
+      "completed": "Completed",
+      "noShow": "No-shows",
+      "cancelled": "Canceled",
       "never": "No booking since it opened.",
       "last": "Last booking taken on {stamp}."
     },
@@ -286,7 +292,7 @@
     "salonLegend": "The salon",
     "name": "Salon name",
     "slug": "Salon web address",
-    "slugHint": "Lower case, digits and hyphens. It appears in every link: /maison-lotus/reservation.",
+    "slugHint": "Lower case, digits and hyphens. It appears in every link: /lotus-spa/reservation.",
     "addressLine1": "Address",
     "addressLine2": "Address line 2",
     "postalCode": "Postal code",

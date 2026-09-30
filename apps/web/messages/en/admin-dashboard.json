@@ -32,7 +32,7 @@
       "detailNone": "No request pending in the next {days} days"
     },
     "noShow": {
-      "label": "No shows · 30 days",
+      "label": "No-shows · 30 days",
       "detail": "{noShows} of {total, plural, one {# appointment past its time} other {# appointments past their time}}"
     }
   },

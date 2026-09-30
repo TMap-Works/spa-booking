@@ -36,7 +36,7 @@
   },
   "record": {
     "headingNone": "Aucune fiche ouverte",
-    "heading": "Fiche de {name}",
+    "heading": "{elision, select, vowel {Fiche d’{name}} other {Fiche de {name}}}",
     "missing": {
       "title": "Fiche introuvable",
       "body": "Aucune fiche de ce salon ne porte cet identifiant. Cherchez la personne par son nom, son téléphone ou son adresse dans le volet de gauche."
@@ -103,7 +103,7 @@
     "phone": "Téléphone",
     "phoneHint": "Laissez vide pour retirer le numéro — le rappel J-1 partira alors par e-mail seulement.",
     "email": "Adresse e-mail",
-    "emailHint": "Identifiant de la fiche dans ce salon. Le MVP ne sait pas encore vérifier une nouvelle adresse : elle ne se modifie pas ici.",
+    "emailHint": "L’identifiant de la fiche dans ce salon. Elle ne se change pas ici : une nouvelle adresse devrait d’abord être vérifiée.",
     "save": "Enregistrer",
     "saving": "Enregistrement…",
     "cancel": "Annuler",
@@ -127,5 +127,8 @@
     "unknownTenant": "Établissement inconnu.",
     "unknownCustomer": "Fiche client inconnue.",
     "invalidInput": "Les informations saisies sont invalides."
+  },
+  "metadata": {
+    "list": "Fichier client"
   }
 }

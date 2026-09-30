@@ -69,5 +69,8 @@
     "failureTitle": "L’enregistrement a échoué",
     "unavailableTitle": "Préférence indisponible",
     "unavailableBody": "Votre compte n’a pas pu être lu à l’instant. Rafraîchissez l’écran pour régler votre langue."
+  },
+  "metadata": {
+    "title": "Réglages de l’établissement"
   }
 }

@@ -20,7 +20,7 @@
   },
   "practitioners": {
     "title": "Praticiens — {count}",
-    "hint": "Les fiches qui portent un agenda. Ouvrez-en une pour saisir ses horaires récurrents, ses congés et les prestations qu’elle pratique.",
+    "hint": "Les fiches qui portent un planning. Ouvrez-en une pour saisir ses horaires récurrents, ses congés et les prestations qu’elle exécute.",
     "emptyTitle": "Aucun praticien enregistré",
     "emptyDescriptionManager": "Tant que personne n’est déclarée, le parcours de réservation ne propose aucun créneau. Créez une fiche praticien à partir d’un compte du personnel pour rendre la personne réservable.",
     "emptyDescriptionReader": "Tant que personne n’est déclarée, le parcours de réservation ne propose aucun créneau. Un gérant ou un administrateur peut créer une fiche praticien à partir d’un compte du personnel.",
@@ -30,13 +30,13 @@
   },
   "accounts": {
     "title": "Comptes — {count}",
-    "hint": "Les identités qui se connectent au back-office, avec leur rôle. Un compte n’est pas une fiche praticien : il porte l’accès, pas l’agenda.",
+    "hint": "Les identités qui se connectent au back-office, avec leur rôle. Un compte n’est pas une fiche praticien : il porte l’accès, pas le planning.",
     "emptyTitle": "Aucun compte du personnel",
     "emptyDescriptionAdmin": "Invitez au moins une personne pour que le salon puisse être tenu à plusieurs.",
     "emptyDescriptionReader": "Un administrateur du salon peut inviter les personnes qui le tiendront avec vous.",
     "caption": "Comptes du personnel de l’établissement, avec leur rôle et l’état de leur accès.",
     "name": "Nom",
-    "email": "Adresse",
+    "email": "Adresse e-mail",
     "phone": "Téléphone",
     "role": "Rôle",
     "state": "État",
@@ -93,12 +93,12 @@
     "screenTitle": "Créer une fiche praticien",
     "deniedTitle": "Accès réservé",
     "deniedBody": "La création d’une fiche praticien est réservée au rang gérant. La liste du personnel reste consultable, et une gérante ou une administratrice du salon peut créer la fiche pour vous. <link>Revenir au personnel</link>.",
-    "hint": "Rattachez un compte du personnel à un agenda. Tant qu’une personne n’a pas sa fiche, aucune prestation ne peut lui être affectée et le parcours de réservation ne propose aucun créneau.",
+    "hint": "Rattachez un compte du personnel à un planning. Tant qu’une personne n’a pas sa fiche, aucune prestation ne peut lui être attribuée et le parcours de réservation ne propose aucun créneau.",
     "failureTitle": "Création impossible",
     "createdTitle": "Fiche créée",
     "createdBody": "{name} apparaît désormais dans les praticiens. Ouvrez sa fiche pour saisir ses horaires, ses congés et les prestations qu’elle pratique.",
     "accountLabel": "Compte à rendre réservable",
-    "accountHint": "Le compte porte l’accès au back-office ; la fiche porte l’agenda.",
+    "accountHint": "Le compte porte l’accès au back-office ; la fiche porte le planning.",
     "accountEmpty": "Aucun compte du personnel à rattacher. Un administrateur du salon doit d’abord inviter la personne.",
     "accountPlaceholder": "Choisissez un compte…",
     "accountOption": "{firstName} {lastName} — {role}",
@@ -247,5 +247,11 @@
     "chooseRole": "Choisissez un rôle du personnel.",
     "statusRequired": "Indiquez si le compte doit être actif.",
     "invalidTimeOff": "L’absence saisie est invalide."
+  },
+  "metadata": {
+    "list": "Personnel et horaires",
+    "member": "Fiche praticien",
+    "newMember": "Nouvelle fiche praticien",
+    "invite": "Inviter un membre"
   }
 }

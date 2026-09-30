@@ -3,22 +3,22 @@
     "pending": "To be confirmed",
     "confirmed": "Confirmed",
     "completed": "Completed",
-    "cancelled": "Cancelled",
-    "no_show": "No show"
+    "cancelled": "Canceled",
+    "no_show": "No-show"
   },
   "plural": {
     "pending": "To be confirmed",
     "confirmed": "Confirmed",
     "completed": "Completed",
-    "cancelled": "Cancelled",
-    "no_show": "No shows"
+    "cancelled": "Canceled",
+    "no_show": "No-shows"
   },
   "rescheduled": "Rescheduled",
   "pendingConfirmation": "Awaiting the salon’s confirmation",
   "unconfirmedPast": "Never confirmed",
   "cancelledBy": {
-    "you": "Cancelled by you",
-    "client": "Cancelled by the client",
-    "salon": "Cancelled by the salon"
+    "you": "Canceled by you",
+    "client": "Canceled by the client",
+    "salon": "Canceled by the salon"
   }
 }

@@ -18,7 +18,7 @@
     "addToCalendar": "Add to my calendar",
     "reschedule": "Reschedule",
     "pendingHold": "Your slot is held; there is nothing for you to do.",
-    "rescheduledNote": "This slot was released in favour of another appointment.",
+    "rescheduledNote": "This slot was released in favor of another appointment.",
     "empty": {
       "title": "No upcoming appointments",
       "action": "Book an appointment",
@@ -59,8 +59,8 @@
         "empty": "No completed visit in your history yet."
       },
       "annules": {
-        "label": "Cancelled",
-        "empty": "No cancelled appointment — all the better."
+        "label": "Canceled",
+        "empty": "No canceled appointment — all the better."
       }
     },
     "empty": {
@@ -137,7 +137,7 @@
     "confirm": "Cancel this appointment? The slot goes back on sale straight away.",
     "confirmAction": "Confirm cancellation",
     "keep": "Keep this appointment",
-    "loading": "Cancelling…",
+    "loading": "Canceling…",
     "failureTitle": "The cancellation did not go through"
   },
   "reschedule": {
@@ -158,13 +158,13 @@
   },
   "notFound": {
     "title": "This appointment is no longer available",
-    "lead": "It may have been cancelled, already moved, or taken place since. Your upcoming appointments are still in your account, and those can still be rescheduled.",
+    "lead": "It may have been canceled, already moved, or taken place since. Your upcoming appointments are still in your account, and those can still be rescheduled.",
     "back": "Back to my appointments"
   },
   "announcements": {
     "appointment-cancelled": {
-      "title": "Your appointment is cancelled",
-      "body": "The one on {when} is no longer in the salon’s diary: you will find it in the “History” tab."
+      "title": "Your appointment is canceled",
+      "body": "The one on {when} is no longer in the salon’s schedule: you will find it in the “History” tab."
     },
     "appointment-rescheduled": {
       "title": "Your appointment has moved",
@@ -175,8 +175,8 @@
       "body": "It now shows as confirmed under “Upcoming appointments”."
     },
     "salon-cancelled": {
-      "title": "The salon cancelled your appointment",
-      "body": "The one on {when} is no longer in the salon’s diary: you will find it in the “History” tab."
+      "title": "The salon canceled your appointment",
+      "body": "The one on {when} is no longer in the salon’s schedule: you will find it in the “History” tab."
     }
   },
   "pageError": {
@@ -196,5 +196,13 @@
     "invalidReschedule": "The reschedule request is incomplete.",
     "invalidLocale": "This language is not offered.",
     "sessionExpired": "Your session has expired. Sign in again to continue."
+  },
+  "metadata": {
+    "appointments": "Upcoming appointments",
+    "history": "History",
+    "login": "Sign in",
+    "register": "Create my account",
+    "profile": "My details",
+    "reschedule": "Reschedule my appointment"
   }
 }

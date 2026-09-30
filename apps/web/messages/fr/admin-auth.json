@@ -44,7 +44,8 @@
       "title": "Aucun écran du back-office pour ce compte",
       "closed": "Le back-office ne vous ouvre aucune section, et la session vient d’être refermée. Vos rendez-vous se consultent depuis votre espace client.",
       "stillOpen": "Le back-office ne vous ouvre aucune section. La session n’a pas pu être refermée : fermez cet onglet ou déconnectez-vous depuis votre espace client, où se consultent vos rendez-vous."
-    }
+    },
+    "metadataTitle": "Se connecter"
   },
   "invitation": {
     "headline": "Bienvenue dans votre back-office",
@@ -58,7 +59,7 @@
     "password": "Mot de passe",
     "passwordHint": "Douze caractères au minimum.",
     "confirmation": "Confirmez le mot de passe",
-    "mismatch": "les deux mots de passe ne correspondent pas",
+    "mismatch": "Les deux mots de passe ne correspondent pas.",
     "submit": "Activer mon compte",
     "submitting": "Activation en cours…",
     "missingToken": {
@@ -73,7 +74,8 @@
     },
     "failureTitle": "Activation impossible",
     "expiredLink": "Ce lien d’activation n’est plus valable : il a expiré, ou il a déjà servi. Demandez un nouveau lien à la personne qui vous l’a envoyé — ou, si votre compte est déjà activé, connectez-vous.",
-    "goToLogin": "Aller à la connexion"
+    "goToLogin": "Aller à la connexion",
+    "metadataTitle": "Activer mon compte"
   },
   "retry": {
     "label": "Réessayer",

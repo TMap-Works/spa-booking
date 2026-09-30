@@ -118,7 +118,7 @@
         "practitioner": "The practitioner of your choice, or the first one available",
         "noAccount": "An account created in seconds, then your booking",
         "history": "Your upcoming and past appointments, in your own area",
-        "reschedule": "Rescheduling or cancelling online, without a phone call",
+        "reschedule": "Rescheduling or canceling online, without a phone call",
         "link": "Find my salon"
       },
       "teams": {
@@ -137,7 +137,7 @@
       "title": "Book in three moves",
       "service": {
         "title": "Choose your service",
-        "text": "The salon's catalogue shows the duration and the price of every treatment."
+        "text": "The salon's catalog shows the duration and the price of every treatment."
       },
       "slot": {
         "title": "Choose your slot",
@@ -232,14 +232,14 @@
     },
     "catalog": {
       "title": "Our services",
-      "categoriesLabel": "Catalogue sections",
+      "categoriesLabel": "Catalog sections",
       "unclassified": "Other services",
       "durationLabel": "Duration:",
-      "staffLabel": "Practitioners:",
+      "staffLabel": "{count, plural, one {Practitioner:} other {Practitioners:}}",
       "unstaffed": "No practitioner — no slot bookable online",
       "priceLabel": "Price:",
       "choose": "Choose",
-      "emptyTitle": "Catalogue being prepared",
+      "emptyTitle": "Catalog being prepared",
       "emptyDescription": "This salon has not published its services online yet.",
       "emptyDescriptionWithContact": "This salon has not published its services online yet. Get in touch directly to find out what it offers."
     },
@@ -330,7 +330,7 @@
     },
     "serviceChoice": {
       "legend": "Service",
-      "tabsLabel": "Service categories",
+      "tabsLabel": "Service sections",
       "tabsMarked": "service selected",
       "durationPrefix": "Duration:",
       "pricePrefix": "Price:",
@@ -436,10 +436,10 @@
       "noteHint": "Allergy, preference, running late — optional.",
       "submit": "Review my booking",
       "errors": {
-        "required": "this field is required",
-        "tooLong": "this field is {max} characters at most",
-        "email": "invalid email address",
-        "invalid": "this value is not valid"
+        "required": "This field is required.",
+        "tooLong": "This field is {max} characters at most.",
+        "email": "Enter a valid email address.",
+        "invalid": "This value is not valid."
       }
     },
     "consent": {
@@ -456,7 +456,7 @@
       "purposes": {
         "identity": {
           "data": "First and last name",
-          "why": "identify your appointment at the salon. Required: without them, there is no booking to honour."
+          "why": "identify your appointment at the salon. Required: without them, there is no booking to honor."
         },
         "email": {
           "data": "Email address",
@@ -479,7 +479,7 @@
         }
       },
       "rights": "The salon keeps this data for as long as it follows up with its clients. You can view it, correct it or ask for its deletion at any time, from your account or by writing to the salon.",
-      "error": "tick this box to continue: without your consent, we cannot process your data"
+      "error": "Tick this box to continue: without your consent, we cannot process your data."
     },
     "gateStep": {
       "title": "Sign in",
@@ -515,19 +515,19 @@
     "confirmationStep": {
       "label": "Your booking confirmation",
       "snapshotTitle": "Your latest booking in this tab",
-      "snapshotBody": "This summary dates from the moment you booked: it has not been checked since. A reschedule or a cancellation made elsewhere does not show up here — the salon's diary is what counts.",
-      "cancelledTitle": "Your appointment is cancelled",
-      "cancelledLine": "It is no longer in the salon's diary. You can book a new one whenever you like.",
+      "snapshotBody": "This summary dates from the moment you booked: it has not been checked since. A reschedule or a cancellation made elsewhere does not show up here — the salon's schedule is what counts.",
+      "cancelledTitle": "Your appointment is canceled",
+      "cancelledLine": "It is no longer in the salon's schedule. You can book a new one whenever you like.",
       "pendingTitle": "Request sent",
       "pendingLine": "{confirmation}. {hold}",
       "pendingHold": "Your slot is held; there is nothing for you to do.",
       "bookedTitle": "You're booked!",
       "bookedLine": "The salon has confirmed your appointment.",
       "reference": "Ref.",
-      "sent": "A summary email is on its way to <address>{email}</address>, and a second one once the salon has confirmed. With a client account at {salon}, this appointment appears in your space, where it can be rescheduled and cancelled.",
+      "sent": "A summary email is on its way to <address>{email}</address>, and a second one once the salon has confirmed. With a client account at {salon}, this appointment appears in your space, where it can be rescheduled and canceled.",
       "cancelFailedTitle": "The cancellation did not go through",
       "confirmCancel": "Confirm cancellation",
-      "cancelling": "Cancelling…",
+      "cancelling": "Canceling…",
       "keep": "Keep my appointment",
       "addToCalendar": "Add to my calendar",
       "myAppointments": "See my appointments",
@@ -575,7 +575,7 @@
     },
     "recipients": {
       "title": "Who else sees it",
-      "team": "<strong>The salon team</strong> — the people who keep the diary and run the counter.",
+      "team": "<strong>The salon team</strong> — the people who keep the schedule and run the counter.",
       "senders": "<strong>The sending services</strong> — an email provider and an SMS provider, which receive your address or your number for as long as it takes to deliver the message, and nothing else.",
       "paymentProvider": "<strong>The payment provider</strong> — if you pay online. Your card details are entered with them and <strong>never reach our servers</strong>: we keep nothing but an opaque reference, which allows neither replaying a payment nor reconstructing a number.",
       "noSale": "No data is sold, exchanged or passed on to a third party for commercial purposes."

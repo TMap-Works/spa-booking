@@ -22,7 +22,8 @@
     "title": "Mon compte",
     "greeting": "Bonjour {firstName}",
     "signOut": "Se déconnecter",
-    "signingOut": "Déconnexion en cours…"
+    "signingOut": "Déconnexion en cours…",
+    "metadataTemplate": "%s · Mon compte"
   },
   "admin": {
     "metadataTitle": "Back-office",
@@ -37,7 +38,7 @@
       "subscriptionPastDue": "Paiement à régulariser"
     },
     "rail": {
-      "label": "Sections du tableau de bord",
+      "label": "Sections du back-office",
       "caption": "Back-office",
       "groups": {
         "daily": "Au quotidien",
@@ -68,6 +69,7 @@
       "signedInAs": "Connecté·e :",
       "signOut": "Se déconnecter",
       "signingOut": "Déconnexion en cours…"
-    }
+    },
+    "metadataTemplate": "%s · Back-office"
   }
 }

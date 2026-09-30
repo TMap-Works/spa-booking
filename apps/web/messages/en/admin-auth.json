@@ -2,7 +2,7 @@
   "platformHome": "{platform} home",
   "login": {
     "headline": "Your salon's back office",
-    "lead": "Your whole day in one place: schedule, clients, till and activity.",
+    "lead": "Your whole day in one place: schedule, clients, register and activity.",
     "highlights": {
       "calendar": "The schedule for the day and the week",
       "users": "Client records and the salon team",
@@ -44,7 +44,8 @@
       "title": "No back-office screen for this account",
       "closed": "The back office opens no section for you, and the session has just been closed. Your appointments are available from your client area.",
       "stillOpen": "The back office opens no section for you. The session could not be closed: close this tab, or sign out from your client area, where your appointments are available."
-    }
+    },
+    "metadataTitle": "Sign in"
   },
   "invitation": {
     "headline": "Welcome to your back office",
@@ -58,7 +59,7 @@
     "password": "Password",
     "passwordHint": "Twelve characters minimum.",
     "confirmation": "Confirm the password",
-    "mismatch": "the two passwords do not match",
+    "mismatch": "The two passwords do not match.",
     "submit": "Activate my account",
     "submitting": "Activating…",
     "missingToken": {
@@ -68,12 +69,13 @@
       "hint": "Paste the link you received in full, or just the code it contains. Line breaks added by your messaging app do not matter.",
       "submit": "Continue",
       "invalid": "This link or code cannot be read. Copy it again from the message you received, in full.",
-      "acceptedTitle": "Activation code recognised",
+      "acceptedTitle": "Activation code recognized",
       "acceptedBody": "Now choose your password."
     },
     "failureTitle": "Activation failed",
     "expiredLink": "This activation link is no longer valid: it has expired, or it has already been used. Ask for a new link from the person who sent it to you — or, if your account is already active, sign in.",
-    "goToLogin": "Go to sign-in"
+    "goToLogin": "Go to sign-in",
+    "metadataTitle": "Activate my account"
   },
   "retry": {
     "label": "Try again",

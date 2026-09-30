@@ -20,7 +20,7 @@
   },
   "practitioners": {
     "title": "Practitioners — {count}",
-    "hint": "The records that carry an agenda. Open one to enter its recurring hours, its time off and the services it performs.",
+    "hint": "The records that carry a schedule. Open one to enter its recurring hours, its time off and the services it performs.",
     "emptyTitle": "No practitioner registered",
     "emptyDescriptionManager": "As long as nobody is registered, the booking journey offers no slot at all. Create a practitioner record from a staff account to make that person bookable.",
     "emptyDescriptionReader": "As long as nobody is registered, the booking journey offers no slot at all. A manager or an administrator can create a practitioner record from a staff account.",
@@ -30,13 +30,13 @@
   },
   "accounts": {
     "title": "Accounts — {count}",
-    "hint": "The identities that sign in to the back office, with their role. An account is not a practitioner record: it carries the access, not the agenda.",
+    "hint": "The identities that sign in to the back office, with their role. An account is not a practitioner record: it carries the access, not the schedule.",
     "emptyTitle": "No staff account",
     "emptyDescriptionAdmin": "Invite at least one person so the salon can be run by more than one pair of hands.",
     "emptyDescriptionReader": "A salon administrator can invite the people who will run it with you.",
     "caption": "Staff accounts of the establishment, with their role and the state of their access.",
     "name": "Name",
-    "email": "Address",
+    "email": "Email address",
     "phone": "Phone",
     "role": "Role",
     "state": "State",
@@ -93,12 +93,12 @@
     "screenTitle": "Create a practitioner record",
     "deniedTitle": "Restricted access",
     "deniedBody": "Creating a practitioner record is reserved for the manager rank. The staff list stays readable, and a salon manager or administrator can create the record for you. <link>Back to staff</link>.",
-    "hint": "Attach a staff account to an agenda. Until a person has their record, no service can be assigned to them and the booking journey offers no slot.",
+    "hint": "Attach a staff account to a schedule. Until a person has their record, no service can be assigned to them and the booking journey offers no slot.",
     "failureTitle": "Cannot create",
     "createdTitle": "Record created",
     "createdBody": "{name} now appears among the practitioners. Open the record to enter their hours, their time off and the services they perform.",
     "accountLabel": "Account to make bookable",
-    "accountHint": "The account carries the back-office access; the record carries the agenda.",
+    "accountHint": "The account carries the back-office access; the record carries the schedule.",
     "accountEmpty": "No staff account to attach. A salon administrator must invite the person first.",
     "accountPlaceholder": "Choose an account…",
     "accountOption": "{firstName} {lastName} — {role}",
@@ -228,7 +228,7 @@
     "hint": "A service no practitioner performs produces no slot at all, whatever the hours entered.",
     "failureTitle": "Cannot assign",
     "conflict": "This service is already assigned to them.",
-    "emptyTitle": "Empty catalogue",
+    "emptyTitle": "Empty catalog",
     "emptyDescription": "Create at least one service before you can assign it to this practitioner.",
     "disabled": "Disabled",
     "assigned": "Assigned",
@@ -247,5 +247,11 @@
     "chooseRole": "Choose a staff role.",
     "statusRequired": "Say whether the account should be active.",
     "invalidTimeOff": "The time off entered is invalid."
+  },
+  "metadata": {
+    "list": "Staff and hours",
+    "member": "Practitioner record",
+    "newMember": "New practitioner record",
+    "invite": "Invite a staff member"
   }
 }
