@@ -234,14 +234,47 @@ export async function reserverParLeTunnel(
     });
     await expect(bande).toBeVisible({ timeout: 20_000 });
 
-    // Les journées pleines, hors fenêtre ou encore en chargement portent
-    // `aria-disabled` (`components/booking/date-band.tsx`). C'est ce qui les
-    // écarte ici — et non plus le décompte en toutes lettres qui fermait leur
-    // nom accessible : ce décompte est une forme plurielle du catalogue, donc
-    // une chaîne différente dans chaque langue, là où l'attribut est le même.
-    const jourOuvert = bande.locator('button:not([aria-disabled="true"])').first();
-    await expect(jourOuvert).toBeVisible({ timeout: 20_000 });
-    await jourOuvert.click();
+    // La journée qu'on retient doit avoir des créneaux à montrer, et la bande le
+    // dit elle-même : la cellule porte `data-state` (`date-band.tsx`), dont seul
+    // « libre » promet une grille d'heures non vide. C'est l'attribut et non le
+    // décompte en toutes lettres qui fermait leur nom accessible : ce décompte
+    // est une forme plurielle du catalogue, donc une chaîne différente dans
+    // chaque langue, là où l'attribut est le même.
+    //
+    // `aria-disabled` ne suffisait pas, et la remarque qui tenait ici affirmait
+    // l'inverse du code : `isSelectableState` retient aussi « chargement »
+    // (`lib/booking/day-state.ts`), donc une journée dont les décomptes ne sont
+    // pas arrivés n'est **pas** désactivée. La scène cliquait la première
+    // journée non désactivée avant que la bande se prononce, puis attendait
+    // trente secondes des créneaux qui n'existeraient jamais (#1381).
+    const jourLibre = bande.locator('[data-state="libre"] button').first();
+
+    // Et la bande ne montre que les journées du mois chargé, rognées aux bornes
+    // réservables (`lib/booking/day-band.ts`, `bandDates`) : le dernier jour du
+    // mois elle n'en tient qu'une, et passé l'heure du dernier créneau cette
+    // journée est complète. Il n'y a alors rien à retenir, et l'on franchit le
+    // mois par le chevron — le geste qu'un client ferait, celui que `step(1)`
+    // sert (#1084). Deux franchissements suffisent : le jeu d'essai ouvre les
+    // journées à venir, la première du mois suivant en a toujours.
+    const joursSuivants = etape.getByRole('button', {
+      name: libelle(langue, 'booking.tunnel.dateBand.nextDays'),
+    });
+
+    for (let franchissements = 0; franchissements < 2; franchissements += 1) {
+      const trouvee = await jourLibre
+        .waitFor({ state: 'visible', timeout: 15_000 })
+        .then(() => true)
+        .catch(() => false);
+
+      if (trouvee) {
+        break;
+      }
+
+      await joursSuivants.click();
+    }
+
+    await expect(jourLibre).toBeVisible({ timeout: 20_000 });
+    await jourLibre.click();
 
     // La grille d'heures, elle, se nomme par la journée qu'elle détaille : seule
     // sa tête est un libellé, la date qui suit vient d'`Intl`.
