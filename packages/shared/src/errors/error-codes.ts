@@ -752,7 +752,18 @@ export const WEB_ACTION_ERROR_CODES = {
    *
    * Ses émetteurs sont les modules d'actions serveur d'`apps/web` qui jugent ce
    * slug : le planning et le comptoir depuis #1372, puis le catalogue, les
-   * fiches clientes, le personnel, le reporting et l'espace client depuis #1375.
+   * fiches clientes, le personnel, le reporting et l'espace client depuis #1375,
+   * et depuis #1379 les deux derniers — les actions transverses du back-office
+   * (`admin/actions.ts` : connexion, déconnexion, réglages de l'établissement,
+   * pages hébergées de l'abonnement, acceptation d'invitation) et la langue du
+   * compte connecté (`admin/reglages/actions.ts`). La liste est donc **close pour
+   * les surfaces authentifiées** : plus aucun module d'actions du back-office ni
+   * de l'espace client ne juge ce slug autrement. Reste hors de cette liste le
+   * tunnel public de réservation
+   * (`app/(booking)/[tenantSlug]/reservation/actions.ts`,
+   * `loadAvailabilityAction`), qui juge encore le slug du même `if` que sa charge
+   * utile et rend `VALIDATION_ERROR` avec une phrase écrite à lui — le dire vaut
+   * mieux que de laisser croire au compte rond.
    * Ils sont nommés parce que l'invariant de ce fichier l'exige — « tout code de
    * ce fichier a un émetteur nommé » —, et ils le restent : ce code ne vaut que
    * pour le refus rendu par le front, jamais pour une réponse de l'API.
