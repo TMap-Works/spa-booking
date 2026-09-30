@@ -242,7 +242,9 @@ describe('une journée de fermeture est un état, pas quatre champs vides (#764)
     await user.click(screen.getByRole('button', { name: 'Enregistrer' }));
 
     expect(
-      await screen.findByText('renseignez une plage, ou décochez « Ouvert » pour fermer la journée'),
+      await screen.findByText(
+        'Renseignez une plage, ou décochez « Ouvert » pour fermer la journée.',
+      ),
     ).toBeDefined();
     expect(updateTenantSettingsAction).not.toHaveBeenCalled();
   });

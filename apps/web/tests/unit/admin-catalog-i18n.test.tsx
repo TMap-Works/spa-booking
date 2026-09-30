@@ -279,8 +279,8 @@ describe('le formulaire de prestation, rendu en anglais', () => {
   });
 
   /**
-   * Les deux refus que le **contrat partagé** écrit lui-même — « ce champ est
-   * obligatoire », « Adresse attendue en minuscules… » (#1356).
+   * Les deux refus que le **contrat partagé** écrit lui-même — « Ce champ est
+   * obligatoire. », « Adresse attendue en minuscules… » (#1356).
    *
    * `zodErrorMap` ne les traduit pas, par conception (`zod-messages.ts`) : ils
    * s'affichaient en français sous un formulaire anglais, constat fait au
@@ -295,8 +295,8 @@ describe('le formulaire de prestation, rendu en anglais', () => {
     await user.type(screen.getByLabelText(/Price \(EUR\)/), '20');
     await user.click(screen.getByRole('button', { name: 'Create the service' }));
 
-    expect(await screen.findByText('this field is required')).toBeDefined();
-    expect(screen.queryByText('ce champ est obligatoire')).toBeNull();
+    expect(await screen.findByText('This field is required.')).toBeDefined();
+    expect(screen.queryByText('Ce champ est obligatoire.')).toBeNull();
     expect(createServiceAction).not.toHaveBeenCalled();
   });
 
@@ -313,7 +313,7 @@ describe('le formulaire de prestation, rendu en anglais', () => {
 
     expect(
       await screen.findByText(
-        'an address in lowercase letters, digits and single hyphens is expected',
+        'An address in lowercase letters, digits and single hyphens is expected.',
       ),
     ).toBeDefined();
     expect(screen.queryByText(/Adresse attendue en minuscules/)).toBeNull();
@@ -337,11 +337,11 @@ describe('le formulaire de prestation, rendu en anglais', () => {
     await user.click(screen.getByRole('button', { name: 'Create the service' }));
 
     expect(
-      await screen.findByText('this name is reserved by the platform — choose another one'),
+      await screen.findByText('This name is reserved by the platform — choose another one.'),
     ).toBeDefined();
     expect(
       screen.queryByText(
-        'an address in lowercase letters, digits and single hyphens is expected',
+        'An address in lowercase letters, digits and single hyphens is expected.',
       ),
     ).toBeNull();
     expect(createServiceAction).not.toHaveBeenCalled();
@@ -357,7 +357,7 @@ describe('le formulaire de prestation, rendu en anglais', () => {
     await user.type(screen.getByLabelText(/Public address/), 'a'.repeat(64));
     await user.click(screen.getByRole('button', { name: 'Create the service' }));
 
-    expect(await screen.findByText('this address is 63 characters at most')).toBeDefined();
+    expect(await screen.findByText('This address is 63 characters at most.')).toBeDefined();
     // Le message par défaut de zod, en anglais brut, ne doit plus remonter.
     expect(screen.queryByText(/String must contain at most/)).toBeNull();
     expect(createServiceAction).not.toHaveBeenCalled();
@@ -391,7 +391,7 @@ describe('le formulaire de prestation, rendu en anglais', () => {
     await user.type(screen.getByLabelText(/Price \(EUR\)/), '20');
     await user.click(screen.getByRole('button', { name: 'Create the service' }));
 
-    expect(await screen.findByText('a duration must be strictly positive')).toBeDefined();
+    expect(await screen.findByText('A duration must be strictly positive.')).toBeDefined();
     expect(createServiceAction).not.toHaveBeenCalled();
   });
 
@@ -519,9 +519,11 @@ describe('les rubriques, rendues en anglais', () => {
     await user.type(screen.getByLabelText(/Public address/), 'Pas Un Slug!');
     await user.click(screen.getByRole('button', { name: 'Create the section' }));
 
-    expect(await screen.findByText('this field is required')).toBeDefined();
+    expect(await screen.findByText('This field is required.')).toBeDefined();
     expect(
-      screen.getByText('an address in lowercase letters, digits and single hyphens is expected'),
+      screen.getByText(
+        'An address in lowercase letters, digits and single hyphens is expected.',
+      ),
     ).toBeDefined();
     expect(createServiceCategoryAction).not.toHaveBeenCalled();
   });
