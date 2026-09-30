@@ -12,10 +12,13 @@ import {
   COUNTER_MEANS,
   checkoutBlocker,
   checkoutFailureMessage,
+  checkoutWords,
   firstSettlementCeiling,
   isAlreadySettledRefusal,
+  isMalformedTerminalReference,
   isSettleable,
   isSettled,
+  isTerminalReferenceRefusal,
   meanHint,
   methodOfMean,
   methodPhrase,
@@ -24,8 +27,6 @@ import {
   settlementBadge,
   settlementOf,
   terminalReferenceField,
-  terminalReferenceIssue,
-  terminalReferenceRefusal,
 } from '@/lib/admin/checkout-summary';
 import type { PaymentTransaction, SaleSummary } from '@/lib/admin/payment-contract';
 
@@ -462,27 +463,40 @@ describe('ce que l’écran dit du moyen choisi', () => {
   });
 });
 
+/*
+ * Les deux suites ci-dessous éprouvent les **verdicts** et non plus leur
+ * composition avec une phrase — #1367.
+ *
+ * `terminalReferenceIssue` et `terminalReferenceRefusal` n'avaient plus d'appelant
+ * hors d'ici depuis #1354 : le panneau range un motif et lit sa phrase au
+ * catalogue par `useTranslations`. Elles ont été retirées, et ce sont
+ * `isMalformedTerminalReference` et `isTerminalReferenceRefusal` — celles que le
+ * panneau appelle réellement — qui portent désormais les mêmes cas, à la lettre.
+ * La polarité s'inverse : `true` veut dire « refusé » là où `null` voulait dire
+ * « recevable ».
+ */
+
 describe('le numéro du ticket du terminal', () => {
   it('accepte l’absence — le caissier n’a pas toujours le ticket sous la main', () => {
-    expect(terminalReferenceIssue('')).toBeNull();
-    expect(terminalReferenceIssue('   ')).toBeNull();
+    expect(isMalformedTerminalReference('')).toBe(false);
+    expect(isMalformedTerminalReference('   ')).toBe(false);
     expect(terminalReferenceField('')).toEqual({});
     expect(terminalReferenceField('  ')).toEqual({});
   });
 
   it('accepte une référence alphanumérique et la transmet sans espaces', () => {
-    expect(terminalReferenceIssue('A1B2C3')).toBeNull();
+    expect(isMalformedTerminalReference('A1B2C3')).toBe(false);
     expect(terminalReferenceField(' A1B2C3 ')).toEqual({ terminalReference: 'A1B2C3' });
   });
 
   it('refuse les séparateurs — ce sont eux qui déguisent un numéro de carte', () => {
-    expect(terminalReferenceIssue('4242 4242 4242 4242')).not.toBeNull();
-    expect(terminalReferenceIssue('4242-4242-4242-4242')).not.toBeNull();
+    expect(isMalformedTerminalReference('4242 4242 4242 4242')).toBe(true);
+    expect(isMalformedTerminalReference('4242-4242-4242-4242')).toBe(true);
   });
 
   it('refuse au-delà de 32 caractères, la borne de la colonne', () => {
-    expect(terminalReferenceIssue('A'.repeat(32))).toBeNull();
-    expect(terminalReferenceIssue('A'.repeat(33))).not.toBeNull();
+    expect(isMalformedTerminalReference('A'.repeat(32))).toBe(false);
+    expect(isMalformedTerminalReference('A'.repeat(33))).toBe(true);
   });
 
   it('laisse passer ce que seule l’API sait refuser', () => {
@@ -491,7 +505,15 @@ describe('le numéro du ticket du terminal', () => {
     // écart est délibéré : le contrôle de conformité ne vit qu'à un endroit
     // (`payments/terminal-reference.ts`), et c'est ce qui rend le chemin
     // ci-dessous nécessaire.
-    expect(terminalReferenceIssue('4242424242424242')).toBeNull();
+    expect(isMalformedTerminalReference('4242424242424242')).toBe(false);
+  });
+
+  it('nomme sa phrase dans les deux langues du comptoir', () => {
+    // La phrase n'est plus composée par ce module — le panneau la lit au
+    // catalogue —, mais les deux langues doivent la porter : c'est ce que
+    // `faultMessage` affiche sous le champ.
+    expect(checkoutWords(FR).terminal.referenceInvalid).toMatch(/32 caractères/i);
+    expect(checkoutWords('en').terminal.referenceInvalid).toMatch(/32 alphanumeric characters/i);
   });
 });
 
@@ -503,18 +525,20 @@ describe('le refus que l’API oppose à la référence — #1025, critère 3', 
     ],
   };
 
-  it('reconnaît le 400 qui nomme le champ, et rend la phrase du catalogue', () => {
-    const refused = terminalReferenceRefusal(ERROR_CODES.VALIDATION_ERROR, violations, FR);
-
-    expect(refused).not.toBeNull();
-    expect(refused).toMatch(/numéro de ticket TPE a été refusé/i);
-    // Jamais le message de l'API : il n'est traduit nulle part, et « La
-    // requête est invalide. » n'apprend rien au comptoir (web-frontend §2).
-    expect(refused).not.toMatch(/requête est invalide/i);
+  it('reconnaît le 400 qui nomme le champ', () => {
+    expect(isTerminalReferenceRefusal(ERROR_CODES.VALIDATION_ERROR, violations)).toBe(true);
   });
 
-  it('parle les deux langues de l’écran', () => {
-    expect(terminalReferenceRefusal(ERROR_CODES.VALIDATION_ERROR, violations, 'en')).toMatch(
+  it('a sa phrase dans les deux langues, et jamais celle de l’API', () => {
+    // Jamais le message de l'API : il n'est traduit nulle part, et « La
+    // requête est invalide. » n'apprend rien au comptoir (web-frontend §2).
+    expect(checkoutWords(FR).failure.terminalReferenceRefused).toMatch(
+      /numéro de ticket TPE a été refusé/i,
+    );
+    expect(checkoutWords(FR).failure.terminalReferenceRefused).not.toMatch(
+      /requête est invalide/i,
+    );
+    expect(checkoutWords('en').failure.terminalReferenceRefused).toMatch(
       /terminal receipt number was refused/i,
     );
   });
@@ -523,27 +547,29 @@ describe('le refus que l’API oppose à la référence — #1025, critère 3', 
     // `ApiClientError` ne compose `HTTP_<statut>` que sur la branche sans
     // `details` : un 400 dont le corps est au contrat garde son vrai code. Lire
     // ce repli ici serait une garde qui ne peut pas se déclencher.
-    expect(terminalReferenceRefusal('HTTP_400', violations)).toBeNull();
+    expect(isTerminalReferenceRefusal('HTTP_400', violations)).toBe(false);
   });
 
   it('laisse au bloc tout refus qui ne parle pas de ce champ', () => {
     // Un 400 sans violation nommée, ou qui en nomme une autre, doit rester
     // visible : posé sur un champ sans rapport, il disparaîtrait de l'écran.
-    expect(terminalReferenceRefusal(ERROR_CODES.VALIDATION_ERROR, undefined)).toBeNull();
-    expect(terminalReferenceRefusal(ERROR_CODES.VALIDATION_ERROR, {})).toBeNull();
+    expect(isTerminalReferenceRefusal(ERROR_CODES.VALIDATION_ERROR, undefined)).toBe(false);
+    expect(isTerminalReferenceRefusal(ERROR_CODES.VALIDATION_ERROR, {})).toBe(false);
+    expect(isTerminalReferenceRefusal(ERROR_CODES.VALIDATION_ERROR, { violations: [] })).toBe(
+      false,
+    );
     expect(
-      terminalReferenceRefusal(ERROR_CODES.VALIDATION_ERROR, { violations: [] }),
-    ).toBeNull();
-    expect(
-      terminalReferenceRefusal(ERROR_CODES.VALIDATION_ERROR, {
+      isTerminalReferenceRefusal(ERROR_CODES.VALIDATION_ERROR, {
         violations: ['amountMinor : entier attendu'],
       }),
-    ).toBeNull();
+    ).toBe(false);
     // Une forme inattendue ne fait pas tomber l'écran : `violations` est du
     // corps d'erreur, et rien ne garantit son type côté front.
     expect(
-      terminalReferenceRefusal(ERROR_CODES.VALIDATION_ERROR, { violations: 'terminalReference' }),
-    ).toBeNull();
+      isTerminalReferenceRefusal(ERROR_CODES.VALIDATION_ERROR, {
+        violations: 'terminalReference',
+      }),
+    ).toBe(false);
   });
 
   it('ne détourne aucun autre refus vers le champ', () => {
@@ -551,9 +577,9 @@ describe('le refus que l’API oppose à la référence — #1025, critère 3', 
     // sous un champ de saisie laisserait le bouton actif sur un règlement qui
     // ne peut qu'échouer.
     expect(
-      terminalReferenceRefusal(PAYMENT_ERROR_CODES.SALE_ALREADY_SETTLED, violations),
-    ).toBeNull();
-    expect(terminalReferenceRefusal(ERROR_CODES.NOT_FOUND, violations)).toBeNull();
+      isTerminalReferenceRefusal(PAYMENT_ERROR_CODES.SALE_ALREADY_SETTLED, violations),
+    ).toBe(false);
+    expect(isTerminalReferenceRefusal(ERROR_CODES.NOT_FOUND, violations)).toBe(false);
   });
 });
 
