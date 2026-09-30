@@ -1,6 +1,5 @@
 import type {
   Appointment,
-  Locale,
   PublicTenant,
   Service,
   StaffMember,
@@ -8,7 +7,7 @@ import type {
   StaffTimeOff,
 } from '@spa/shared';
 import type { Metadata } from 'next';
-import { getLocale, getTranslations } from 'next-intl/server';
+import { getTranslations } from 'next-intl/server';
 import { redirect } from 'next/navigation';
 
 import {
@@ -20,7 +19,6 @@ import {
   fetchStaffSchedule,
   fetchStaffTimeOff,
 } from '@/lib/api-client';
-import { calendarApiFailureMessage } from '@/lib/admin/calendar-failure';
 import { calendarTimeOffWindow } from '@/lib/admin/calendar-time-off';
 import {
   anchorOf,
@@ -175,7 +173,6 @@ export default async function CalendarPage({ params, searchParams }: CalendarPag
   const { tenantSlug } = await params;
   const query = await searchParams;
   const t = await getTranslations('admin-planning');
-  const locale = await getLocale();
 
   // La vue et la date sont lues **avant** la garde : elles ne demandent aucun
   // jeton, et c'est ce qui permet de dire à la garde où revenir après un
@@ -320,7 +317,16 @@ export default async function CalendarPage({ params, searchParams }: CalendarPag
 
   const periods: Record<string, readonly Appointment[]> = {};
   const timeOffPeriods: Record<string, readonly StaffTimeOff[]> = {};
-  let loadError: string | null = null;
+  /**
+   * Le **code** du refus qui a fait échouer la période ouverte — #1354.
+   *
+   * La page passait la phrase, et le planning la rangeait dans son état : elle
+   * restait alors écrite dans la langue de ce rendu-là quand le sélecteur de
+   * langue rejouait la route sans navigation. C'est donc le code qui traverse, et
+   * `CalendarBoard` en tire la phrase à chaque rendu — par le même module, pour
+   * que les deux chemins continuent de dire exactement la même chose.
+   */
+  let loadErrorCode: string | null = null;
 
   for (const result of loaded) {
     if ('appointments' in result) {
@@ -347,7 +353,7 @@ export default async function CalendarPage({ params, searchParams }: CalendarPag
     // L'échec d'un **préchargement** ne se montre pas : personne ne l'a demandé,
     // et la période affichée est intacte. Seul celui de la période ouverte parle.
     if (result.key === rangeKey(view, anchor, weekStart)) {
-      loadError = describeLoadFailure(result.error, locale);
+      loadErrorCode = loadFailureCode(result.error);
     }
   }
 
@@ -362,7 +368,7 @@ export default async function CalendarPage({ params, searchParams }: CalendarPag
         date={anchor}
         initialPeriods={periods}
         initialTimeOff={timeOffPeriods}
-        loadError={loadError}
+        loadErrorCode={loadErrorCode}
         openingHours={tenant.openingHours ?? []}
         services={services}
         setupKnown={setupKnown}
@@ -377,25 +383,27 @@ export default async function CalendarPage({ params, searchParams }: CalendarPag
 }
 
 /**
- * Ce qu'on affiche quand le chargement des rendez-vous échoue.
+ * Le code du refus qui a fait échouer le chargement des rendez-vous.
  *
- * La traduction elle-même vit dans `lib/admin/calendar-failure.ts`, parce que
- * les navigations suivantes échouent par l'action serveur et doivent dire
- * exactement la même chose.
+ * La traduction vit dans `lib/admin/calendar-failure.ts`, parce que les
+ * navigations suivantes échouent par l'action serveur et doivent dire exactement
+ * la même chose. Ce chemin-ci n'a que le corps d'erreur de l'API, dont le
+ * `message` est écrit en français pour le journal : la phrase se tire du
+ * **code** (#1298), et le `message` de l'API ne traverse plus cette frontière —
+ * c'est lui qui repassait un planning anglais au français au premier refus.
  *
- * Ce chemin-ci n'a que le corps d'erreur de l'API, dont le `message` est écrit
- * en français pour le journal : la phrase se tire donc du **code**, par
- * `calendarApiFailureMessage` (#1298). Le `message` de l'API ne traverse plus
- * cette frontière — c'est lui qui repassait un planning anglais au français au
- * premier refus.
+ * Depuis #1354, la page ne l'écrit plus elle-même : elle rend le code, et c'est
+ * `CalendarBoard` qui appelle `calendarApiFailureMessage` à chaque rendu. La
+ * phrase passée en propriété atterrissait dans son état, où le sélecteur de
+ * langue ne pouvait plus la réécrire.
  *
  * Ce qui n'est pas une erreur d'API est **relancé** : une panne de rendu n'est
  * pas un refus métier, et l'avaler la ferait passer pour un agenda vide.
  */
-function describeLoadFailure(error: unknown, locale: Locale): string {
+function loadFailureCode(error: unknown): string {
   if (!(error instanceof ApiClientError)) {
     throw error;
   }
 
-  return calendarApiFailureMessage(error.code, locale);
+  return error.code;
 }

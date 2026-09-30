@@ -13,6 +13,8 @@ import { Select } from '@/components/ui/select';
 import { TextArea } from '@/components/ui/textarea';
 import { suggestedStaffDisplayName } from '@/lib/admin/staff-directory';
 import type { StaffAccount } from '@/lib/admin/staff-contract';
+import { fieldRefusalMessage, type FieldRefusal } from '@/lib/field-refusal';
+import { refusalMessage } from '@/lib/refusal';
 
 import { roleLabel } from '../../components/navigation';
 import { createStaffMemberAction } from '../actions';
@@ -78,35 +80,57 @@ const MEMBER_FIELDS = ['userId', 'displayName', 'bio'] as const satisfies readon
 type AucunChampOublie<T extends never> = T;
 type _ChampsCouverts = AucunChampOublie<Exclude<MemberField, (typeof MEMBER_FIELDS)[number]>>;
 
-type MemberFieldErrors = Partial<Record<MemberField, string>>;
+/**
+ * Ce que porte chaque champ fautif — un **motif**, jamais sa phrase (#1354).
+ *
+ * Ce formulaire n'emploie pas `react-hook-form` : il `safeParse` lui-même à la
+ * soumission et rangeait les phrases écrites par `zodErrorMap(locale)` au moment
+ * du parse. Le sélecteur de langue rejoue la route sans démonter ce composant, si
+ * bien qu'elles restaient dans la langue d'avant sous des étiquettes qui, elles,
+ * suivaient le rendu. Ce qui va en état est donc l'`issue` elle-même — des
+ * **données** —, ou la clé de catalogue quand l'écran dit mieux que le contrat.
+ * Même conduite que `staff-invite-form.tsx`.
+ */
+type MemberFieldErrors = Partial<Record<MemberField, FieldRefusal>>;
+
+/**
+ * Ce que le bandeau a à dire, gardé en **motif** — #1354.
+ *
+ * Il rangeait une phrase : celle du catalogue pour une saisie refusée, et le
+ * `message` rendu par l'action serveur — c'est-à-dire un texte écrit dans la
+ * langue de la requête. Voir `lib/refusal.ts`. Deux motifs, parce que les deux
+ * refus n'ont pas la même origine : la saisie refusée par le contrat avant tout
+ * appel, et le refus rendu par l'API.
+ */
+type MemberFailure = { readonly kind: 'invalid' } | { readonly kind: 'refusal'; readonly code: string };
 
 function isMemberField(value: unknown): value is MemberField {
   return typeof value === 'string' && (MEMBER_FIELDS as readonly string[]).includes(value);
 }
 
 /**
- * Range les erreurs d'une soumission : celles qui désignent un champ d'un côté,
- * le reste de l'autre. Un seul message par champ — le premier rencontré : empiler
- * « vide » et « trop court » sous le même contrôle n'apprend rien de plus.
+ * Range les refus d'une soumission par champ — **un seul par champ**, le premier
+ * rencontré : empiler « vide » et « trop court » sous le même contrôle n'apprend
+ * rien de plus.
+ *
+ * Ce qui ne désigne aucun champ n'est pas retenu ici, et le bouton ne reste pas
+ * muet pour autant : l'absence de toute marque de champ fait parler le bandeau
+ * générique du formulaire (`{ kind: 'invalid' }` chez l'appelant). C'est la seule
+ * réponse qui vaille pour ce refus-là — la phrase du contrat nomme une clé que
+ * personne n'a composée à la main.
  */
-function collectMemberErrors(issues: readonly ZodIssue[]): {
-  readonly fields: MemberFieldErrors;
-  readonly form: string | null;
-} {
+function collectMemberErrors(issues: readonly ZodIssue[]): MemberFieldErrors {
   const fields: MemberFieldErrors = {};
-  let form: string | null = null;
 
   for (const issue of issues) {
     const field = issue.path[0];
 
     if (isMemberField(field)) {
-      fields[field] ??= issue.message;
-    } else {
-      form ??= issue.message;
+      fields[field] ??= { kind: 'issue', issue };
     }
   }
 
-  return { fields, form };
+  return fields;
 }
 
 interface StaffMemberFormProps {
@@ -130,7 +154,7 @@ export function StaffMemberForm({ tenantSlug, accounts }: StaffMemberFormProps) 
   const [saving, setSaving] = useState(false);
   const [, startRefresh] = useTransition();
   const [fieldErrors, setFieldErrors] = useState<MemberFieldErrors>({});
-  const [formError, setFormError] = useState<string | null>(null);
+  const [formError, setFormError] = useState<MemberFailure | null>(null);
   const [created, setCreated] = useState<string | null>(null);
 
   function clearMark(field: MemberField): void {
@@ -179,7 +203,7 @@ export function StaffMemberForm({ tenantSlug, accounts }: StaffMemberFormProps) 
     );
 
     if (!parsed.success) {
-      const { fields } = collectMemberErrors(parsed.error.issues);
+      const fields = collectMemberErrors(parsed.error.issues);
 
       // La confirmation de la fiche précédente ne survit pas au refus de la
       // suivante : deux bandeaux contradictoires — « Fiche créée » en vert et
@@ -193,12 +217,14 @@ export function StaffMemberForm({ tenantSlug, accounts }: StaffMemberFormProps) 
         // sait pas qu'à l'écran ce champ est un sélecteur, et que la valeur
         // vide y est le choix par défaut. Afficher ce message sous une liste
         // déroulante ne s'adresse à personne.
-        ...(userId === '' ? { userId: t('member.accountRequired') } : {}),
+        ...(userId === ''
+          ? { userId: { kind: 'key', key: 'member.accountRequired' } as const }
+          : {}),
       });
       // Le refus du contrat se lit maintenant dans la langue de la page (#1232),
       // mais il reste rattaché à son champ : ce qui monte en bandeau, c'est la
       // phrase du catalogue, et seulement quand aucun champ n'a été nommé.
-      setFormError(Object.keys(fields).length === 0 ? t('member.invalid') : null);
+      setFormError(Object.keys(fields).length === 0 ? { kind: 'invalid' } : null);
       return;
     }
 
@@ -215,7 +241,10 @@ export function StaffMemberForm({ tenantSlug, accounts }: StaffMemberFormProps) 
       if (renewIfExpired(result)) {
         return;
       }
-      setFormError(result.message);
+      // Le code, pas la phrase (#1354) : c'est `refusalMessage` qui l'écrit au
+      // rendu, dans la langue lue. « Cette personne a déjà une fiche. » vient de
+      // la table du contrat partagé, celle-là même que l'action consultait.
+      setFormError({ kind: 'refusal', code: result.code });
       return;
     }
 
@@ -235,13 +264,22 @@ export function StaffMemberForm({ tenantSlug, accounts }: StaffMemberFormProps) 
   // écran, dont le `<h1>` porte exactement le libellé de l'action qui y mène —
   // « Créer une fiche praticien ». Le redire ici ferait deux titres pour une
   // seule chose, ce que /catalogue/nouveau ne fait pas non plus.
+  /** La phrase d'un refus de champ, dans la langue de ce rendu (#1354). */
+  const fieldMessage = (field: MemberField): string | undefined =>
+    fieldRefusalMessage(fieldErrors[field], locale, () => t('member.accountRequired'));
+
   return (
     <section className="spa-admin__section spa-admin-form">
       <p className="spa-admin-toolbar__hint">{t('member.hint')}</p>
 
       {formError === null ? null : (
         <Notification tone="danger" title={t('member.failureTitle')}>
-          <p>{formError}</p>
+          {/* La phrase est écrite ici, dans la langue de ce rendu (#1354). */}
+          <p>
+            {formError.kind === 'invalid'
+              ? t('member.invalid')
+              : refusalMessage(formError, locale)}
+          </p>
         </Notification>
       )}
 
@@ -252,7 +290,7 @@ export function StaffMemberForm({ tenantSlug, accounts }: StaffMemberFormProps) 
       )}
 
       <Select
-        error={fieldErrors.userId}
+        error={fieldMessage('userId')}
         emptyLabel={
           accounts.length === 0
             ? // Le geste nommé ici doit être celui que la personne qui lit peut
@@ -283,7 +321,7 @@ export function StaffMemberForm({ tenantSlug, accounts }: StaffMemberFormProps) 
 
       <Field
         disabled={accounts.length === 0}
-        error={fieldErrors.displayName}
+        error={fieldMessage('displayName')}
         hint={t('member.displayNameHint')}
         id="fiche-praticien-nom"
         label={t('member.displayName')}
@@ -298,7 +336,7 @@ export function StaffMemberForm({ tenantSlug, accounts }: StaffMemberFormProps) 
 
       <TextArea
         disabled={accounts.length === 0}
-        error={fieldErrors.bio}
+        error={fieldMessage('bio')}
         // Même formulation que sur la fiche (#771) : aucune surface publique ne
         // rend `bio` aujourd'hui, et deux écrans du même parcours ne peuvent pas
         // dire deux choses différentes du même champ.

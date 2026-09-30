@@ -7,7 +7,7 @@ import {
   type TimeZone,
   type UtcInstant,
 } from '@spa/shared';
-import { useTranslations } from 'next-intl';
+import { useLocale, useTranslations } from 'next-intl';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useRef, useState, useTransition } from 'react';
@@ -23,6 +23,7 @@ import {
   type CalendarMonth,
 } from '@/lib/booking/month-grid';
 import { formatDateTimeInTimeZone, timeZoneMention } from '@/lib/format';
+import { refusalMessage, type Refusal } from '@/lib/refusal';
 
 import { rescheduleOwnAppointmentAction } from '../actions';
 import { accountPath } from '../paths';
@@ -143,6 +144,22 @@ interface RescheduleFormProps {
   readonly monthHref: string;
 }
 
+/**
+ * Pourquoi le report a été refusé — un **motif**, jamais ses phrases (#1354).
+ *
+ * L'état rangeait le titre et le corps déjà écrits. Or le sélecteur de langue
+ * pose un cookie et laisse Next rejouer la route **sans navigation**
+ * (`i18n/actions.ts`) : ce formulaire se rendait à nouveau, son état ne bougeait
+ * pas, et l'avis restait entier dans la langue d'avant sous un écran qui, lui,
+ * avait basculé.
+ *
+ * Deux motifs, parce que les deux refus ne se disent pas de la même main : le
+ * créneau perdu a les deux phrases de cet écran — le contrat ne sait pas dire
+ * que le rendez-vous, lui, n'a pas bougé —, tout le reste a celle de son code
+ * dans la table du contrat partagé (`lib/refusal.ts`).
+ */
+type RescheduleFailure = { readonly kind: 'slotTaken' } | ({ readonly kind: 'refusal' } & Refusal);
+
 export function RescheduleForm({
   tenantSlug,
   appointmentId,
@@ -156,13 +173,15 @@ export function RescheduleForm({
   monthHref,
 }: RescheduleFormProps) {
   const t = useTranslations('account.reschedule');
+  /** La langue de ce rendu — celle dans laquelle un refus déjà affiché s'écrit (#1354). */
+  const locale = useLocale();
   const display = useAccountDisplay();
   const router = useRouter();
   const announce = useAccountAnnouncement();
   const { renewIfExpired } = useAccountSessionRenewal(tenantSlug);
   const [chosen, setChosen] = useState<UtcInstant | null>(null);
   const [submitting, setSubmitting] = useState(false);
-  const [failure, setFailure] = useState<{ title: string; message: string } | null>(null);
+  const [failure, setFailure] = useState<RescheduleFailure | null>(null);
   /**
    * Le changement de mois est en vol.
    *
@@ -303,7 +322,7 @@ export function RescheduleForm({
       }
 
       if (result.code === ERROR_CODES.SLOT_NO_LONGER_AVAILABLE) {
-        setFailure({ title: t('slotTakenTitle'), message: t('slotTakenBody') });
+        setFailure({ kind: 'slotTaken' });
         setChosen(null);
         setSubmitting(false);
         // Recharger la page serveur : c'est elle qui lit les créneaux.
@@ -311,7 +330,9 @@ export function RescheduleForm({
         return;
       }
 
-      setFailure({ title: t('failureTitle'), message: result.message });
+      // Le code, pas la phrase : les deux moitiés de l'avis s'écrivent au rendu
+      // (#1354).
+      setFailure({ kind: 'refusal', code: result.code });
       setSubmitting(false);
       return;
     }
@@ -328,6 +349,21 @@ export function RescheduleForm({
     router.replace(accountPath(tenantSlug));
     router.refresh();
   };
+
+  /**
+   * L'avis de refus, écrit **au rendu** dans la langue de ce rendu-là (#1354).
+   *
+   * Le titre et le corps sont calculés d'un seul geste : ils forment une seule
+   * annonce, et c'est de les avoir rangés écrits que l'un pouvait suivre la
+   * bascule sans l'autre. Ce qui reste en état est le motif — voir
+   * `RescheduleFailure`.
+   */
+  const announced =
+    failure === null
+      ? null
+      : failure.kind === 'slotTaken'
+        ? { title: t('slotTakenTitle'), message: t('slotTakenBody') }
+        : { title: t('failureTitle'), message: refusalMessage(failure, locale) };
 
   return (
     <section className="spa-account__panel" aria-labelledby="report-titre">
@@ -348,9 +384,9 @@ export function RescheduleForm({
         {mention === null ? null : <span className="spa-appointment__timezone"> ({mention})</span>}.
       </p>
 
-      {failure === null ? null : (
-        <Notification tone="warning" title={failure.title}>
-          <p>{failure.message}</p>
+      {announced === null ? null : (
+        <Notification tone="warning" title={announced.title}>
+          <p>{announced.message}</p>
         </Notification>
       )}
 

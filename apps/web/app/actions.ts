@@ -1,6 +1,5 @@
 'use server';
 
-import { getTranslations } from 'next-intl/server';
 import { redirect } from 'next/navigation';
 
 import { salonSlugFromAddress } from '@/lib/salon-address';
@@ -18,29 +17,45 @@ import { isSalonDoor, salonDoorPath, type SalonDoor } from './salon-doors';
  * champ qui l'a portée (web-frontend §4) plutôt que par une page 404 où il n'y a
  * plus rien à corriger.
  *
- * ## La langue (#1233)
+ * ## La langue (#1233, puis #1354)
  *
  * Les trois messages rendus par cette action étaient écrits ici, en français —
  * le formulaire qui les affiche (`components/home/salon-finder.tsx`) le
- * signalait lui-même. Ils viennent désormais du namespace `booking`, racine
- * `home.finder.errors`, celui-là même où le formulaire lit ses libellés : le
- * message de refus et le champ qui le porte se lisent dans la même langue, et
- * s'écrivent au même endroit.
+ * signalait lui-même. Ils viennent du namespace `booking`, racine
+ * `home.finder.errors`, celui-là même où le formulaire lit ses libellés.
  *
- * `getTranslations` de `next-intl/server` et non `useTranslations` : une action
- * serveur n'est pas un composant, aucun crochet n'y est appelable. La langue
- * est celle que `i18n/server.ts` résout sur la requête — la soumission du
- * formulaire en est une, et elle porte les mêmes cookies et le même
- * `Accept-Language` que le rendu de la page.
+ * Ce que l'action rend n'est plus la **phrase** mais le **motif** du refus, et
+ * c'est le formulaire qui l'écrit au rendu (#1354). La raison est que
+ * `useActionState` garde ce résultat : le sélecteur de langue pose un cookie et
+ * laisse Next rejouer la route **sans navigation** (`i18n/actions.ts`), si bien
+ * que le composant se rend à nouveau mais que son état ne bouge pas. Une phrase
+ * rangée ici restait donc écrite dans la langue de la soumission — « aucun salon
+ * ne répond à cette adresse » sous un champ passé en anglais. Un motif, lui, ne
+ * se démode pas : c'est une donnée. Même règle que `lib/refusal.ts` pour les
+ * refus d'action et `lib/field-refusal.ts` pour ceux des champs.
+ *
+ * L'action n'a plus aucun message à lire, et donc plus besoin de
+ * `getTranslations` : la langue n'intervient qu'au rendu, celui-là même qui
+ * affiche le champ.
  */
+
+/**
+ * Le **motif** d'un refus — jamais sa phrase, voir l'en-tête.
+ *
+ * Il vaut aussi clé de catalogue, sous `home.finder.errors` : `empty` et
+ * `unknown` se disent sur le champ, `unavailable` dans l'encart. Le salon que
+ * `unknown` nomme n'a pas à voyager ici — c'est l'`address` de l'état, que le
+ * formulaire a déjà sous la main.
+ */
+export type SalonFinderRefusal = 'empty' | 'unknown' | 'unavailable';
 
 export interface SalonFinderState {
   /** Ce qui a été saisi, rendu tel quel pour que l'erreur ne l'efface pas. */
   readonly address: string;
-  /** Le message du champ — adresse vide, illisible, ou d'aucun salon. */
-  readonly fieldError: string | null;
-  /** Le message de l'encart — la vérification n'a pas pu avoir lieu. */
-  readonly formError: string | null;
+  /** Le refus du champ — adresse vide, illisible, ou d'aucun salon. */
+  readonly fieldRefusal: SalonFinderRefusal | null;
+  /** Le refus de l'encart — la vérification n'a pas pu avoir lieu. */
+  readonly formRefusal: SalonFinderRefusal | null;
 }
 
 export async function openSalonAction(
@@ -53,26 +68,25 @@ export async function openSalonAction(
   // Entrée au clavier : le navigateur soumet avec le premier bouton du
   // formulaire, qui est la réservation. Une valeur inventée y retombe aussi.
   const door: SalonDoor = isSalonDoor(rawDoor) ? rawDoor : 'reservation';
-  const t = await getTranslations('booking');
 
   if (address === '') {
-    return { address, fieldError: t('home.finder.errors.empty'), formError: null };
+    return { address, fieldRefusal: 'empty', formRefusal: null };
   }
 
   const slug = salonSlugFromAddress(address);
 
   if (slug === null) {
-    return { address, fieldError: t('home.finder.errors.unknown', { address }), formError: null };
+    return { address, fieldRefusal: 'unknown', formRefusal: null };
   }
 
   const identity = await readSalonIdentity(slug);
 
   if (identity.status === 'unknown') {
-    return { address, fieldError: t('home.finder.errors.unknown', { address }), formError: null };
+    return { address, fieldRefusal: 'unknown', formRefusal: null };
   }
 
   if (identity.status === 'unavailable') {
-    return { address, fieldError: null, formError: t('home.finder.errors.unavailable') };
+    return { address, fieldRefusal: null, formRefusal: 'unavailable' };
   }
 
   await rememberSalon(identity.slug);

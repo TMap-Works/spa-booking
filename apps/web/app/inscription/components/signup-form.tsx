@@ -5,7 +5,6 @@ import {
   ERROR_CODES,
   SUBSCRIPTION_PLAN,
   countryUsesAddressRegion,
-  errorMessage,
   resourceSlugSchema,
   salonSignupRequestSchema,
   type Locale,
@@ -21,8 +20,10 @@ import { Field } from '@/components/ui/field';
 import { Notification } from '@/components/ui/notification';
 import { Select } from '@/components/ui/select';
 import { SUPPORTED_LOCALES } from '@/i18n/resolve';
+import { useLocalizedFieldErrors } from '@/lib/field-refusal';
 import type { DisplayLocale } from '@/lib/format';
 import { planPriceLabel } from '@/lib/plan';
+import { refusalMessage, type Refusal } from '@/lib/refusal';
 import {
   CURRENCY_CHOICES,
   DEFAULT_COUNTRY,
@@ -76,9 +77,18 @@ import { signupSalonAction } from '../actions';
  * code d'erreur, parce que c'est ce qu'une gérante lit — « indiquez votre
  * ville », et non « chaîne trop courte ».
  *
- * Les refus que l'**API** pose sur un champ (`setError`) échappent à cette
- * table : ils portent le type {@link SERVER_FIELD_ERROR}, et leur message —
- * déjà traduit par {@link ERROR_KEYS} — l'emporte.
+ * Les refus que l'**API** pose sur un champ échappent à cette table : leur phrase
+ * l'emporte, et c'est `useLocalizedFieldErrors` qui la réécrit depuis leur code à
+ * chaque changement de langue (#1354).
+ *
+ * ## Ce que l'état garde d'un refus : un motif, jamais une phrase (#1354)
+ *
+ * Le sélecteur de langue pose un cookie et laisse Next rejouer la route **sans
+ * navigation** (`i18n/actions.ts`) : ce formulaire n'est pas démonté, son état ne
+ * bouge pas. Une phrase rangée telle quelle restait donc écrite dans la langue
+ * d'avant, sous un titre qui, lui, suivait le rendu — le bandeau comme les
+ * messages de champ. Ce qui va en état est le **code** du refus, et la phrase
+ * s'écrit au rendu : voir `lib/refusal.ts` et `lib/field-refusal.ts`.
  */
 
 /**
@@ -118,15 +128,6 @@ const EMPTY_VALUES: SignupFormValues = {
   confirmation: '',
   dataConsent: false as unknown as true,
 };
-
-/**
- * Le type dont l'écran marque un refus venu de l'**API**.
- *
- * Il le distingue d'un refus de schéma, dont le type est le code d'erreur de
- * Zod : le premier porte déjà son message traduit, le second se traduit par
- * {@link FIELD_ERROR_KEYS}.
- */
-const SERVER_FIELD_ERROR = 'server';
 
 /** Ce qu'un champ refusé annonce, dans la langue lue — un message par champ. */
 const FIELD_ERROR_KEYS = {
@@ -223,7 +224,8 @@ export function SignupForm() {
   const languages = useTranslations('locale');
   const locale = useLocale() as Locale;
   const [slugTouched, setSlugTouched] = useState(false);
-  const [failure, setFailure] = useState<string | null>(null);
+  /** Le **code** du refus, pas sa phrase (#1354) — voir `lib/refusal.ts`. */
+  const [failure, setFailure] = useState<Refusal | null>(null);
   const [leaving, setLeaving] = useState(false);
 
   // Aucun établissement n'existe encore : la région de mise en forme est celle
@@ -250,12 +252,36 @@ export function SignupForm() {
     handleSubmit,
     setValue,
     setError,
+    trigger,
     watch,
     formState: { errors, isSubmitting },
   } = useForm<SignupFormValues, unknown, SignupFormOutput>({
     resolver: zodResolver(schema),
     defaultValues: EMPTY_VALUES,
     mode: 'onTouched',
+  });
+
+  /**
+   * Les messages de **champ** suivent la langue — #1354.
+   *
+   * Deux sortes ici : la confirmation du mot de passe, dont la phrase est écrite
+   * par le schéma au moment de la validation, et les deux refus que l'API pose
+   * elle-même. La première se **rejoue** — et seulement si le champ porte déjà
+   * une erreur —, les seconds se **réécrivent** depuis leur code, ce qui les
+   * exclut du rejeu : sans cela le schéma trouverait l'adresse valable et
+   * effacerait le refus.
+   */
+  const { postFieldRefusal, clearFieldRefusals } = useLocalizedFieldErrors({
+    locale,
+    errors,
+    trigger,
+    setError,
+    own: (code) =>
+      code === ERROR_CODES.TENANT_SLUG_TAKEN
+        ? t('errors.slugTaken')
+        : code === ERROR_CODES.EMAIL_ALREADY_REGISTERED
+          ? t('errors.emailTaken')
+          : null,
   });
 
   /**
@@ -271,13 +297,26 @@ export function SignupForm() {
       return undefined;
     }
 
-    if (error.type === SERVER_FIELD_ERROR) {
+    /*
+     * Un refus **posé par l'API** n'a pas de `type` : `postFieldRefusal` appelle
+     * `setError(name, { message })`, quand le résolveur de Zod marque chacun des
+     * siens du code de l'issue (`{ message, type: issue.code }`). Sa phrase est
+     * déjà celle du catalogue, et `useLocalizedFieldErrors` la réécrit à chaque
+     * changement de langue — on la rend telle quelle.
+     *
+     * La lecture est élargie parce que `FieldError` déclare `type` obligatoire :
+     * une comparaison directe à `undefined` serait refusée par `tsc` alors que
+     * c'est exactement ce que `setError` laisse.
+     */
+    const refusedBy: string | undefined = (error as { type?: string }).type;
+
+    if (refusedBy === undefined) {
       return error.message;
     }
 
     // Le nom réservé — voir {@link CUSTOM_FIELD_ERROR}. Une faute de forme rend
     // le même code depuis #1232 : c'est la valeur saisie qui les départage.
-    if (name === 'slug' && error.type === CUSTOM_FIELD_ERROR && slugReserved(watch('slug'))) {
+    if (name === 'slug' && refusedBy === CUSTOM_FIELD_ERROR && slugReserved(watch('slug'))) {
       return t('fieldErrors.slugReserved');
     }
 
@@ -286,24 +325,27 @@ export function SignupForm() {
 
   const submit = handleSubmit(async ({ confirmation: _confirmation, ...values }) => {
     setFailure(null);
+    clearFieldRefusals();
     const request: SalonSignupRequest = values;
     const result = await signupSalonAction(request);
 
     if (!result.ok) {
-      const key = ERROR_KEYS[result.code];
-
       // Un refus qui désigne un champ s'affiche **sur** ce champ, jamais en bloc
-      // en haut de page (web-frontend §4).
+      // en haut de page (web-frontend §4) — et par son **code**, pour qu'il suive
+      // la langue comme le reste (#1354).
       if (result.code === ERROR_CODES.TENANT_SLUG_TAKEN) {
-        setError('slug', { type: SERVER_FIELD_ERROR, message: t('errors.slugTaken') });
+        postFieldRefusal('slug', result.code);
         return;
       }
       if (result.code === ERROR_CODES.EMAIL_ALREADY_REGISTERED) {
-        setError('adminEmail', { type: SERVER_FIELD_ERROR, message: t('errors.emailTaken') });
+        postFieldRefusal('adminEmail', result.code);
         return;
       }
 
-      setFailure(key === undefined ? errorMessage(result.code, locale) : t(key));
+      // Le code, pas la phrase : `refusalMessage` consulte {@link ERROR_KEYS} au
+      // rendu et retombe sur celle du contrat partagé pour un code que ce
+      // formulaire ne nomme pas.
+      setFailure({ code: result.code });
       return;
     }
 
@@ -339,7 +381,16 @@ export function SignupForm() {
 
       {failure === null ? null : (
         <Notification tone="danger" title={t('errors.title')}>
-          <p>{failure}</p>
+          {/* La phrase est écrite ici, dans la langue de ce rendu (#1354). Les
+              deux refus que ce formulaire pose sur un champ ne passent pas par
+              ce bandeau. */}
+          <p>
+            {refusalMessage(failure, locale, (code) => {
+              const key = ERROR_KEYS[code];
+
+              return key === undefined ? null : t(key);
+            })}
+          </p>
         </Notification>
       )}
 

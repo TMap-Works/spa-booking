@@ -1,7 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { fixerLangue, nextIntlServerMobile } from '../support/langue-mobile';
-
 /**
  * #927 — ouvrir un salon depuis l'accueil.
  *
@@ -9,18 +7,20 @@ import { fixerLangue, nextIntlServerMobile } from '../support/langue-mobile';
  * champ, pas par une page 404 où il n'y a plus rien à corriger. Elle retient le
  * salon ouvert, et ouvre la porte choisie.
  *
- * ## Les trois refus se disent dans la langue de la requête (#1233)
+ * ## Ce qu'elle rend d'un refus est un motif, plus une phrase (#1354)
  *
- * Ils étaient écrits en dur, en français, dans `app/actions.ts`. La suite les
- * éprouve donc dans les **deux** langues — et les lit dans les catalogues plutôt
- * que de les recopier : un test qui réécrirait la phrase resterait vert le jour
- * où l'action cesserait de lire le catalogue.
+ * Les trois messages étaient écrits en dur, en français, puis lus dans le
+ * catalogue par `getTranslations` (#1233). Ils n'y sont plus lus du tout :
+ * `useActionState` garde ce résultat d'une soumission à l'autre, et le
+ * sélecteur de langue rejoue la route sans démonter le formulaire — une phrase
+ * résolue ici restait donc dans la langue de la soumission. L'action rend
+ * `'empty' | 'unknown' | 'unavailable'`, et c'est `salon-finder.tsx` qui écrit
+ * la phrase au rendu.
  *
- * Une action serveur n'est pas un composant : elle lit ses messages par
- * `getTranslations`. La doublure est donc celle de `next-intl/server` —
- * l'amorce des suites (`tests/support/next-intl.ts`) en pose une qui fige la
- * langue à `fr`, et il en faut une qui bouge. Elle est partagée, comme son
- * pendant pour les crochets : `tests/support/langue-mobile.ts` (#1277).
+ * Cette suite vérifie donc **quel motif** sort de quel cas, et qu'aucune phrase
+ * n'en sort — la traduction se prouve à l'écran, dans
+ * `erreur-de-champ-suit-la-langue.test.tsx`. Plus de doublure de
+ * `next-intl/server` : l'action ne lit plus aucun message.
  */
 
 const readSalonIdentity = vi.fn();
@@ -33,8 +33,6 @@ vi.mock('@/lib/salon-identity', () => ({
 vi.mock('next/headers', () => ({
   cookies: () => Promise.resolve({ get: () => undefined, set: setCookie }),
 }));
-
-vi.mock('next-intl/server', () => nextIntlServerMobile());
 
 class RedirectSignal extends Error {
   public constructor(public readonly destination: string) {
@@ -49,13 +47,8 @@ vi.mock('next/navigation', () => ({
 }));
 
 import { openSalonAction, type SalonFinderState } from '@/app/actions';
-import en from '@/messages/en/booking.json';
-import fr from '@/messages/fr/booking.json';
 
-const INITIAL: SalonFinderState = { address: '', fieldError: null, formError: null };
-
-/** Les trois refus, tels que les catalogues les écrivent. */
-const REFUS = { fr: fr.home.finder.errors, en: en.home.finder.errors } as const;
+const INITIAL: SalonFinderState = { address: '', fieldRefusal: null, formRefusal: null };
 
 function formulaire(adresse: string, porte?: string): FormData {
   const data = new FormData();
@@ -81,7 +74,6 @@ async function destinationDe(action: Promise<unknown>): Promise<string> {
 afterEach(() => {
   readSalonIdentity.mockReset();
   setCookie.mockReset();
-  fixerLangue('fr');
 });
 
 describe('un salon connu', () => {
@@ -126,27 +118,29 @@ describe('ce qui reste sur la page', () => {
   it('une adresse vide, sans appeler l’API', async () => {
     const state = await openSalonAction(INITIAL, formulaire('   '));
 
-    expect(state.fieldError).toBe(REFUS.fr.empty);
-    expect(state.formError).toBeNull();
+    expect(state.fieldRefusal).toBe('empty');
+    expect(state.formRefusal).toBeNull();
     expect(readSalonIdentity).not.toHaveBeenCalled();
   });
 
   it('un lien qui ne désigne aucun salon, sans appeler l’API', async () => {
     const state = await openSalonAction(INITIAL, formulaire('https://www.exemple.fr/'));
 
-    expect(state.fieldError).toMatch(/aucun salon ne répond/i);
+    expect(state.fieldRefusal).toBe('unknown');
     expect(readSalonIdentity).not.toHaveBeenCalled();
   });
 
-  it('un salon inconnu : le message est sur le champ, et la saisie est gardée', async () => {
+  it('un salon inconnu : le refus est sur le champ, et la saisie est gardée', async () => {
     readSalonIdentity.mockResolvedValue({ status: 'unknown' });
 
     const state = await openSalonAction(INITIAL, formulaire('Salon Fantôme', 'compte'));
 
+    // L'adresse est rendue telle quelle : c'est elle que le formulaire
+    // interpole dans la phrase, le motif n'a pas à la porter deux fois.
     expect(state).toEqual({
       address: 'Salon Fantôme',
-      fieldError: REFUS.fr.unknown.replace('{address}', 'Salon Fantôme'),
-      formError: null,
+      fieldRefusal: 'unknown',
+      formRefusal: null,
     });
     expect(setCookie).not.toHaveBeenCalled();
   });
@@ -156,50 +150,33 @@ describe('ce qui reste sur la page', () => {
 
     const state = await openSalonAction(INITIAL, formulaire('maison-lotus'));
 
-    expect(state.fieldError).toBeNull();
-    expect(state.formError).toBe(REFUS.fr.unavailable);
+    expect(state.fieldRefusal).toBeNull();
+    expect(state.formRefusal).toBe('unavailable');
     expect(state.address).toBe('maison-lotus');
     expect(setCookie).not.toHaveBeenCalled();
   });
-});
 
-describe('la langue de la requête (#1233)', () => {
-  it('dit l’adresse manquante en anglais', async () => {
-    fixerLangue('en');
-
-    const state = await openSalonAction(INITIAL, formulaire(''));
-
-    expect(state.fieldError).toBe(REFUS.en.empty);
-    expect(state.fieldError).not.toBe(REFUS.fr.empty);
-  });
-
-  it('nomme le salon introuvable en anglais, sans perdre la saisie', async () => {
-    fixerLangue('en');
-    readSalonIdentity.mockResolvedValue({ status: 'unknown' });
-
-    const state = await openSalonAction(INITIAL, formulaire('Salon Fantôme'));
-
-    expect(state).toEqual({
-      address: 'Salon Fantôme',
-      fieldError: REFUS.en.unknown.replace('{address}', 'Salon Fantôme'),
-      formError: null,
-    });
-  });
-
-  it('dit le service injoignable en anglais', async () => {
-    fixerLangue('en');
+  /**
+   * Le garde-fou de #1354 : ce qui sort de l'action doit rester une **donnée**.
+   *
+   * Un motif est un identifiant court, sans espace ; une phrase de catalogue en
+   * a toutes les qualités contraires. Le jour où quelqu'un remettrait un
+   * `t(…)` ici, ce cas tombe — et c'est la seule façon de s'en apercevoir sans
+   * monter l'écran.
+   */
+  it('ne rend jamais de phrase, sur aucun des trois refus', async () => {
     readSalonIdentity.mockResolvedValue({ status: 'unavailable' });
 
-    const state = await openSalonAction(INITIAL, formulaire('maison-lotus'));
+    const states = [
+      await openSalonAction(INITIAL, formulaire('')),
+      await openSalonAction(INITIAL, formulaire('https://www.exemple.fr/')),
+      await openSalonAction(INITIAL, formulaire('maison-lotus')),
+    ];
 
-    expect(state.formError).toBe(REFUS.en.unavailable);
-  });
-
-  it('n’écrit plus aucune phrase en dur : les trois refus diffèrent d’une langue à l’autre', () => {
-    // Un message identique dans les deux catalogues passerait les trois tests
-    // ci-dessus sans rien prouver.
-    expect(REFUS.en.empty).not.toBe(REFUS.fr.empty);
-    expect(REFUS.en.unknown).not.toBe(REFUS.fr.unknown);
-    expect(REFUS.en.unavailable).not.toBe(REFUS.fr.unavailable);
+    for (const state of states) {
+      for (const refusal of [state.fieldRefusal, state.formRefusal]) {
+        expect(refusal === null || ['empty', 'unknown', 'unavailable'].includes(refusal)).toBe(true);
+      }
+    }
   });
 });

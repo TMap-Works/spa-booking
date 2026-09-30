@@ -1,4 +1,4 @@
-import type { MyStaffAppointment, MyStaffSchedule } from '@spa/shared';
+import { errorMessage, type MyStaffAppointment, type MyStaffSchedule } from '@spa/shared';
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -374,7 +374,11 @@ describe('les gestes de la praticienne sur son rendez-vous', () => {
 
   it('dit le refus de l’API sans rien relire', async () => {
     figerLHorloge(APRES);
-    markStatus.mockResolvedValue({ ok: false, code: 'FORBIDDEN', message: 'Ce rendez-vous n’est pas le vôtre.' });
+    markStatus.mockResolvedValue({
+      ok: false,
+      code: 'FORBIDDEN',
+      message: 'Ce rendez-vous n’est pas le vôtre.',
+    });
     render(
       <MyAppointmentActions
         appointmentId="aaaaaaaa-0000-4000-8000-000000000001"
@@ -387,7 +391,14 @@ describe('les gestes de la praticienne sur son rendez-vous', () => {
 
     await userEvent.click(screen.getByRole('button', { name: 'Marquer honoré' }));
 
-    expect(await screen.findByRole('alert')).toHaveProperty('textContent', 'Ce rendez-vous n’est pas le vôtre.');
+    // La phrase vient du **code** et non du `message` de l'action (#1354) : ce
+    // dernier vaut déjà `errorMessage(code, locale)` depuis #1234, et le garder
+    // en état l'aurait figé dans la langue du refus. La phrase attendue est lue
+    // dans la table du contrat partagé, jamais recopiée.
+    expect(await screen.findByRole('alert')).toHaveProperty(
+      'textContent',
+      errorMessage('FORBIDDEN', 'fr'),
+    );
     expect(refresh).not.toHaveBeenCalled();
   });
 

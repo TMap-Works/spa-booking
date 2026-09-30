@@ -11,13 +11,16 @@ import {
   SCHEDULE_END_OF_DAY,
   newScheduleRow,
   rowsFromEntries,
+  scheduleRefusalMessage,
   validateScheduleRows,
   weekdayLabel,
   weekdayLabelInSentence,
   weekdaysForRegion,
+  type ScheduleRefusalKey,
   type ScheduleRow,
 } from '@/lib/admin/staff-schedule';
 import { formatDuration, type DisplayLocale } from '@/lib/format';
+import { refusalMessage } from '@/lib/refusal';
 
 import { setStaffScheduleAction } from '../actions';
 import { useAdminSessionRenewal } from '../../components/use-admin-session-renewal';
@@ -79,6 +82,22 @@ import { useAdminSessionRenewal } from '../../components/use-admin-session-renew
  * la règle, pas seulement ce fichier.
  */
 
+/**
+ * Ce que l'éditeur garde d'un refus — un **motif**, jamais sa phrase (#1354).
+ *
+ * Il rangeait le texte : celui du verdict de `validateScheduleRows`, ou le
+ * `message` rendu par l'action serveur. Le sélecteur de langue rejoue la route
+ * sans démonter cette grille, si bien que « Deux plages du même jour se
+ * recouvrent. » restait en français sous un titre « Week not saved » qui, lui,
+ * suivait le rendu. Voir `lib/refusal.ts`.
+ *
+ * Deux motifs, parce que les deux refus n'ont pas la même origine : la grille
+ * refusée par le contrat avant tout appel, et le refus rendu par l'API.
+ */
+type ScheduleFailure =
+  | { readonly kind: 'grid'; readonly refusalKey: ScheduleRefusalKey }
+  | { readonly kind: 'refusal'; readonly code: string };
+
 /** Les plages d'un jour, dans l'ordre où elles ont été saisies. */
 function rowsOf(rows: readonly ScheduleRow[], weekday: IsoWeekday): readonly ScheduleRow[] {
   return rows.filter((row) => row.weekday === weekday);
@@ -134,8 +153,19 @@ export function StaffScheduleEditor({
   const [rows, setRows] = useState<readonly ScheduleRow[]>(() => rowsFromEntries(schedule.entries));
   const [saving, setSaving] = useState(false);
   const [refreshing, startRefresh] = useTransition();
-  const [error, setError] = useState<{ rowId: string | null; message: string } | null>(null);
+  // `rowId` reste une **donnée** — c'est la ligne à marquer, et elle ne se démode
+  // pas quand la langue change. Seul le texte devient un motif (#1354).
+  const [error, setError] = useState<{
+    rowId: string | null;
+    failure: ScheduleFailure;
+  } | null>(null);
   const [saved, setSaved] = useState(false);
+
+  /** La phrase d'un refus, écrite dans la langue de ce rendu (#1354). */
+  const failureMessage = (failure: ScheduleFailure): string =>
+    failure.kind === 'grid'
+      ? scheduleRefusalMessage(failure.refusalKey, locale)
+      : refusalMessage(failure, locale);
 
   /** Le total de la semaine, recalculé à la frappe — le repère qui trahit l'oubli. */
   const total = rows.reduce((sum, row) => sum + (rowMinutes(row) ?? 0), 0);
@@ -169,10 +199,13 @@ export function StaffScheduleEditor({
   }
 
   async function save(): Promise<void> {
-    const validation = validateScheduleRows(rows, locale);
+    const validation = validateScheduleRows(rows);
 
     if (!validation.ok) {
-      setError({ rowId: validation.rowId, message: validation.message });
+      setError({
+        rowId: validation.rowId,
+        failure: { kind: 'grid', refusalKey: validation.refusalKey },
+      });
       return;
     }
 
@@ -191,7 +224,9 @@ export function StaffScheduleEditor({
       if (renewIfExpired(result)) {
         return;
       }
-      setError({ rowId: null, message: result.message });
+      // Le code, pas la phrase (#1354) : c'est `refusalMessage` qui l'écrit au
+      // rendu, dans la langue lue.
+      setError({ rowId: null, failure: { kind: 'refusal', code: result.code } });
       return;
     }
 
@@ -219,7 +254,8 @@ export function StaffScheduleEditor({
 
       {error !== null && error.rowId === null ? (
         <Notification tone="danger" title={t('schedule.failureTitle')}>
-          <p>{error.message}</p>
+          {/* La phrase est écrite ici, dans la langue de ce rendu (#1354). */}
+          <p>{failureMessage(error.failure)}</p>
         </Notification>
       ) : null}
 
@@ -311,7 +347,7 @@ export function StaffScheduleEditor({
                         </Button>
                         {error !== null && error.rowId === row.id ? (
                           <span className="spa-field__error" role="alert">
-                            {error.message}
+                            {failureMessage(error.failure)}
                           </span>
                         ) : null}
                       </span>

@@ -1,12 +1,13 @@
 'use client';
 
 import { ERROR_CODES } from '@spa/shared';
-import { useTranslations } from 'next-intl';
+import { useLocale, useTranslations } from 'next-intl';
 import { useRouter } from 'next/navigation';
 import { useState, useTransition } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { Notification } from '@/components/ui/notification';
+import { refusalMessage, type Refusal } from '@/lib/refusal';
 
 import { assignStaffServiceAction, removeStaffServiceAction } from '../actions';
 import { useAdminSessionRenewal } from '../../components/use-admin-session-renewal';
@@ -60,11 +61,13 @@ export function StaffServicesPanel({
   readonly canManage?: boolean;
 }) {
   const t = useTranslations('admin-staff');
+  const locale = useLocale();
   const router = useRouter();
   const { renewIfExpired } = useAdminSessionRenewal(tenantSlug);
   const [pending, setPending] = useState<string | null>(null);
   const [refreshing, startRefresh] = useTransition();
-  const [failure, setFailure] = useState<string | null>(null);
+  /** Le **code** du refus, pas sa phrase (#1354) — voir `lib/refusal.ts`. */
+  const [failure, setFailure] = useState<Refusal | null>(null);
 
   async function toggle(service: StaffServiceChoice): Promise<void> {
     setPending(service.id);
@@ -82,10 +85,9 @@ export function StaffServicesPanel({
       }
       // Un 409 n'est pas une panne : quelqu'un a posé la même affectation entre
       // le rendu de la page et le clic. On le dit, et le rafraîchissement remet
-      // la liste d'aplomb.
-      setFailure(
-        result.code === ERROR_CODES.CONFLICT ? t('services.conflict') : result.message,
-      );
+      // la liste d'aplomb. Le **code** et non la phrase (#1354) : c'est le rendu
+      // qui l'écrit, dans la langue qu'il lit.
+      setFailure({ code: result.code });
     }
 
     startRefresh(() => {
@@ -102,7 +104,14 @@ export function StaffServicesPanel({
 
       {failure === null ? null : (
         <Notification tone="danger" title={t('services.failureTitle')}>
-          <p>{failure}</p>
+          {/* La phrase est écrite ici, dans la langue de ce rendu (#1354). Le
+              conflit d'affectation est le seul refus que ce panneau nomme
+              lui-même ; les autres retombent sur la phrase du contrat partagé. */}
+          <p>
+            {refusalMessage(failure, locale, (code) =>
+              code === ERROR_CODES.CONFLICT ? t('services.conflict') : null,
+            )}
+          </p>
         </Notification>
       )}
 

@@ -1,6 +1,6 @@
 'use client';
 
-import type { Appointment, Locale, SaleReceipt } from '@spa/shared';
+import { ERROR_CODES, type Appointment, type Locale, type SaleReceipt } from '@spa/shared';
 import { useLocale, useTranslations } from 'next-intl';
 import { useEffect, useState } from 'react';
 
@@ -9,6 +9,7 @@ import { Notification } from '@/components/ui/notification';
 import { receiptDisclaimer } from '@/lib/admin/checkout-summary';
 import type { PaymentTransaction } from '@/lib/admin/payment-contract';
 import { formatMoney, type DisplayLocale } from '@/lib/format';
+import { refusalMessage, type Refusal } from '@/lib/refusal';
 
 import { loadReceiptAction } from '../encaissement/actions';
 import { adminReceiptPdfPath } from '../paths';
@@ -97,13 +98,27 @@ type TicketState =
   | { readonly kind: 'chargement' }
   | { readonly kind: 'pret'; readonly receipt: SaleReceipt }
   /**
-   * `message` est celui que l'**API** a rendu — c'est elle qui nomme son refus
-   * (web-frontend §2). `null` dit « le serveur n'a pas répondu du tout » : il n'y
-   * a alors aucun message à reprendre, et c'est l'écran qui le dit, donc le
-   * catalogue. Porter la phrase ici aurait obligé l'effet à lire `t`, donc à le
-   * déclarer en dépendance, donc à relancer la lecture du ticket à chaque rendu.
+   * Le **code** du refus, jamais sa phrase — #1354.
+   *
+   * Cet état rangeait le message que l'API avait rendu, au motif que c'est elle
+   * qui nomme son refus (web-frontend §2). Le sélecteur de langue du rail pose un
+   * cookie et laisse Next rejouer la route **sans navigation**
+   * (`i18n/actions.ts`) : ce composant n'est pas démonté, son état ne bouge pas,
+   * et la phrase restait donc écrite dans la langue d'avant sous un titre
+   * « Ticket indisponible » qui, lui, suivait le rendu.
+   *
+   * Le code ne fait rien perdre du diagnostic : `refusalMessage` en écrit la
+   * phrase au rendu, dans la langue de ce rendu-là, et c'est la même table que
+   * l'action serveur consultait déjà pour composer son `message`
+   * (`action-result.ts`, #1234). Il garde en outre la raison pour laquelle la
+   * phrase n'était pas ici : l'effet ci-dessous n'a toujours pas à lire `t`, donc
+   * pas à le déclarer en dépendance, donc pas à relancer la lecture du ticket à
+   * chaque rendu.
+   *
+   * `null` dit « le serveur n'a pas répondu du tout » : il n'y a alors aucun refus
+   * à nommer, et c'est l'écran qui le dit, donc le catalogue.
    */
-  | { readonly kind: 'echec'; readonly message: string | null };
+  | { readonly kind: 'echec'; readonly refusal: Refusal | null };
 
 /**
  * Le ticket de caisse d'une vente : relu de l'API, affiché en aperçu,
@@ -120,6 +135,7 @@ function SaleTicket({
   readonly tenantSlug: string;
 }) {
   const t = useTranslations('admin-checkout');
+  const locale = useLocale() as Locale;
   const [state, setState] = useState<TicketState>({ kind: 'chargement' });
   const [attempt, setAttempt] = useState(0);
   const { renewIfExpired } = useAdminSessionRenewal(tenantSlug);
@@ -142,11 +158,11 @@ function SaleTicket({
         if (renewIfExpired(result)) {
           return;
         }
-        setState({ kind: 'echec', message: result.message });
+        setState({ kind: 'echec', refusal: { code: result.code } });
       })
       .catch(() => {
         if (live) {
-          setState({ kind: 'echec', message: null });
+          setState({ kind: 'echec', refusal: null });
         }
       });
 
@@ -188,7 +204,20 @@ function SaleTicket({
     return (
       <>
         <Notification tone="warning" title={t('receipt.unavailableTitle')}>
-          <p>{state.message ?? t('receipt.loadFailed')}</p>
+          {/* La phrase est écrite ici, dans la langue de ce rendu (#1354). La
+              cible illisible est le seul refus que cet écran nomme lui-même :
+              c'est l'action serveur qui l'oppose, avant tout appel, et le contrat
+              partagé ne sait dire d'un `VALIDATION_ERROR` que « la requête est
+              invalide » (`encaissement/actions.ts`). */}
+          <p>
+            {state.refusal === null
+              ? t('receipt.loadFailed')
+              : refusalMessage(state.refusal, locale, (code) =>
+                  code === ERROR_CODES.VALIDATION_ERROR
+                    ? t('failure.unknownReceiptTarget')
+                    : null,
+                )}
+          </p>
         </Notification>
         <div className="spa-ticket-actions">
           <Button

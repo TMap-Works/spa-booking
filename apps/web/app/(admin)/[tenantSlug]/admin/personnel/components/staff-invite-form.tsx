@@ -12,6 +12,7 @@ import { Notification } from '@/components/ui/notification';
 import { PhoneField } from '@/components/ui/phone-field';
 import { Select } from '@/components/ui/select';
 import { inviteStaffAccountRequestSchema } from '@/lib/admin/staff-contract';
+import { fieldRefusalMessage, type FieldRefusal } from '@/lib/field-refusal';
 import { refusalMessage } from '@/lib/refusal';
 
 import { roleLabel } from '../../components/navigation';
@@ -84,8 +85,31 @@ type InviteDraft = {
 
 type InviteField = keyof InviteDraft;
 
-/** Le message porté par chaque champ fautif, `undefined` pour les autres. */
-type InviteFieldErrors = Partial<Record<InviteField, string>>;
+/**
+ * Ce que porte chaque champ fautif — un **motif**, jamais sa phrase (#1354).
+ *
+ * Ce formulaire n'emploie pas `react-hook-form` : il `safeParse` lui-même à la
+ * soumission et range le résultat. Rangeait, donc, cinq phrases écrites par
+ * `zodErrorMap(locale)` au moment du parse — et le sélecteur de langue rejoue la
+ * route sans démonter ce composant, si bien qu'elles restaient dans la langue
+ * d'avant sous des étiquettes qui, elles, suivaient le rendu.
+ *
+ * Ce qui va en état est donc l'`issue` elle-même — un code, un chemin, des
+ * bornes : des **données** —, ou la clé de catalogue quand l'écran dit mieux que
+ * le contrat. `fieldRefusalMessage` écrit la phrase au rendu.
+ */
+type InviteFieldErrors = Partial<Record<InviteField, FieldRefusal>>;
+
+/**
+ * La seule phrase que cet écran dise en propre sous un champ.
+ *
+ * `PhoneField` écrit lui-même la sienne quand il est marqué invalide — elle
+ * nomme le pays choisi, ce que le contrat ne sait pas faire (#825) —, si bien
+ * que ce motif **marque** le champ plus qu'il ne l'énonce. Il porte tout de même
+ * sa clé, et non un marqueur nu : le jour où le champ cessera de dire sa propre
+ * phrase, celle du formulaire est déjà là, dans la langue du rendu.
+ */
+const PHONE_INVALID_KEY = 'invite.phoneInvalid';
 
 /**
  * Ce que le bandeau du formulaire a à dire, gardé en **motif** — #1327.
@@ -121,37 +145,30 @@ function isInviteField(value: unknown): value is InviteField {
 }
 
 /**
- * Range **toutes** les erreurs d'une soumission : celles qui désignent un champ
- * du formulaire d'un côté, le reste de l'autre.
+ * Range les refus d'une soumission par champ — **un seul par champ**, le premier
+ * rencontré. Un même champ cumule volontiers deux règles (vide *et* trop court),
+ * et empiler les phrases sous le contrôle n'apprend rien de plus sur ce qu'il
+ * faut taper.
  *
- * Deux règles, et elles ont chacune leur raison :
- *
- * - **un seul message par champ**, le premier rencontré. Un même champ cumule
- *   volontiers deux règles (vide *et* trop court) et empiler les phrases sous le
- *   contrôle n'apprend rien de plus sur ce qu'il faut taper ;
- * - **ce qui ne désigne aucun champ remonte au formulaire.** Le schéma est
- *   `.strict()` : une clé inattendue produit une erreur de chemin vide, qu'aucun
- *   contrôle ne saurait afficher. Sans ce filet, elle disparaîtrait sans trace et
- *   le bouton semblerait ne rien faire.
+ * Ce qui ne désigne aucun champ n'est pas retenu ici, et le bouton ne reste pas
+ * muet pour autant : le schéma est `.strict()`, une clé inattendue produit une
+ * erreur de chemin vide, et l'absence de toute marque de champ fait parler le
+ * bandeau générique du formulaire (`{ kind: 'invalid' }` chez l'appelant). C'est
+ * la seule réponse qui vaille pour ce refus-là — la phrase du contrat nomme une
+ * clé que personne n'a composée à la main (`zod-messages.ts`, `unexpected`).
  */
-function collectInviteErrors(issues: readonly ZodIssue[]): {
-  readonly fields: InviteFieldErrors;
-  readonly form: string | null;
-} {
+function collectInviteErrors(issues: readonly ZodIssue[]): InviteFieldErrors {
   const fields: InviteFieldErrors = {};
-  let form: string | null = null;
 
   for (const issue of issues) {
     const field = issue.path[0];
 
     if (isInviteField(field)) {
-      fields[field] ??= issue.message;
-    } else {
-      form ??= issue.message;
+      fields[field] ??= { kind: 'issue', issue };
     }
   }
 
-  return { fields, form };
+  return fields;
 }
 
 export function StaffInviteForm({ tenantSlug }: { readonly tenantSlug: string }) {
@@ -213,12 +230,10 @@ export function StaffInviteForm({ tenantSlug }: { readonly tenantSlug: string })
     const phoneRejected = draft.phone !== '' && !e164PhoneSchema.safeParse(draft.phone).success;
 
     if (!parsed.success || phoneRejected) {
-      const collected = parsed.success
-        ? { fields: {}, form: null }
-        : collectInviteErrors(parsed.error.issues);
+      const collected = parsed.success ? {} : collectInviteErrors(parsed.error.issues);
       const fields: InviteFieldErrors = phoneRejected
-        ? { ...collected.fields, phone: collected.fields.phone ?? t('invite.phoneInvalid') }
-        : collected.fields;
+        ? { ...collected, phone: collected.phone ?? { kind: 'key', key: PHONE_INVALID_KEY } }
+        : collected;
 
       setFieldErrors(fields);
       // Le bandeau ne double pas les marques de champ : il ne parle que lorsque
@@ -268,6 +283,10 @@ export function StaffInviteForm({ tenantSlug }: { readonly tenantSlug: string })
   // La carte n'a plus de titre à elle depuis #766 : le formulaire a son propre
   // écran, dont le `<h1>` reprend ce libellé. Le redire ici ferait deux titres
   // pour une seule chose.
+  /** La phrase d'un refus de champ, dans la langue de ce rendu (#1354). */
+  const fieldMessage = (field: InviteField): string | undefined =>
+    fieldRefusalMessage(fieldErrors[field], locale, () => t(PHONE_INVALID_KEY));
+
   return (
     <section className="spa-admin__section spa-admin-form">
       {formError === null ? null : (
@@ -289,7 +308,7 @@ export function StaffInviteForm({ tenantSlug }: { readonly tenantSlug: string })
       )}
 
       <Field
-        error={fieldErrors.firstName}
+        error={fieldMessage('firstName')}
         id="invitation-prenom"
         label={t('invite.firstName')}
         onChange={(event) => change({ firstName: event.target.value })}
@@ -297,7 +316,7 @@ export function StaffInviteForm({ tenantSlug }: { readonly tenantSlug: string })
         value={draft.firstName}
       />
       <Field
-        error={fieldErrors.lastName}
+        error={fieldMessage('lastName')}
         id="invitation-nom"
         label={t('invite.lastName')}
         onChange={(event) => change({ lastName: event.target.value })}
@@ -305,7 +324,7 @@ export function StaffInviteForm({ tenantSlug }: { readonly tenantSlug: string })
         value={draft.lastName}
       />
       <Field
-        error={fieldErrors.email}
+        error={fieldMessage('email')}
         hint={t('invite.emailHint')}
         id="invitation-email"
         label={t('invite.email')}
@@ -326,7 +345,7 @@ export function StaffInviteForm({ tenantSlug }: { readonly tenantSlug: string })
         value={draft.phone}
       />
       <Select
-        error={fieldErrors.role}
+        error={fieldMessage('role')}
         hint={t('invite.roleHint')}
         id="invitation-role"
         label={t('invite.role')}

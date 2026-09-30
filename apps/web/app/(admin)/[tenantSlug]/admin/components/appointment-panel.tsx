@@ -58,6 +58,7 @@ import {
   catalogEmptyTitle,
 } from '@/lib/admin/calendar-start';
 import { formatDateTimeInTimeZone, formatMoney, type DisplayLocale } from '@/lib/format';
+import { refusalMessage } from '@/lib/refusal';
 
 import {
   cancelDeskAppointmentAction,
@@ -166,6 +167,62 @@ import { BEFORE_ANY_HOUR, useAppointmentClock } from './use-appointment-clock';
  * une modification — le champ reste visible, désactivé, avec sa raison.
  */
 
+/**
+ * Ce que le bandeau d'échec du tiroir garde — un **motif**, jamais sa phrase
+ * (#1354).
+ *
+ * Il rangeait un texte, composé à l'instant du refus : une phrase du catalogue
+ * pour les trois refus que cet écran nomme lui-même, le `message` de l'action
+ * serveur pour le reste. Le sélecteur de langue du rail pose un cookie et
+ * laisse Next rejouer la route **sans navigation**
+ * (`i18n/actions.ts`) : le tiroir n'est pas démonté, son état ne bouge pas, et la
+ * phrase restait donc écrite dans la langue d'avant sous un titre — « Action
+ * refusée » — qui, lui, suivait le rendu.
+ *
+ * Deux formes, parce que les deux refus n'ont pas la même source :
+ *
+ * - la **clé de catalogue** de ce que cet écran dit de mieux que le contrat : la
+ *   route absente, le constat qui attend l'heure du soin, l'annulation
+ *   concurrente. Ces trois-là sont choisis par le site d'appel — le même `409`
+ *   est un créneau perdu sur un report et une annulation concurrente sur une
+ *   annulation (#754) —, et le code seul ne saurait pas les départager ;
+ * - le **code** du refus pour tout le reste, dont `refusalMessage` tire la
+ *   phrase du contrat partagé.
+ *
+ * Le `message` de l'action ne remonte plus, et rien ne s'y perd : depuis #1234
+ * il vaut déjà `errorMessage(code, locale)` (`action-result.ts`), c'est-à-dire
+ * exactement ce que `refusalMessage` écrit — à ceci près qu'il le réécrit à
+ * chaque rendu.
+ */
+type DeskFailure =
+  | {
+      readonly kind: 'key';
+      readonly key: 'desk.routeMissing' | 'desk.notStarted' | 'desk.cancelConflict';
+    }
+  | { readonly kind: 'refusal'; readonly code: string };
+
+/**
+ * Le motif d'un refus d'écriture du comptoir qui n'est pas un créneau perdu.
+ *
+ * ## `desk.routeMissing` dit un manque identifié, pas une panne
+ *
+ * `NOT_FOUND` et `HTTP_404` sont les deux façons dont un 404 remonte du client
+ * d'API ; sur les écritures du comptoir, les deux disent la même absence de
+ * route. L'écran est écrit contre le contrat partagé et **dégrade** : il
+ * s'affiche, il valide, il dit ce qui manque — plutôt qu'un message générique
+ * qui masquerait un manque parfaitement identifié derrière une phrase qui
+ * n'aide personne.
+ *
+ * Hors du composant depuis #1354 : il ne choisit plus de **phrase**, seulement un
+ * motif, et n'a donc plus besoin du traducteur de l'écran. Le créneau perdu,
+ * lui, ne passe pas par ici — il a son propre bandeau, voir `conflict`.
+ */
+function deskFailureOf(code: string): DeskFailure {
+  return code === ERROR_CODES.NOT_FOUND || code === 'HTTP_404'
+    ? { kind: 'key', key: 'desk.routeMissing' }
+    : { kind: 'refusal', code };
+}
+
 /** Ce qu'un clic sur le planning ouvre. */
 export type DeskTarget =
   | {
@@ -242,15 +299,34 @@ export function AppointmentPanel({
   // de prestation choisie — que le sélecteur distingue de la journée complète,
   // qui est une liste **vide**.
   const [slots, setSlots] = useState<readonly DeskSlotOption[] | null>(null);
-  const [slotsFailure, setSlotsFailure] = useState<string | null>(null);
+  /**
+   * La liste n'a pas pu être lue — un fait, et non sa phrase (#1354).
+   *
+   * Un booléen suffit, et c'est la forme juste : ce que l'état gardait —
+   * `t('desk.slotsUnreadable')` — n'était jamais **lu** depuis l'état. Le
+   * sélecteur cède la place à un champ d'heure libre dont l'aide rend cette
+   * même clé au rendu, et le texte rangé ne servait qu'à marquer que le cas
+   * était survenu. Il aurait donc figé la langue le jour où quelqu'un l'aurait
+   * affiché.
+   */
+  const [slotsUnreadable, setSlotsUnreadable] = useState(false);
   // Un compteur, relu par l'effet de disponibilité : un créneau refusé par l'API
   // doit disparaître de la liste, sinon l'opératrice renvoie la même heure et
   // reçoit le même refus. Le planning se recharge déjà dans ce cas (`onReload`),
   // et le tiroir n'avait aucune raison de rester sur une liste périmée.
   const [slotsVersion, setSlotsVersion] = useState(0);
   const [saving, setSaving] = useState(false);
-  const [conflict, setConflict] = useState<string | null>(null);
-  const [failure, setFailure] = useState<string | null>(null);
+  /**
+   * Le créneau est perdu — un fait, et non sa phrase (#1354).
+   *
+   * Un booléen, parce que ce bandeau n'a **qu'une** chose à dire :
+   * `desk.conflictBody`, qui se garde de nommer la cause puisque le 409 couvre
+   * cinq refus et n'en distingue aucun (#611). Il n'y a donc pas de code à
+   * retenir pour choisir une phrase — seulement à écrire celle-là, au rendu.
+   */
+  const [conflict, setConflict] = useState(false);
+  /** Le **motif** du refus, pas sa phrase (#1354) — voir `DeskFailure`. */
+  const [failure, setFailure] = useState<DeskFailure | null>(null);
   // L'annulation au comptoir, en deux temps — #754. Le premier clic n'annule
   // rien : il pose la question. C'est ce que web-frontend §5 exige d'une action
   // destructive, et c'est aussi ce qui protège du clic au téléphone, le pied du
@@ -262,7 +338,13 @@ export function AppointmentPanel({
   // n'y a rien à montrer — pas encore lu, et création — que la section distingue
   // de l'échec de lecture.
   const [notifications, setNotifications] = useState<readonly NotificationTrace[] | null>(null);
-  const [notificationsFailure, setNotificationsFailure] = useState<string | null>(null);
+  /**
+   * Le journal n'a pas pu être lu — un fait, et non sa phrase (#1354).
+   *
+   * Même forme et même raison que `slotsUnreadable` : ce bloc n'a qu'une chose à
+   * dire, `desk.notificationsUnreadable`, et elle s'écrit au rendu.
+   */
+  const [notificationsUnreadable, setNotificationsUnreadable] = useState(false);
   // L'horloge des constats — #1210. Sans graine : le tiroir n'existe qu'à la
   // suite d'un clic, il n'est donc jamais rendu par le serveur avec un
   // rendez-vous dedans, et `null` avant le montage est la réponse qui ne peut
@@ -371,7 +453,7 @@ export function AppointmentPanel({
 
     let current = true;
     setNotifications(null);
-    setNotificationsFailure(null);
+    setNotificationsUnreadable(false);
 
     void loadAppointmentNotificationsAction(tenantSlug, editingId).then((result) => {
       if (!current) {
@@ -388,13 +470,14 @@ export function AppointmentPanel({
       // Le journal illisible ne bloque rien : c'est une information de contexte,
       // et le tiroir sert d'abord à poser et déplacer des rendez-vous. Le dire
       // vaut mieux que d'afficher un « aucun message » qui, lui, serait faux.
-      setNotificationsFailure(t('desk.notificationsUnreadable'));
+      // La phrase s'écrit au rendu — ici on ne retient que le fait (#1354).
+      setNotificationsUnreadable(true);
     });
 
     return () => {
       current = false;
     };
-  }, [tenantSlug, editingId, onExpired, t]);
+  }, [tenantSlug, editingId, onExpired]);
 
   // Les créneaux de la journée retenue — le cœur de #611.
   //
@@ -418,13 +501,13 @@ export function AppointmentPanel({
   useEffect(() => {
     if (serviceId === '' || parseCalendarDate(day) === null) {
       setSlots(null);
-      setSlotsFailure(null);
+      setSlotsUnreadable(false);
       return undefined;
     }
 
     let current = true;
     setSlots(null);
-    setSlotsFailure(null);
+    setSlotsUnreadable(false);
 
     void loadDeskAvailabilityAction(tenantSlug, {
       serviceId,
@@ -466,14 +549,16 @@ export function AppointmentPanel({
       // retombe sur la saisie libre, et l'API reste juge du créneau. Le ton de
       // `desk.slotsUnreadable` est donc celui d'un avertissement et non d'une
       // panne — ce qui suit reste possible, seulement moins sûr (#611).
+      // La phrase de l'avertissement est celle du champ d'heure libre, écrite au
+      // rendu : l'état ne retient que le fait (#1354).
       setSlots(null);
-      setSlotsFailure(t('desk.slotsUnreadable'));
+      setSlotsUnreadable(true);
     });
 
     return () => {
       current = false;
     };
-  }, [tenantSlug, serviceId, staffId, day, editingId, timeZone, slotsVersion, onExpired, t]);
+  }, [tenantSlug, serviceId, staffId, day, editingId, timeZone, slotsVersion, onExpired]);
 
   // Le créneau retenu, quand il vient bien de la liste du moteur. `null` en
   // saisie libre — liste illisible — et pendant le chargement.
@@ -481,7 +566,7 @@ export function AppointmentPanel({
   // Une heure qu'aucun créneau ne porte ne part pas à l'API : elle reviendrait
   // en 409, et c'est exactement le refus que ce ticket supprime. La saisie libre
   // fait exception — la liste étant illisible, c'est l'API qui tranchera.
-  const bookable = slotsFailure !== null || chosen !== null;
+  const bookable = slotsUnreadable || chosen !== null;
 
   // Les praticiens réellement offerts par le sélecteur : ceux qui tiennent la
   // prestation, plus — en édition — celui déjà affecté au rendez-vous même s'il
@@ -517,13 +602,13 @@ export function AppointmentPanel({
   }, [staff, offered, staffId]);
 
   /**
-   * Le message d'un refus d'écriture du comptoir, dans la langue de la session.
+   * Traite le refus d'une écriture — créneau perdu, session, ou motif du refus.
    *
-   * La composition vit ici depuis #848, et non plus dans
-   * `lib/admin/appointment-desk.ts` : le **verdict** reste au module — c'est
-   * `isSlotConflict` qui dit si le refus est un créneau perdu —, la phrase vient
-   * du catalogue. Un module de calcul pur n'a pas de traducteur sous la main. Le
-   * module en gardait encore une copie française morte jusqu'à #1187.
+   * Le **verdict** reste au module de calcul depuis #848 — c'est `isSlotConflict`
+   * qui dit si le refus est un créneau perdu —, et la phrase vient du catalogue.
+   * Le module en gardait encore une copie française morte jusqu'à #1187. Depuis
+   * #1354, cette fonction ne compose plus aucune phrase : elle range un fait ou
+   * un motif, et c'est le rendu qui écrit (voir `DeskFailure`).
    *
    * ## Pourquoi `desk.conflictBody` ne nomme pas la cause (#611)
    *
@@ -541,32 +626,9 @@ export function AppointmentPanel({
    * collègue qui n'avait rien réservé. La règle, qui tient les deux langues et
    * les quatre clés concernées, est écrite à l'en-tête du namespace
    * (`messages/admin-planning.d.ts`).
-   *
-   * ## `desk.routeMissing` dit un manque identifié, pas une panne
-   *
-   * `NOT_FOUND` et `HTTP_404` sont les deux façons dont un 404 remonte du client
-   * d'API ; sur les écritures du comptoir, les deux disent la même absence de
-   * route. L'écran est écrit contre le contrat partagé et **dégrade** : il
-   * s'affiche, il valide, il dit ce qui manque — plutôt qu'un message générique
-   * qui masquerait un manque parfaitement identifié derrière une phrase qui
-   * n'aide personne.
    */
-  const failureMessage = useCallback(
-    (code: string, message: string): string => {
-      if (isSlotConflict(code)) {
-        return t('desk.conflictBody');
-      }
-
-      return code === ERROR_CODES.NOT_FOUND || code === 'HTTP_404'
-        ? t('desk.routeMissing')
-        : message;
-    },
-    [t],
-  );
-
-  /** Traite le refus d'une écriture — conflit, session, ou message de l'API. */
   const refuse = useCallback(
-    (code: string, message: string): void => {
+    (code: string): void => {
       if (code === ERROR_CODES.UNAUTHORIZED) {
         onExpired();
         return;
@@ -575,7 +637,7 @@ export function AppointmentPanel({
       if (isSlotConflict(code)) {
         // Le planning est relu : le créneau perdu doit se voir occupé. Aucune
         // saisie n'est touchée — c'est tout l'objet du quatrième critère.
-        setConflict(failureMessage(code, message));
+        setConflict(true);
         setFailure(null);
         // …et la liste des créneaux avec lui (#611) : celui que l'API vient de
         // refuser n'a plus à être proposé, et le suivant se choisit sans quitter
@@ -585,10 +647,10 @@ export function AppointmentPanel({
         return;
       }
 
-      setConflict(null);
-      setFailure(failureMessage(code, message));
+      setConflict(false);
+      setFailure(deskFailureOf(code));
     },
-    [onExpired, onReload, failureMessage],
+    [onExpired, onReload],
   );
 
   const submit = useCallback(async (): Promise<void> => {
@@ -631,7 +693,7 @@ export function AppointmentPanel({
       return;
     }
 
-    refuse(result.code, result.message);
+    refuse(result.code);
   }, [
     confirmingCancel,
     chosen,
@@ -672,14 +734,16 @@ export function AppointmentPanel({
       // passe entre le rendu et le clic, et l'horloge du poste n'est pas celle
       // du serveur, qui tranche.
       if (isAppointmentNotStartedRefusal(result.code, result.details)) {
-        setConflict(null);
-        setFailure(t('desk.notStarted'));
+        setConflict(false);
+        // La clé, pas la phrase : le tiroir reste ouvert, et la bascule de langue
+        // doit la réécrire (#1354).
+        setFailure({ kind: 'key', key: 'desk.notStarted' });
         return;
       }
 
-      refuse(result.code, result.message);
+      refuse(result.code);
     },
-    [editing, tenantSlug, onReload, onClose, refuse, t],
+    [editing, tenantSlug, onReload, onClose, refuse],
   );
 
   /**
@@ -731,13 +795,17 @@ export function AppointmentPanel({
     // et n'ayant aucun créneau à reprendre. Le 409 y désigne deux annulations
     // concurrentes (`appointments.service.ts`, `ConflictError`), le 404 un
     // rendez-vous introuvable ou d'un autre établissement, et tout le reste se
-    // dit avec le message de l'API, qui nomme déjà le refus —
-    // `INVALID_STATE_TRANSITION` compris.
-    setConflict(null);
+    // dit avec la phrase du **code** du refus, qui le nomme déjà —
+    // `INVALID_STATE_TRANSITION` compris. Un motif et non une phrase depuis
+    // #1354 : la question reste posée, donc le tiroir reste ouvert, donc la
+    // bascule de langue doit réécrire ce qu'il affiche.
+    setConflict(false);
     setFailure(
-      result.code === ERROR_CODES.CONFLICT ? t('desk.cancelConflict') : result.message,
+      result.code === ERROR_CODES.CONFLICT
+        ? { kind: 'key', key: 'desk.cancelConflict' }
+        : { kind: 'refusal', code: result.code },
     );
-  }, [editing, cancelReason, tenantSlug, onReload, onClose, onExpired, t]);
+  }, [editing, cancelReason, tenantSlug, onReload, onClose, onExpired]);
 
   /**
    * Le focus entre dans le tiroir à son ouverture (#617).
@@ -889,12 +957,13 @@ export function AppointmentPanel({
           </div>
         )}
 
-        {conflict === null ? null : (
+        {!conflict ? null : (
           <div className="spa-admin-appointment__conflict">
             {/* « Indisponible » et non « déjà réservé » : le 409 couvre cinq
-                refus différents et n'en distingue aucun (#611). */}
+                refus différents et n'en distingue aucun (#611). La phrase est
+                écrite ici, dans la langue de ce rendu (#1354). */}
             <Notification tone="warning" title={t('desk.conflictTitle')}>
-              <p>{conflict}</p>
+              <p>{t('desk.conflictBody')}</p>
             </Notification>
           </div>
         )}
@@ -902,7 +971,10 @@ export function AppointmentPanel({
         {failure === null ? null : (
           <div className="spa-admin-appointment__conflict">
             <Notification tone="danger" title={t('desk.failureTitle')}>
-              <p>{failure}</p>
+              {/* La phrase est écrite ici, dans la langue de ce rendu (#1354) :
+                  celle du catalogue pour les refus que cet écran nomme, celle du
+                  contrat partagé pour les autres. */}
+              <p>{failure.kind === 'key' ? t(failure.key) : refusalMessage(failure, locale)}</p>
             </Notification>
           </div>
         )}
@@ -1097,7 +1169,7 @@ export function AppointmentPanel({
 
             {/* L'heure se choisit dans la liste du moteur, et ne se saisit à la
                 main que si cette liste n'a pas pu être lue (#611). */}
-            {slotsFailure === null ? (
+            {!slotsUnreadable ? (
               <Select
                 id={`${formId}-heure`}
                 label={t('desk.timeLabel')}
@@ -1231,8 +1303,9 @@ export function AppointmentPanel({
             notifications={notifications}
             timeZone={timeZone}
             countryCode={countryCode}
-            loading={notifications === null && notificationsFailure === null}
-            failure={notificationsFailure}
+            loading={notifications === null && !notificationsUnreadable}
+            // La phrase est écrite ici, dans la langue de ce rendu (#1354).
+            failure={notificationsUnreadable ? t('desk.notificationsUnreadable') : null}
           />
         )}
       </div>

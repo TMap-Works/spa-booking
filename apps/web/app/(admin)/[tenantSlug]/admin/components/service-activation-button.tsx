@@ -1,11 +1,12 @@
 'use client';
 
-import type { Service } from '@spa/shared';
-import { useTranslations } from 'next-intl';
+import type { Locale, Service } from '@spa/shared';
+import { useLocale, useTranslations } from 'next-intl';
 import { useRouter } from 'next/navigation';
 import { useState, useTransition } from 'react';
 
 import { Button } from '@/components/ui/button';
+import { refusalMessage, type Refusal } from '@/lib/refusal';
 
 import { updateServiceAction } from '../catalogue/actions';
 import { useAdminSessionRenewal } from './use-admin-session-renewal';
@@ -43,6 +44,16 @@ import { useAdminSessionRenewal } from './use-admin-session-renewal';
  * retombe de lui-même quand le rendu serveur est arrivé, et le bouton reste
  * inerte pendant tout l'aller-retour — pas une milliseconde de plus, pas une de
  * moins.
+ *
+ * ## Le refus est gardé par son code, jamais par sa phrase (#1354)
+ *
+ * Pour la raison même qui fait employer `useTransition` ci-dessus : ce composant
+ * **n'est pas démonté** quand la route se rejoue. Le sélecteur de langue du rail
+ * pose un cookie et laisse Next rendre à nouveau sans navigation
+ * (`i18n/actions.ts`), si bien qu'une phrase rangée en état restait écrite dans la
+ * langue d'avant, sous des boutons qui, eux, suivaient le rendu. Ce qui va en état
+ * est donc le **code** du refus, et `refusalMessage` en écrit la phrase au rendu —
+ * voir `lib/refusal.ts`.
  */
 export function ServiceActivationButton({
   tenantSlug,
@@ -52,11 +63,13 @@ export function ServiceActivationButton({
   readonly service: Service;
 }) {
   const t = useTranslations('admin-catalog');
+  const locale = useLocale() as Locale;
   const router = useRouter();
   const { renewIfExpired } = useAdminSessionRenewal(tenantSlug);
   const [saving, setSaving] = useState(false);
   const [refreshing, startRefresh] = useTransition();
-  const [failure, setFailure] = useState<string | null>(null);
+  /** Le **code** du refus, pas sa phrase (#1354) — voir l'en-tête. */
+  const [failure, setFailure] = useState<Refusal | null>(null);
 
   async function toggle(): Promise<void> {
     setSaving(true);
@@ -71,7 +84,7 @@ export function ServiceActivationButton({
         setSaving(false);
         return;
       }
-      setFailure(result.message);
+      setFailure({ code: result.code });
       setSaving(false);
       return;
     }
@@ -98,7 +111,8 @@ export function ServiceActivationButton({
       </Button>
       {failure === null ? null : (
         <p className="spa-field__error" role="alert">
-          {failure}
+          {/* La phrase est écrite ici, dans la langue de ce rendu (#1354). */}
+          {refusalMessage(failure, locale)}
         </p>
       )}
     </>

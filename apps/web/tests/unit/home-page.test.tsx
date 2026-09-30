@@ -184,10 +184,12 @@ describe('le salon de la dernière visite', () => {
 
 describe('le formulaire d’accès', () => {
   it('affiche le refus sur le champ et garde la saisie', async () => {
+    // Le **motif**, comme l'action le rend depuis #1354 : la phrase est écrite
+    // par le formulaire, au rendu.
     openSalonAction.mockResolvedValue({
       address: 'Salon Fantôme',
-      fieldError: 'Aucun salon ne répond à « Salon Fantôme ».',
-      formError: null,
+      fieldRefusal: 'unknown',
+      formRefusal: null,
     });
     render(<SalonFinder initialAddress="" title="Accéder à mon salon" />);
 
@@ -219,7 +221,7 @@ describe('le formulaire d’accès', () => {
         expect((bouton as HTMLButtonElement).disabled).toBe(true);
       }
     });
-    conclure({ address: 'maison-lotus', fieldError: null, formError: 'Le service est momentanément injoignable.' });
-    expect(await screen.findByText(/momentanément injoignable/i)).toBeDefined();
+    conclure({ address: 'maison-lotus', fieldRefusal: null, formRefusal: 'unavailable' });
+    expect(await screen.findByText(booking.home.finder.errors.unavailable)).toBeDefined();
   });
 });

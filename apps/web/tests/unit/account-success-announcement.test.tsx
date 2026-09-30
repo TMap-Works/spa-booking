@@ -1,4 +1,9 @@
-import type { AvailabilityResponse, BookedAppointment } from '@spa/shared';
+import {
+  ERROR_CODES,
+  errorMessage,
+  type AvailabilityResponse,
+  type BookedAppointment,
+} from '@spa/shared';
 import { cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { renderToStaticMarkup } from 'react-dom/server';
@@ -243,7 +248,11 @@ describe('espace client — l’annulation menée à son terme s’annonce', () 
     await user.click(screen.getByRole('button', { name: 'Annuler' }));
     await user.click(screen.getByRole('button', { name: 'Confirmer l’annulation' }));
 
-    expect(screen.getByText('Ce rendez-vous n’est plus annulable.')).toBeDefined();
+    // Le refus s'affiche, et c'est la phrase du **code** dans la table du
+    // contrat : la carte ne range plus le `message` de l'action depuis #1354,
+    // faute de quoi il resterait écrit dans la langue d'avant la bascule. Le
+    // `message` du double ci-dessus n'atteint donc plus l'écran.
+    expect(screen.getByText(errorMessage(ERROR_CODES.VALIDATION_ERROR, 'fr'))).toBeDefined();
     expect(region(container).textContent).toBe('');
   });
 

@@ -11,10 +11,13 @@ import { Notification } from '@/components/ui/notification';
 import {
   defaultReturnDate,
   formatTimeOff,
+  timeOffRefusalMessage,
   validateTimeOffDraft,
   type TimeOffDraft,
+  type TimeOffRefusalKey,
 } from '@/lib/admin/staff-time-off';
 import type { DisplayLocale } from '@/lib/format';
+import { refusalMessage } from '@/lib/refusal';
 
 import { createStaffTimeOffAction, deleteStaffTimeOffAction } from '../actions';
 import { useAdminSessionRenewal } from '../../components/use-admin-session-renewal';
@@ -66,6 +69,32 @@ import { useAdminSessionRenewal } from '../../components/use-admin-session-renew
 
 const EMPTY_DRAFT = { fromDate: '', fromTime: '', toDate: '', toTime: '', reason: '' } as const;
 
+/**
+ * Ce que le panneau garde d'un refus — un **motif**, jamais sa phrase (#1354).
+ *
+ * Il rangeait le texte : celui du verdict de `validateTimeOffDraft`, le
+ * `message` rendu par l'action serveur, ou la phrase du serveur muet. Le
+ * sélecteur de langue rejoue la route sans démonter ce panneau, si bien que
+ * « Indiquez le jour de reprise. » restait en français sous un champ « Day back
+ * at work » qui, lui, suivait le rendu. Voir `lib/refusal.ts`.
+ *
+ * Trois motifs, parce que les trois refus n'ont pas la même origine : la saisie
+ * refusée par le contrat avant tout appel, le refus rendu par l'API, et le
+ * serveur qui n'a pas répondu du tout — celui-là, l'écran est seul à savoir le
+ * dire.
+ */
+type TimeOffFailure =
+  | { readonly kind: 'draft'; readonly refusalKey: TimeOffRefusalKey }
+  | { readonly kind: 'refusal'; readonly code: string }
+  | { readonly kind: 'unreachable' };
+
+/**
+ * Le titre du bandeau, gardé en **clé** — « Absence non enregistrée » sur un
+ * retrait raté serait un contresens, et ce qui distingue les deux est ce qui a
+ * échoué, non la langue de ce jour-là (#1354).
+ */
+type TimeOffFailureTitleKey = 'timeOff.notSavedTitle' | 'timeOff.notRemovedTitle';
+
 /** L'identifiant du déclencheur, seul moyen de lui rendre le focus : `Button` n'expose pas de `ref`. */
 function removeButtonId(timeOffId: string): string {
   return `absence-retirer-${timeOffId}`;
@@ -109,11 +138,13 @@ export function StaffTimeOffPanel({
   const [draft, setDraft] = useState<Omit<TimeOffDraft, 'staffId'>>(EMPTY_DRAFT);
   const [pending, setPending] = useState<string | null>(null);
   const [refreshing, startRefresh] = useTransition();
+  // `field` reste une **donnée** — c'est le contrôle à marquer, et il ne se démode
+  // pas quand la langue change. Le corps et le titre, eux, sont des motifs (#1354).
   const [error, setError] = useState<{
     field: keyof TimeOffDraft | null;
-    message: string;
+    failure: TimeOffFailure;
     /** Ce qui a échoué — « Absence non enregistrée » sur un retrait raté serait un contresens. */
-    title: string;
+    titleKey: TimeOffFailureTitleKey;
   } | null>(null);
   /** L'absence dont le retrait attend un second geste — une seule à la fois. */
   const [confirming, setConfirming] = useState<string | null>(null);
@@ -167,8 +198,19 @@ export function StaffTimeOffPanel({
     setRestoreFocus(null);
   }, [restoreFocus]);
 
+  /** La phrase d'un refus, écrite dans la langue de ce rendu (#1354). */
+  function failureMessage(failure: TimeOffFailure): string {
+    if (failure.kind === 'draft') {
+      return timeOffRefusalMessage(failure.refusalKey, locale);
+    }
+
+    return failure.kind === 'unreachable'
+      ? t('timeOff.unreachable')
+      : refusalMessage(failure, locale);
+  }
+
   function fieldError(field: keyof TimeOffDraft): string | undefined {
-    return error !== null && error.field === field ? error.message : undefined;
+    return error !== null && error.field === field ? failureMessage(error.failure) : undefined;
   }
 
   function change(changes: Partial<Omit<TimeOffDraft, 'staffId'>>): void {
@@ -187,13 +229,13 @@ export function StaffTimeOffPanel({
   }
 
   async function create(): Promise<void> {
-    const validation = validateTimeOffDraft({ ...draft, staffId }, timeZone, locale);
+    const validation = validateTimeOffDraft({ ...draft, staffId }, timeZone);
 
     if (!validation.ok) {
       setError({
         field: validation.field,
-        message: validation.message,
-        title: t('timeOff.notSavedTitle'),
+        failure: { kind: 'draft', refusalKey: validation.refusalKey },
+        titleKey: 'timeOff.notSavedTitle',
       });
       return;
     }
@@ -208,7 +250,13 @@ export function StaffTimeOffPanel({
         if (renewIfExpired(result)) {
           return;
         }
-        setError({ field: null, message: result.message, title: t('timeOff.notSavedTitle') });
+        // Le code, pas la phrase (#1354) : c'est `refusalMessage` qui l'écrit au
+        // rendu, dans la langue lue.
+        setError({
+          field: null,
+          failure: { kind: 'refusal', code: result.code },
+          titleKey: 'timeOff.notSavedTitle',
+        });
         return;
       }
 
@@ -219,8 +267,8 @@ export function StaffTimeOffPanel({
     } catch {
       setError({
         field: null,
-        message: t('timeOff.unreachable'),
-        title: t('timeOff.notSavedTitle'),
+        failure: { kind: 'unreachable' },
+        titleKey: 'timeOff.notSavedTitle',
       });
     } finally {
       setPending(null);
@@ -243,7 +291,12 @@ export function StaffTimeOffPanel({
         if (renewIfExpired(result)) {
           return;
         }
-        setError({ field: null, message: result.message, title: t('timeOff.notRemovedTitle') });
+        // Le code, pas la phrase (#1354) — voir `create` juste au-dessus.
+        setError({
+          field: null,
+          failure: { kind: 'refusal', code: result.code },
+          titleKey: 'timeOff.notRemovedTitle',
+        });
         return;
       }
 
@@ -258,8 +311,8 @@ export function StaffTimeOffPanel({
     } catch {
       setError({
         field: null,
-        message: t('timeOff.unreachable'),
-        title: t('timeOff.notRemovedTitle'),
+        failure: { kind: 'unreachable' },
+        titleKey: 'timeOff.notRemovedTitle',
       });
     } finally {
       setPending(null);
@@ -277,8 +330,9 @@ export function StaffTimeOffPanel({
       <p className="spa-admin-toolbar__hint">{windowLabel}</p>
 
       {error !== null && error.field === null ? (
-        <Notification tone="danger" title={error.title}>
-          <p>{error.message}</p>
+        /* Titre et phrase sont écrits ici, dans la langue de ce rendu (#1354). */
+        <Notification tone="danger" title={t(error.titleKey)}>
+          <p>{failureMessage(error.failure)}</p>
         </Notification>
       ) : null}
 

@@ -35,6 +35,7 @@ import { Button } from '@/components/ui/button';
 import { Icon, type IconName } from '@/components/ui/icon';
 import { Notification } from '@/components/ui/notification';
 import type { ContactDraft } from '@/lib/booking/draft';
+import { refusalMessage, type Refusal } from '@/lib/refusal';
 
 import { BookingAppointmentCard } from './appointment-card';
 
@@ -253,6 +254,16 @@ interface Announcement {
  * La constante française qui portait cette phrase (`PENDING_HOLD_NOTE`) est
  * tombée avec #1297, comme `UNCLASSIFIED_TITLE` et `PUBLIC_EXIT_LABELS`.
  *
+ * ### Le refus d'annulation aussi (#1354)
+ *
+ * Il rangeait la phrase composée par `requestCancellation`. Or le sélecteur de
+ * langue pose un cookie et laisse Next rejouer la route **sans navigation**
+ * (`i18n/actions.ts`) : cet écran se rendait à nouveau, son état ne bougeait pas,
+ * et « The cancellation failed » se retrouvait au-dessus d'une phrase restée
+ * française. Ce qui va en état est donc le **code**, et la phrase s'écrit au
+ * rendu (`lib/refusal.ts`). La phrase de repli passée à `requestCancellation`
+ * reste exigée par son contrat — elle n'atteint plus l'écran.
+ *
  * ### Le fichier d'agenda suit la langue de l'écran (#1297)
  *
  * `appointmentIcsHref` et `appointmentIcsFilename` reçoivent `locale` : sans
@@ -274,7 +285,8 @@ export function ConfirmationStep({
   const locale = useLocale();
   const [confirmingCancellation, setConfirmingCancellation] = useState(false);
   const [cancelling, setCancelling] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  /** Le **code** du refus d'annulation, pas sa phrase (#1354) — voir `lib/refusal.ts`. */
+  const [failure, setFailure] = useState<Refusal | null>(null);
 
   const isCancelled = appointment.status === 'cancelled';
   const staffName =
@@ -333,11 +345,14 @@ export function ConfirmationStep({
     }
 
     setCancelling(true);
-    setError(null);
+    setFailure(null);
 
     const result = await requestCancellation(
       tenant.slug,
       appointment.id,
+      // La phrase de repli reste exigée par le module appelé, qui compose un
+      // `message` complet ; cet écran ne le lit plus — il s'en tient au code, et
+      // écrit la phrase au rendu (#1354).
       t('tunnel.actions.unexpectedError'),
     );
 
@@ -345,7 +360,7 @@ export function ConfirmationStep({
       onCancelled(result.data);
       setConfirmingCancellation(false);
     } else {
-      setError(result.message);
+      setFailure({ code: result.code });
     }
 
     setCancelling(false);
@@ -451,11 +466,14 @@ export function ConfirmationStep({
         </p>
       )}
 
-      {error === null ? null : (
-        // Le titre vient du catalogue ; la phrase, de l'action — traduite quand
-        // c'est elle qui l'écrit, celle de l'API sinon (voir `actions.ts`).
+      {failure === null ? null : (
+        // Le titre vient du catalogue ; la phrase, de la table du contrat
+        // partagé, écrite **ici** dans la langue de ce rendu (#1354). Cet écran
+        // ne nomme aucun de ces refus en propre : l'annulation échoue par la
+        // session, par un état qui ne la permet plus ou par le transport, et le
+        // contrat dit chacun des trois mieux qu'une phrase du tunnel.
         <Notification tone="danger" title={t('tunnel.confirmationStep.cancelFailedTitle')}>
-          <p>{error}</p>
+          <p>{refusalMessage(failure, locale)}</p>
         </Notification>
       )}
 
@@ -530,7 +548,7 @@ export function ConfirmationStep({
               <Button
                 variant="quiet"
                 onClick={() => {
-                  setError(null);
+                  setFailure(null);
                   setConfirmingCancellation(true);
                 }}
               >

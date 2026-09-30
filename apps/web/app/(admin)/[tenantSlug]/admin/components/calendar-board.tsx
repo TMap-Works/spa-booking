@@ -26,7 +26,7 @@ import {
   type DeskMoveRefusal,
   type DeskMoveTarget,
 } from '@/lib/admin/appointment-desk';
-import { calendarFailureMessage } from '@/lib/admin/calendar-failure';
+import { calendarApiFailureMessage } from '@/lib/admin/calendar-failure';
 import {
   buildCalendarBoard,
   cellsInWindow,
@@ -51,6 +51,7 @@ import { appointmentOutcomeLabel, appointmentStatusLabels } from '@/lib/appointm
 import { elisionForm } from '@/lib/elision';
 import type { DisplayLocale } from '@/lib/format';
 import { initialsOf } from '@/lib/initials';
+import { refusalMessage, type Refusal } from '@/lib/refusal';
 
 import type { AdminActionResult } from '../action-result';
 import { loadCalendarRangeAction, rescheduleDeskAppointmentAction } from '../calendrier/actions';
@@ -198,8 +199,18 @@ interface CalendarBoardProps {
    * lire le planning d'absences gardent le comportement d'avant ce ticket.
    */
   readonly initialTimeOff?: CalendarTimeOffCache;
-  /** Message d'indisponibilité du premier chargement, s'il a échoué. */
-  readonly loadError: string | null;
+  /**
+   * Le **code** du refus qui a fait échouer le premier chargement, s'il a
+   * échoué — `null` sinon.
+   *
+   * Un code et non la phrase depuis #1354 : la page le passait déjà traduit, et
+   * cette phrase-là allait droit dans l'état du planning (`failure`), où le
+   * sélecteur de langue ne pouvait plus la réécrire — « Le planning du
+   * back-office n'est pas encore servi par l'API » restait en français sous une
+   * barre d'outils passée à l'anglais. C'est `calendarApiFailureMessage` qui
+   * l'écrit ici, au rendu, exactement comme `calendrier/page.tsx` l'écrivait.
+   */
+  readonly loadErrorCode: string | null;
   /**
    * Le catalogue de l'établissement, pour le tiroir de rendez-vous (#50).
    *
@@ -306,7 +317,7 @@ export function CalendarBoard({
   date: initialDate,
   initialPeriods,
   initialTimeOff = EMPTY_TIME_OFF_CACHE,
-  loadError,
+  loadErrorCode,
   services,
   staff,
   staffSchedules = EMPTY_SCHEDULES,
@@ -330,7 +341,21 @@ export function CalendarBoard({
     () => new Map(Object.entries(initialTimeOff)),
   );
   const [loading, setLoading] = useState(false);
-  const [failure, setFailure] = useState<string | null>(loadError);
+  /**
+   * Le **code** du refus qui empêche d'afficher la période, pas sa phrase (#1354).
+   *
+   * Le sélecteur de langue du rail pose un cookie et laisse Next rejouer la route
+   * **sans navigation** (`i18n/actions.ts`) : ce planning n'est pas démonté, son
+   * état ne bouge pas, et la bannière restait donc écrite dans la langue d'avant
+   * sous un titre — « Planning indisponible » — qui, lui, suivait le rendu. La
+   * phrase se compose désormais au rendu, par le même module que le premier rendu
+   * serveur (`lib/admin/calendar-failure.ts`).
+   *
+   * Amorcée par `loadErrorCode`, qui est le code du refus du premier chargement.
+   */
+  const [failure, setFailure] = useState<Refusal | null>(() =>
+    loadErrorCode === null ? null : { code: loadErrorCode },
+  );
   const [now, setNow] = useState<Date | null>(null);
   const [visible, setVisible] = useState<SlotWindow>({ first: 0, last: 0 });
   /** Ce que le tiroir de rendez-vous est en train de montrer, s'il est ouvert (#50). */
@@ -341,10 +366,27 @@ export function CalendarBoard({
   const [moving, setMoving] = useState<{ move: DeskMove; key: string } | null>(null);
   /** Le report qui attend la confirmation du changement de praticien. */
   const [confirming, setConfirming] = useState<{ move: DeskMove; key: string } | null>(null);
-  /** Le retour arrière à annoncer, et le bloc qu'il vient de replacer. */
+  /**
+   * Le retour arrière à annoncer — le rendez-vous replacé et le **code** du
+   * refus, jamais les trois phrases de la bannière (#1354).
+   *
+   * Il rangeait le `DeskMoveRefusal` tout composé — titre, corps, ton —, et le
+   * corps porte une date et trois noms mis en forme dans la langue du moment. Le
+   * sélecteur de langue rejoue la route sans démonter ce planning : « Le
+   * rendez-vous de Rina Andriamana est resté le mercredi 26 août à 09:00 »
+   * restait donc en français sous une barre d'outils anglaise.
+   *
+   * Ce qui va en état est désormais **de la donnée** : le rendez-vous d'origine —
+   * dont la bannière tire le nom de la cliente, son élision, l'heure et le
+   * praticien — et le code du refus, dont `refusalOf` tire le titre, la raison et
+   * le ton à chaque rendu. `appointmentId` n'est plus rangé à part : il se lit
+   * sur `previous.id`, et deux copies d'un même identifiant finissent par
+   * diverger.
+   */
   const [refusal, setRefusal] = useState<{
-    notice: DeskMoveRefusal;
-    appointmentId: string;
+    /** Le rendez-vous tel qu'il était avant le lâcher, remis à sa place. */
+    readonly previous: Appointment;
+    readonly code: string;
   } | null>(null);
 
   const columnsRef = useRef<HTMLDivElement | null>(null);
@@ -594,13 +636,18 @@ export function CalendarBoard({
       }
 
       if (speaks) {
-        // La même traduction que le premier rendu, côté serveur : sans elle,
-        // ouvrir la semaine suivante afficherait le « Cannot GET … » brut du
-        // cadre HTTP là où la journée ouverte disait ce qui manque.
-        setFailure(calendarFailureMessage(result.code, result.message, locale));
+        // Le **code**, et la phrase au rendu (#1354) : c'est la même traduction
+        // que le premier rendu côté serveur — sans elle, ouvrir la semaine
+        // suivante afficherait le « Cannot GET … » brut du cadre HTTP là où la
+        // journée ouverte disait ce qui manque.
+        //
+        // Le `message` du refus ne remonte plus, et rien ne s'y perd : depuis
+        // #1234 il vaut déjà `errorMessage(code, locale)` (`action-result.ts`),
+        // c'est-à-dire ce que `calendarApiFailureMessage` écrit du code.
+        setFailure({ code: result.code });
       }
     },
-    [renewSession, tenantSlug, weekStart, locale, timeZone],
+    [renewSession, tenantSlug, weekStart, timeZone],
   );
 
   /** Ouvre une période — depuis le cache si elle y est, sinon par l'action. */
@@ -731,9 +778,22 @@ export function CalendarBoard({
    * Ces deux phrases et leurs deux titres vivaient encore en constantes
    * françaises dans `lib/admin/appointment-desk.ts`, que plus rien ne rendait
    * depuis #848 ; leur justification les a suivies jusqu'ici (#1187).
+   *
+   * ## Appelée **au rendu** depuis #1354
+   *
+   * Elle composait la bannière à l'instant du refus, et l'état gardait ses trois
+   * phrases. Elle est désormais appelée à chaque rendu, sur le rendez-vous et le
+   * code rangés par `commitMove` : c'est ce qui fait suivre la langue au titre,
+   * à la raison — et à la date insérée dans le corps, qui est une **donnée** et
+   * se remet en forme avec le reste.
+   *
+   * Le `message` du refus ne remonte plus : depuis #1234 il vaut déjà
+   * `errorMessage(code, locale)` (`action-result.ts`), et c'est exactement ce
+   * que `refusalMessage` écrit du code — à ceci près qu'il le réécrit à chaque
+   * rendu.
    */
   const refusalOf = useCallback(
-    (previous: Appointment, code: string, message: string): DeskMoveRefusal => {
+    (previous: Appointment, code: string): DeskMoveRefusal => {
       const transient = isSlotConflict(code);
       // `NOT_FOUND` et `HTTP_404` sont les deux façons dont un 404 remonte du
       // client d'API. Sur un report, ni l'un ni l'autre ne dit l'absence de
@@ -744,7 +804,7 @@ export function CalendarBoard({
         ? t('move.conflictBody')
         : gone
           ? t('move.goneBody')
-          : message;
+          : refusalMessage({ code }, locale);
 
       return {
         // « Indisponible » et non « déjà pris » : le titre est la première chose
@@ -762,7 +822,7 @@ export function CalendarBoard({
         tone: transient ? 'warning' : 'danger',
       };
     },
-    [t, timeZone, display],
+    [t, timeZone, display, locale],
   );
 
   const commitMove = useCallback(
@@ -783,16 +843,15 @@ export function CalendarBoard({
       }
 
       replaceAppointment(key, move.previous.id, move.previous);
-      setRefusal({
-        notice: refusalOf(move.previous, result.code, result.message),
-        appointmentId: move.previous.id,
-      });
+      // Le rendez-vous replacé et le code, jamais la bannière composée (#1354) :
+      // c'est `refusalOf` qui l'écrit au rendu.
+      setRefusal({ previous: move.previous, code: result.code });
 
       if (result.code === ERROR_CODES.UNAUTHORIZED) {
         renewSession();
       }
     },
-    [tenantSlug, refusalOf, replaceAppointment, renewSession],
+    [tenantSlug, replaceAppointment, renewSession],
   );
 
   /**
@@ -982,7 +1041,7 @@ export function CalendarBoard({
     () => ({
       picked: busy ? null : picked,
       movingId: moving?.move.previous.id ?? null,
-      revertedId: refusal?.appointmentId ?? null,
+      revertedId: refusal?.previous.id ?? null,
       onToggle: (appointment: Appointment) => {
         if (busy) {
           return;
@@ -1080,6 +1139,15 @@ export function CalendarBoard({
     // c'est ce que la recette a montré.
   }, [board.slotCount, showsGrid]);
 
+  /**
+   * La bannière de retour arrière, composée **à ce rendu-ci** (#1354).
+   *
+   * Hors du JSX pour que la condition d'affichage reste une lecture simple :
+   * `refusalOf` a besoin du rendez-vous et du code rangés en état, et l'appeler
+   * au milieu d'un ternaire aurait obligé à les relire deux fois.
+   */
+  const moveNotice = refusal === null ? null : refusalOf(refusal.previous, refusal.code);
+
   const classes = [
     'spa-admin-calendar',
     view === 'semaine' ? 'spa-admin-calendar--week' : null,
@@ -1154,13 +1222,16 @@ export function CalendarBoard({
 
       {failure === null ? null : (
         <Notification tone="danger" title={t('failure.title')}>
-          <p>{failure}</p>
+          {/* La phrase est écrite ici, dans la langue de ce rendu (#1354) : le
+              404 garde son diagnostic propre, tout le reste se dit par la table
+              bilingue du contrat partagé. */}
+          <p>{calendarApiFailureMessage(failure.code, locale)}</p>
         </Notification>
       )}
 
-      {refusal === null ? null : (
-        <Notification tone={refusal.notice.tone} title={refusal.notice.title}>
-          <p>{refusal.notice.body}</p>
+      {moveNotice === null ? null : (
+        <Notification tone={moveNotice.tone} title={moveNotice.title}>
+          <p>{moveNotice.body}</p>
         </Notification>
       )}
 

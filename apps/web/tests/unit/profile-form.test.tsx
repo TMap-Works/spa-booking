@@ -1,4 +1,4 @@
-import type { SessionUser } from '@spa/shared';
+import { ERROR_CODES, errorMessage, type SessionUser } from '@spa/shared';
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -254,10 +254,17 @@ describe('coordonnées — soumission', () => {
     resolve?.({ ok: true, data: profile });
   });
 
+  /*
+   * La phrase attendue est celle du **contrat**, lue dans `errorMessage`, et non
+   * celle que l'action serveur a écrite : depuis #1354 cet écran ne range que le
+   * `code` du refus et écrit la phrase au rendu, dans la langue de ce rendu-là.
+   * Le `message` de la réponse reste dans la réponse — il est écrit pour un
+   * journal, et l'afficher figeait la langue de la requête.
+   */
   it('annonce l’échec sans effacer la saisie', async () => {
     updateProfileAction.mockResolvedValue({
       ok: false,
-      code: 'VALIDATION_ERROR',
+      code: ERROR_CODES.VALIDATION_ERROR,
       message: 'Les coordonnées saisies sont invalides.',
     });
     const user = userEvent.setup();
@@ -266,7 +273,9 @@ describe('coordonnées — soumission', () => {
     await user.type(screen.getByLabelText(/Prénom/), 'e');
     await user.click(screen.getByRole('button', { name: /Enregistrer/ }));
 
-    expect(await screen.findByText('Les coordonnées saisies sont invalides.')).toBeDefined();
+    expect(
+      await screen.findByText(errorMessage(ERROR_CODES.VALIDATION_ERROR, 'fr')),
+    ).toBeDefined();
     expect(valueOf(/Prénom/)).toBe('Camillee');
   });
 

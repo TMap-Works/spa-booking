@@ -1,4 +1,4 @@
-import type { Appointment, Service } from '@spa/shared';
+import { errorMessage, type Appointment, type Service } from '@spa/shared';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -187,7 +187,7 @@ describe('premier critère — le tiroir s’ouvre sur le créneau cliqué', () 
       <CalendarBoard
         date="2026-08-26"
         initialPeriods={{ 'jour:2026-08-26': [CONFIRME] }}
-        loadError={null}
+        loadErrorCode={null}
         services={[MASSAGE]}
         // Ces deux cas partent d'une journée déjà occupée : la colonne vient du
         // rendez-vous posé, pas du répertoire (#507).
@@ -218,7 +218,7 @@ describe('premier critère — le tiroir s’ouvre sur le créneau cliqué', () 
       <CalendarBoard
         date="2026-08-26"
         initialPeriods={{ 'jour:2026-08-26': [CONFIRME] }}
-        loadError={null}
+        loadErrorCode={null}
         services={[MASSAGE]}
         // Ces deux cas partent d'une journée déjà occupée : la colonne vient du
         // rendez-vous posé, pas du répertoire (#507).
@@ -620,7 +620,12 @@ describe('#754 — le salon annule depuis le tiroir', () => {
     await user.type(screen.getByLabelText(/Motif de l’annulation/), 'Fermeture exceptionnelle');
     await user.click(screen.getByRole('button', { name: 'Confirmer l’annulation' }));
 
-    expect(await screen.findByText('Rendez-vous déjà annulé.')).toBeDefined();
+    // La phrase vient du **code** et non du `message` de l'action (#1354) : ce
+    // dernier vaut déjà `errorMessage(code, locale)` depuis #1234, et le garder
+    // en état l'aurait figé dans la langue du refus.
+    expect(
+      await screen.findByText(errorMessage('INVALID_STATE_TRANSITION', 'fr')),
+    ).toBeDefined();
     expect(screen.getByLabelText<HTMLTextAreaElement>(/Motif de l’annulation/).value).toBe(
       'Fermeture exceptionnelle',
     );
@@ -1088,7 +1093,7 @@ describe('#1210 — le tiroir n’offre pas un constat avant l’heure du soin',
    * Tout autre refus garde le message de l'API, qui nomme déjà la cause : un
    * rendez-vous déjà soldé porte le même code, sans `notStarted`.
    */
-  it('laisse passer les autres refus de transition avec leur message', async () => {
+  it('laisse passer les autres refus de transition avec la phrase de leur code', async () => {
     figerLHorloge(SOIN_COMMENCE);
     const user = userEvent.setup();
     markDeskAppointmentStatusAction.mockResolvedValue({
@@ -1106,8 +1111,9 @@ describe('#1210 — le tiroir n’offre pas un constat avant l’heure du soin',
     });
     await user.click(screen.getByRole('button', { name: 'Marquer non honoré' }));
 
+    // Là encore la phrase du code, jamais le `message` de l'action (#1354).
     expect(
-      await screen.findByText('Transition « COMPLETED » → « NO_SHOW » interdite.'),
+      await screen.findByText(errorMessage('INVALID_STATE_TRANSITION', 'fr')),
     ).toBeDefined();
   });
 });
@@ -1142,7 +1148,7 @@ describe('#51 — un report tombé sur un 404 dit le rendez-vous disparu', () =>
       <CalendarBoard
         date="2026-08-26"
         initialPeriods={{ 'jour:2026-08-26': [CONFIRME] }}
-        loadError={null}
+        loadErrorCode={null}
         services={[MASSAGE]}
         staff={[]}
         tenantSlug={SLUG}

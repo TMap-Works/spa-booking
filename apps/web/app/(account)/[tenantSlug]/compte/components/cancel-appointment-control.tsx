@@ -1,12 +1,13 @@
 'use client';
 
 import type { BookedAppointment, TimeZone } from '@spa/shared';
-import { useTranslations } from 'next-intl';
+import { useLocale, useTranslations } from 'next-intl';
 import { useState } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { Notification } from '@/components/ui/notification';
 import { formatDateTimeInTimeZone } from '@/lib/format';
+import { refusalMessage, type Refusal } from '@/lib/refusal';
 
 import { cancelOwnAppointmentAction } from '../actions';
 import { accountPath } from '../paths';
@@ -62,12 +63,15 @@ export function CancelAppointmentControl({
   onCancelled,
 }: CancelAppointmentControlProps) {
   const t = useTranslations('account.cancel');
+  /** La langue de ce rendu — celle dans laquelle un refus déjà affiché s'écrit (#1354). */
+  const locale = useLocale();
   const display = useAccountDisplay();
   const announce = useAccountAnnouncement();
   const { renewIfExpired } = useAccountSessionRenewal(tenantSlug);
   const [cancelling, setCancelling] = useState(false);
   const [confirming, setConfirming] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  /** Le **code** du refus, pas sa phrase (#1354) — voir `lib/refusal.ts`. */
+  const [failure, setFailure] = useState<Refusal | null>(null);
 
   const cancel = async (): Promise<void> => {
     // La garde en tête du gestionnaire double le `disabled` du bouton : entre le
@@ -78,14 +82,16 @@ export function CancelAppointmentControl({
     }
 
     setCancelling(true);
-    setError(null);
+    setFailure(null);
 
     const result = await cancelOwnAppointmentAction(tenantSlug, appointment.id);
 
     if (!result.ok) {
       setCancelling(false);
       if (!renewIfExpired(result)) {
-        setError(result.message);
+        // Le code, pas la phrase : elle s'écrit au rendu, dans la langue de ce
+        // rendu-là (#1354).
+        setFailure({ code: result.code });
       }
       return;
     }
@@ -104,9 +110,13 @@ export function CancelAppointmentControl({
 
   return (
     <>
-      {error === null ? null : (
+      {failure === null ? null : (
         <Notification tone="danger" title={t('failureTitle')}>
-          <p>{error}</p>
+          {/* La phrase est écrite ici, dans la langue de ce rendu (#1354). Ce
+              geste ne se refuse que par le contrat — session, état du
+              rendez-vous, transport —, et cet écran n'en nomme aucun mieux que
+              lui : le repli d'`errorMessage` est donc la phrase entière. */}
+          <p>{refusalMessage(failure, locale)}</p>
         </Notification>
       )}
 

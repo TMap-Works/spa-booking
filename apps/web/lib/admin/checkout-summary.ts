@@ -845,7 +845,7 @@ export function receiptDisclaimer(locale: Locale = CHECKOUT_FALLBACK_LOCALE): st
 // ---------------------------------------------------------------------------
 
 /**
- * Ce qui cloche dans le **numéro du ticket du TPE** saisi — `null` s'il est
+ * `true` si le **numéro du ticket du TPE** saisi est mal formé — `false` s'il est
  * recevable, y compris vide.
  *
  * Vide est recevable, et c'est le troisième critère de #1025 autant que le
@@ -869,10 +869,7 @@ export function receiptDisclaimer(locale: Locale = CHECKOUT_FALLBACK_LOCALE): st
  * (web-frontend §4) — et son refus tombe dans le `ValidationPipe`, avant toute
  * écriture et avant tout journal (payments-stripe §1).
  */
-export function terminalReferenceIssue(
-  value: string,
-  locale: Locale = CHECKOUT_FALLBACK_LOCALE,
-): string | null {
+export function isMalformedTerminalReference(value: string): boolean {
   // La **même** valeur que celle qui partira : `terminalReferenceField` envoie
   // la chaîne détourée, et juger l'autre faisait refuser à l'écran un numéro
   // parfaitement recevable — « TPE7788A » collé depuis le ticket du terminal
@@ -880,13 +877,25 @@ export function terminalReferenceIssue(
   // que c'est lui qu'on lui reproche.
   const trimmed = value.trim();
 
-  if (trimmed === '') {
-    return null;
-  }
+  return trimmed !== '' && !terminalReferenceSchema.safeParse(trimmed).success;
+}
 
-  return terminalReferenceSchema.safeParse(trimmed).success
-    ? null
-    : checkoutWords(locale).terminal.referenceInvalid;
+/**
+ * Le même verdict, **suivi de sa phrase** — `null` quand la référence est
+ * recevable.
+ *
+ * Deux formes depuis #1354, et c'est le verdict seul que l'écran lit : il range un
+ * motif et n'écrit la phrase qu'au rendu, dans la langue de ce rendu-là. Une
+ * phrase rangée en état restait écrite dans la langue d'avant, le sélecteur de
+ * langue rejouant la route sans démonter le panneau (`lib/refusal.ts`).
+ */
+export function terminalReferenceIssue(
+  value: string,
+  locale: Locale = CHECKOUT_FALLBACK_LOCALE,
+): string | null {
+  return isMalformedTerminalReference(value)
+    ? checkoutWords(locale).terminal.referenceInvalid
+    : null;
 }
 
 /** Ce que le corps porte pour `terminalReference` — la clé absente quand rien n'est saisi. */
@@ -919,14 +928,14 @@ function namesTerminalReference(violation: string): boolean {
 }
 
 /**
- * Le refus que l'API oppose au **numéro du ticket du TPE** — `null` quand le
- * refus parle d'autre chose.
+ * `true` si l'API refuse le **numéro du ticket du TPE** — `false` quand son refus
+ * parle d'autre chose.
  *
- * ## Pourquoi ce chemin existe à côté de `terminalReferenceIssue`
+ * ## Pourquoi ce chemin existe à côté de `isMalformedTerminalReference`
  *
  * Les deux barrières de la référence ne sont pas au même endroit, et c'est
  * délibéré : la **forme** — 32 caractères alphanumériques — est jugée à l'écran
- * par `terminalReferenceIssue`, la **clé de Luhn** ne vit que côté API
+ * par `isMalformedTerminalReference`, la **clé de Luhn** ne vit que côté API
  * (`payments/terminal-reference.ts`), pour n'avoir qu'une implémentation d'un
  * contrôle de conformité. La conséquence est qu'un numéro parfaitement bien
  * formé — seize chiffres collés, sans espace ni tiret — passe l'écran et se
@@ -949,7 +958,9 @@ function namesTerminalReference(violation: string): boolean {
  *
  * Affiché : la phrase **du catalogue**, dans la langue de l'écran — pas celle
  * de l'API, qui n'est traduite nulle part. C'est la même discipline que partout
- * ailleurs au comptoir : l'écran réagit sur le code, jamais sur le message.
+ * ailleurs au comptoir : l'écran réagit sur le code, jamais sur le message. Et
+ * depuis #1354 il ne la **range** pas davantage : ce verdict lui suffit à retenir
+ * un motif, et la phrase s'écrit au rendu.
  *
  * `HTTP_400` n'est **pas** du lot, et c'est la différence avec `HTTP_404` et
  * `HTTP_409` lus plus haut : ceux-là se décident sur le code seul, celui-ci
@@ -964,13 +975,12 @@ function namesTerminalReference(violation: string): boolean {
  * changera la façon dont elle nomme un champ fautif, c'est lui qui bougera, et
  * ce chemin suivra sans qu'on ait à s'en souvenir.
  */
-export function terminalReferenceRefusal(
+export function isTerminalReferenceRefusal(
   code: string,
   details: Record<string, unknown> | undefined,
-  locale: Locale = CHECKOUT_FALLBACK_LOCALE,
-): string | null {
+): boolean {
   if (code !== ERROR_CODES.VALIDATION_ERROR) {
-    return null;
+    return false;
   }
 
   const parsed = validationErrorDetailsSchema.safeParse(details);
@@ -978,11 +988,24 @@ export function terminalReferenceRefusal(
   // Un 400 de validation qui ne nomme pas ce champ n'est pas le sien : il
   // repart vers le bloc, où un refus qu'aucun champ ne porte doit rester
   // visible plutôt que de disparaître sous un `input` sans rapport.
-  if (!parsed.success || !parsed.data.violations.some(namesTerminalReference)) {
-    return null;
-  }
+  return parsed.success && parsed.data.violations.some(namesTerminalReference);
+}
 
-  return checkoutWords(locale).failure.terminalReferenceRefused;
+/**
+ * Le même refus, **suivi de sa phrase** — `null` quand il parle d'autre chose.
+ *
+ * Deux formes depuis #1354, pour la raison dite sur {@link terminalReferenceIssue}
+ * : le panneau lit le verdict et range un motif, la phrase s'écrivant au rendu
+ * dans la langue de ce rendu-là.
+ */
+export function terminalReferenceRefusal(
+  code: string,
+  details: Record<string, unknown> | undefined,
+  locale: Locale = CHECKOUT_FALLBACK_LOCALE,
+): string | null {
+  return isTerminalReferenceRefusal(code, details)
+    ? checkoutWords(locale).failure.terminalReferenceRefused
+    : null;
 }
 
 // ---------------------------------------------------------------------------

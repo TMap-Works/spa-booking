@@ -1,4 +1,4 @@
-import type { Appointment, AppointmentStatus, Service } from '@spa/shared';
+import { errorMessage, type Appointment, type AppointmentStatus, type Service } from '@spa/shared';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -142,7 +142,7 @@ function renderBoard(periods: Readonly<Record<string, readonly Appointment[]>>):
     <CalendarBoard
       date="2026-08-26"
       initialPeriods={periods}
-      loadError={null}
+      loadErrorCode={null}
       services={CATALOGUE}
       // Les colonnes de ces cas viennent des rendez-vous qu'ils posent : le
       // report se joue entre deux blocs, pas sur une journée creuse (#507).
@@ -367,7 +367,7 @@ describe('le retour arrière sur 409 — troisième critère', () => {
     expect(alerte.textContent).toContain('chez Hasina');
   });
 
-  it('replace aussi sur un refus qui n’est pas un conflit, avec le motif de l’API', async () => {
+  it('replace aussi sur un refus qui n’est pas un conflit, avec le motif de son code', async () => {
     const user = userEvent.setup();
     rescheduleDeskAppointmentAction.mockResolvedValue({
       ok: false,
@@ -379,9 +379,13 @@ describe('le retour arrière sur 409 — troisième critère', () => {
     await user.click(grip('Rina Andriamana'));
     await user.click(slot('08 h 00'));
 
+    // La phrase vient du **code**, pas du `message` de l'action (#1354) : ce
+    // dernier vaut déjà `errorMessage(code, locale)` depuis #1234, et le garder
+    // en état l'aurait figé dans la langue du refus. La phrase attendue est donc
+    // lue dans la table du contrat partagé, jamais recopiée.
     await waitFor(() => {
       expect(screen.getByRole('alert').textContent).toContain(
-        'Hasina ne travaille pas à cette heure-là.',
+        errorMessage('SLOT_OUTSIDE_WORKING_HOURS', 'fr'),
       );
     });
     expect(screen.getByRole('button', { name: /09:00 – 10:00/ })).toBeDefined();

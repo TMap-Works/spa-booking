@@ -1,3 +1,4 @@
+import { ERROR_CODES, errorMessage } from '@spa/shared';
 import { cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -158,17 +159,23 @@ describe('affectation des praticiens — les gestes', () => {
   });
 
   it('affiche le motif d’un échec qui n’est pas un conflit', async () => {
+    // La phrase attendue est celle du **contrat partagé** pour ce code, et non le
+    // `message` de l'action : le panneau ne range plus qu'un code et écrit la
+    // phrase au rendu, dans la langue de ce rendu-là (#1354). C'est la même table
+    // que l'action consultait pour composer son message (#1234).
     removeServiceStaffAction.mockResolvedValue({
       ok: false,
-      code: 'INTERNAL',
-      message: 'Le service est momentanément indisponible.',
+      code: ERROR_CODES.INTERNAL_ERROR,
+      message: errorMessage(ERROR_CODES.INTERNAL_ERROR, 'fr'),
     });
     const user = userEvent.setup();
     renderPanel();
 
     await user.click(screen.getByRole('button', { name: /Retirer Hasina/ }));
 
-    expect(await screen.findByText(/momentanément indisponible/i)).toBeDefined();
+    expect(
+      await screen.findByText(errorMessage(ERROR_CODES.INTERNAL_ERROR, 'fr')),
+    ).toBeDefined();
   });
 
   it('rend les autres lignes inertes tant qu’une bascule est en vol', async () => {

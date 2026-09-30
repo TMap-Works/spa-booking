@@ -18,6 +18,8 @@ import { Button } from '@/components/ui/button';
 import { Field } from '@/components/ui/field';
 import { Notification } from '@/components/ui/notification';
 import { PhoneField } from '@/components/ui/phone-field';
+import { useLocalizedFieldErrors } from '@/lib/field-refusal';
+import { refusalMessage, type Refusal } from '@/lib/refusal';
 
 import { updateCustomerAction } from '../actions';
 import { useAdminSessionRenewal } from '../../components/use-admin-session-renewal';
@@ -118,7 +120,8 @@ export function ClientContactForm({ tenantSlug, customer }: ClientContactFormPro
   const { renewIfExpired } = useAdminSessionRenewal(tenantSlug);
   const [open, setOpen] = useState(false);
   const [saved, setSaved] = useState(false);
-  const [failure, setFailure] = useState<string | null>(null);
+  /** Le **code** du refus, pas sa phrase (#1354) — voir `lib/refusal.ts`. */
+  const [failure, setFailure] = useState<Refusal | null>(null);
 
   // Mémoïsé sur la langue, comme les formulaires de connexion et de réglages :
   // un résolveur neuf à chaque frappe serait reconstruit par `react-hook-form`
@@ -141,6 +144,8 @@ export function ClientContactForm({ tenantSlug, customer }: ClientContactFormPro
     register,
     control,
     handleSubmit,
+    setError,
+    trigger,
     formState: { errors, isSubmitting },
   } = useForm<ContactFormValues, unknown, z.output<ReturnType<typeof contactFormSchema>>>({
     resolver,
@@ -151,6 +156,18 @@ export function ClientContactForm({ tenantSlug, customer }: ClientContactFormPro
     },
     mode: 'onTouched',
   });
+
+  /**
+   * Et les messages **des champs** suivent la langue — #1354.
+   *
+   * Le résolveur est refabriqué à la bascule, mais rien ne rejouait la
+   * validation d'un nom déjà refusé : « ce champ est obligatoire » restait en
+   * français sous une fiche passée en anglais. Le rejeu ne touche que les champs
+   * **déjà fautifs** — corriger un prénom ne fait pas surgir un reproche sur le
+   * nom. Aucun `own` : l'API ne refuse rien sur un champ ici, ses refus vont au
+   * bandeau du formulaire.
+   */
+  useLocalizedFieldErrors({ locale, errors, trigger, setError });
 
   const submit = handleSubmit(async (values) => {
     setFailure(null);
@@ -167,7 +184,11 @@ export function ClientContactForm({ tenantSlug, customer }: ClientContactFormPro
       if (renewIfExpired(result)) {
         return;
       }
-      setFailure(result.message);
+      // Le `code`, jamais le `message` (#1354) : celui de l'API est écrit pour un
+      // journal, dans une langue qui n'est pas négociée, et il restait en état —
+      // donc figé — tant que le formulaire n'était pas démonté. C'est
+      // `refusalMessage` qui écrit la phrase au rendu, depuis le contrat partagé.
+      setFailure({ code: result.code });
       return;
     }
 
@@ -204,7 +225,8 @@ export function ClientContactForm({ tenantSlug, customer }: ClientContactFormPro
     <form onSubmit={(event) => void submit(event)} noValidate>
       {failure === null ? null : (
         <Notification tone="danger" title={t('failureTitle')}>
-          <p>{failure}</p>
+          {/* La phrase est écrite ici, dans la langue de ce rendu (#1354). */}
+          <p>{refusalMessage(failure, locale)}</p>
         </Notification>
       )}
 

@@ -12,6 +12,7 @@ import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { deskStatusActions } from '@/lib/admin/appointment-desk';
 import { appointmentStatusLabelInSentence } from '@/lib/appointment-status';
+import { refusalMessage } from '@/lib/refusal';
 
 import { markDeskAppointmentStatusAction } from '../calendrier/actions';
 import { useAdminSessionRenewal } from './use-admin-session-renewal';
@@ -28,6 +29,30 @@ import { BEFORE_ANY_HOUR, useAppointmentClock } from './use-appointment-clock';
  * (`appointment-panel.tsx`, #917) — le verbe appartient à l'écran, le statut au
  * module de vocabulaire.
  */
+
+/**
+ * Ce que le refus d'un constat garde — un **motif**, jamais sa phrase (#1354).
+ *
+ * Il rangeait un texte : celui du catalogue pour les deux cas que cet écran
+ * nomme lui-même, et `result.message` pour le reste. Le sélecteur de langue du
+ * rail pose un cookie et laisse Next rejouer la route **sans navigation**
+ * (`i18n/actions.ts`) : la ligne de rendez-vous n'est pas démontée, son état ne
+ * bouge pas, et la phrase restait écrite dans la langue d'avant sous des boutons
+ * qui, eux, suivaient le rendu.
+ *
+ * Deux formes, parce que les deux refus n'ont pas la même source : la clé de
+ * catalogue quand cet écran dit mieux que le contrat — « attendez l'heure du
+ * rendez-vous », « le serveur ne répond pas » —, et le **code** du refus pour
+ * tout le reste, dont `refusalMessage` tire la phrase du contrat partagé.
+ *
+ * Le `message` de l'action ne remonte plus, et rien ne s'y perd : depuis #1234
+ * il vaut déjà `errorMessage(code, locale)` (`action-result.ts`), c'est-à-dire
+ * exactement ce que `refusalMessage` écrit — à ceci près qu'il le réécrit à
+ * chaque rendu.
+ */
+type MarkFailure =
+  | { readonly kind: 'key'; readonly key: 'actions.notStarted' | 'actions.serverSilent' }
+  | { readonly kind: 'refusal'; readonly code: string };
 
 /** Le rafraîchissement de l'écran : toutes les minutes, et au retour sur l'onglet. */
 export const MY_PLANNING_REFRESH_MS = 60_000;
@@ -108,7 +133,8 @@ export function MyAppointmentActions({
   const { renewIfExpired } = useAdminSessionRenewal(tenantSlug);
   const now = useAppointmentClock(renderedAt ?? null);
   const [pending, setPending] = useState<AppointmentStatus | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  /** Le **motif** du refus, pas sa phrase (#1354) — voir `MarkFailure`. */
+  const [error, setError] = useState<MarkFailure | null>(null);
 
   const actions = deskStatusActions(status);
   // `null` — l'horloge n'a pas encore parlé — vaut « antérieur à tout » : le
@@ -140,11 +166,11 @@ export function MyAppointmentActions({
       // recommencer (#1210).
       setError(
         isAppointmentNotStartedRefusal(result.code, result.details)
-          ? t('actions.notStarted')
-          : result.message,
+          ? { kind: 'key', key: 'actions.notStarted' }
+          : { kind: 'refusal', code: result.code },
       );
     } catch {
-      setError(t('actions.serverSilent'));
+      setError({ kind: 'key', key: 'actions.serverSilent' });
     } finally {
       setPending(null);
     }
@@ -177,7 +203,8 @@ export function MyAppointmentActions({
       {!waiting ? null : <p className="spa-field__hint">{t('actions.notStarted')}</p>}
       {error === null ? null : (
         <p className="spa-field__error" role="alert">
-          {error}
+          {/* La phrase est écrite ici, dans la langue de ce rendu (#1354). */}
+          {error.kind === 'key' ? t(error.key) : refusalMessage(error, locale)}
         </p>
       )}
     </div>

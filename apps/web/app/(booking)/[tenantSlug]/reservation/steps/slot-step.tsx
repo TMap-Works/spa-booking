@@ -1,11 +1,12 @@
 'use client';
 
-import type {
-  CalendarDate,
-  DayAvailability,
-  PublicService,
-  PublicTenant,
-  UtcInstant,
+import {
+  ERROR_CODES,
+  type CalendarDate,
+  type DayAvailability,
+  type PublicService,
+  type PublicTenant,
+  type UtcInstant,
 } from '@spa/shared';
 import { useLocale, useTranslations } from 'next-intl';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -28,6 +29,7 @@ import {
   type CalendarMonth,
 } from '@/lib/booking/month-grid';
 import type { DisplayLocale } from '@/lib/format';
+import { refusalMessage, type Refusal } from '@/lib/refusal';
 
 import { loadAvailabilityAction } from '../actions';
 
@@ -154,9 +156,20 @@ interface SlotStepProps {
  * times with Nivo in September 2026 » ne placent ni la préposition ni le nom au
  * même endroit, et une concaténation figerait l'ordre du français.
  *
- * Le message d'erreur affiché, lui, reste celui que l'action rend : les phrases
- * que le front écrit sont traduites (`actions.ts`), celle que l'API renvoie
- * appartient à l'API.
+ * ### Le refus de chargement suit la langue (#1354)
+ *
+ * L'encart rouge rangeait la **phrase** que l'action venait de rendre. Or le
+ * sélecteur de langue pose un cookie et laisse Next rejouer la route **sans
+ * navigation** (`i18n/actions.ts`) : cet écran se rendait à nouveau, son état ne
+ * bougeait pas, et son titre passait en anglais au-dessus d'une phrase restée
+ * française. Ce qui va en état est donc le **code** du refus, et la phrase
+ * s'écrit au rendu — voir `lib/refusal.ts`.
+ *
+ * Un seul code garde une phrase de cet écran : `VALIDATION_ERROR`, que l'action
+ * rend avant tout appel, et que « la demande de disponibilités est incomplète »
+ * nomme mieux que le contrat. Tous les autres retombent sur la phrase de leur
+ * code dans la table du contrat partagé — celle-là même que l'action rendait
+ * déjà pour un refus de l'API (#1298), au mot près.
  */
 export function SlotStep({
   tenant,
@@ -174,7 +187,8 @@ export function SlotStep({
   const countryCode = tenant.address?.country ?? null;
   const display: DisplayLocale = { locale, countryCode };
   const [days, setDays] = useState<readonly DayAvailability[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  /** Le **code** du refus de chargement, pas sa phrase (#1354) — voir `lib/refusal.ts`. */
+  const [failure, setFailure] = useState<Refusal | null>(null);
   const [retrying, setRetrying] = useState(false);
   /** Le choix du praticien est-il ouvert dans son panneau ? — `BM-PRATICIEN-04`. */
   const [staffOpen, setStaffOpen] = useState(false);
@@ -257,7 +271,7 @@ export function SlotStep({
   /**
    * Recharge les journées du mois regardé, et dit si la réponse est arrivée.
    *
-   * Le booléen n'est pas pour l'écran — il a déjà `error` — mais pour la boucle
+   * Le booléen n'est pas pour l'écran — il a déjà `failure` — mais pour la boucle
    * de revalidation, qui s'écarte après un refus au lieu d'insister au même
    * rythme (`availability-refresh.ts`). « Rien à demander » n'est pas un refus :
    * un mois hors fenêtre et une réponse périmée rendent `true`.
@@ -284,7 +298,7 @@ export function SlotStep({
       // Un mois entièrement hors de la fenêtre de réservation n'a rien à
       // demander : le calendrier rend ses cases inertes, et l'écran dit qu'il
       // n'y a rien plutôt que d'attendre une réponse qui ne viendra pas.
-      setError(null);
+      setFailure(null);
       setDays([]);
       return true;
     }
@@ -305,12 +319,14 @@ export function SlotStep({
     }
 
     if (result.ok) {
-      setError(null);
+      setFailure(null);
       setDays(result.data.days);
       return true;
     }
 
-    setError(result.message);
+    // Le code, pas la phrase : elle s'écrit au rendu, dans la langue de ce
+    // rendu-là (#1354).
+    setFailure({ code: result.code });
     // Une revalidation qui échoue ne vide pas une liste déjà affichée : la
     // panne est passagère, les créneaux montrés restent la meilleure
     // information disponible. Seul un premier chargement en échec pose la
@@ -327,7 +343,7 @@ export function SlotStep({
     // l'aller-retour proposerait l'agenda du praticien précédent. On repasse par
     // le chargement.
     setDays(null);
-    setError(null);
+    setFailure(null);
     void load();
   }, [load]);
 
@@ -533,11 +549,19 @@ export function SlotStep({
         ) : null}
       </Sheet>
 
-      {error === null ? null : (
+      {failure === null ? null : (
         <Notification tone="danger" title={t('tunnel.slotStep.errorTitle')}>
-          {/* La phrase de l'erreur vient de l'action, qui traduit les siennes
-              et laisse passer celle de l'API — voir l'en-tête, « La langue ». */}
-          <p>{error}</p>
+          {/* La phrase est écrite ici, dans la langue de ce rendu (#1354).
+              `VALIDATION_ERROR` est le seul refus que cet écran nomme en
+              propre — l'action l'a rendu avant tout appel, et le contrat ne
+              sait pas dire de quelle demande il s'agissait. */}
+          <p>
+            {refusalMessage(failure, locale, (code) =>
+              code === ERROR_CODES.VALIDATION_ERROR
+                ? t('tunnel.actions.availabilityIncomplete')
+                : null,
+            )}
+          </p>
           <Button
             variant="neutral"
             loading={retrying}
@@ -562,7 +586,7 @@ export function SlotStep({
         ferait disparaître un état vide déjà affiché — et avec lui le bouton
         qui lève la préférence de praticien — à la première revalidation ratée.
       */}
-      {days !== null && error !== null && days.length === 0 ? null : (
+      {days !== null && failure !== null && days.length === 0 ? null : (
         <SlotPicker
           days={days}
           month={month}

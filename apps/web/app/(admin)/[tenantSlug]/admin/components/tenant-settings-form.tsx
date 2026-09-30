@@ -14,7 +14,6 @@ import {
   localeSchema,
   openingHoursSchema,
   postalAddressSchema,
-  errorMessage,
   zodErrorMap,
   type Locale,
   type OpeningHoursEntry,
@@ -33,6 +32,11 @@ import { Notification } from '@/components/ui/notification';
 import { PhoneField } from '@/components/ui/phone-field';
 import { Select } from '@/components/ui/select';
 import { SUPPORTED_LOCALES } from '@/i18n/resolve';
+import {
+  fieldRefusalMessage,
+  useLocalizedFieldErrors,
+  type FieldRefusal,
+} from '@/lib/field-refusal';
 import { weekdayLabel, weekdayLabelInSentence } from '@/components/salon/opening-hours';
 
 import { updateTenantSettingsAction } from '../actions';
@@ -191,6 +195,15 @@ import { useAdminSessionRenewal } from './use-admin-session-renewal';
  * au module les aurait figés dans une langue. Le schéma est donc **construit
  * avec ses phrases** et mémoïsé sur elles — sans quoi `react-hook-form`
  * reconstruirait son résolveur à chaque frappe.
+ *
+ * ## Et aucun de ces refus ne reste en état (#1354)
+ *
+ * Le résolveur se refabriquait bien à la bascule de langue, mais rien ne
+ * rejouait ce qui était **déjà affiché** : le verdict rangeait une phrase, et
+ * les vingt-huit champs de la grille gardaient celle que zod leur avait écrite à
+ * la validation. Ce qui va en état est donc un motif — une `issue`, une clé de
+ * catalogue, un code — et la phrase s'écrit au rendu ; les messages de champ,
+ * eux, sont rejoués par `useLocalizedFieldErrors`.
  */
 
 /** Les sept jours, en numérotation ISO 8601 — l'ordre de la grille. */
@@ -385,8 +398,33 @@ function hiddenRanges(tenant: Tenant): readonly OpeningHoursEntry[] {
  *
  * Un seul état pour les deux tons : ils s'excluent, et les tenir séparément
  * ouvrait la porte à les afficher tous les deux.
+ *
+ * La raison est un **motif** et non une phrase depuis #1354 : le sélecteur de
+ * langue du rail rejoue la route sans démonter ce formulaire, si bien qu'un
+ * « deux plages du même jour se recouvrent » restait écrit en français sous un
+ * titre « Saving failed » qui, lui, suivait le rendu. Le ton, lui, reste une
+ * donnée — il ne se traduit pas.
+ *
+ * `FieldRefusal` de `lib/field-refusal.ts` porte exactement les trois origines
+ * d'ici — l'`issue` que le contrat a produite, la clé de catalogue de cet écran,
+ * le code rendu par l'API. Son nom dit le champ parce que c'est là qu'il est né ;
+ * sa forme, elle, ne dit que l'origine, et la redéclarer ici aurait fait deux
+ * écritures d'une même énumération.
  */
-type Verdict = { readonly tone: 'success' } | { readonly tone: 'danger'; readonly message: string };
+type Verdict =
+  | { readonly tone: 'success' }
+  | { readonly tone: 'danger'; readonly refusal: FieldRefusal };
+
+/**
+ * Les deux phrases que cet écran écrit lui-même faute d'`issue` — par leur clé.
+ *
+ * Nommées plutôt qu'écrites en place : `key` de `FieldRefusal` est une chaîne, et
+ * `next-intl` ne vérifie une clé que là où elle est **littérale**. Ces deux
+ * constantes le sont, et le rendu les passe telles quelles à `t` : une faute de
+ * frappe fait échouer `tsc` au lieu d'afficher le chemin de la clé à l'écran.
+ */
+const ADDRESS_INVALID_KEY = 'address.invalid';
+const HOURS_INVALID_KEY = 'hours.invalid';
 
 export function TenantSettingsForm({ tenantSlug, tenant }: TenantSettingsFormProps) {
   const t = useTranslations('admin-settings');
@@ -480,6 +518,8 @@ export function TenantSettingsForm({ tenantSlug, tenant }: TenantSettingsFormPro
     setValue,
     clearErrors,
     handleSubmit,
+    setError,
+    trigger,
     formState: { errors, isSubmitting },
   } = useForm<SettingsFormValues, unknown, z.output<SettingsFormSchema>>({
     resolver,
@@ -503,6 +543,24 @@ export function TenantSettingsForm({ tenantSlug, tenant }: TenantSettingsFormPro
     },
     mode: 'onTouched',
   });
+
+  /**
+   * Les messages **des champs** suivent la langue — #1354.
+   *
+   * Le résolveur est refabriqué à la bascule (ci-dessus), mais rien ne rejouait
+   * la validation de ce qui était déjà fautif : « heure attendue au format
+   * HH:MM » restait en français dans la grille d'un back-office passé en
+   * anglais, et « au moins 3 caractères » sous le nom de l'établissement. Le
+   * crochet ne rejoue que les champs **déjà fautifs** — une gérante ne se voit
+   * pas reprocher les vingt-huit champs d'horaires parce qu'elle a changé de
+   * langue. Aucun `own` : cet écran ne pose aucun refus de l'API sur un champ,
+   * ses refus d'enregistrement vont au verdict.
+   *
+   * Aucun effet ne réécrit ici la valeur d'un champ au changement de langue — ni
+   * montant ni date dans cette grille —, l'ordre de déclaration n'a donc rien à
+   * rattraper (voir `service-form.tsx`, champ de prix).
+   */
+  useLocalizedFieldErrors({ locale, errors, trigger, setError });
 
   /**
    * L'état d'ouverture des sept jours, tel que la grille le peint.
@@ -613,9 +671,17 @@ export function TenantSettingsForm({ tenantSlug, tenant }: TenantSettingsFormPro
             );
 
       if (address !== null && !address.success) {
+        // L'`issue` elle-même, et non sa phrase (#1354) : son code et ses bornes
+        // sont des **données**, que `issueMessage` réécrit au rendu dans la
+        // langue lue. Le repli reste la phrase de cet écran, par sa clé.
+        const issue = address.error.issues[0];
+
         setVerdict({
           tone: 'danger',
-          message: address.error.issues[0]?.message ?? t('address.invalid'),
+          refusal:
+            issue === undefined
+              ? { kind: 'key', key: ADDRESS_INVALID_KEY }
+              : { kind: 'issue', issue },
         });
         return;
       }
@@ -625,9 +691,15 @@ export function TenantSettingsForm({ tenantSlug, tenant }: TenantSettingsFormPro
       });
 
       if (!week.success) {
+        // Même règle que pour l'adresse : le recouvrement de deux plages porte
+        // une clé de message depuis #1232, et c'est `zodErrorMap` qui la dit —
+        // au rendu, donc dans la langue de ce rendu-là (#1354).
+        const issue = week.error.issues[0];
+
         setVerdict({
           tone: 'danger',
-          message: week.error.issues[0]?.message ?? t('hours.invalid'),
+          refusal:
+            issue === undefined ? { kind: 'key', key: HOURS_INVALID_KEY } : { kind: 'issue', issue },
         });
         return;
       }
@@ -649,8 +721,10 @@ export function TenantSettingsForm({ tenantSlug, tenant }: TenantSettingsFormPro
           return;
         }
         // Le `code` et non le `message` : celui de l'API est écrit pour un
-        // journal, dans une langue qui n'est pas négociée (#845, #853).
-        setVerdict({ tone: 'danger', message: errorMessage(result.code, locale) });
+        // journal, dans une langue qui n'est pas négociée (#845, #853). Et le
+        // code **reste** en état depuis #1354, là où l'écran y rangeait la phrase
+        // qu'`errorMessage` en avait tirée — figée dans la langue de l'envoi.
+        setVerdict({ tone: 'danger', refusal: { kind: 'code', code: result.code } });
         return;
       }
 
@@ -953,7 +1027,15 @@ export function TenantSettingsForm({ tenantSlug, tenant }: TenantSettingsFormPro
               </Notification>
             ) : (
               <Notification tone="danger" title={t('verdict.failureTitle')}>
-                <p>{verdict.message}</p>
+                {/* La phrase est écrite ici, dans la langue de ce rendu (#1354).
+                    Les deux seules clés que cet écran range sont celles des
+                    constantes, et le repli est celle de l'adresse — la seule
+                    autre valeur possible étant celle des horaires. */}
+                <p>
+                  {fieldRefusalMessage(verdict.refusal, locale, (key) =>
+                    key === HOURS_INVALID_KEY ? t(HOURS_INVALID_KEY) : t(ADDRESS_INVALID_KEY),
+                  )}
+                </p>
               </Notification>
             )}
           </div>
