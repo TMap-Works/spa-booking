@@ -124,6 +124,21 @@ import { useAdminSessionRenewal } from './use-admin-session-renewal';
  * `packages/shared` et concerne tous les écrans déjà traduits : elle fait l'objet
  * d'un suivi, pas de ce ticket.
  *
+ * ## Ce que #1373 reprend : le nom vide redit la phrase du contrat
+ *
+ * L'arbitrage ci-dessus valait pour les phrases qu'un **schéma du contrat écrit
+ * lui-même** — celles de `slugSchema`, que zod court-circuite dès qu'une `issue`
+ * porte un `message`. « Ce champ est obligatoire. » n'en est pas une : c'est la
+ * phrase **générique** que `zodErrorMap` rend sur un `too_small` de plancher 1,
+ * traduite dans les deux langues depuis #845. Ce formulaire en portait pourtant
+ * une copie au catalogue, mot pour mot identique, et rien ne reliait les deux —
+ * le jour où l'une bougeait, le même champ disait deux phrases.
+ *
+ * Le `.min(1)` ci-dessous ne porte donc plus de message : la carte passée au
+ * résolveur sert la phrase, et `validationPhrases(locale).required` en décide
+ * seule. C'est déjà ainsi que le reste du produit procède — `RegisterForm`,
+ * `StaffMemberForm` (`validation-i18n.test.tsx`).
+ *
  * Ce que la gérante **saisit**, en revanche, ne se traduit jamais : le nom, la
  * description et le nom des rubriques du `<select>` sont rendus tels qu'ils sont
  * enregistrés.
@@ -137,7 +152,6 @@ import { useAdminSessionRenewal } from './use-admin-session-renewal';
  * arguments.
  */
 interface ServiceFormMessages {
-  readonly nameRequired: string;
   readonly nameTooLong: string;
   readonly slug: string;
   readonly slugReserved: string;
@@ -210,10 +224,13 @@ function serviceFormSchema(
 
   return z.object({
     // Les bornes de `displayNameSchema`, ses phrases en moins — voir l'en-tête.
+    // Le plancher, lui, n'a **pas** de message : sans lui, c'est `zodErrorMap`
+    // qui répond, et `validationPhrases(locale).required` décide seule de la
+    // phrase du champ vide (#1373).
     name: z
       .string()
       .trim()
-      .min(1, { message: messages.nameRequired })
+      .min(1)
       .max(DISPLAY_NAME_MAX_LENGTH, { message: messages.nameTooLong }),
     // Vide vaut « laisse le serveur dériver l'adresse du nom ». Sinon, c'est
     // `slugSchema` qui tranche — la règle reste celle du contrat, seule sa
@@ -334,7 +351,6 @@ export function ServiceForm({
     () =>
       zodResolver(
         serviceFormSchema(currency, display, {
-          nameRequired: t('errors.nameRequired'),
           nameTooLong: t('errors.nameTooLong', { max: DISPLAY_NAME_MAX_LENGTH }),
           slug: t('errors.slug'),
           slugReserved: t('errors.slugReserved'),
