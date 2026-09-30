@@ -45,7 +45,6 @@
     "submit": "Sign in",
     "submitting": "Signing in…",
     "fieldErrors": {
-      "email": "Enter a valid email address.",
       "password": "The password is at least {min} characters long.",
       "totpCode": "Six digits, as your authenticator app shows them."
     },
@@ -333,8 +332,7 @@
       "defaultCurrency": "Choose the currency.",
       "defaultLocale": "Choose the language.",
       "adminFirstName": "Enter the manager’s first name.",
-      "adminLastName": "Enter the manager’s last name.",
-      "adminEmail": "Enter a valid email address."
+      "adminLastName": "Enter the manager’s last name."
     },
     "errors": {
       "emailTaken": "This address already has an account."

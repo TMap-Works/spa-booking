@@ -7,6 +7,7 @@ import {
   countryUsesAddressRegion,
   resourceSlugSchema,
   salonSignupRequestSchema,
+  zodErrorMap,
   type Locale,
   type SalonSignupRequest,
 } from '@spa/shared';
@@ -61,21 +62,27 @@ import { signupSalonAction } from '../actions';
  *
  * ## Les messages de validation, et pourquoi ils ne viennent pas du contrat
  *
- * Les schémas de `@spa/shared` portent leurs messages **en dur, en français**
- * (« adresse requise », « ville requise ») quand ils en portent un, et le
+ * Les schémas de `@spa/shared` portaient leurs messages **en dur, en français**
+ * (« adresse requise », « ville requise ») quand ils en portaient un, et le
  * message anglais brut de Zod sinon (« String must contain at least 1
  * character(s) »). Un écran anglais devenait donc bilingue à la première
- * soumission — c'est ce que la recette de ce ticket a montré.
+ * soumission — c'est ce que la recette de #1105 a montré.
  *
- * Ils ne peuvent pas se traduire là où ils sont écrits : `packages/shared` est
- * lu par l'API autant que par le front, et n'a pas de langue de requête. Un
- * `errorMap` de Zod ne les rattraperait pas davantage — un message explicite
- * l'emporte sur lui.
+ * Ces phrases ne peuvent pas se traduire là où elles sont écrites :
+ * `packages/shared` est lu par l'API autant que par le front, et n'a pas de
+ * langue de requête. L'écran traduit donc **par champ**, dans son propre
+ * catalogue : la règle reste celle du contrat, seule sa formulation change. Un
+ * message par champ et non par code d'erreur, parce que c'est ce qu'une gérante
+ * lit — « indiquez votre ville », et non « chaîne trop courte ».
  *
- * L'écran traduit donc **par champ**, dans son propre catalogue : la règle reste
- * celle du contrat, seule sa formulation change. Un message par champ et non par
- * code d'erreur, parce que c'est ce qu'une gérante lit — « indiquez votre
- * ville », et non « chaîne trop courte ».
+ * **Sauf l'adresse e-mail**, depuis #1376. Le contrat ne porte plus de phrase
+ * mais une clé de message depuis #1232, et `zodErrorMap(locale)` la dit dans les
+ * deux langues : la clé `fieldErrors.email` redisait donc mot pour mot
+ * `validationPhrases('en').email` en anglais, et inventait une troisième
+ * formulation en français — « Indiquez … » ici, « Saisissez … » sur les deux
+ * écrans de la console, « valable » au contrat. Trois formulations pour un même
+ * refus, ce que le glossaire refuse (`messages/README.md`, « une chose, un
+ * mot »). La carte est passée au résolveur, et la clé est partie.
  *
  * Les refus que l'**API** pose sur un champ échappent à cette table : leur phrase
  * l'emporte, et c'est `useLocalizedFieldErrors` qui la réécrit depuis leur code à
@@ -129,7 +136,13 @@ const EMPTY_VALUES: SignupFormValues = {
   dataConsent: false as unknown as true,
 };
 
-/** Ce qu'un champ refusé annonce, dans la langue lue — un message par champ. */
+/**
+ * Ce qu'un champ refusé annonce, dans la langue lue — un message par champ.
+ *
+ * `null` pour les champs dont le contrat dit déjà le refus, et le dit dans les
+ * deux langues : `zodErrorMap(locale)` répond pour eux, et le redire ici en
+ * ferait une seconde source de la même phrase (#1376).
+ */
 const FIELD_ERROR_KEYS = {
   name: 'fieldErrors.name',
   slug: 'fieldErrors.slug',
@@ -143,7 +156,7 @@ const FIELD_ERROR_KEYS = {
   defaultLocale: 'fieldErrors.defaultLocale',
   adminFirstName: 'fieldErrors.firstName',
   adminLastName: 'fieldErrors.lastName',
-  adminEmail: 'fieldErrors.email',
+  adminEmail: null,
   password: 'fieldErrors.password',
 } as const;
 
@@ -246,6 +259,14 @@ export function SignupForm() {
   );
 
   const countries = useMemo(() => countryChoices(locale), [locale]);
+  // Mémoïsé sur le schéma et la langue : c'est `zodErrorMap` qui dit les refus
+  // dont le catalogue ne porte plus la phrase (#1376). `path` et `async` sont là
+  // pour le typage de `@hookform/resolvers`, qui déclare `ParseParams` entier là
+  // où zod n'en lit qu'une partie.
+  const resolver = useMemo(
+    () => zodResolver(schema, { errorMap: zodErrorMap(locale), path: [], async: true }),
+    [schema, locale],
+  );
 
   const {
     register,
@@ -256,7 +277,7 @@ export function SignupForm() {
     watch,
     formState: { errors, isSubmitting },
   } = useForm<SignupFormValues, unknown, SignupFormOutput>({
-    resolver: zodResolver(schema),
+    resolver,
     defaultValues: EMPTY_VALUES,
     mode: 'onTouched',
   });
@@ -288,7 +309,8 @@ export function SignupForm() {
    * Ce qu'affiche un champ refusé — rien s'il ne l'est pas.
    *
    * Un refus de l'API garde son propre message ; un refus de schéma prend celui
-   * du catalogue. Voir l'en-tête de ce module.
+   * du catalogue, ou celui que `zodErrorMap(locale)` a posé quand le catalogue
+   * n'en porte pas (#1376). Voir l'en-tête de ce module.
    */
   const fieldError = (name: SignupFieldName): string | undefined => {
     const error = errors[name];
@@ -320,7 +342,11 @@ export function SignupForm() {
       return t('fieldErrors.slugReserved');
     }
 
-    return t(FIELD_ERROR_KEYS[name]);
+    const key = FIELD_ERROR_KEYS[name];
+
+    // Sans clé propre, la phrase du contrat, déjà dans la langue de ce rendu —
+    // et remise dans la nouvelle par le rejeu de `useLocalizedFieldErrors`.
+    return key === null ? error.message : t(key);
   };
 
   const submit = handleSubmit(async ({ confirmation: _confirmation, ...values }) => {

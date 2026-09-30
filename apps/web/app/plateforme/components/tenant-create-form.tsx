@@ -6,6 +6,7 @@ import {
   countryUsesAddressRegion,
   createTenantRequestSchema,
   resourceSlugSchema,
+  zodErrorMap,
   type CreateTenantRequest,
   type Locale,
   type ProvisionedTenant,
@@ -68,11 +69,19 @@ import {
  *
  * ## Les refus sont lus sur le code, les champs traduits par champ
  *
- * Les messages de `createTenantRequestSchema` sont des littéraux français quand
- * ils existent, et le message anglais brut de Zod sinon : `packages/shared` est
- * lu par l'API autant que par le front et n'a pas de langue de requête. L'écran
- * traduit donc par champ, et les refus de l'API par code — jamais en recopiant
- * `result.message`, qui rendrait un écran anglais bilingue à la première erreur.
+ * Les messages de `createTenantRequestSchema` ne peuvent pas se traduire là où
+ * ils sont écrits : `packages/shared` est lu par l'API autant que par le front
+ * et n'a pas de langue de requête. L'écran traduit donc par champ, et les refus
+ * de l'API par code — jamais en recopiant `result.message`, qui rendrait un
+ * écran anglais bilingue à la première erreur.
+ *
+ * **Sauf l'adresse du gérant**, depuis #1376. Sa phrase de catalogue était mot
+ * pour mot `validationPhrases('en').email` en anglais, et en divergeait en
+ * français — « valide » ici, « valable » au contrat : le même champ disait deux
+ * phrases selon que le refus venait du schéma ou du formulaire. C'est
+ * `zodErrorMap(locale)`, passée au résolveur, qui répond pour lui, et elle dit
+ * mieux — « Adresse e-mail invalide. » nomme la faute. Voir
+ * {@link FIELD_ERROR_KEYS}.
  *
  * ## Et ce qu'il garde est la **clé**, pas la phrase (#1354)
  *
@@ -141,7 +150,13 @@ function slugReserved(value: unknown): boolean {
   return resourceSlugSchema.safeParse(value).success;
 }
 
-/** Ce qu'un champ refusé annonce — un message par champ, jamais par code de Zod. */
+/**
+ * Ce qu'un champ refusé annonce — un message par champ, jamais par code de Zod.
+ *
+ * `null` pour les champs dont le contrat dit déjà le refus, et le dit dans les
+ * deux langues : `zodErrorMap(locale)` répond pour eux, et le redire ici en
+ * ferait une seconde source de la même phrase (#1376).
+ */
 const FIELD_ERROR_KEYS = {
   name: 'create.fieldErrors.name',
   slug: 'create.fieldErrors.slug',
@@ -156,7 +171,7 @@ const FIELD_ERROR_KEYS = {
   defaultLocale: 'create.fieldErrors.defaultLocale',
   adminFirstName: 'create.fieldErrors.adminFirstName',
   adminLastName: 'create.fieldErrors.adminLastName',
-  adminEmail: 'create.fieldErrors.adminEmail',
+  adminEmail: null,
 } as const;
 
 type CreateFieldName = keyof typeof FIELD_ERROR_KEYS;
@@ -200,6 +215,19 @@ export function TenantCreateForm() {
   const [opened, setOpened] = useState<ProvisionedTenant | null>(null);
 
   const countries = useMemo(() => countryChoices(locale), [locale]);
+  // Mémoïsé sur la langue : c'est `zodErrorMap` qui dit les refus dont le
+  // catalogue ne porte plus la phrase (#1376). `path` et `async` sont là pour le
+  // typage de `@hookform/resolvers`, qui déclare `ParseParams` entier là où zod
+  // n'en lit qu'une partie.
+  const resolver = useMemo(
+    () =>
+      zodResolver(createTenantRequestSchema, {
+        errorMap: zodErrorMap(locale),
+        path: [],
+        async: true,
+      }),
+    [locale],
+  );
 
   const {
     register,
@@ -211,7 +239,7 @@ export function TenantCreateForm() {
     watch,
     formState: { errors, isSubmitting },
   } = useForm<CreateTenantRequest, unknown, z.output<typeof createTenantRequestSchema>>({
-    resolver: zodResolver(createTenantRequestSchema),
+    resolver,
     defaultValues: EMPTY_VALUES,
     mode: 'onTouched',
   });
@@ -242,7 +270,8 @@ export function TenantCreateForm() {
    * Ce qu'affiche un champ refusé — rien s'il ne l'est pas.
    *
    * Un refus de l'API garde son propre message ; un refus de schéma prend celui
-   * du catalogue.
+   * du catalogue, ou celui que `zodErrorMap(locale)` a posé quand le catalogue
+   * n'en porte pas (#1376).
    */
   const fieldError = (name: CreateFieldName): string | undefined => {
     const error = errors[name];
@@ -272,7 +301,11 @@ export function TenantCreateForm() {
       return t('create.fieldErrors.slugReserved');
     }
 
-    return t(FIELD_ERROR_KEYS[name]);
+    const key = FIELD_ERROR_KEYS[name];
+
+    // Sans clé propre, la phrase du contrat, déjà dans la langue de ce rendu —
+    // et remise dans la nouvelle par le rejeu de `useLocalizedFieldErrors`.
+    return key === null ? error.message : t(key);
   };
 
   const submit = handleSubmit(async (values) => {

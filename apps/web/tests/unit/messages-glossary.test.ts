@@ -501,49 +501,101 @@ describe('le registre des refus de validation (#1357)', () => {
 });
 
 // ---------------------------------------------------------------------------
-// La phrase du champ vide n'a qu'une source — #1373
+// Un refus du contrat n'a qu'une source — #1373, élargi par #1376
 // ---------------------------------------------------------------------------
 
 /**
- * Les copies de `validationPhrases(locale).required` que ce test laisse encore
- * passer — une seule, et elle est nommée.
+ * Les phrases de `validationPhrases(locale)` qui sont des **chaînes**, par nom.
  *
- * Le tunnel public porte la même phrase que le contrat, dans les deux langues, et
- * la reprendre demandait de toucher un écran que #1373 ne nommait pas : c'est
- * l'objet de #1376. Cette dispense-ci n'est donc pas un déversoir, et le cas
- * suivant l'empêche d'en devenir un — il vérifie que la copie **est encore là**.
- * Le jour où #1376 la retire, ce test rougit, et la dispense s'en va du même
- * geste plutôt que de survivre à ce qu'elle dispensait.
+ * Lues au contrat et jamais recopiées ici : une reformulation du contrat ne fait
+ * pas rougir la garde, elle la suit. Et lues **par énumération** plutôt que par
+ * une liste de noms — `required`, `email`, `invalid`… — pour la raison qui vaut
+ * déjà pour `messages-parity` : une phrase ajoutée au contrat est tenue le jour
+ * où elle est écrite, sans qu'il faille revenir ici l'y inscrire.
+ *
+ * ## Pourquoi les phrases **paramétrées** en sont dehors
+ *
+ * `tooShort`, `tooLong`, `tooSmall`, `tooBig`, `tooFew`, `tooMany` prennent une
+ * borne et rendent une phrase qui la porte — « Ne dépassez pas 2000
+ * caractères. ». Un catalogue, lui, écrit la même chose avec un argument ICU —
+ * « Ce champ fait au plus {max} caractères. » —, et les deux textes ne
+ * s'égalisent pour aucune valeur de la borne : la comparaison littérale ne dirait
+ * rien, ni dans un sens ni dans l'autre. C'est pourquoi le deuxième critère de
+ * #1376 nomme les phrases **`string`**, et non toutes.
+ *
+ * Ce n'est pas un trou laissé par commodité : `messages/README.md` tranche que le
+ * plafond de longueur **reste** au catalogue — « ce sont deux formulations
+ * différentes d'une même règle, pas une copie ». Il n'y a donc rien à y
+ * surveiller, et la garde qu'il faut sur ces phrases-là est celle d'un test de
+ * rendu, qui montre laquelle des deux arrive sous le champ
+ * (`refus-de-saisie-vient-du-contrat.test.tsx`).
  */
-const COPIES_DE_REQUIRED_TOLEREES: ReadonlySet<string> = new Set([
-  'booking.tunnel.contactStep.errors.required',
-]);
+function phrasesFixesDuContrat(locale: Locale): ReadonlyMap<string, string> {
+  return new Map(
+    Object.entries(validationPhrases(locale)).filter(
+      (entree): entree is [string, string] => typeof entree[1] === 'string',
+    ),
+  );
+}
 
-describe('la phrase du champ vide n’a qu’une source (#1373)', () => {
+/**
+ * Les copies d'une phrase du contrat que la garde laisse encore passer.
+ *
+ * **Elle est vide, et c'est l'état attendu** — troisième critère de #1376. Elle
+ * ne l'a pas toujours été : #1373 y avait nommé
+ * `booking.tunnel.contactStep.errors.required`, le temps qu'un ticket vienne
+ * reprendre le tunnel public, qu'il ne nommait pas. Le cas
+ * « ne garde de dispense que pour une copie qui existe encore » a forcé la main
+ * au bon moment : reprendre le tunnel a fait rougir ce cas-là, et la dispense
+ * s'en est allée du même geste que ce qu'elle dispensait.
+ *
+ * Ce qui la garde vide est le régime, et non la chance : un écran qui aurait
+ * besoin d'y inscrire une clé est un écran qui redit une phrase que
+ * `zodErrorMap(locale)` sait déjà dire — le remède est de laisser la carte
+ * répondre, jamais d'allonger cette liste.
+ */
+const COPIES_DE_PHRASES_TOLEREES: ReadonlySet<string> = new Set<string>();
+
+describe('un refus du contrat n’a qu’une source (#1373, #1376)', () => {
   /**
-   * `validationPhrases(locale).required` décide seule de ce qui s'affiche sous un
-   * champ obligatoire laissé vide — la décision et sa raison sont écrites dans
+   * `validationPhrases(locale)` décide seule de ce qui s'affiche sous un champ
+   * que le contrat refuse — la décision et sa raison sont écrites dans
    * `messages/README.md` et dans `zod-messages.ts`.
    *
-   * Ce que ce cas empêche est précis : qu'un catalogue **redise** cette phrase.
-   * Trois clés le faisaient, mot pour mot dans les deux langues, sans que rien ne
-   * relie les deux sources ; le jour où l'une des deux bougeait, le même champ
-   * disait deux phrases selon que le refus venait du schéma partagé ou du
-   * formulaire. La comparaison se fait sur la phrase **lue** au contrat, jamais
-   * sur un littéral recopié ici : une reformulation du contrat ne fait pas rougir
-   * ce test, elle le suit.
+   * Ce que ce cas empêche est précis : qu'un catalogue **redise** une de ces
+   * phrases. Neuf clés le faisaient — trois reprises par #1373, six par #1376 —,
+   * sans que rien ne relie les deux sources ; le jour où l'une des deux bougeait,
+   * le même champ disait deux phrases selon que le refus venait du schéma partagé
+   * ou du formulaire. Et ce jour-là était déjà venu sans que rien ne le signale :
+   * les quatre clés d'adresse e-mail étaient identiques au contrat en anglais et
+   * en divergeaient en français, « valide » contre « valable ».
    */
   for (const locale of LOCALES) {
     it(`n’en laisse aucune copie au catalogue en « ${locale} »`, () => {
-      const attendue = validationPhrases(locale).required;
-      const copies = [...valeurs(locale)]
-        .filter(([cle, message]) => message === attendue && !COPIES_DE_REQUIRED_TOLEREES.has(cle))
-        .map(([cle]) => cle);
+      const contrat = phrasesFixesDuContrat(locale);
+      const copies: string[] = [];
+
+      for (const [cle, message] of valeurs(locale)) {
+        if (COPIES_DE_PHRASES_TOLEREES.has(cle)) {
+          continue;
+        }
+
+        for (const [nom, phrase] of contrat) {
+          if (message === phrase) {
+            copies.push(`${cle} redit validationPhrases(${locale}).${nom} — « ${phrase} »`);
+          }
+        }
+      }
+
+      // Une garde contre le pire échec possible : une règle qui ne juge plus
+      // rien et reste verte. Le contrat en porte dix.
+      expect(contrat.size).toBeGreaterThanOrEqual(10);
 
       expect(
         copies,
-        `clés qui redisent « ${attendue} » alors que le contrat la porte déjà ` +
-          `(validationPhrases(${locale}).required, voir messages/README.md) :\n${copies.join('\n')}`,
+        'clés qui redisent une phrase que le contrat porte déjà — laisser ' +
+          `zodErrorMap(${locale}) répondre et retirer la clé (voir messages/README.md) :\n` +
+          copies.join('\n'),
       ).toEqual([]);
     });
   }
@@ -553,9 +605,12 @@ describe('la phrase du champ vide n’a qu’une source (#1373)', () => {
 
     for (const locale of LOCALES) {
       const catalogue = valeurs(locale);
+      const phrases = new Set(phrasesFixesDuContrat(locale).values());
 
-      for (const cle of COPIES_DE_REQUIRED_TOLEREES) {
-        if (catalogue.get(cle) !== validationPhrases(locale).required) {
+      for (const cle of COPIES_DE_PHRASES_TOLEREES) {
+        const message = catalogue.get(cle);
+
+        if (message === undefined || !phrases.has(message)) {
           survivantes.push(`${locale} · ${cle}`);
         }
       }
@@ -563,8 +618,8 @@ describe('la phrase du champ vide n’a qu’une source (#1373)', () => {
 
     expect(
       survivantes,
-      'dispenses devenues inutiles — la copie a été reprise (#1376), retirer la clé ' +
-        `de COPIES_DE_REQUIRED_TOLEREES :\n${survivantes.join('\n')}`,
+      'dispenses devenues inutiles — la copie a été reprise, retirer la clé ' +
+        `de COPIES_DE_PHRASES_TOLEREES :\n${survivantes.join('\n')}`,
     ).toEqual([]);
   });
 });

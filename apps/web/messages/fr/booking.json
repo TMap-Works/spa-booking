@@ -436,10 +436,7 @@
       "noteHint": "Allergie, préférence, retard annoncé — facultatif.",
       "submit": "Vérifier ma réservation",
       "errors": {
-        "required": "Ce champ est obligatoire.",
-        "tooLong": "Ce champ fait au plus {max} caractères.",
-        "email": "Saisissez une adresse e-mail valide.",
-        "invalid": "Cette valeur n’est pas valide."
+        "tooLong": "Ce champ fait au plus {max} caractères."
       }
     },
     "consent": {

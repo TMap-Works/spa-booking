@@ -8,8 +8,10 @@ import {
   e164PhoneSchemaFor,
   guestContactSchemaFor,
   longTextSchema,
+  zodErrorMap,
+  type Locale,
 } from '@spa/shared';
-import { useTranslations } from 'next-intl';
+import { useLocale, useTranslations } from 'next-intl';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Controller, useForm, type FieldError } from 'react-hook-form';
 import { z } from 'zod';
@@ -22,6 +24,7 @@ import { TextArea } from '@/components/ui/textarea';
 import type { AccountPresence } from '@/lib/account-presence';
 import { ConsentField, consentSchema } from '@/lib/booking/consent';
 import type { ContactDraft } from '@/lib/booking/draft';
+import { useLocalizedFieldErrors } from '@/lib/field-refusal';
 import { formatPhoneForDisplay } from '@/lib/phone';
 
 import { useDraftAutosave } from '../use-draft-autosave';
@@ -64,17 +67,20 @@ import { useDraftAutosave } from '../use-draft-autosave';
  * déplace le refus après la soumission, en bloc en tête de page, pour un numéro
  * que le champ venait d'accepter — ce qu'interdit la skill web-frontend §4.
  *
- * ## Aucun de ses messages n'est affichable tel quel (#846)
+ * ## Aucun de ses messages n'est affichable tel quel (#846), sauf ceux du
+ * contrat depuis #1376
  *
  * Ce schéma est bâti **hors de React** : ni lui ni les schémas dont il dérive
  * ne peuvent lire le catalogue. Ses deux sources de messages s'en tirent
- * différemment, et les deux sont traduites au point de rendu :
+ * différemment :
  *
  * - `consentSchema` porte une **clé** (`CONSENT_ERROR_KEY`), que le point de
- *   rendu passe à `t` ;
- * - les schémas de `packages/shared` portent des phrases françaises, écrites
- *   pour l'API autant que pour cet écran : elles sont remplacées à l'affichage
- *   d'après le **code** de l'erreur — voir `fieldError`.
+ *   rendu passe à `t`. Un message explicite l'emporte sur toute carte
+ *   d'erreurs, par conception de zod : celui-là traverse intact ;
+ * - les schémas de `packages/shared` ne portent plus de phrase depuis #1232,
+ *   mais une **clé de message** que `zodErrorMap(locale)` traduit. La carte est
+ *   passée au résolveur, et ce qu'elle rend s'affiche tel quel — voir
+ *   `fieldError`.
  */
 function contactFormSchemaFor(countryCode: string | null) {
   return guestContactSchemaFor(countryCode).extend({
@@ -201,20 +207,29 @@ interface ContactStepProps {
  * en haut de page (skill web-frontend §4) : un bloc oblige à retrouver
  * soi-même le champ fautif, sur un écran mobile où il est souvent hors vue.
  *
- * ## La langue (#846)
+ * ## La langue (#846, repris par #1376)
  *
- * ### Les messages de validation sont traduits sur le **code**, pas sur le texte
+ * ### Les refus de validation sont ceux du contrat, dits dans la langue de l'écran
  *
  * Les règles de fond viennent de `packages/shared` — `guestContactSchemaFor`,
- * `longTextSchema` —, et le contrat y écrit ses messages Zod en français : il
- * sert aussi l'API, qui n'a pas la langue de cette requête-ci. Les afficher tels
- * quels laisserait « ce champ est obligatoire » sous un formulaire anglais.
+ * `longTextSchema` —, et le contrat y sert aussi l'API, qui n'a pas la langue de
+ * cette requête-ci. Il portait ses messages en français, et cet écran les
+ * remplaçait par quatre clés de catalogue choisies sur le `code` de l'erreur.
  *
- * La traduction se fait donc **à l'écran**, à partir du `code` de l'erreur
- * (`FieldError.type`, que `zodResolver` recopie de l'`issue`) et non de son
- * texte — exactement l'arbitrage déjà pris pour les erreurs de l'API
- * (`booking-tunnel.tsx`, `onSlotLost`) : un code engage, une phrase non. Voir
- * `fieldError` ci-dessous.
+ * Depuis #1232 le contrat ne porte plus de phrase mais une **clé de message**, et
+ * `zodErrorMap(locale)` la dit dans les deux langues : c'est la carte qui est
+ * passée au résolveur, et trois des quatre clés sont parties (#1376). Elles
+ * redisaient mot pour mot ce que la carte rend — « Ce champ est obligatoire. »
+ * est `validationPhrases(locale).required` — et en divergeaient déjà en français
+ * sur deux d'entre elles : « valide » au catalogue contre « valable » au
+ * contrat. Le même champ disait donc deux phrases selon que le refus venait du
+ * schéma partagé ou du formulaire. La quatrième, le plafond de longueur, reste
+ * au catalogue : voir `fieldError`.
+ *
+ * Ce qui reste vrai de l'arbitrage de #846 : la phrase n'est jamais **lue** pour
+ * décider quoi que ce soit. Elle est produite par la carte à la validation, et
+ * `useLocalizedFieldErrors` la refait dire dans la nouvelle langue quand le
+ * sélecteur de la coquille du salon en change (#1354).
  *
  * ### Ce qui n'est pas écrit ici
  *
@@ -236,15 +251,27 @@ export function ContactStep({
   onSubmit,
 }: ContactStepProps) {
   const t = useTranslations('booking');
+  const locale = useLocale() as Locale;
   // Le schéma ne dépend que du pays, qui ne change pas d'une frappe à l'autre :
   // le reconstruire à chaque rendu recréerait un résolveur par caractère tapé.
   // Le résolveur est mémoïsé **avec** lui — le mémoïser à moitié laisserait
   // `zodResolver` rappelé à chaque frappe, c'est-à-dire précisément ce qu'on
   // évite ici.
   //
-  // La langue n'y entre pas, et c'est voulu : aucun de ses messages n'est
-  // affiché tel quel (#846) — voir `contactFormSchemaFor`.
-  const resolver = useMemo(() => zodResolver(contactFormSchemaFor(countryCode)), [countryCode]);
+  // La langue y entre depuis #1376 : c'est elle que `zodErrorMap` sert, et les
+  // phrases du contrat arrivent désormais sous les champs sans passer par le
+  // catalogue. `path` et `async` sont là pour le **typage** de
+  // `@hookform/resolvers`, qui déclare `ParseParams` entier là où zod n'en lit
+  // qu'une partie — même forme que les trois formulaires de l'espace client.
+  const resolver = useMemo(
+    () =>
+      zodResolver(contactFormSchemaFor(countryCode), {
+        errorMap: zodErrorMap(locale),
+        path: [],
+        async: true,
+      }),
+    [countryCode, locale],
+  );
 
   /**
    * Ce que le formulaire porte à l'ouverture — le brouillon, complété par les
@@ -322,6 +349,8 @@ export function ContactStep({
     control,
     handleSubmit,
     getValues,
+    setError,
+    trigger,
     formState: { errors, isSubmitted, isSubmitting },
   } = useForm<ContactDraft, unknown, ContactFormValues>({
     resolver,
@@ -331,6 +360,25 @@ export function ContactStep({
     // du bruit.
     mode: 'onTouched',
   });
+
+  /*
+   * Un message déjà affiché suit la langue — #1354, étendu à cette étape par
+   * #1376.
+   *
+   * La phrase est calculée par `zodErrorMap` **à la validation** et rangée telle
+   * quelle dans `formState.errors` : rien ne la recalcule. Le sélecteur de
+   * langue de la coquille du salon pose un cookie et laisse Next rejouer la
+   * route sans navigation, si bien que ce formulaire n'est pas démonté — sans ce
+   * crochet, « Ce champ est obligatoire. » resterait sous une étiquette « First
+   * name ». Le rejeu ne touche que les champs qui portent **déjà** une erreur :
+   * changer de langue ne se met pas à reprocher des champs jamais remplis.
+   *
+   * Aucun refus n'est posé à la main sur un champ ici — les erreurs de l'API
+   * sont traitées par le tunnel, qui les affiche en tête d'étape (créneau perdu,
+   * service indisponible) : le crochet n'a donc rien à réécrire, seulement à
+   * rejouer.
+   */
+  useLocalizedFieldErrors({ locale, errors, trigger, setError });
 
   /**
    * Les coordonnées du compte sont-elles ouvertes à la correction ?
@@ -419,46 +467,42 @@ export function ContactStep({
   const autosave = useDraftAutosave(persistDraft);
 
   /**
-   * Le message d'un champ, écrit **ici** à partir du code de son erreur (#846).
+   * Le message d'un champ : celui du contrat, sauf le plafond de longueur
+   * (#846, repris par #1376).
    *
-   * `FieldError.type` porte le `code` de l'`issue` Zod que `zodResolver` a
-   * relayée : `too_small` pour un champ requis laissé vide, `too_big` pour une
-   * borne de longueur dépassée. Ce sont les seules issues **de forme** que les
-   * trois schémas de ce formulaire produisent ; le repli couvre ce qu'un
-   * durcissement du contrat y ajouterait, plutôt que de laisser un champ refusé
-   * sans un mot.
+   * Trois des quatre clés que cette fonction lisait sont parties. `required` sur
+   * un `too_small` et `invalid` en repli redisaient mot pour mot ce que
+   * `zodErrorMap(locale)` rend sur les mêmes codes, et `email` n'apportait rien
+   * que `identifier.email` ne dise mieux — « Adresse e-mail invalide. » nomme la
+   * faute, là où « Saisissez une adresse e-mail valide. » redisait le contrat en
+   * lui changeant un mot. Ce que la carte a posé sur l'erreur est donc rendu tel
+   * quel : il est déjà dans la langue de ce rendu.
    *
-   * Le repli dépend du champ, et c'est ce que `invalid` nomme : depuis #1232 les
-   * règles que le contrat écrit lui-même — une adresse e-mail, un numéro
-   * normalisable — sont des `refine`, seule forme d'`issue` que zod laisse
-   * porter une clé de message traduisible. Elles rendent donc toutes un `custom`,
-   * que le code ne distingue plus : c'est l'appelant qui sait de quel champ il
-   * parle, et « cette valeur n'est pas valide » sous un champ d'adresse e-mail
-   * n'apprenait rien à personne.
+   * **Le plafond reste au catalogue**, et c'est une décision écrite
+   * (`messages/README.md`, « ce qui reste au catalogue, et pourquoi ») : « Ce
+   * champ fait au plus {max} caractères. » n'est pas le texte du contrat (« Ne
+   * dépassez pas {max} caractères. ») mais une autre formulation de la même
+   * règle. Il n'y a donc pas deux sources d'une même phrase à réunir, et unifier
+   * les deux textes serait un changement visible que ni #1373 ni #1376 ne
+   * demandent.
    *
    * `max` est la borne du champ, lue dans `@spa/shared` — la même constante que
    * le schéma : « faites plus court » sans dire combien oblige à tâtonner
    * caractère par caractère. Elle est passée en **chaîne** pour qu'`Intl` ne
    * groupe pas ses milliers : la borne d'un mot au salon s'écrit « 2000 » et
    * non « 2 000 », comme la borne d'une colonne.
+   *
+   * Les messages restent rendus **sur le champ** par `Field`, jamais en bloc en
+   * tête de page (web-frontend §4).
    */
-  const fieldError = (
-    error: FieldError | undefined,
-    max: number,
-    invalid: 'email' | 'invalid' = 'invalid',
-  ): string | undefined => {
+  const fieldError = (error: FieldError | undefined, max: number): string | undefined => {
     if (error === undefined) {
       return undefined;
     }
 
-    switch (error.type) {
-      case 'too_small':
-        return t('tunnel.contactStep.errors.required');
-      case 'too_big':
-        return t('tunnel.contactStep.errors.tooLong', { max: String(max) });
-      default:
-        return t(`tunnel.contactStep.errors.${invalid}`);
-    }
+    return error.type === 'too_big'
+      ? t('tunnel.contactStep.errors.tooLong', { max: String(max) })
+      : error.message;
   };
 
   return (
@@ -630,7 +674,7 @@ export function ContactStep({
           autoComplete="email"
           required
           hint={t('tunnel.contactStep.emailHint')}
-          error={fieldError(errors.email, EMAIL_ADDRESS_MAX_LENGTH, 'email')}
+          error={fieldError(errors.email, EMAIL_ADDRESS_MAX_LENGTH)}
           {...register('email')}
         />
       </div>

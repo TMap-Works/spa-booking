@@ -60,7 +60,6 @@
     "defaultLocale": "Choisissez la langue d’ouverture de votre salon.",
     "firstName": "Indiquez votre prénom.",
     "lastName": "Indiquez votre nom.",
-    "email": "Indiquez une adresse e-mail valide.",
     "password": "Votre mot de passe doit faire au moins douze caractères."
   },
   "errors": {
