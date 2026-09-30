@@ -1,4 +1,4 @@
-import { LOCALES, type Locale } from '@spa/shared';
+import { LOCALES, validationPhrases, type Locale } from '@spa/shared';
 import { describe, expect, it } from 'vitest';
 
 import { loadMessages, type MessageTree } from '@/i18n/messages';
@@ -454,7 +454,7 @@ describe('le registre des refus de validation (#1357)', () => {
     expect(estUnRefus('admin-catalog.form.failureTitle')).toBe(false);
 
     // Et les deux formes qu'elle tient : le bloc nommé, et le registre.
-    expect(estUnRefus('admin-catalog.form.errors.nameRequired')).toBe(true);
+    expect(estUnRefus('admin-catalog.form.errors.nameTooLong')).toBe(true);
     expect(estUnRefus('admin-staff.schedule.overlap')).toBe(true);
 
     // Le registre désigne des clés une à une : le voisin d'un refus inscrit
@@ -496,6 +496,75 @@ describe('le registre des refus de validation (#1357)', () => {
     expect(
       fantomes,
       `clés inscrites au registre mais absentes du catalogue :\n${fantomes.join('\n')}`,
+    ).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// La phrase du champ vide n'a qu'une source — #1373
+// ---------------------------------------------------------------------------
+
+/**
+ * Les copies de `validationPhrases(locale).required` que ce test laisse encore
+ * passer — une seule, et elle est nommée.
+ *
+ * Le tunnel public porte la même phrase que le contrat, dans les deux langues, et
+ * la reprendre demandait de toucher un écran que #1373 ne nommait pas : c'est
+ * l'objet de #1376. Cette dispense-ci n'est donc pas un déversoir, et le cas
+ * suivant l'empêche d'en devenir un — il vérifie que la copie **est encore là**.
+ * Le jour où #1376 la retire, ce test rougit, et la dispense s'en va du même
+ * geste plutôt que de survivre à ce qu'elle dispensait.
+ */
+const COPIES_DE_REQUIRED_TOLEREES: ReadonlySet<string> = new Set([
+  'booking.tunnel.contactStep.errors.required',
+]);
+
+describe('la phrase du champ vide n’a qu’une source (#1373)', () => {
+  /**
+   * `validationPhrases(locale).required` décide seule de ce qui s'affiche sous un
+   * champ obligatoire laissé vide — la décision et sa raison sont écrites dans
+   * `messages/README.md` et dans `zod-messages.ts`.
+   *
+   * Ce que ce cas empêche est précis : qu'un catalogue **redise** cette phrase.
+   * Trois clés le faisaient, mot pour mot dans les deux langues, sans que rien ne
+   * relie les deux sources ; le jour où l'une des deux bougeait, le même champ
+   * disait deux phrases selon que le refus venait du schéma partagé ou du
+   * formulaire. La comparaison se fait sur la phrase **lue** au contrat, jamais
+   * sur un littéral recopié ici : une reformulation du contrat ne fait pas rougir
+   * ce test, elle le suit.
+   */
+  for (const locale of LOCALES) {
+    it(`n’en laisse aucune copie au catalogue en « ${locale} »`, () => {
+      const attendue = validationPhrases(locale).required;
+      const copies = [...valeurs(locale)]
+        .filter(([cle, message]) => message === attendue && !COPIES_DE_REQUIRED_TOLEREES.has(cle))
+        .map(([cle]) => cle);
+
+      expect(
+        copies,
+        `clés qui redisent « ${attendue} » alors que le contrat la porte déjà ` +
+          `(validationPhrases(${locale}).required, voir messages/README.md) :\n${copies.join('\n')}`,
+      ).toEqual([]);
+    });
+  }
+
+  it('ne garde de dispense que pour une copie qui existe encore', () => {
+    const survivantes: string[] = [];
+
+    for (const locale of LOCALES) {
+      const catalogue = valeurs(locale);
+
+      for (const cle of COPIES_DE_REQUIRED_TOLEREES) {
+        if (catalogue.get(cle) !== validationPhrases(locale).required) {
+          survivantes.push(`${locale} · ${cle}`);
+        }
+      }
+    }
+
+    expect(
+      survivantes,
+      'dispenses devenues inutiles — la copie a été reprise (#1376), retirer la clé ' +
+        `de COPIES_DE_REQUIRED_TOLEREES :\n${survivantes.join('\n')}`,
     ).toEqual([]);
   });
 });

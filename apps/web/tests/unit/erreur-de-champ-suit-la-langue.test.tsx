@@ -303,10 +303,15 @@ describe('fiche d’une prestation', () => {
   }
 
   /**
-   * La phrase vient du catalogue de cet écran, et non du contrat : le
-   * formulaire passe ses propres messages à son schéma (#849). Elle se démodait
-   * exactement comme celles du contrat, puisque c'est la validation qui les fige
-   * toutes les deux.
+   * La phrase vient du **contrat** depuis #1373, et non plus du catalogue de cet
+   * écran : le `.min(1)` du formulaire ne porte plus de message, si bien que
+   * `zodErrorMap(locale)` répond et que `validationPhrases(locale).required` en
+   * décide seule. Elle se démode exactement comme avant — c'est la validation qui
+   * la fige —, et c'est toujours ce que ce cas mesure.
+   *
+   * Lue au contrat, jamais recopiée : c'est ce qui fait de ce cas la garde du
+   * choix de #1373. Le jour où ce formulaire reposerait sa propre phrase, elle ne
+   * serait plus celle-ci, et le cas rougirait.
    *
    * Le compte de messages est la seconde moitié du cas : un seul champ est
    * fautif avant la bascule, et il doit en rester un seul après. Sept autres
@@ -320,7 +325,7 @@ describe('fiche d’une prestation', () => {
     await user.click(screen.getByRole('button', { name: adminCatalogFr.form.save }));
 
     await waitFor(() => {
-      expect(messageDuChamp('service-name')).toBe(adminCatalogFr.form.errors.nameRequired);
+      expect(messageDuChamp('service-name')).toBe(validationPhrases('fr').required);
     });
     expect(nombreDeMessages()).toBe(1);
     expect(updateServiceAction).not.toHaveBeenCalled();
@@ -328,7 +333,7 @@ describe('fiche d’une prestation', () => {
     enAnglais();
 
     await waitFor(() => {
-      expect(messageDuChamp('service-name')).toBe(adminCatalogEn.form.errors.nameRequired);
+      expect(messageDuChamp('service-name')).toBe(validationPhrases('en').required);
     });
     expect(nombreDeMessages()).toBe(1);
   });

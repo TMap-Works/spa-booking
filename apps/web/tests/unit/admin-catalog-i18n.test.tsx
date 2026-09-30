@@ -1,7 +1,13 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import type { PublicService, Service, ServiceCategory, SessionUser } from '@spa/shared';
+import {
+  validationPhrases,
+  type PublicService,
+  type Service,
+  type ServiceCategory,
+  type SessionUser,
+} from '@spa/shared';
 import { cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -279,15 +285,21 @@ describe('le formulaire de prestation, rendu en anglais', () => {
   });
 
   /**
-   * Les deux refus que le **contrat partagé** écrit lui-même — « Ce champ est
-   * obligatoire. », « Adresse attendue en minuscules… » (#1356).
+   * Le champ vide, dit par le **contrat** et dans la langue de l'écran — #1373.
    *
-   * `zodErrorMap` ne les traduit pas, par conception (`zod-messages.ts`) : ils
-   * s'affichaient en français sous un formulaire anglais, constat fait au
-   * navigateur pendant la recette de #849. Le formulaire porte donc ses propres
-   * phrases pour ces deux champs, la règle restant celle du contrat.
+   * Cet écran portait sa propre copie de la phrase, au catalogue : deux sources
+   * pour le même texte, que rien ne reliait. Le `.min(1)` du formulaire n'a plus
+   * de message, `zodErrorMap(locale)` répond, et `validationPhrases(locale)` en
+   * décide seule. La phrase attendue est donc **lue** au contrat, jamais recopiée
+   * ici — c'est ce qui fait rougir ce cas le jour où le formulaire reposerait la
+   * sienne.
+   *
+   * L'adresse publique, elle, garde la phrase de l'écran : celle de `slugSchema`
+   * est un littéral français que `zodErrorMap` ne traduit pas, par conception
+   * (`zod-messages.ts`) — constat fait au navigateur pendant la recette de #849.
+   * C'est le cas suivant qui la tient.
    */
-  it('dit le champ obligatoire dans la langue, et non dans celle du contrat', async () => {
+  it('dit le champ obligatoire dans la langue, telle que le contrat la porte', async () => {
     const user = userEvent.setup();
     render(<ServiceForm tenantSlug={SLUG} currency="EUR" categories={CATEGORIES} />);
 
@@ -295,8 +307,8 @@ describe('le formulaire de prestation, rendu en anglais', () => {
     await user.type(screen.getByLabelText(/Price \(EUR\)/), '20');
     await user.click(screen.getByRole('button', { name: 'Create the service' }));
 
-    expect(await screen.findByText('This field is required.')).toBeDefined();
-    expect(screen.queryByText('Ce champ est obligatoire.')).toBeNull();
+    expect(await screen.findByText(validationPhrases('en').required)).toBeDefined();
+    expect(screen.queryByText(validationPhrases('fr').required)).toBeNull();
     expect(createServiceAction).not.toHaveBeenCalled();
   });
 
@@ -519,7 +531,9 @@ describe('les rubriques, rendues en anglais', () => {
     await user.type(screen.getByLabelText(/Public address/), 'Pas Un Slug!');
     await user.click(screen.getByRole('button', { name: 'Create the section' }));
 
-    expect(await screen.findByText('This field is required.')).toBeDefined();
+    // Le nom vide : la phrase du contrat depuis #1373, lue et non recopiée.
+    // L'adresse : la phrase de l'écran, `slugSchema` n'étant pas traduisible.
+    expect(await screen.findByText(validationPhrases('en').required)).toBeDefined();
     expect(
       screen.getByText(
         'An address in lowercase letters, digits and single hyphens is expected.',
