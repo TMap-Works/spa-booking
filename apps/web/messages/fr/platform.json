@@ -45,8 +45,7 @@
     "submit": "Se connecter",
     "submitting": "Connexion en cours…",
     "fieldErrors": {
-      "password": "Le mot de passe fait au moins {min} caractères.",
-      "totpCode": "Six chiffres, tels que les affiche votre application."
+      "password": "Le mot de passe fait au moins {min} caractères."
     },
     "errors": {
       "credentials": {

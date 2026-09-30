@@ -39,9 +39,10 @@ import { PLATFORM_CONSOLE_PATH } from '../paths';
  * Même règle pour les refus de champ, à une nuance près depuis #1376 : les
  * messages de `platformLoginRequestSchema` ne peuvent pas se traduire là où ils
  * sont écrits — `packages/shared` est lu par l'API autant que par le front, et
- * n'a pas de langue de requête. L'écran en traduit deux par champ, parce qu'il
- * dit mieux que le contrat ce qui cloche : la longueur attendue du mot de passe,
- * et la forme des six chiffres.
+ * n'a pas de langue de requête. L'écran n'en traduit donc plus qu'un seul, celui
+ * qu'il dit mieux que le contrat : la longueur attendue du mot de passe, que
+ * `zodErrorMap` ne sait annoncer que par un décompte anonyme (« Saisissez au
+ * moins 12 caractères. ») là où le catalogue nomme le champ.
  *
  * L'adresse e-mail, non. Sa phrase de catalogue était mot pour mot
  * `validationPhrases('en').email` en anglais, et en divergeait en français —
@@ -50,6 +51,15 @@ import { PLATFORM_CONSOLE_PATH } from '../paths';
  * `zodErrorMap(locale)`, passée au résolveur, qui répond pour lui — la même
  * carte et la même phrase que les formulaires de connexion de l'espace client
  * et du back-office (#1232).
+ *
+ * Le code de vérification non plus, depuis #1387. Sa phrase de catalogue redisait
+ * `validationMessage('platform.totpCode', 'fr')` mot pour mot, et en divergeait
+ * déjà en anglais — « as your authenticator app shows them » ici, « as shown by
+ * your authenticator app » au contrat : la divergence que #1376 annonçait était
+ * donc installée, sans que rien ne la signale, parce que la garde d'alors ne
+ * comparait qu'aux phrases de `validationPhrases` et non à la table
+ * `VALIDATION_MESSAGES`. Le `refine` du schéma pose `messageKey('platform.totpCode')`
+ * et la carte sait le dire dans les deux langues : c'est elle qui répond.
  */
 
 /** Les clés d'un couple titre + corps d'échec, telles que `t()` les accepte. */
@@ -70,12 +80,14 @@ const FAILURE_KEYS: Readonly<Record<string, FailureKey>> = {
  *
  * `null` pour les champs dont le contrat dit déjà le refus, et le dit dans les
  * deux langues : `zodErrorMap(locale)` répond pour eux, et le redire ici en
- * ferait une seconde source de la même phrase (#1376).
+ * ferait une seconde source de la même phrase (#1376, #1387). Il n'en reste
+ * qu'un, le mot de passe, et ce n'est pas une copie : sa phrase **nomme le
+ * champ** là où le contrat ne sait rendre qu'un décompte générique.
  */
 const FIELD_ERROR_KEYS = {
   email: null,
   password: 'login.fieldErrors.password',
-  totpCode: 'login.fieldErrors.totpCode',
+  totpCode: null,
 } as const;
 
 export function PlatformLoginForm({ expired }: { readonly expired: boolean }) {

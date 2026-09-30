@@ -187,6 +187,82 @@ là où un refus nomme une faute dont le remède ne se devine pas — « Adresse
 invalide. » plutôt que « Saisissez une adresse e-mail valable. » —, et ce
 chantier-là reste ouvert sur la table `VALIDATION_MESSAGES`, comme dit plus bas.
 
+## Un refus que le contrat **nomme** ne se redit pas non plus
+
+**Décision de #1387.** La règle ci-dessus vaut pour les dix tournures génériques
+de `validationPhrases(locale)`. Elle vaut aussi, et pour la même raison, pour la
+seconde table de
+[`zod-messages.ts`](../../../packages/shared/src/errors/zod-messages.ts) : les
+**trente-quatre refus que les schémas nomment eux-mêmes** par `messageKey(…)` —
+`identifier.slug`, `identifier.phone`, `platform.totpCode`,
+`availability.scheduleOverlap`… Une feuille de catalogue qui redit une de
+celles-là crée la même paire de sources non reliées, avec un risque supérieur :
+ces phrases-là sont plus spécifiques, donc plus tentantes à recopier dans le
+catalogue d'un écran.
+
+Et le risque était déjà réalisé. `platform.login.fieldErrors.totpCode` redisait
+`platform.totpCode` mot pour mot en français, et en **divergeait** en anglais —
+« Six digits, as your authenticator app shows them. » au catalogue contre « Six
+digits, as shown by your authenticator app. » au contrat. Aucune garde ne le
+voyait : celle de #1376 ne comparait qu'aux phrases de `validationPhrases`. La
+clé n'existe plus, `FIELD_ERROR_KEYS.totpCode` est à `null`, et c'est
+`zodErrorMap(locale)` qui répond — le `refine` de `platformLoginRequestSchema`
+pose déjà la clé de message.
+
+**Ce qui tient la décision.** Un second cas dans
+[`messages-glossary.test.ts`](../tests/unit/messages-glossary.test.ts), jumeau du
+précédent, qui compare les catalogues aux phrases **fixes** de
+`VALIDATION_MESSAGES`. Et un cas de rendu bilingue dans
+[`refus-de-saisie-vient-du-contrat.test.tsx`](../tests/unit/refus-de-saisie-vient-du-contrat.test.tsx),
+qui lit la phrase au contrat plutôt que de la recopier — sans lui, un écran
+pourrait avoir perdu sa clé et n'afficher plus rien.
+
+**L'arbitrage, et il est explicite : la garde part avec huit dispenses.** #1387
+portait sur l'empreinte `contracts:shared, web/identity` ; son recensement a
+trouvé huit autres feuilles qui redisent une phrase fixe de
+`VALIDATION_MESSAGES`, sur quatre catalogues qu'il ne pouvait pas toucher —
+d'autres tickets du même jalon y travaillaient en parallèle. Elles sont inscrites
+nommément, avec leur motif, dans `COPIES_DE_MESSAGES_TOLEREES`, et **#1388** les
+écoule :
+
+| Clé | Redit | Divergence déjà installée |
+|---|---|---|
+| `admin-catalog.form.errors.slug` | `identifier.slug` | oui, en anglais |
+| `admin-catalog.form.errors.slugReserved` | `identifier.slugReserved` | oui, en anglais |
+| `admin-catalog.categoryForm.errors.slug` | `identifier.slug` | oui, en anglais |
+| `admin-catalog.categoryForm.errors.slugReserved` | `identifier.slugReserved` | oui, en anglais |
+| `admin-settings.address.countryFormat` | `identifier.countryCode` | non |
+| `admin-staff.invite.phoneInvalid` | `identifier.phone` | non |
+| `admin-staff.schedule.overlap` | `availability.scheduleOverlap` | non |
+| `signup.fieldErrors.slugReserved` | `identifier.slugReserved` | oui, en anglais |
+
+C'est le même arbitrage que celui de #1373, qui avait laissé
+`booking.tunnel.contactStep.errors.required` en dispense le temps qu'un ticket
+vienne reprendre le tunnel public — et #1376 l'a reprise du même geste que la
+dispense. Le motif n'est pas la commodité : chacune de ces huit clés demande de
+reprendre le **formulaire** qui l'affiche et la suite de rendu qui la cite, pas
+seulement une ligne de JSON. Poser la garde maintenant et nommer ce qui reste
+vaut mieux que de ne rien poser — une neuvième copie écrite demain rougit, et les
+huit restantes sont écrites noir sur blanc.
+
+**Ce qui n'est pas concerné.** Trois cas, et ils ne sont pas des oublis.
+
+- Les phrases **paramétrées** de la table — six clés sur trente-quatre, qui
+  interpolent une borne ou une nature d'identifiant. Un catalogue écrit la même
+  chose avec un argument ICU (`{max}`), et les deux textes ne s'égalisent pour
+  aucune valeur : la comparaison littérale ne dirait rien. C'est la limite déjà
+  posée par #1376 sur `tooShort`, `tooLong` et leurs pareilles.
+- Les **reformulations**, qui ne sont pas des copies. `login.fieldErrors.password`
+  reste au catalogue et dit « Le mot de passe fait au moins {min} caractères. » là
+  où le contrat dit « Saisissez au moins {min} caractères. » : elle **nomme le
+  champ**, ce qu'une phrase générique ne peut pas faire. Même chose pour
+  `admin-settings.hours.order` et pour `platform.create.fieldErrors.slugReserved`,
+  proches sans être identiques.
+- Les **indications**, qui ne sont pas des refus. `platform.login.totpHint` — « Les
+  six chiffres affichés par votre application d'authentification. » — est le texte
+  d'aide posé sous le champ, lu **avant** toute saisie ; le refus, lui, ne paraît
+  qu'après. Deux rôles, deux textes, même s'ils se ressemblent.
+
 ## Ce que la langue ne change pas
 
 Les **paramètres d'URL** et les **segments de route** restent français
