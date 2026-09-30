@@ -18,6 +18,7 @@ import { Button } from '@/components/ui/button';
 import { Field } from '@/components/ui/field';
 import { Notification, type NotificationTone } from '@/components/ui/notification';
 import { PasswordField } from '@/components/ui/password-field';
+import { useLocalizedFieldErrors } from '@/lib/field-refusal';
 import { refusalMessage, type Refusal } from '@/lib/refusal';
 import type { SessionNotice } from '@/lib/session-refresh';
 import { useNavigateAfterAuth } from '@/lib/use-navigate-after-auth';
@@ -117,6 +118,8 @@ export function LoginForm({ tenantSlug, notice }: LoginFormProps) {
   const {
     register,
     handleSubmit,
+    setError,
+    trigger,
     formState: { errors, isSubmitting },
   } = useForm<LoginRequest>({
     resolver,
@@ -124,6 +127,16 @@ export function LoginForm({ tenantSlug, notice }: LoginFormProps) {
     // Le message apparaît quand on quitte le champ, pas à la première frappe.
     mode: 'onTouched',
   });
+
+  /*
+   * Les messages **des champs** suivent la langue, eux aussi (#1354).
+   *
+   * Le résolveur ci-dessus est bien refabriqué à la bascule, mais rien ne
+   * rejouait la validation : « Saisissez une adresse e-mail valable. » restait
+   * sous un formulaire devenu anglais. Seuls les champs déjà fautifs sont
+   * rejoués — voir `lib/field-refusal.ts`.
+   */
+  useLocalizedFieldErrors({ locale, errors, trigger, setError });
 
   const submit = handleSubmit(async (values) => {
     setFailure(null);

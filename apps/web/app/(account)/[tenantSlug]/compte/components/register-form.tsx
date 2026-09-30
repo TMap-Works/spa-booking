@@ -22,6 +22,7 @@ import { Notification } from '@/components/ui/notification';
 import { PasswordField } from '@/components/ui/password-field';
 import { PhoneField } from '@/components/ui/phone-field';
 import { ConsentField, consentSchema } from '@/lib/booking/consent';
+import { useLocalizedFieldErrors } from '@/lib/field-refusal';
 import { refusalMessage, type Refusal } from '@/lib/refusal';
 import { useNavigateAfterAuth } from '@/lib/use-navigate-after-auth';
 
@@ -117,6 +118,8 @@ export function RegisterForm({ tenantSlug }: RegisterFormProps) {
     register,
     control,
     handleSubmit,
+    setError,
+    trigger,
     watch,
     formState: { errors, isSubmitting },
   } = useForm<RegisterFormValues, unknown, z.output<typeof registerFormSchema>>({
@@ -155,6 +158,18 @@ export function RegisterForm({ tenantSlug }: RegisterFormProps) {
     mode: 'onSubmit',
     reValidateMode: 'onChange',
   });
+
+  /*
+   * Les messages **des champs** suivent la langue, eux aussi (#1354).
+   *
+   * Le résolveur est refabriqué à la bascule, mais rien ne rejouait la
+   * validation : « Saisissez au moins 12 caractères. » et « Le traitement des
+   * données doit être accepté… » restaient dans la langue d'avant sous un
+   * formulaire qui avait changé. Seuls les champs déjà fautifs sont rejoués —
+   * une bascule ne fait apparaître aucun message sur un champ jamais rempli.
+   * Voir `lib/field-refusal.ts`.
+   */
+  useLocalizedFieldErrors({ locale, errors, trigger, setError });
 
   // `watch` rend le critère vivant : il se coche à la frappe, sans attendre une
   // soumission ni la perte du focus.

@@ -33,6 +33,7 @@ import {
   reformatAmountInput,
   type DisplayLocale,
 } from '@/lib/format';
+import { useLocalizedFieldErrors } from '@/lib/field-refusal';
 import { refusalMessage, type Refusal } from '@/lib/refusal';
 
 import { adminServicePath } from '../paths';
@@ -394,8 +395,6 @@ export function ServiceForm({
    * deviendrait « 35005,00 » au retour, un prix mille fois trop élevé.
    */
   const priceDisplayRef = useRef<DisplayLocale>(display);
-  /** L'erreur que porte le champ de prix, s'il en porte une. */
-  const priceError = errors.price;
 
   /**
    * Le prix se réécrit quand la langue de l'écran change — deuxième critère
@@ -422,12 +421,12 @@ export function ServiceForm({
    *   gérante, et marquer le formulaire modifié ferait mentir tout garde-fou de
    *   sortie qui s'y adosserait.
    *
-   * La validation est rejouée pour le seul champ de prix, et seulement s'il porte
-   * déjà une erreur : sa phrase vient du catalogue et se serait sinon figée dans
-   * la langue d'avant, comme les états d'erreur que ce ticket corrige par
-   * ailleurs. Aucun `trigger` sur les champs sains — un formulaire ne se met pas
-   * à reprocher des champs qu'on n'a pas encore remplis parce qu'on a changé de
-   * langue.
+   * Le **rejeu de la validation** n'est plus ici : il vaut pour tous les champs
+   * fautifs de ce formulaire, et plus seulement pour le prix, depuis #1354 —
+   * c'est `useLocalizedFieldErrors` qui s'en charge juste en dessous. Cet effet
+   * est déclaré **avant** lui à dessein : les effets se jouent dans l'ordre de
+   * leurs crochets, et rejouer la validation du prix avant sa réécriture le
+   * jugerait sur le texte de la langue d'avant.
    */
   useEffect(() => {
     const from = priceDisplayRef.current;
@@ -442,14 +441,31 @@ export function ServiceForm({
       priceDisplayRef.current = display;
       setValue('price', rewritten, { shouldDirty: false, shouldTouch: false });
     }
+  }, [currency, display, getValues, setValue]);
 
-    if (priceError !== undefined) {
-      void trigger('price');
-    }
-    // `priceError` figure dans les dépendances par honnêteté envers le crochet,
-    // mais ne déclenche rien seul : la garde de langue ci-dessus fait sortir
-    // l'effet dès que ce n'est pas un changement de langue qui l'a réveillé.
-  }, [currency, display, getValues, priceError, setValue, trigger]);
+  /**
+   * Les messages de **champ** suivent la langue — #1354.
+   *
+   * Sept champs sur huit gardaient la phrase de leur refus telle que zod
+   * l'avait écrite à la validation ; seul le prix était rejoué (#1327). Le
+   * crochet rejoue la validation des champs **déjà fautifs**, et de ceux-là
+   * seulement — un formulaire ne se met pas à reprocher un champ jamais rempli
+   * parce qu'on a changé de langue.
+   *
+   * Le conflit d'adresse est l'autre moitié : c'est un refus de l'API, qu'aucune
+   * validation locale ne saurait retrouver. Il est posé par son **code** et le
+   * crochet le réécrit, ce qui l'exclut du rejeu — sans cela, la validation
+   * locale trouverait l'adresse valable et effacerait le refus.
+   */
+  const { postFieldRefusal, clearFieldRefusals } = useLocalizedFieldErrors({
+    locale,
+    errors,
+    trigger,
+    setError,
+    // Le conflit ne peut venir que de l'adresse : c'est la seule unicité que
+    // porte la table, et cet écran la nomme mieux que le contrat.
+    own: (code) => (code === ERROR_CODES.CONFLICT ? t('errors.slugTaken') : null),
+  });
 
   // Recalculée à chaque frappe : c'est la durée que l'agenda bloquera, et la
   // voir avant d'enregistrer évite de découvrir après coup pourquoi le créneau
@@ -463,6 +479,7 @@ export function ServiceForm({
 
   const submit = handleSubmit(async (values) => {
     setFailure(null);
+    clearFieldRefusals();
     setSaved(false);
 
     const price = parseAmountInput(values.price, currency, display);
@@ -510,8 +527,9 @@ export function ServiceForm({
       if (result.code === ERROR_CODES.CONFLICT) {
         // Le conflit ne peut venir que du slug : c'est la seule unicité que
         // porte la table. Le message se pose donc sur le champ qui se corrige,
-        // pas en bandeau au-dessus du formulaire.
-        setError('slug', { message: t('errors.slugTaken') });
+        // pas en bandeau au-dessus du formulaire — et par son **code**, pour
+        // qu'il suive la langue comme le reste (#1354).
+        postFieldRefusal('slug', result.code);
         return;
       }
       setFailure({ code: result.code });
