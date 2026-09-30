@@ -515,7 +515,14 @@ export function parseAmountInput(
   return amountMinor > AMOUNT_MINOR_MAX ? null : { amountMinor, currency };
 }
 
-/** « 1 h 15 » à partir d'une durée en minutes. */
+/**
+ * « 1 h 15 » à partir d'une durée en minutes.
+ *
+ * Le zéro de tête sur les minutes est une convention d'**horloge française** —
+ * « 1 h 05 » se lit comme une heure au cadran. L'anglais du produit ne pose pas
+ * une heure, il compte deux unités : « 1 hr 5 min », et le zéro y passerait pour
+ * une coquille (#1329). Appliqué aux deux langues, il écrivait « 1 hr 05 min ».
+ */
 export function formatDuration(minutes: number, display: DisplayLocale = FALLBACK_DISPLAY): string {
   const words = WORDS[display.locale];
   const hours = Math.floor(minutes / 60);
@@ -529,7 +536,7 @@ export function formatDuration(minutes: number, display: DisplayLocale = FALLBAC
     ? fill(words.durationHours, { hours: String(hours) })
     : fill(words.durationHoursMinutes, {
         hours: String(hours),
-        minutes: String(rest).padStart(2, '0'),
+        minutes: display.locale === 'fr' ? String(rest).padStart(2, '0') : String(rest),
       });
 }
 

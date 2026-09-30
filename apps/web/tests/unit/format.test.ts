@@ -377,6 +377,25 @@ describe('formatDuration', () => {
   ])('rend %i minutes en « %s »', (minutes, expected) => {
     expect(formatDuration(minutes, FR)).toBe(expected);
   });
+
+  /*
+   * Le zéro de tête est une convention d'horloge **française** — « 1 h 05 » se lit
+   * au cadran. L'anglais du produit compte deux unités, et « 1 hr 05 min » y passe
+   * pour une coquille (#1329).
+   */
+  it.each([
+    [45, '45 min'],
+    [60, '1 hr'],
+    [65, '1 hr 5 min'],
+    [75, '1 hr 15 min'],
+    [120, '2 hr'],
+  ])('rend %i minutes en « %s » en anglais', (minutes, expected) => {
+    expect(formatDuration(minutes, { locale: 'en' })).toBe(expected);
+  });
+
+  it('garde le zéro de tête en français, et lui seul', () => {
+    expect(formatDuration(65, FR)).toBe('1 h 05');
+  });
 });
 
 describe('dates civiles de l’établissement', () => {

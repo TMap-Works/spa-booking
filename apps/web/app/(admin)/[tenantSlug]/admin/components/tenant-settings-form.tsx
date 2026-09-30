@@ -33,7 +33,7 @@ import { Notification } from '@/components/ui/notification';
 import { PhoneField } from '@/components/ui/phone-field';
 import { Select } from '@/components/ui/select';
 import { SUPPORTED_LOCALES } from '@/i18n/resolve';
-import { weekdayLabel } from '@/components/salon/opening-hours';
+import { weekdayLabel, weekdayLabelInSentence } from '@/components/salon/opening-hours';
 
 import { updateTenantSettingsAction } from '../actions';
 import { useAdminSessionRenewal } from './use-admin-session-renewal';
@@ -149,7 +149,10 @@ import { useAdminSessionRenewal } from './use-admin-session-renewal';
  * rien n'exerce finissent par diverger — et la divergence se lirait ici dans ce
  * qu'un lecteur d'écran annonce (#652). Il reçoit désormais la langue résolue et
  * le pays du salon (#853) : sans eux, `Intl` rendait « lundi » à un back-office
- * servi en anglais.
+ * servi en anglais. Sa variante `weekdayLabelInSentence` sert les noms
+ * accessibles, où le jour n'ouvre pas la phrase : la casse y est celle de la
+ * langue et non une minuscule forcée, « Open on Monday » et non « on monday »
+ * (#1329).
  *
  * ## Le verdict se rend contre le bouton, pas en tête d'écran
  *
@@ -795,16 +798,13 @@ export function TenantSettingsForm({ tenantSlug, tenant }: TenantSettingsFormPro
                * Le même jour, au fil d'une phrase — c'est lui qui part dans les
                * noms accessibles, « Ouverture 1 du lundi ».
                *
-               * La minuscule est celle du français, et elle ne vaut que pour
-               * lui : l'anglais écrit « Open on Monday ». La rendre juste dans
-               * les deux langues demande la forme non capitalisée d'`Intl`, que
-               * `components/salon/opening-hours.ts` garde pour lui
-               * (`weekdayName`) — fichier hors de l'empreinte de ce ticket. Le
-               * mot est un `aria-label`, donc prononcé et non lu : la casse n'y
-               * change rien pour un lecteur d'écran. Laissé en suivi plutôt que
-               * de toucher une brique partagée par la vitrine publique.
+               * Il vient d'`Intl` par `weekdayLabelInSentence`, et non d'un
+               * `toLowerCase()` sur le libellé autonome : la minuscule est une
+               * règle du **français**, et l'appliquer aux deux langues écrivait
+               * « Open on monday » dans les vingt-huit champs de cette grille
+               * (#1329). La casse est désormais celle de la langue, à la source.
                */
-              const inSentence = day.toLowerCase();
+              const inSentence = weekdayLabelInSentence(weekday, display, hours);
               const dayLabelId = `tenant-hours-${String(weekday)}-jour`;
               const toggleId = `tenant-hours-${String(weekday)}-ouvert`;
               const open = days[dayIndex]?.open ?? false;

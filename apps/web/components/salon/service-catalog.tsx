@@ -257,7 +257,14 @@ function ServiceList({ services, reservationPath }: ServiceListProps) {
                   <span>{t('salon.catalog.unstaffed')}</span>
                 ) : (
                   <span>
-                    <span className="spa-visually-hidden">{t('salon.catalog.staffLabel')} </span>
+                    {/*
+                     * Le prefixe s'accorde : « Praticien : Yanis B. » pour un
+                     * seul nom, « Praticiens : … » au-dela. Un pluriel fige se
+                     * lisait au singulier une fois sur deux (#1329).
+                     */}
+                    <span className="spa-visually-hidden">
+                      {t('salon.catalog.staffLabel', { count: service.staff.length })}{' '}
+                    </span>
                     {service.staff.map((member) => member.displayName).join(', ')}
                   </span>
                 )}
