@@ -45,8 +45,7 @@
     "submit": "Sign in",
     "submitting": "Signing in…",
     "fieldErrors": {
-      "password": "The password is at least {min} characters long.",
-      "totpCode": "Six digits, as your authenticator app shows them."
+      "password": "The password is at least {min} characters long."
     },
     "errors": {
       "credentials": {

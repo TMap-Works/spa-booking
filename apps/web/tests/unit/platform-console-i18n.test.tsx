@@ -1,4 +1,4 @@
-import { ERROR_CODES, type PlatformTenant } from '@spa/shared';
+import { ERROR_CODES, validationMessage, type PlatformTenant } from '@spa/shared';
 import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -161,6 +161,22 @@ describe('la connexion de la console, en anglais', () => {
     expect((screen.getByLabelText('Verification code*') as HTMLInputElement).value).toBe('');
   });
 
+  /**
+   * La phrase est **lue au contrat**, et non recopiée ici — #1387.
+   *
+   * Elle l'était : le catalogue de cet écran portait sa propre copie, que le
+   * littéral de ce cas citait. Les deux ont divergé sans que rien ne le signale,
+   * l'anglais du catalogue disant « as your authenticator app shows them » là où
+   * le contrat dit « as shown by your authenticator app ». Le littéral était le
+   * complice de la copie : citer la phrase à la main rend vraie une assertion
+   * qui ne prouve plus laquelle des deux sources répond.
+   *
+   * Le contrat est la seule source depuis ce ticket — `platformLoginRequestSchema`
+   * pose `messageKey('platform.totpCode')` sur son `refine`, et `zodErrorMap(locale)`
+   * la traduit. Le même refus est éprouvé **dans les deux langues** par
+   * `refus-de-saisie-vient-du-contrat.test.tsx` ; ce cas-ci tient l'anglais de
+   * cette console-là, avec le reste de sa langue.
+   */
   it('refuse un code TOTP mal formé sous le champ, dans la langue', async () => {
     const user = userEvent.setup();
     render(<PlatformLoginForm expired={false} />);
@@ -171,9 +187,7 @@ describe('la connexion de la console, en anglais', () => {
     await user.click(screen.getByRole('button', { name: 'Sign in' }));
 
     await waitFor(() => {
-      expect(
-        screen.getByText('Six digits, as your authenticator app shows them.'),
-      ).toBeDefined();
+      expect(screen.getByText(validationMessage('platform.totpCode', 'en'))).toBeDefined();
     });
     expect(platformLoginAction).not.toHaveBeenCalled();
   });

@@ -8,7 +8,7 @@ import { fixerLangue, nextIntlMobile } from '../support/langue-mobile';
 
 /**
  * Le refus d'un champ vient du contrat, et il arrive dans la langue de l'écran —
- * #1376.
+ * #1376, étendu au code de vérification par #1387.
  *
  * ## Le défaut que cette suite referme
  *
@@ -42,7 +42,11 @@ import { fixerLangue, nextIntlMobile } from '../support/langue-mobile';
  * - `validationPhrases(locale).required` pour le champ laissé vide ;
  * - `validationMessage('identifier.email', locale)` pour l'adresse mal formée —
  *   `emailSchema` porte cette clé de message depuis #1232, et c'est elle que
- *   `zodErrorMap(locale)` traduit.
+ *   `zodErrorMap(locale)` traduit ;
+ * - `validationMessage('platform.totpCode', locale)` pour le code de vérification
+ *   incomplet de la console — la copie que #1376 avait laissée derrière lui, parce
+ *   que ses critères ne portaient que sur `validationPhrases` et non sur la table
+ *   `VALIDATION_MESSAGES` (#1387). Elle avait, elle aussi, déjà divergé en anglais.
  *
  * Jamais un littéral recopié : une reformulation du contrat ne fait pas rougir
  * cette suite, elle la suit. C'est la règle déjà tenue par
@@ -188,17 +192,25 @@ function normaliser(phrase: string): string {
 }
 
 /**
- * Les trois phrases que les catalogues portaient avant ce ticket, et qui ne
- * doivent plus s'afficher nulle part.
+ * Les phrases que les catalogues portaient avant ces tickets, et qui ne doivent
+ * plus s'afficher nulle part.
  *
  * Elles sont écrites en clair ici, et c'est le seul endroit de cette suite où un
  * littéral est justifié : ce sont des textes **retirés**, qu'aucune source ne
  * porte plus — les lire quelque part serait précisément le défaut à interdire.
+ *
+ * La quatrième vient de #1387, et elle dit pourquoi cette liste vaut mieux qu'une
+ * comparaison de plus : la copie anglaise du refus de code de vérification avait
+ * **divergé** du contrat, et c'est cette formulation-là — et non celle du
+ * contrat — qui ne doit plus paraître. Son pendant français, lui, n'est pas
+ * inscrit ici : il était identique au contrat, et c'est donc la phrase que les
+ * écrans affichent encore, légitimement.
  */
 const PHRASES_RETIREES: readonly string[] = [
   'Saisissez une adresse e-mail valide.',
   'Indiquez une adresse e-mail valide.',
   'Cette valeur n’est pas valide.',
+  'Six digits, as your authenticator app shows them.',
 ];
 
 /** Rougit si l'écran affiche encore une des phrases que le catalogue a perdues. */
@@ -342,6 +354,41 @@ describe('la connexion de la console dit le refus du contrat (#1376)', () => {
   }
 
   /**
+   * Le code de vérification — la copie que #1376 avait laissée derrière lui (#1387).
+   *
+   * Sa phrase de catalogue redisait `validationMessage('platform.totpCode', 'fr')`
+   * mot pour mot, et en divergeait déjà en anglais. Le refus vient désormais du
+   * `refine` de `platformLoginRequestSchema`, qui pose
+   * `messageKey('platform.totpCode')` : ce cas le lit au contrat, et il le lit dans
+   * les deux langues — c'est le troisième critère de #1387.
+   *
+   * Le code est saisi **incomplet** et non laissé vide : le `refine` refuse les
+   * deux, mais un champ vide se dirait aussi bien par `phrases.required` sur un
+   * autre schéma, et ce qu'on veut éprouver ici est la phrase que seule cette
+   * règle-là sait nommer.
+   */
+  for (const locale of LANGUES) {
+    it(`annonce le code de vérification incomplet avec la phrase du contrat en « ${locale} »`, async () => {
+      fixerLangue(locale);
+      const user = frappe();
+      render(<PlatformLoginForm expired={false} />);
+
+      await user.type(screen.getByLabelText(LIBELLES[locale].consoleEmail), 'ops@spa.test');
+      await user.type(screen.getByLabelText(LIBELLES[locale].consolePassword), 'mot-de-passe-long');
+      await user.type(screen.getByLabelText(LIBELLES[locale].consoleCode), '12');
+      await user.click(screen.getByRole('button', { name: LIBELLES[locale].consoleSubmit }));
+
+      await waitFor(() => {
+        expect(messageDuChamp('plateforme-totp')).toBe(
+          normaliser(validationMessage('platform.totpCode', locale)),
+        );
+      });
+      aucunePhraseRetiree();
+      expect(platformLoginAction).not.toHaveBeenCalled();
+    });
+  }
+
+  /**
    * Le rejeu, sur le second écran que #1376 branche à `useLocalizedFieldErrors`.
    *
    * Même raison qu'au tunnel : c'est le seul cas où la phrase affichée est
@@ -366,6 +413,44 @@ describe('la connexion de la console dit le refus du contrat (#1376)', () => {
       expect(messageDuChamp('plateforme-email')).toBe(normaliser(adresseInvalide('en')));
     });
     expect(messageDuChamp('plateforme-password')).toBeNull();
+  });
+
+  /**
+   * Le rejeu du **code de vérification** — ce que #1387 rend nécessaire ici.
+   *
+   * Tant que la phrase venait du catalogue, elle suivait la langue **au rendu** :
+   * `t('login.fieldErrors.totpCode')` était relu à chaque passage, et le rejeu
+   * n'y était pour rien. Depuis que c'est le contrat qui répond, elle est
+   * calculée **à la validation** et rangée telle quelle dans
+   * `formState.errors` — la même situation que l'adresse, donc la même
+   * dépendance à `useLocalizedFieldErrors`. Sans ce cas, le crochet pourrait
+   * cesser de reprendre ce champ-là sans que rien ne rougisse : l'opérateur qui
+   * bascule la langue garderait « Six chiffres… » sous une étiquette anglaise.
+   */
+  it('rejoue le refus du code de vérification dans la nouvelle langue', async () => {
+    const user = frappe();
+    const { enAnglais } = monter(() => <PlatformLoginForm expired={false} />);
+
+    await user.type(screen.getByLabelText(LIBELLES.fr.consoleCode), '12');
+    // `mode: 'onTouched'` : la validation a lieu quand on quitte le champ.
+    await user.tab();
+
+    await waitFor(() => {
+      expect(messageDuChamp('plateforme-totp')).toBe(
+        normaliser(validationMessage('platform.totpCode', 'fr')),
+      );
+    });
+    expect(messageDuChamp('plateforme-email')).toBeNull();
+
+    enAnglais();
+
+    await waitFor(() => {
+      expect(messageDuChamp('plateforme-totp')).toBe(
+        normaliser(validationMessage('platform.totpCode', 'en')),
+      );
+    });
+    expect(messageDuChamp('plateforme-email')).toBeNull();
+    aucunePhraseRetiree();
   });
 });
 
