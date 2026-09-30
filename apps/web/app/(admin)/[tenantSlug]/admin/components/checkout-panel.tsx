@@ -390,22 +390,44 @@ export function CheckoutPanel({
     /**
      * Ce que **ce geste-ci** dit du refus qu'il oppose lui-même — #1367.
      *
-     * La table reprend, geste par geste, la clé que l'action serveur emploie
-     * avant tout appel (`encaissement/actions.ts`) : les deux écritures du
-     * comptoir refusent une cible illisible sous la même phrase, et c'est cette
-     * correspondance-là qui doit rester vraie. Un geste ajouté sans la sienne
-     * n'héritera pas de celle du voisin.
+     * La table reprend, geste par geste, une clé que l'action serveur emploie
+     * avant tout appel (`encaissement/actions.ts`), et c'est cette
+     * correspondance-là qui doit rester vraie : une phrase que l'écran
+     * inventerait dirait un refus que le serveur n'oppose pas. Un geste ajouté
+     * sans la sienne n'héritera pas de celle du voisin.
      *
      * Un vrai 400 de l'API ne passe pas par là : `explainFailure` ne retient le
      * geste que sur un refus sans `details`, c'est-à-dire opposé avant tout
      * appel. La route en oppose d'autres que celui du numéro du TPE — tout champ
      * du corps, et la clé d'idempotence de l'en-tête (`sales.controller.ts`) —,
      * et leur donner « Rendez-vous ou établissement inconnu » aurait nommé faux.
+     *
+     * ## Les deux gestes ne disent plus la même chose — #1378
+     *
+     * Ils partageaient `failure.unknownTarget`, « Rendez-vous inconnu. » Elle est
+     * juste pour le premier — composer le ticket vise bien un rendez-vous, et les
+     * deux identifiants que l'action juge viennent du **même** objet
+     * `appointment`, si bien qu'un seul refus les couvre tous les deux ici. Elle
+     * était fausse pour le second : inscrire un règlement ne reçoit aucun
+     * identifiant de rendez-vous, et ce que l'action y refuse est un ticket de
+     * caisse, un règlement, ou la clé du geste
+     * (`encaissement/actions.ts`, #1378).
+     *
+     * La table s'arrête au **geste**, et non à la cause, parce que c'est tout ce
+     * que cet écran peut savoir : les trois refus de l'écriture portent le même
+     * code et aucun `details`, et les distinguer aurait demandé de changer l'un
+     * ou l'autre — ce que le troisième critère de #1378 interdit, et pour la
+     * raison écrite en tête d'`action-result.ts`. La phrase retenue est donc
+     * celle de la seule cause que ce poste puisse atteindre : le ticket vient du
+     * serveur et la clé de `newGestureKey`, quand le corps, lui, se compose de ce
+     * que l'opérateur a saisi. Sa dernière proposition — recharger l'écran —
+     * couvre les deux autres, qui seraient une panne d'écran et non une faute de
+     * saisie.
      */
     const gesture = failed.gesture;
     const own: Readonly<Record<CheckoutGesture, string>> = {
       ticket: t('failure.unknownTarget'),
-      reglement: t('failure.unknownTarget'),
+      reglement: t('failure.unreadableSettlement'),
     };
 
     return checkoutFailureMessage(
