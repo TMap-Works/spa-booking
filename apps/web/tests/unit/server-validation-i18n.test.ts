@@ -8,6 +8,7 @@ import {
   type Locale,
 } from '@spa/shared';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { ZodError } from 'zod';
 
 import { fixerLangue, nextIntlServerMobile } from '../support/langue-mobile';
 
@@ -173,18 +174,29 @@ describe('le repli de validation — une seule phrase, tenue en un seul point', 
  * requête fixe, pour la même raison que ci-dessus : une phrase anglaise ne peut
  * alors venir que du paramètre.
  *
- * L'`undefined` du premier paramètre n'est pas une commodité : il sert le site
- * où le refus peut venir d'ailleurs que du schéma — l'acceptation d'invitation
- * juge aussi le slug de l'URL. Son cas est plus bas, sur l'action elle-même.
+ * Le premier paramètre a toléré une erreur **absente** jusqu'à #1379, pour un seul
+ * site — l'acceptation d'invitation, qui jugeait aussi le slug de l'URL. Ce site a
+ * été repris, le slug y rendant `TENANT_NOT_FOUND` : la signature exige donc une
+ * `ZodError`. Le repli n'a pas disparu pour autant, une `ZodError` pouvant ne
+ * porter aucune `issue`, et c'est sous cette forme qu'il se mesure ci-dessous.
  */
 describe('le refus d’un schéma — même code, même phrase, même langue', () => {
-  /** Une `ZodError` véritable, dans la langue demandée — jamais une doublure. */
+  /**
+   * Une `ZodError` véritable, dans la langue demandée — jamais une doublure.
+   *
+   * Elle lève plutôt que de rendre `undefined` : la signature n'accepte plus
+   * d'erreur absente depuis #1379, et un schéma qui se mettrait à accepter une
+   * charge utile vide doit arrêter le test au lieu de le faire glisser sur le
+   * repli, qui a son propre cas juste en dessous.
+   */
   function refusDuSchema(locale: Locale) {
     const parsed = createPlatformNoteRequestSchema.safeParse({}, { errorMap: zodErrorMap(locale) });
 
-    expect(parsed.success).toBe(false);
+    if (parsed.success) {
+      throw new Error('le schéma a accepté une note vide : ce cas ne mesure plus le refus');
+    }
 
-    return parsed.success ? undefined : parsed.error;
+    return parsed.error;
   }
 
   it.each(LANGUES)('rend le message du premier refus du schéma, en %s', (locale) => {
@@ -200,7 +212,11 @@ describe('le refus d’un schéma — même code, même phrase, même langue', (
   it.each(LANGUES)('retombe sur la phrase du code quand rien ne le nomme, en %s', (locale) => {
     fixerLangue('fr');
 
-    expect(invalidFromZod(undefined, locale)).toEqual({
+    // Une `ZodError` sans aucune `issue` — le seul chemin qui reste vers le repli
+    // depuis que la signature n'accepte plus d'erreur absente (#1379). Il n'est
+    // pas théorique : c'est ce que rendrait un schéma dont la carte d'erreurs ne
+    // nomme rien, et c'est le `?.` de la fonction qui le couvre.
+    expect(invalidFromZod(new ZodError([]), locale)).toEqual({
       ok: false,
       code: ERROR_CODES.VALIDATION_ERROR,
       message: errorMessage(ERROR_CODES.VALIDATION_ERROR, locale),
@@ -284,15 +300,21 @@ describe('console de l’éditeur — plus aucune phrase écrite en dur', () => 
 });
 
 /**
- * Le site où le refus peut venir d'**ailleurs** que du schéma — #1319.
+ * Le site que #1319 avait laissé à part, et que #1379 a tranché.
  *
- * `adminAcceptInvitationAction` juge le slug de l'URL et la charge utile d'un
- * même `if` : une charge utile valable sur un slug illisible refuse sans qu'aucune
- * `ZodError` n'existe. C'est ce cas-là que l'`undefined` d'`invalidFromZod` sert,
- * et c'est ici qu'il se mesure en situation — la phrase attendue est celle du
- * code, exactement ce que rendait le `parsed.success ? generique : …` d'avant.
+ * `adminAcceptInvitationAction` jugeait le slug de l'URL et la charge utile d'un
+ * même `if` : une charge utile valable sur un slug illisible refusait sans
+ * qu'aucune `ZodError` n'existe, et c'était le seul emploi de l'`undefined`
+ * d'`invalidFromZod`. Le slug s'y juge désormais seul et **en premier**, et il rend
+ * le code qui nomme l'établissement — la raison du choix est en tête
+ * d'`action-result.ts`.
+ *
+ * Ce cas reste ici, dans la suite qui l'avait vu naître, pour ce qu'il continue de
+ * garder : la charge utile est **valable**, si bien qu'un site qui n'aurait jamais
+ * séparé les deux refus rendrait encore `VALIDATION_ERROR` et tomberait. La langue
+ * est exigée dans les deux sens, comme partout ici.
  */
-describe('acceptation d’invitation — un slug illisible se dit par la phrase du code', () => {
+describe('acceptation d’invitation — un slug illisible nomme l’établissement', () => {
   it.each(LANGUES)('charge utile valable, slug refusé, en %s', async (locale) => {
     fixerLangue(locale);
 
@@ -300,7 +322,22 @@ describe('acceptation d’invitation — un slug illisible se dit par la phrase 
       adminAcceptInvitationAction('Spa Lumière', INVITATION_VALABLE),
     );
 
+    expect(code).toBe(ERROR_CODES.TENANT_NOT_FOUND);
+    expect(message).toBe(errorMessage(ERROR_CODES.TENANT_NOT_FOUND, locale));
+    // La tournure qu'il disait à sa place : elle ne doit plus sortir de ce site.
+    expect(message).not.toBe(errorMessage(ERROR_CODES.VALIDATION_ERROR, locale));
+  });
+
+  it.each(LANGUES)('slug lisible, mot de passe trop court : la saisie garde son refus, en %s', async (locale) => {
+    fixerLangue(locale);
+
+    // L'autre moitié du même arbitrage : la charge utile est jugée juste après le
+    // slug, et son refus nomme toujours le champ fautif plutôt que le code.
+    const { code, message } = await refus(
+      adminAcceptInvitationAction('spa-lumiere', { token: 'jeton-de-test', password: 'court' }),
+    );
+
     expect(code).toBe(ERROR_CODES.VALIDATION_ERROR);
-    expect(message).toBe(errorMessage(ERROR_CODES.VALIDATION_ERROR, locale));
+    expect(message).not.toBe(errorMessage(ERROR_CODES.TENANT_NOT_FOUND, locale));
   });
 });
