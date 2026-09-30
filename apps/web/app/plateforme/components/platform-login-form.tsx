@@ -8,13 +8,13 @@ import {
   type PlatformLoginRequest,
 } from '@spa/shared';
 import { useTranslations } from 'next-intl';
-import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 import { useForm } from 'react-hook-form';
 
 import { Button } from '@/components/ui/button';
 import { Field } from '@/components/ui/field';
 import { Notification } from '@/components/ui/notification';
+import { useNavigateAfterAuth } from '@/lib/use-navigate-after-auth';
 
 import { platformLoginAction } from '../actions';
 import { PLATFORM_CONSOLE_PATH } from '../paths';
@@ -61,7 +61,7 @@ const FIELD_ERROR_KEYS = {
 
 export function PlatformLoginForm({ expired }: { readonly expired: boolean }) {
   const t = useTranslations('platform');
-  const router = useRouter();
+  const { navigating, navigate } = useNavigateAfterAuth();
   const [failure, setFailure] = useState<FailureKey | null>(null);
 
   const {
@@ -92,8 +92,7 @@ export function PlatformLoginForm({ expired }: { readonly expired: boolean }) {
       return;
     }
 
-    router.replace(PLATFORM_CONSOLE_PATH);
-    router.refresh();
+    navigate(PLATFORM_CONSOLE_PATH);
   });
 
   return (
@@ -152,7 +151,7 @@ export function PlatformLoginForm({ expired }: { readonly expired: boolean }) {
         type="submit"
         variant="accent"
         block
-        loading={isSubmitting}
+        loading={isSubmitting || navigating}
         loadingLabel={t('login.submitting')}
       >
         {t('login.submit')}

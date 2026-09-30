@@ -11,7 +11,6 @@ import {
 } from '@spa/shared';
 import { useLocale, useTranslations } from 'next-intl';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
 import { useMemo, useState } from 'react';
 import { useForm } from 'react-hook-form';
 
@@ -19,6 +18,7 @@ import { Button } from '@/components/ui/button';
 import { Field } from '@/components/ui/field';
 import { Notification, type NotificationTone } from '@/components/ui/notification';
 import type { SessionNotice } from '@/lib/session-refresh';
+import { useNavigateAfterAuth } from '@/lib/use-navigate-after-auth';
 
 import { adminLoginAction, adminLogoutAction } from '../actions';
 import { adminCalendarPath } from '../paths';
@@ -219,7 +219,7 @@ interface AdminLoginFormProps {
 export function AdminLoginForm({ tenantSlug, notice }: AdminLoginFormProps) {
   const t = useTranslations('admin-auth.login');
   const locale = useLocale() as Locale;
-  const router = useRouter();
+  const { navigating, navigate } = useNavigateAfterAuth();
   const [failure, setFailure] = useState<AdminLoginFailure | null>(null);
   // Les refus des champs viennent de zod, donc de `zodErrorMap` — « adresse
   // e-mail attendue » et non « Invalid email » sous un formulaire français, ni
@@ -290,11 +290,7 @@ export function AdminLoginForm({ tenantSlug, notice }: AdminLoginFormProps) {
       return;
     }
 
-    router.replace(landing);
-    // Les pages du back-office sont rendues côté serveur : sans ce
-    // rafraîchissement, la navigation servirait le rendu fait **avant** que le
-    // cookie de session n'existe, et rebondirait aussitôt sur cet écran.
-    router.refresh();
+    navigate(landing);
   });
 
   return (
@@ -358,7 +354,7 @@ export function AdminLoginForm({ tenantSlug, notice }: AdminLoginFormProps) {
         type="submit"
         variant="accent"
         block
-        loading={isSubmitting}
+        loading={isSubmitting || navigating}
         loadingLabel={t('submitting')}
       >
         {t('submit')}
