@@ -67,7 +67,9 @@ calendrier au sens propre.
 
 - **Une phrase montrée à quelqu'un commence par une capitale et finit par un
   point** — refus de validation compris. « Saisissez une adresse e-mail
-  valide. », et non « adresse e-mail invalide ».
+  valide. », et non « adresse e-mail invalide ». Ce qui est une phrase et ce qui
+  n'en est pas une, c'est la section suivante qui le dit ; le test du glossaire
+  tient la règle sur les refus de validation depuis #1357.
 - **Aucun terme d'implémentation à l'écran.** Ni « front end », ni « MVP », ni
   « slug », ni « API ». On dit ce que la personne peut en faire, pas comment
   c'est construit.
@@ -82,6 +84,58 @@ calendrier au sens propre.
   doit pas en ajouter un second. Et le français élide — « la fiche d'Alice » —, ce
   que le message porte par un `select` sur l'argument `elision`
   (`lib/elision.ts`).
+
+## Ce qui est une phrase, et comment la clé le dit
+
+La règle de ponctuation ne peut pas valoir pour tout le catalogue : « Adresse
+e-mail », « Rôle », « Écran à venir » ne sont pas des phrases et n'en prennent
+ni la capitale de phrase ni le point final. Une règle aveugle rougirait sur des
+centaines de libellés justes. Ce qui délimite le sous-ensemble est donc la
+**clé**, et non la valeur.
+
+**Un refus de validation est une phrase.** C'est le message qu'un formulaire
+affiche quand la saisie est refusée — sous le champ, ou en verdict de
+soumission. Deux formes le désignent, et deux seulement :
+
+1. **La feuille vit sous un bloc nommé `errors` ou `fieldErrors`.**
+   `form.errors.slugTooLong`, `login.fieldErrors.password`. C'est la forme à
+   employer pour tout refus ajouté désormais : le nom du bloc suffit à classer la
+   feuille, et le test la tient le jour où elle est écrite, sans rien inscrire
+   nulle part. Au singulier, `error` n'est pas un bloc de refus —
+   `admin-auth.error.title` coiffe un écran en erreur, pas une saisie fautive.
+2. **La clé est inscrite au registre `REFUS_HORS_BLOC`** de
+   [`tests/unit/messages-glossary.test.ts`](../tests/unit/messages-glossary.test.ts).
+   Ce registre est là pour les refus qui **précèdent** la convention —
+   `admin-settings.hours.pair`, `admin-staff.invite.phoneInvalid`,
+   `admin-catalog.categoryForm.slugTaken`. Les ranger sous `errors` demanderait
+   de renommer leurs clés dans les composants qui les lisent, ce qui n'a pas sa
+   place dans un ticket de chaînes. La liste est **fermée** : elle n'exempte
+   rien, elle étend la règle à des clés que leur nom ne trahissait pas.
+
+**Trois choses n'en sont pas, sous un bloc de refus comme ailleurs :**
+
+- **Un titre** — la feuille se nomme `title`, ou son nom finit par `Title`.
+  « Connexion refusée », « Formulaire incomplet », « L'enregistrement a échoué ».
+  Un titre nomme l'écran ou le verdict ; il ne prend pas de point. Le `body`
+  qu'il coiffe, lui, est bien une phrase.
+- **Un libellé de champ, un en-tête de colonne, une entrée de menu, un badge.**
+  « Adresse e-mail », « Rôle », « réglé ». Aucun n'est une phrase, et plusieurs
+  sont délibérément minuscules parce qu'ils s'insèrent dans une autre.
+- **Un fragment destiné à être inséré** — `record.suppression.reasons.*`,
+  `tunnel.consent.purposes.*.why`, `weekdaysInSentence.*`. La phrase qui les
+  reçoit porte la ponctuation ; eux non.
+
+Ce qui reste licite en tête de phrase : un `{argument}`, un chiffre, un
+acronyme, un guillemet ouvrant. Seule une **lettre minuscule** est une faute.
+Ce qui clôt : `.`, `!`, `?`, `…`. Un refus écrit en `plural` ou en `select` est
+jugé **branche par branche** : chacune est une phrase entière, et l'accolade qui
+l'ouvre ne la dispense de rien.
+
+Où en est le catalogue : #1329 avait repris `booking.json`, `signup.json` et
+`admin-auth.json`, et #1357 a fini le travail sur `admin-catalog.json`,
+`admin-clients.json`, `admin-settings.json` et `admin-staff.json` — puis a posé
+le test qui le tient. Le test ne lit que `apps/web/messages` ; hors de ce
+répertoire, c'est encore la relecture qui tient la règle.
 
 ## Ce que la langue ne change pas
 
@@ -100,12 +154,7 @@ américaine et la règle de ponctuation — capitale en tête, point final —, 
 sorti « slug » des refus de validation. Ce qui reste à faire de ce côté-là est
 nommé : les refus du contrat énoncent encore une faute (« Adresse e-mail
 invalide. ») là où ce glossaire préfère dire quoi faire (« Saisissez une adresse
-e-mail valide. »), et les catalogues de validation de ce répertoire même —
-`admin-catalog.json`, `admin-staff.json`, `admin-settings.json` — sont restés
-minuscules et sans point quand #1329 n'a repris que `booking.json`,
-`signup.json` et `admin-auth.json`. Le test du glossaire, lui, ne lit que
-`apps/web/messages` et ne juge que le vocabulaire : sur le registre, c'est la
-relecture qui tient la règle.
+e-mail valide. »).
 
 Les **noms de clés** de ces catalogues non plus. Plusieurs reprennent une valeur
 d'énumération du contrat partagé — `appointment-status.json` porte `cancelled` et
