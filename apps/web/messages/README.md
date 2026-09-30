@@ -90,13 +90,22 @@ Les **paramètres d'URL** et les **segments de route** restent français
 collègues doit ouvrir le même écran quelle que soit la langue de chacun.
 
 Ce glossaire vaut aussi pour les textes **hors de ce répertoire** qui partent chez
-la cliente — les modèles d'e-mail et de SMS de
-`apps/api/src/modules/notifications/notification-default-templates.ts`. Ils
-disent encore « cancelled » là où les écrans disent « canceled », et c'est un
-écart connu : ce fichier est hors de l'empreinte de #1329, qui s'arrête à
-`apps/web/**`, et l'aligner demande son propre ticket. Le test du glossaire ne
-lit que `apps/web/messages` ; de ce côté-là, c'est la relecture qui tiendra la
-règle.
+la cliente ou qu'elle lit : les modèles d'e-mail et de SMS de
+`apps/api/src/modules/notifications/notification-default-templates.ts`, le
+vocabulaire du PDF du reçu
+(`apps/api/src/modules/payments/receipt-pdf/receipt-pdf.vocabulary.ts`) et les
+refus de validation du contrat partagé
+(`packages/shared/src/errors/zod-messages.ts`). #1356 y a porté l'orthographe
+américaine et la règle de ponctuation — capitale en tête, point final —, et a
+sorti « slug » des refus de validation. Ce qui reste à faire de ce côté-là est
+nommé : les refus du contrat énoncent encore une faute (« Adresse e-mail
+invalide. ») là où ce glossaire préfère dire quoi faire (« Saisissez une adresse
+e-mail valide. »), et les catalogues de validation de ce répertoire même —
+`admin-catalog.json`, `admin-staff.json`, `admin-settings.json` — sont restés
+minuscules et sans point quand #1329 n'a repris que `booking.json`,
+`signup.json` et `admin-auth.json`. Le test du glossaire, lui, ne lit que
+`apps/web/messages` et ne juge que le vocabulaire : sur le registre, c'est la
+relecture qui tient la règle.
 
 Les **noms de clés** de ces catalogues non plus. Plusieurs reprennent une valeur
 d'énumération du contrat partagé — `appointment-status.json` porte `cancelled` et
