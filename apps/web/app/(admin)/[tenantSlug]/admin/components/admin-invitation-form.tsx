@@ -10,7 +10,6 @@ import {
 } from '@spa/shared';
 import { useLocale, useTranslations } from 'next-intl';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
 import { useMemo, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
@@ -18,6 +17,7 @@ import { z } from 'zod';
 import { Button } from '@/components/ui/button';
 import { Field } from '@/components/ui/field';
 import { Notification } from '@/components/ui/notification';
+import { useNavigateAfterAuth } from '@/lib/use-navigate-after-auth';
 
 import { adminAcceptInvitationAction } from '../actions';
 import { invitationTokenFromInput } from '../invitation/paths';
@@ -88,7 +88,7 @@ interface AdminInvitationFormProps {
 export function AdminInvitationForm({ tenantSlug, token }: AdminInvitationFormProps) {
   const t = useTranslations('admin-auth.invitation');
   const locale = useLocale() as Locale;
-  const router = useRouter();
+  const { navigating, navigate } = useNavigateAfterAuth();
   const [failure, setFailure] = useState<string | null>(null);
   /** Ce que la personne a collé, et ce qu'on a su en tirer. */
   const [pasted, setPasted] = useState('');
@@ -165,8 +165,7 @@ export function AdminInvitationForm({ tenantSlug, token }: AdminInvitationFormPr
       return;
     }
 
-    router.replace(adminLandingPath(tenantSlug, result.data.role) ?? adminLoginPath(tenantSlug));
-    router.refresh();
+    navigate(adminLandingPath(tenantSlug, result.data.role) ?? adminLoginPath(tenantSlug));
   });
 
   return (
@@ -259,7 +258,7 @@ export function AdminInvitationForm({ tenantSlug, token }: AdminInvitationFormPr
         variant="accent"
         block
         disabled={activationToken === null}
-        loading={isSubmitting}
+        loading={isSubmitting || navigating}
         loadingLabel={t('submitting')}
       >
         {t('submit')}

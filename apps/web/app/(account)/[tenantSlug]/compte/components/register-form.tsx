@@ -11,7 +11,7 @@ import {
 } from '@spa/shared';
 import { useLocale, useTranslations } from 'next-intl';
 import Link from 'next/link';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useSearchParams } from 'next/navigation';
 import { useMemo, useState } from 'react';
 import { Controller, useForm } from 'react-hook-form';
 import { z } from 'zod';
@@ -23,6 +23,7 @@ import { PasswordField } from '@/components/ui/password-field';
 import { PhoneField } from '@/components/ui/phone-field';
 import { ConsentField, consentSchema } from '@/lib/booking/consent';
 import { refusalMessage, type Refusal } from '@/lib/refusal';
+import { useNavigateAfterAuth } from '@/lib/use-navigate-after-auth';
 
 import { registerAction } from '../actions';
 import { RETURN_QUERY_KEY, safeReturnPath, withReturnPath } from '../connexion/return-path';
@@ -89,7 +90,7 @@ interface RegisterFormProps {
 export function RegisterForm({ tenantSlug }: RegisterFormProps) {
   const t = useTranslations('account.register');
   const locale = useLocale() as Locale;
-  const router = useRouter();
+  const { navigating, navigate } = useNavigateAfterAuth();
   /*
    * Le retour reçu du lien « Créer mon compte » de la connexion, rejugé ici
    * comme il l'a été là-bas (#1087) : cet écran est atteignable directement, et
@@ -181,8 +182,7 @@ export function RegisterForm({ tenantSlug }: RegisterFormProps) {
     }
 
     // Là d'où l'on vient quand l'adresse le dit, l'espace client sinon (#1087).
-    router.replace(returnTo ?? accountPath(tenantSlug));
-    router.refresh();
+    navigate(returnTo ?? accountPath(tenantSlug));
   });
 
   return (
@@ -315,7 +315,7 @@ export function RegisterForm({ tenantSlug }: RegisterFormProps) {
           type="submit"
           variant="accent"
           block
-          loading={isSubmitting}
+          loading={isSubmitting || navigating}
           loadingLabel={t('submitting')}
         >
           {t('submit')}

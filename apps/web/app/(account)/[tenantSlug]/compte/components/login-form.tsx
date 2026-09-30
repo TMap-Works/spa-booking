@@ -10,7 +10,7 @@ import {
 } from '@spa/shared';
 import { useLocale, useTranslations } from 'next-intl';
 import Link from 'next/link';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useSearchParams } from 'next/navigation';
 import { useMemo, useState } from 'react';
 import { useForm } from 'react-hook-form';
 
@@ -20,6 +20,7 @@ import { Notification, type NotificationTone } from '@/components/ui/notificatio
 import { PasswordField } from '@/components/ui/password-field';
 import { refusalMessage, type Refusal } from '@/lib/refusal';
 import type { SessionNotice } from '@/lib/session-refresh';
+import { useNavigateAfterAuth } from '@/lib/use-navigate-after-auth';
 
 import { loginAction } from '../actions';
 import { RETURN_QUERY_KEY, safeReturnPath, withReturnPath } from '../connexion/return-path';
@@ -72,7 +73,7 @@ const NOTICE_TONES: Readonly<Record<SessionNotice, NotificationTone>> = {
 export function LoginForm({ tenantSlug, notice }: LoginFormProps) {
   const t = useTranslations('account.login');
   const locale = useLocale() as Locale;
-  const router = useRouter();
+  const { navigating, navigate } = useNavigateAfterAuth();
   /*
    * La destination de retour, lue dans l'adresse et **rejugée ici** (#1087).
    *
@@ -134,12 +135,7 @@ export function LoginForm({ tenantSlug, notice }: LoginFormProps) {
     }
 
     // Là d'où l'on vient quand l'adresse le dit, l'espace client sinon (#1087).
-    router.replace(returnTo ?? accountPath(tenantSlug));
-    // La page de destination est rendue côté serveur : sans ce rafraîchissement,
-    // la navigation servirait le rendu fait **avant** que le cookie de session
-    // n'existe — l'espace client rebondirait sur cet écran, et le tunnel
-    // redemanderait des coordonnées que le cookie de présence connaît (#1086).
-    router.refresh();
+    navigate(returnTo ?? accountPath(tenantSlug));
   });
 
   return (
@@ -219,7 +215,7 @@ export function LoginForm({ tenantSlug, notice }: LoginFormProps) {
           type="submit"
           variant="accent"
           block
-          loading={isSubmitting}
+          loading={isSubmitting || navigating}
           loadingLabel={t('submitting')}
         >
           {t('submit')}
