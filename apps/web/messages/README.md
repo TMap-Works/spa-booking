@@ -137,6 +137,56 @@ Où en est le catalogue : #1329 avait repris `booking.json`, `signup.json` et
 le test qui le tient. Le test ne lit que `apps/web/messages` ; hors de ce
 répertoire, c'est encore la relecture qui tient la règle.
 
+## Le champ laissé vide : c'est le contrat qui le dit, pas le catalogue
+
+**Décision de #1373.** Quand un champ obligatoire est laissé vide, la phrase
+affichée vient de `validationPhrases(locale).required`
+([`packages/shared/src/errors/zod-messages.ts`](../../../packages/shared/src/errors/zod-messages.ts)),
+et **d'aucun catalogue**. Trois clés portaient la même phrase, mot pour mot, dans
+les deux langues — `admin-catalog.form.errors.nameRequired`,
+`admin-catalog.categoryForm.errors.nameRequired`,
+`admin-clients.contact.errors.required` — et elles n'existent plus.
+
+La raison pour laquelle ces copies existaient était bonne, mais elle ne valait
+pas pour ce champ-là. Elle vaut pour les phrases qu'un **schéma du contrat écrit
+lui-même** : zod court-circuite ses cartes d'erreurs dès qu'une `issue` porte un
+`message`, si bien que les littéraux français de `slugSchema` s'affichaient tels
+quels sous un formulaire anglais — constat fait au navigateur en #849, et c'est
+pour eux que ces formulaires portent encore leurs propres phrases. « Ce champ est
+obligatoire. » n'est pas de celles-là : c'est la phrase **générique** que
+`zodErrorMap` rend sur un `too_small` de plancher 1, traduite dans les deux
+langues depuis #845. Un `.min(1)` sans message suffit donc à la faire venir, et
+c'est déjà ainsi que le reste du produit procède — `RegisterForm`,
+`StaffMemberForm` (`tests/unit/validation-i18n.test.tsx`).
+
+Ce qui tient la décision, plutôt qu'une intention : deux tests. Les suites de
+rendu lisent `validationPhrases(locale).required` au lieu de recopier la phrase —
+elles rougissent le jour où un formulaire repose un message local. Et
+[`tests/unit/messages-glossary.test.ts`](../tests/unit/messages-glossary.test.ts)
+refuse qu'une feuille de catalogue redise cette phrase, où que ce soit.
+
+**Ce qui reste au catalogue, et pourquoi.** Le plafond de longueur — « Ce champ
+fait au plus {max} caractères. » — n'est pas le texte du contrat (« Ne dépassez
+pas {max} caractères. ») : ce sont deux formulations différentes d'une même règle,
+pas une copie, il n'y a donc pas de divergence à empêcher, et les unifier serait
+un changement de texte visible hors des trois champs que #1373 nomme.
+
+**Et la préférence pour « dire quoi faire » ?** Elle ne s'applique pas à ce
+refus-ci, et c'est tranché : cette phrase reste un constat. Trois raisons.
+D'abord, elle est **générique** — une seule phrase pour tous les champs vides du
+produit : elle ne peut pas dire « Saisissez le nom de la prestation. » sans
+nommer un champ qu'elle ne connaît pas, et ce que la personne doit faire, la
+position du message sous le champ vide le dit déjà (il y est lié par
+`aria-describedby`). Ensuite, une phrase par champ serait exactement la
+duplication que #1373 retire — trois clés hier, une par champ obligatoire du
+produit demain. Enfin, une instruction générique (« Remplissez ce champ. »)
+changerait le texte de **tous** les formulaires et de `details.violations` de
+toutes les routes de l'API : c'est un changement de contrat de la taille de
+#1356, pas l'effet de bord d'une déduplication. La préférence garde tout son sens
+là où un refus nomme une faute dont le remède ne se devine pas — « Adresse e-mail
+invalide. » plutôt que « Saisissez une adresse e-mail valable. » —, et ce
+chantier-là reste ouvert sur la table `VALIDATION_MESSAGES`, comme dit plus bas.
+
 ## Ce que la langue ne change pas
 
 Les **paramètres d'URL** et les **segments de route** restent français
