@@ -48,10 +48,45 @@ import { createDeskClientAction, searchDeskClientsAction } from '../calendrier/a
  * désormais saisi derrière un drapeau, émis en E.164, et confronté au schéma du
  * contrat quand on quitte le champ ou qu'on enregistre — le refus s'affiche sur
  * le champ, en nommant le pays choisi.
+ *
+ * ## Ses deux phrases ne sont prêtées qu'à ses propres refus (#1369)
+ *
+ * Le geste dit **laquelle** des deux phrases s'applique ; c'est le `details` du
+ * refus qui dit qu'elle s'applique tout court. Voir
+ * {@link PickerFailureOrigin} : la garde est celle que #1367 a posée sur
+ * `calendar-board.tsx`, `checkout-panel.tsx` et `appointment-panel.tsx`.
  */
 
 /** Délai d'inactivité avant qu'une frappe devienne une requête. */
 const SEARCH_DEBOUNCE_MS = 300;
+
+/**
+ * D'où vient le refus que ce sélecteur affiche — #1354, resserré par #1369.
+ *
+ * Les deux gestes de ce composant partagent un seul emplacement d'erreur — celle
+ * de la recherche s'affiche sur le même champ que celle de la création — et leurs
+ * refus de saisie portent tous deux `VALIDATION_ERROR` :
+ *
+ * - `search` — le refus que `searchDeskClientsAction` oppose **avant tout
+ *   appel**, quand le terme ne satisfait pas `customerSearchQuerySchema`
+ *   (`invalid(t('actions.invalidSearch'))`) ;
+ * - `create` — celui que `createDeskClientAction` oppose de même sur une fiche
+ *   incomplète (`invalid(t('actions.invalidClient'))`) — la seule phrase que
+ *   l'opérateur puisse atteindre en cliquant « Enregistrer » ;
+ * - `api` — le refus que l'**API** a rendu et que l'action n'a fait que
+ *   rapporter. Cet écran n'a alors aucune phrase propre à opposer, et le contrat
+ *   partagé dit mieux que lui un 400 qu'il n'a pas produit.
+ *
+ * Le geste seul ne suffisait pas (#1369) : les deux actions rapportent **aussi**
+ * les 400 de l'API, sous exactement le même code, et un champ du corps refusé par
+ * le DTO s'affichait donc « La recherche saisie est invalide. » ou « La fiche
+ * client saisie est invalide. », ce qu'il n'était pas. Ce qui les sépare est le
+ * `details` : `invalid()` n'en pose aucun, quand `failure()` transporte toujours
+ * celui du corps d'erreur de l'API (`action-result.ts`, `ApiClientError.details`
+ * vaut `{}` par défaut). Même garde que `calendar-board.tsx`,
+ * `checkout-panel.tsx` et `appointment-panel.tsx` depuis #1367.
+ */
+type PickerFailureOrigin = 'search' | 'create' | 'api';
 
 /**
  * Ce qu'un refus laisse en état : son **code**, et d'où il vient — jamais sa
@@ -62,16 +97,11 @@ const SEARCH_DEBOUNCE_MS = 300;
  * phrase rangée ici restait écrite dans la langue d'avant, sous une étiquette
  * « Client » qui, elle, suivait le rendu.
  *
- * `origin` est une **donnée** et non un texte : les deux gestes de ce composant
- * partagent un seul emplacement d'erreur — celle de la recherche s'affiche sur le
- * même champ que celle de la création — et leurs refus de saisie portent tous
- * deux `VALIDATION_ERROR`. Sans lui, « La fiche client saisie est invalide. »
- * serait devenue la phrase générique du code, alors que c'est la seule que
- * l'opérateur puisse atteindre en cliquant « Enregistrer » sur une fiche
- * incomplète (`calendrier/actions.ts`).
+ * `origin` est une **donnée** et non un texte — une donnée ne se démode pas quand
+ * la langue change, une phrase si.
  */
 interface PickerRefusal extends Refusal {
-  readonly origin: 'search' | 'create';
+  readonly origin: PickerFailureOrigin;
 }
 
 interface ClientPickerProps {
@@ -129,7 +159,14 @@ export function ClientPicker({ tenantSlug, selected, onSelect, onExpired }: Clie
       }
 
       setResults(null);
-      setFailure({ origin: 'search', code: result.code });
+      // L'origine se lit au `details` (#1369) : sans cette garde, un 400 rendu
+      // par l'API — un champ du corps refusé par le DTO — se disait « Recherche
+      // invalide. », ce qu'il n'est pas. Il retombe désormais sur la phrase du
+      // contrat partagé, celle de son code.
+      setFailure({
+        origin: result.details === undefined ? 'search' : 'api',
+        code: result.code,
+      });
     },
     [tenantSlug, onExpired],
   );
@@ -179,15 +216,24 @@ export function ClientPicker({ tenantSlug, selected, onSelect, onExpired }: Clie
       return;
     }
 
-    setFailure({ origin: 'create', code: result.code });
+    // Même garde qu'à la recherche (#1369) : `POST /customers` rend son propre
+    // 400 sous ce même code — un champ du corps refusé par le DTO —, et lui
+    // donner « La fiche client saisie est invalide. » l'aurait nommé faux, en
+    // faisant passer pour un refus de cet écran ce que l'API a refusé.
+    setFailure({
+      origin: result.details === undefined ? 'create' : 'api',
+      code: result.code,
+    });
   }, [tenantSlug, draft, fieldId, onSelect, onExpired]);
 
   /** La phrase d'un refus, écrite **au rendu** dans la langue de ce rendu (#1354). */
   const failureMessage = (refusal: PickerRefusal): string =>
     refusalMessage(refusal, locale, (code) =>
       // La seule phrase que cet écran dise de mieux que le contrat : le refus de
-      // la saisie, qui n'est pas le même selon le geste qui l'a produite.
-      code === ERROR_CODES.VALIDATION_ERROR
+      // la saisie, qui n'est pas le même selon le geste qui l'a produite — et
+      // qu'il ne prête pas à un 400 de l'API, dont ce geste n'est pas l'auteur
+      // (#1369, voir `PickerFailureOrigin`).
+      refusal.origin !== 'api' && code === ERROR_CODES.VALIDATION_ERROR
         ? t(refusal.origin === 'search' ? 'actions.invalidSearch' : 'actions.invalidClient')
         : null,
     );
