@@ -82,7 +82,7 @@
     "emailHint": "C’est l’identifiant de connexion, et il ne se modifie pas ensuite.",
     "phone": "Téléphone",
     "phoneHint": "Facultatif.",
-    "phoneInvalid": "numéro de téléphone invalide",
+    "phoneInvalid": "Numéro de téléphone invalide.",
     "role": "Rôle",
     "roleHint": "Le rôle décide de ce que la personne pourra faire ; il se change ensuite depuis la liste.",
     "submit": "Inviter",
@@ -157,7 +157,7 @@
     "restricted": "La modification des horaires est réservée au rang gérant.",
     "incomplete": "Renseignez les deux bornes de la plage, ou retirez-la.",
     "tooMany": "Au plus {max} plages par semaine.",
-    "overlap": "deux plages du même jour se recouvrent",
+    "overlap": "Deux plages du même jour se recouvrent.",
     "endBeforeStart": "La fin d’une plage doit suivre son début.",
     "invalid": "La semaine saisie est invalide."
   },

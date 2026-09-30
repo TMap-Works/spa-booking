@@ -360,10 +360,10 @@ describe('les deux formulaires d’écriture de la fiche, rendus en anglais', ()
     // la **règle** du contrat — plancher à un caractère après découpe des blancs,
     // plafond à `NAME_MAX_LENGTH` — mais emprunte sa **phrase** au catalogue :
     // les messages de `nameSchema` sont des littéraux français que `zodErrorMap`
-    // ne traduit pas, et « ce champ est obligatoire » s'affichait tel quel sous
+    // ne traduit pas, et « Ce champ est obligatoire. » s'affichait tel quel sous
     // ce formulaire anglais. Et l'action ne part pas.
     expect(updateCustomerAction).not.toHaveBeenCalled();
-    expect(screen.getByText('this field is required')).toBeDefined();
+    expect(screen.getByText('This field is required.')).toBeDefined();
     expect(screen.queryByText(/caractères/)).toBeNull();
     expect(screen.queryByText(/obligatoire/)).toBeNull();
   });

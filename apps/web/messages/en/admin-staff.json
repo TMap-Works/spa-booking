@@ -82,7 +82,7 @@
     "emailHint": "This is the sign-in identifier, and it cannot be changed afterwards.",
     "phone": "Phone",
     "phoneHint": "Optional.",
-    "phoneInvalid": "invalid phone number",
+    "phoneInvalid": "Invalid phone number.",
     "role": "Role",
     "roleHint": "The role decides what the person will be able to do; it can be changed later from the list.",
     "submit": "Invite",
@@ -157,7 +157,7 @@
     "restricted": "Changing the hours is reserved for the manager rank.",
     "incomplete": "Fill in both ends of the range, or remove it.",
     "tooMany": "At most {max} ranges per week.",
-    "overlap": "two ranges on the same day overlap",
+    "overlap": "Two ranges on the same day overlap.",
     "endBeforeStart": "A range must end after it starts.",
     "invalid": "The week entered is invalid."
   },

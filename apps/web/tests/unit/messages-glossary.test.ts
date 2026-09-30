@@ -27,10 +27,23 @@ import { loadMessages, type MessageTree } from '@/i18n/messages';
  * **fermée** de couples « forme refusée → forme retenue », tous relevés par la
  * recette de traduction du 2026-09-29, et deux règles de terminologie.
  *
- * Il ne regarde que les **valeurs**. Les clés sont des identifiants, et plusieurs
- * reprennent une valeur d'énumération du contrat partagé —
- * `appointment-status.json` porte `cancelled` et `no_show` parce que
+ * Il ne regarde que les **valeurs** pour le vocabulaire. Les clés sont des
+ * identifiants, et plusieurs reprennent une valeur d'énumération du contrat
+ * partagé — `appointment-status.json` porte `cancelled` et `no_show` parce que
  * `AppointmentStatus` les nomme ainsi.
+ *
+ * ## Le registre, depuis #1357
+ *
+ * S'y ajoute une règle qui, elle, **part de la clé** : le registre des refus de
+ * validation. `messages/README.md` veut qu'une phrase montrée à quelqu'un
+ * commence par une capitale et finisse par un point, refus compris — et rien ne
+ * le tenait, si bien que #1329 a repris trois namespaces et laissé les quatre
+ * autres en fragments minuscules.
+ *
+ * La règle ne peut pas porter sur tout le catalogue : « Adresse e-mail », un
+ * en-tête de colonne, une entrée de menu ne sont pas des phrases et n'en
+ * prennent pas la ponctuation. Elle porte donc sur le sous-ensemble que
+ * `messages/README.md` **nomme** — voir {@link estUnRefus}.
  */
 
 /** Les feuilles d'un catalogue, par clé aplatie. */
@@ -184,4 +197,305 @@ describe('le glossaire des catalogues (#1329)', () => {
       verifier(locale, JARGON);
     });
   }
+});
+
+/**
+ * Les blocs dont **toutes** les feuilles sont des refus de validation.
+ *
+ * C'est la forme que `messages/README.md` impose à tout refus ajouté désormais :
+ * `form.errors.slugTooLong`, `login.fieldErrors.password`. Le nom du bloc suffit
+ * alors à classer la feuille, sans liste à tenir — un refus neuf est tenu
+ * d'office, le jour où il est écrit.
+ *
+ * Au singulier, `error` n'y est **pas** : `admin-auth.error.title` et
+ * `booking.salon.error.title` sont des titres d'écran en erreur, pas des refus
+ * de saisie.
+ */
+const BLOCS_DE_REFUS: ReadonlySet<string> = new Set(['errors', 'fieldErrors']);
+
+/**
+ * Les refus déclarés **hors** d'un bloc `errors` — le registre nommé.
+ *
+ * Ils précèdent la convention, et les ranger sous `errors` demanderait de
+ * renommer leurs clés dans les composants qui les lisent : un autre diff que
+ * celui-ci. La liste est **fermée**, et c'est ce qui la distingue d'une
+ * dispense : elle n'exempte rien, elle **étend** la règle à des clés que leur
+ * nom ne trahissait pas. Un refus neuf n'a pas à y être inscrit — il se range
+ * sous `errors` et la règle le tient sans rien ajouter ici.
+ */
+const REFUS_HORS_BLOC: ReadonlySet<string> = new Set([
+  // Le catalogue des prestations et ses rubriques.
+  'admin-catalog.actions.invalidService',
+  'admin-catalog.actions.invalidCategory',
+  'admin-catalog.actions.chooseStaff',
+  'admin-catalog.staffPanel.alreadyAssigned',
+  'admin-catalog.categoryForm.slugTaken',
+  // Le fichier client — coordonnées et recherche.
+  'admin-clients.actions.invalidInput',
+  'admin-clients.list.search.tooShort',
+  'admin-clients.list.search.tooLong',
+  // Les réglages de l'établissement — adresse postale et horaires d'ouverture.
+  'admin-settings.address.countryFormat',
+  'admin-settings.address.incomplete',
+  'admin-settings.address.invalid',
+  'admin-settings.hours.format',
+  'admin-settings.hours.pair',
+  'admin-settings.hours.order',
+  'admin-settings.hours.emptyDay',
+  'admin-settings.hours.invalid',
+  // Le personnel — invitation, fiche praticien, semaine de travail, absences.
+  'admin-staff.invite.phoneInvalid',
+  'admin-staff.invite.invalid',
+  'admin-staff.member.accountRequired',
+  'admin-staff.member.invalid',
+  'admin-staff.profile.invalid',
+  'admin-staff.schedule.incomplete',
+  'admin-staff.schedule.tooMany',
+  'admin-staff.schedule.overlap',
+  'admin-staff.schedule.endBeforeStart',
+  'admin-staff.schedule.invalid',
+  'admin-staff.timeOff.missingFrom',
+  'admin-staff.timeOff.missingTo',
+  'admin-staff.timeOff.rangeInvalid',
+  'admin-staff.timeOff.invalid',
+  'admin-staff.actions.invalid',
+  'admin-staff.actions.invalidTimeOff',
+  'admin-staff.actions.chooseRole',
+  'admin-staff.actions.statusRequired',
+  // Le consentement du tunnel, refus posé en phrase par #1329.
+  'booking.tunnel.consent.error',
+]);
+
+/**
+ * Un **titre** n'est pas une phrase : « Connexion refusée », « Formulaire
+ * incomplet ». Il nomme l'écran ou le verdict, et ne prend pas de point final —
+ * c'est déjà l'usage du dépôt sur `failureTitle`, `savedTitle`, `noticeTitle`.
+ *
+ * Il en vit sous les blocs de refus : `platform.login.errors.throttled.title`
+ * coiffe le `body` qui, lui, est bien une phrase.
+ */
+function estUnTitre(cle: string): boolean {
+  const feuille = cle.slice(cle.lastIndexOf('.') + 1);
+
+  return feuille === 'title' || feuille.endsWith('Title');
+}
+
+/** `true` si cette clé désigne un refus de validation (`messages/README.md`). */
+function estUnRefus(cle: string): boolean {
+  if (estUnTitre(cle)) {
+    return false;
+  }
+
+  if (REFUS_HORS_BLOC.has(cle)) {
+    return true;
+  }
+
+  // Le dernier segment nomme la feuille ; les précédents nomment ses blocs.
+  return cle
+    .split('.')
+    .slice(0, -1)
+    .some((bloc) => BLOCS_DE_REFUS.has(bloc));
+}
+
+/** Ce qui clôt une phrase. `…` compte : « Patientez… » est close. */
+const PONCTUATION_FINALE = /[.!?…]$/u;
+
+/**
+ * Le message ramené à ce que la ponctuation concerne.
+ *
+ * Deux retraits, et deux seulement :
+ *
+ * - les **balises riches** de next-intl — `<link>`, `<strong>` —, dont les
+ *   chevrons masqueraient le point qui les précède ou les suit ;
+ * - les **accolades fermantes de fin**, qui closent un `plural` ou un `select`
+ *   dont la dernière branche, elle, porte bien sa ponctuation.
+ */
+function corpsDeLaPhrase(message: string): string {
+  return message
+    .replace(/<\/?[a-zA-Z][^>]*>/g, '')
+    .trim()
+    .replace(/\}+$/u, '')
+    .trim();
+}
+
+/** L'ouverture de la phrase, guillemets et parenthèse d'entrée retirés. */
+function ouvertureDeLaPhrase(corps: string): string {
+  return corps.replace(/^[«“"'(\s]+/u, '');
+}
+
+/** Un message qui n'est **qu'un** `plural` ou un `select` — accolade en tête. */
+const ICU_A_BRANCHES = /^\{\s*\w+\s*,\s*(?:plural|selectordinal|select)\s*,/u;
+
+/**
+ * Les branches d'un `plural` ou d'un `select`, une à une, ou rien.
+ *
+ * L'appariement des accolades, et non une expression régulière : une branche en
+ * contient — `{count, plural, one {Une seule plage, {day}.} …}` —, et une
+ * expression gourmande ou paresseuse se tromperait de fermante dans un cas comme
+ * dans l'autre. Les branches imbriquées descendent d'un cran de plus.
+ */
+function branchesICU(message: string): readonly string[] {
+  const corps = message.trim();
+
+  if (!ICU_A_BRANCHES.test(corps) || !corps.endsWith('}')) {
+    return [];
+  }
+
+  const interieur = corps.slice(1, -1);
+  const branches: string[] = [];
+  let profondeur = 0;
+  let debut = -1;
+
+  for (let index = 0; index < interieur.length; index += 1) {
+    const caractere = interieur[index];
+
+    if (caractere === '{') {
+      if (profondeur === 0) {
+        debut = index + 1;
+      }
+
+      profondeur += 1;
+    } else if (caractere === '}') {
+      profondeur -= 1;
+
+      if (profondeur === 0 && debut >= 0) {
+        branches.push(interieur.slice(debut, index));
+        debut = -1;
+      }
+    }
+  }
+
+  return branches.flatMap((branche) => {
+    const imbriquees = branchesICU(branche);
+
+    return imbriquees.length === 0 ? [branche] : imbriquees;
+  });
+}
+
+/**
+ * Les phrases d'un message : une seule en général, **une par branche** quand le
+ * message est un `plural` ou un `select`.
+ *
+ * Sans cette descente, un refus écrit `{count, plural, one {…} other {…}}`
+ * échapperait à la règle de la capitale : son corps commence par une accolade,
+ * jamais par une minuscule, et la règle le déclarerait juste sans l'avoir lu.
+ * C'est déjà la position du glossaire sur le vocabulaire — voir
+ * {@link sansArguments} : « le texte de ses branches reste soumis aux règles ».
+ */
+function phrasesDuMessage(message: string): readonly string[] {
+  const branches = branchesICU(message);
+
+  return branches.length === 0 ? [message] : branches;
+}
+
+/**
+ * Ce qui cloche dans ce message — la liste vide quand il dit bien une phrase.
+ *
+ * Les motifs sont **dédoublonnés** : deux branches d'un même pluriel qui
+ * oublient l'une et l'autre leur point n'ont qu'une faute à nommer.
+ */
+function fautesDePhrase(message: string): readonly string[] {
+  const fautes = new Set<string>();
+
+  for (const phrase of phrasesDuMessage(message)) {
+    const corps = corpsDeLaPhrase(phrase);
+
+    // `\p{Ll}` et non `[a-z]` : « état », « à partir de » sont minuscules eux
+    // aussi. Un `{argument}`, un chiffre ou un acronyme ouvrent légitimement —
+    // seule une **lettre minuscule** est une faute.
+    if (/^\p{Ll}/u.test(ouvertureDeLaPhrase(corps))) {
+      fautes.add('ne commence pas par une capitale');
+    }
+
+    if (!PONCTUATION_FINALE.test(corps)) {
+      fautes.add('ne finit pas par un point');
+    }
+  }
+
+  return [...fautes];
+}
+
+describe('le registre des refus de validation (#1357)', () => {
+  for (const locale of LOCALES) {
+    it(`dit chaque refus en une phrase en « ${locale} »`, () => {
+      const fautes: string[] = [];
+      let refus = 0;
+
+      for (const [cle, message] of valeurs(locale)) {
+        if (!estUnRefus(cle)) {
+          continue;
+        }
+
+        refus += 1;
+
+        for (const faute of fautesDePhrase(message)) {
+          fautes.push(`${locale} · ${cle} : « ${message} » ${faute}`);
+        }
+      }
+
+      // Une garde contre le pire échec possible : une règle qui ne juge plus
+      // rien et reste verte. Le catalogue en porte plus de cent.
+      expect(refus).toBeGreaterThan(100);
+
+      expect(
+        fautes,
+        `refus de validation hors registre (apps/web/messages/README.md) :\n${fautes.join('\n')}`,
+      ).toEqual([]);
+    });
+  }
+
+  it('ne compte pour refus ni un libellé, ni un en-tête, ni un titre', () => {
+    // Les trois formes que l'issue #1357 nommait comme le piège à éviter : une
+    // règle appliquée à tout le catalogue aurait rougi sur elles.
+    expect(estUnRefus('admin-staff.invite.email')).toBe(false);
+    expect(estUnRefus('admin-staff.accounts.role')).toBe(false);
+    expect(estUnRefus('shell.admin.rail.upcoming')).toBe(false);
+    expect(estUnRefus('platform.login.errors.throttled.title')).toBe(false);
+    expect(estUnRefus('admin-catalog.form.failureTitle')).toBe(false);
+
+    // Et les deux formes qu'elle tient : le bloc nommé, et le registre.
+    expect(estUnRefus('admin-catalog.form.errors.nameRequired')).toBe(true);
+    expect(estUnRefus('admin-staff.schedule.overlap')).toBe(true);
+
+    // Le registre désigne des clés une à une : le voisin d'un refus inscrit
+    // n'en devient pas un. `hours.timezone` est une mention sous le champ.
+    expect(estUnRefus('admin-settings.hours.timezone')).toBe(false);
+  });
+
+  it('juge le texte des branches d’un pluriel, et non l’accolade qui l’ouvre', () => {
+    // Une phrase simple, pour l'ancrage.
+    expect(fautesDePhrase('Au plus {max} plages par semaine.')).toEqual([]);
+    expect(fautesDePhrase('au plus {max} plages par semaine')).toEqual([
+      'ne commence pas par une capitale',
+      'ne finit pas par un point',
+    ]);
+
+    // Le message qui n'est **qu'un** pluriel : son corps ouvre sur une
+    // accolade, et sans descente dans les branches la règle ne jugerait rien.
+    expect(
+      fautesDePhrase('{max, plural, one {Une seule plage est permise.} other {Au plus # plages.}}'),
+    ).toEqual([]);
+    expect(
+      fautesDePhrase('{max, plural, one {une seule plage est permise.} other {au plus # plages.}}'),
+    ).toEqual(['ne commence pas par une capitale']);
+    expect(
+      fautesDePhrase('{max, plural, one {Une seule plage est permise} other {Au plus # plages}}'),
+    ).toEqual(['ne finit pas par un point']);
+
+    // Une branche porte ses propres accolades : l'appariement les traverse sans
+    // se tromper de fermante.
+    expect(
+      fautesDePhrase('{count, plural, one {Une plage le {day}.} other {# plages le {day}.}}'),
+    ).toEqual([]);
+  });
+
+  it('n’inscrit au registre hors bloc que des clés qui existent', () => {
+    const cles = new Set(valeurs('en').keys());
+    const fantomes = [...REFUS_HORS_BLOC].filter((cle) => !cles.has(cle));
+
+    expect(
+      fantomes,
+      `clés inscrites au registre mais absentes du catalogue :\n${fantomes.join('\n')}`,
+    ).toEqual([]);
+  });
 });

@@ -20,8 +20,8 @@
     "regionHint": "NY, QC… or the full name. Optional.",
     "country": "Country",
     "countryHint": "Two-letter code: FR, BE, MG…",
-    "countryFormat": "ISO 3166-1 alpha-2 country code expected (“FR”)",
-    "incomplete": "fill in the street, the city and the country, or leave the address entirely empty",
+    "countryFormat": "ISO 3166-1 alpha-2 country code expected (“FR”).",
+    "incomplete": "Fill in the street, the city and the country, or leave the address entirely empty.",
     "invalid": "The address entered is invalid."
   },
   "hours": {
@@ -34,10 +34,10 @@
     "closesAt": "Closing {rank}",
     "fieldOn": "{field} on {day}",
     "timezone": "Hours written in the salon time zone ({timezone}), stored in UTC.",
-    "format": "time expected in HH:MM format (“24:00” for midnight)",
-    "pair": "fill in both the opening and the closing, or leave both empty",
-    "order": "the closing must come after the opening",
-    "emptyDay": "fill in a range, or untick “Open” to close the day",
+    "format": "Time expected in HH:MM format (“24:00” for midnight).",
+    "pair": "Fill in both the opening and the closing, or leave both empty.",
+    "order": "The closing must come after the opening.",
+    "emptyDay": "Fill in a range, or untick “Open” to close the day.",
     "invalid": "The hours entered are invalid."
   },
   "contact": {

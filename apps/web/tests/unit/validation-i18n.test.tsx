@@ -116,7 +116,7 @@ describe('espace client — inscription rendue en anglais', () => {
     await screen.findAllByText(REQUIRED);
 
     // Les trois phrases que cet écran affichait en français avant #1232.
-    expect(screen.queryByText(/ce champ est obligatoire/)).toBeNull();
+    expect(screen.queryByText(/Ce champ est obligatoire\./)).toBeNull();
     expect(screen.queryByText(/Adresse e-mail invalide\./)).toBeNull();
     expect(screen.queryByText(/le mot de passe fait au moins/)).toBeNull();
     // Ni le libellé brut de zod, que #613 avait chassé de ces écrans.
@@ -155,7 +155,7 @@ describe('back-office — fiche praticien rendue en anglais', () => {
     await user.click(screen.getByRole('button', { name: /Create the record/ }));
 
     expect(await screen.findByText(REQUIRED)).toBeDefined();
-    expect(screen.queryByText(/ce champ est obligatoire/)).toBeNull();
+    expect(screen.queryByText(/Ce champ est obligatoire\./)).toBeNull();
     expect(createStaffMemberAction).not.toHaveBeenCalled();
   });
 });

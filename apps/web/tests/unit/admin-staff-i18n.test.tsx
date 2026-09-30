@@ -120,7 +120,7 @@ describe('le verdict rendu sur la grille d’horaires', () => {
       expect(verdict.rowId).toBeNull();
       expect(scheduleRefusalMessage(verdict.refusalKey, 'fr')).toMatch(/recouvrent/i);
       expect(scheduleRefusalMessage(verdict.refusalKey, 'en')).toBe(
-        'two ranges on the same day overlap',
+        'Two ranges on the same day overlap.',
       );
     }
   });
