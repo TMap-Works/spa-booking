@@ -32,6 +32,13 @@
  * le contexte de la requête, donc dans la langue que le visiteur a obtenue. Les
  * autres refus viennent de l'API, et c'est `checkoutFailureMessage` qui les
  * nomme, sur leur **code**.
+ *
+ * ## L'établissement n'est plus une cible parmi d'autres — #1372
+ *
+ * Les trois actions jugeaient le slug d'établissement dans le même `if` que leur
+ * cible, sous la même phrase. Il a désormais son propre refus,
+ * `unknownTenant()` — voir {@link checkTenant} et l'en-tête d'`action-result.ts`
+ * pour le choix qui le porte.
  */
 
 import {
@@ -48,27 +55,32 @@ import { z } from 'zod';
 import { createSale, fetchAppointmentSales, fetchSaleReceipt, settleSale } from '@/lib/api-client';
 import type { SaleSummary } from '@/lib/admin/payment-contract';
 
-import { failure, invalid, type AdminActionResult } from '../action-result';
+import { failure, invalid, unknownTenant, type AdminActionResult } from '../action-result';
 import { adminActionAccess } from '../session';
 
 /**
- * Valide les deux entrées communes aux actions de rendez-vous.
+ * L'établissement désigné par l'URL, ou `null` s'il n'en désigne aucun.
  *
- * `tenantSlug` et `appointmentId` arrivent du navigateur : rien ne garantit
- * qu'un appel d'action vienne de l'écran. Ils sont donc revalidés ici, comme
- * partout ailleurs — le front valide pour le confort, l'API pour la sécurité, et
- * l'action pour les deux (web-frontend §4).
+ * `tenantSlug` arrive du navigateur : rien ne garantit qu'un appel d'action
+ * vienne de l'écran. Il est donc revalidé ici, comme partout ailleurs — le front
+ * valide pour le confort, l'API pour la sécurité, et l'action pour les deux
+ * (web-frontend §4).
+ *
+ * ## Il est jugé à part de la cible, depuis #1372
+ *
+ * Les trois actions de ce fichier confondaient ce refus avec celui de leur
+ * **cible** — rendez-vous, prestation, ticket — dans un seul `if`, sous un seul
+ * `VALIDATION_ERROR` et une seule phrase, « Rendez-vous ou établissement
+ * inconnu ». Elle tombait juste par construction, puisqu'elle nommait les deux ;
+ * elle ne disait pas lequel des deux, et le panneau d'encaissement n'avait aucun
+ * moyen de le dire non plus. Le slug a désormais son propre code
+ * (`unknownTenant()`, voir l'en-tête d'`action-result.ts`) ; la cible illisible
+ * reste le refus de saisie du geste, avec la phrase du comptoir.
  */
-function checkTarget(
-  tenantSlug: string,
-  appointmentId: string,
-): { readonly slug: string; readonly appointmentId: string } | null {
+function checkTenant(tenantSlug: string): string | null {
   const slug = slugSchema.safeParse(tenantSlug);
-  const target = uuidSchema.safeParse(appointmentId);
 
-  return slug.success && target.success
-    ? { slug: slug.data, appointmentId: target.data }
-    : null;
+  return slug.success ? slug.data : null;
 }
 
 /**
@@ -107,14 +119,20 @@ export async function openCheckoutTicketAction(
   appointmentId: string,
   serviceId: string,
 ): Promise<AdminActionResult<SaleSummary>> {
-  const target = checkTarget(tenantSlug, appointmentId);
+  const slug = checkTenant(tenantSlug);
+
+  if (slug === null) {
+    return unknownTenant();
+  }
+
+  const target = uuidSchema.safeParse(appointmentId);
   const service = uuidSchema.safeParse(serviceId);
 
-  if (target === null || !service.success) {
+  if (!target.success || !service.success) {
     return invalid((await getTranslations('admin-checkout'))('failure.unknownTarget'));
   }
 
-  const access = await adminActionAccess(target.slug);
+  const access = await adminActionAccess(slug);
 
   if (!access.ok) {
     return access;
@@ -123,7 +141,7 @@ export async function openCheckoutTicketAction(
   const { accessToken } = access;
 
   try {
-    const existing = await fetchAppointmentSales(accessToken, target.appointmentId);
+    const existing = await fetchAppointmentSales(accessToken, target.data);
     // Le ticket encore ouvert d'abord ; à défaut le plus récent, qui dira de
     // lui-même qu'il est soldé (`remaining` à zéro) plutôt que d'en composer un
     // second sur une prestation déjà payée.
@@ -136,7 +154,7 @@ export async function openCheckoutTicketAction(
     return {
       ok: true,
       data: await createSale(accessToken, {
-        appointmentId: target.appointmentId,
+        appointmentId: target.data,
         lines: [{ kind: 'SERVICE', serviceId: service.data, quantity: 1 }],
       }),
     };
@@ -177,7 +195,12 @@ export async function settleTicketAction(
   request: SettleSaleRequest,
   idempotencyKey: string,
 ): Promise<AdminActionResult<SaleSettlement>> {
-  const slug = slugSchema.safeParse(tenantSlug);
+  const slug = checkTenant(tenantSlug);
+
+  if (slug === null) {
+    return unknownTenant();
+  }
+
   const sale = uuidSchema.safeParse(saleId);
   // Le corps, et non seulement la cible : une action serveur est un point
   // d'entrée **public** de notre front, et rien ne garantit qu'un appel vienne
@@ -195,11 +218,11 @@ export async function settleTicketAction(
     .regex(/^[A-Za-z0-9._-]+$/)
     .safeParse(idempotencyKey);
 
-  if (!slug.success || !sale.success || !body.success || !key.success) {
+  if (!sale.success || !body.success || !key.success) {
     return invalid((await getTranslations('admin-checkout'))('failure.unknownTarget'));
   }
 
-  const access = await adminActionAccess(slug.data);
+  const access = await adminActionAccess(slug);
 
   if (!access.ok) {
     return access;
@@ -227,14 +250,19 @@ export async function loadReceiptAction(
   tenantSlug: string,
   saleId: string,
 ): Promise<AdminActionResult<SaleReceipt>> {
-  const slug = slugSchema.safeParse(tenantSlug);
+  const slug = checkTenant(tenantSlug);
+
+  if (slug === null) {
+    return unknownTenant();
+  }
+
   const sale = uuidSchema.safeParse(saleId);
 
-  if (!slug.success || !sale.success) {
+  if (!sale.success) {
     return invalid((await getTranslations('admin-checkout'))('failure.unknownReceiptTarget'));
   }
 
-  const access = await adminActionAccess(slug.data);
+  const access = await adminActionAccess(slug);
 
   if (!access.ok) {
     return access;

@@ -175,8 +175,8 @@
     "tooManyRequests": "Trop de demandes en peu de temps. Patientez quelques secondes avant de réessayer.",
     "notFound": "Ce rendez-vous est introuvable dans cet établissement.",
     "forbidden": "Votre compte n’a pas le droit d’encaisser. Demandez l’accès à l’administrateur du salon.",
-    "unknownTarget": "Rendez-vous ou établissement inconnu.",
-    "unknownReceiptTarget": "Ticket ou établissement inconnu."
+    "unknownTarget": "Rendez-vous inconnu.",
+    "unknownReceiptTarget": "Ticket inconnu."
   },
   "sale": {
     "subtotal": "Sous-total",

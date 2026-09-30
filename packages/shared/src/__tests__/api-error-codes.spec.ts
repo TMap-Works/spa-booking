@@ -15,10 +15,17 @@
  *
  * ## Les deux côtés du contrat
  *
- * Le premier bloc garde `apps/api`, qui **émet** les codes. Le second garde
- * `apps/web`, qui les **lit** : #546 y a trouvé huit littéraux pour des codes que
- * le contrat portait déjà, et rien n'aurait empêché le neuvième. Le producteur
- * comme le consommateur n'ont plus qu'une écriture, celle d'ici.
+ * Le premier bloc garde `apps/api`, qui **émet** les codes de ses huit modules.
+ * Le second garde `apps/web`, qui les **lit** : #546 y a trouvé huit littéraux
+ * pour des codes que le contrat portait déjà, et rien n'aurait empêché le
+ * neuvième. Le producteur comme le consommateur n'ont plus qu'une écriture,
+ * celle d'ici.
+ *
+ * Depuis #1372, `apps/web` n'est plus seulement lecteur : ses actions serveur
+ * émettent les codes de `WEB_ACTION_ERROR_CODES` avant tout appel à l'API. Cela
+ * ne change rien à ce que ce fichier garde — le second bloc refuse toujours les
+ * littéraux, et un refus du front qui écrirait `'TENANT_NOT_FOUND'` en clair y
+ * serait pris comme n'importe quel autre.
  *
  * ## Pourquoi ici, dans `packages/shared`
  *
@@ -37,9 +44,11 @@
  *
  * Que tout code d'`ERROR_CODES` est émis — le sens inverse. Il ne peut pas : les
  * codes de transport sortent du `DomainExceptionFilter` par un statut HTTP, pas
- * d'une classe, et `CURRENCY_MISMATCH` est porté par `CurrencyMismatchError` de
- * ce paquet. La chasse aux orphelins reste une revue, faite en #536 et écrite en
- * tête de `error-codes.ts`.
+ * d'une classe, `CURRENCY_MISMATCH` est porté par `CurrencyMismatchError` de ce
+ * paquet, et ceux de `WEB_ACTION_ERROR_CODES` sont émis par une action serveur
+ * d'`apps/web` — trois émetteurs que ce fichier ne sait pas relire. La chasse aux
+ * orphelins reste une revue, faite en #536 et écrite en tête de
+ * `error-codes.ts`.
  */
 
 import { readFileSync, readdirSync } from 'node:fs';

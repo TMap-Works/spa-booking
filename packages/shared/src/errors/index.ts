@@ -23,6 +23,7 @@ export {
   PAYMENT_ERROR_CODES,
   REPORTING_ERROR_CODES,
   TRANSPORT_ERROR_CODES,
+  WEB_ACTION_ERROR_CODES,
   isKnownErrorCode,
 } from './error-codes';
 export type { ErrorCode } from './error-codes';

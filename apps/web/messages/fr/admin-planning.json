@@ -187,7 +187,6 @@
     }
   },
   "actions": {
-    "unknownTenant": "Établissement inconnu.",
     "invalidDate": "Date de planning invalide.",
     "invalidSearch": "Recherche invalide.",
     "invalidClient": "La fiche client saisie est invalide.",

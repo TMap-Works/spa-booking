@@ -7,7 +7,7 @@ l'API expose déjà ; l'API n'y duplique jamais un schéma de validation.
 src/
   common/     primitives transverses — montants, instants UTC, identifiants, pagination
   constants/  statuts de RDV, rôles, canaux de notification, bornes de champs
-  errors/     codes d'erreur stables et enveloppe de réponse en échec
+  errors/     codes d'erreur stables — ceux de l'API, et ceux que les actions serveur du front opposent elles-mêmes — et enveloppe de réponse en échec
   locale/     les deux langues du produit — `fr` et `en` —, et la règle de mise en forme qu'elles décident
   schemas/    entités et DTO, en schémas Zod dont les types sont inférés
   index.ts    baril racine — tout ce qu'expose `@spa/shared`

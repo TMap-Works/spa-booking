@@ -23,6 +23,13 @@
  * sont écrits pour la personne devant l'écran, et c'est le front qui les choisit,
  * sur la foi du code reçu.
  *
+ * Certains n'ont d'ailleurs aucun `DomainError` en regard, et c'est cohérent
+ * plutôt qu'exceptionnel : `WEB_ACTION_ERROR_CODES` porte les refus que les
+ * actions serveur d'`apps/web` opposent elles-mêmes (#1372), et la phrase de ces
+ * codes-là n'a jamais eu de version « API ». Elle est écrite ici pour la même
+ * raison que toutes les autres — c'est ici que le front la trouve, à partir du
+ * seul code.
+ *
  * ## Ce qu'aucun de ces messages ne dit
  *
  * Rien de plus que le code ne dit déjà. Les règles de `error-codes.ts` valent
@@ -151,6 +158,13 @@ const FR: Readonly<Record<ErrorCode, string>> = {
   REPORT_WINDOW_INVALID: 'La période demandée ne contient aucun instant.',
   REPORT_WINDOW_TOO_WIDE: 'La période demandée est trop longue. Réduisez-la.',
   REPORT_EXPORT_UNAVAILABLE: 'L’export n’est pas disponible sur cet environnement.',
+
+  /* --- refus opposés par les actions serveur d'apps/web ------------------- */
+  // Elle nomme l'établissement, et c'est tout ce qu'on lui demande : les quatre
+  // écrans du planning et du comptoir la prennent en repli de leur propre
+  // phrase de geste, et c'est d'elle qu'ils tiennent de ne plus dire « Recherche
+  // invalide. » à un établissement inconnu (#1372).
+  TENANT_NOT_FOUND: 'Cet établissement est introuvable.',
 };
 
 /** Les mêmes refus, en anglais — la langue par défaut du système (#844). */
@@ -252,6 +266,9 @@ const EN: Readonly<Record<ErrorCode, string>> = {
   REPORT_WINDOW_INVALID: 'The requested period contains no point in time.',
   REPORT_WINDOW_TOO_WIDE: 'The requested period is too long. Please shorten it.',
   REPORT_EXPORT_UNAVAILABLE: 'Export is not available on this environment.',
+
+  /* --- refus opposés par les actions serveur d'apps/web ------------------- */
+  TENANT_NOT_FOUND: 'This establishment could not be found.',
 };
 
 /**

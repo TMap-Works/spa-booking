@@ -90,6 +90,41 @@
  * Ce qui n'a **pas** changé : le refus rendu. Même `VALIDATION_ERROR`, même
  * phrase, même langue — `invalidFromZod` n'est que l'assemblage d'`invalid()` et
  * du `??`, à la lettre.
+ *
+ * ## L'établissement inconnu a son code, et non un marqueur — #1372
+ *
+ * C'est la décision de ce ticket, et elle se dit ici parce que c'est ici que le
+ * refus se fabrique ({@link unknownTenant}) ; son autre moitié — le code et sa
+ * phrase bilingue — est écrite dans `WEB_ACTION_ERROR_CODES`
+ * (`packages/shared/src/errors/error-codes.ts`).
+ *
+ * Le refus d'établissement inconnu portait `VALIDATION_ERROR`, sans `details`,
+ * comme les refus de saisie que chaque geste oppose. Or c'est exactement par
+ * l'absence de `details` que les quatre écrans du planning et du comptoir
+ * reconnaissaient « le refus que l'action a opposé elle-même », pour lui prêter
+ * la phrase du geste (#1367, #1369). La garde est juste pour ce qu'elle a été
+ * écrite — séparer l'action de l'API —, mais deux refus que la **même** action
+ * oppose d'elle-même y sont indiscernables : « Établissement inconnu » se disait
+ * donc « Recherche invalide. », « Le report saisi est invalide. », « Date de
+ * planning invalide. ».
+ *
+ * Deux voies étaient ouvertes. **Un marqueur dans `details`** aurait obligé
+ * `invalid()` à en poser un, c'est-à-dire à faire précisément ce que
+ * `details === undefined` sert à exclure : le refus se serait mis à passer pour
+ * un refus de l'API sur les quatre écrans, à moins de lire le marqueur *avant* la
+ * garde — un ordre que rien n'imposerait au cinquième écran. Et il aurait
+ * contredit ce que la section « Et `details`, depuis #1210 » énonce plus haut :
+ * ce que `details` porte vient de l'API et d'elle seule, ce qui est ce qui rend
+ * son report sûr au regard de `tenant-isolation` §4.
+ *
+ * **Le code propre** ne demande rien de tout cela. Les écrans trient déjà sur le
+ * code et réservent la phrase de leur geste au seul `VALIDATION_ERROR` : un code
+ * distinct les corrige tous les quatre sans toucher à leur logique, et leur repli
+ * — `errorMessage(code, locale)`, déjà en place depuis #1234 — rend la phrase qui
+ * nomme l'établissement, dans la langue du rendu.
+ *
+ * Ce que `details` dit n'a donc pas changé d'un mot, et c'est voulu : ce ticket
+ * ajoute un code, il ne redéfinit pas la garde des quatre écrans.
  */
 
 import { ERROR_CODES, errorMessage, type Locale } from '@spa/shared';
@@ -139,6 +174,30 @@ export async function failure(error: unknown): Promise<AdminActionFailure> {
 /** Refus de validation : l'appel n'a même pas atteint l'API. */
 export function invalid(message: string): AdminActionFailure {
   return { ok: false, code: ERROR_CODES.VALIDATION_ERROR, message };
+}
+
+/**
+ * Refus faute d'établissement : le slug de l'URL n'en désigne aucun — #1372.
+ *
+ * Il se distingue du refus de saisie du geste par son **code**, et non par un
+ * marqueur dans `details` : la raison du choix est en tête de ce module. Les
+ * écrans n'ont donc rien à reconnaître de particulier — ils trient déjà sur le
+ * code, et celui-ci n'est pas `VALIDATION_ERROR`, donc aucun d'eux ne lui prête
+ * la phrase de son geste.
+ *
+ * Asynchrone pour la même raison que {@link failure} et {@link expired} : la
+ * phrase vient d'`errorMessage`, qui a besoin de la langue de la requête. Elle
+ * n'est d'ailleurs presque jamais affichée telle quelle — les écrans gardent le
+ * code et réécrivent la phrase à chaque rendu (#1354) —, mais elle reste ce que
+ * le contrat d'une action promet, et un appelant qui n'aurait que le résultat
+ * doit y trouver une phrase déjà dans sa langue.
+ */
+export async function unknownTenant(): Promise<AdminActionFailure> {
+  return {
+    ok: false,
+    code: ERROR_CODES.TENANT_NOT_FOUND,
+    message: errorMessage(ERROR_CODES.TENANT_NOT_FOUND, await getLocale()),
+  };
 }
 
 /**

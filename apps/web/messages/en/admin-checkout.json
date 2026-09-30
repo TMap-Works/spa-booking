@@ -175,8 +175,8 @@
     "tooManyRequests": "Too many requests in a short time. Wait a few seconds before trying again.",
     "notFound": "This appointment cannot be found in this salon.",
     "forbidden": "Your account is not allowed to take payments. Ask the salon administrator for access.",
-    "unknownTarget": "Unknown appointment or salon.",
-    "unknownReceiptTarget": "Unknown receipt or salon."
+    "unknownTarget": "Unknown appointment.",
+    "unknownReceiptTarget": "Unknown receipt."
   },
   "sale": {
     "subtotal": "Subtotal",
