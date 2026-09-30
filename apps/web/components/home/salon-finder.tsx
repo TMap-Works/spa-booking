@@ -4,7 +4,7 @@ import type { Locale } from '@spa/shared';
 import { useLocale, useTranslations } from 'next-intl';
 import { useActionState, useState } from 'react';
 
-import { openSalonAction, type SalonFinderState } from '@/app/actions';
+import { openSalonAction, type SalonFinderRefusal, type SalonFinderState } from '@/app/actions';
 import { type SalonDoor } from '@/app/salon-doors';
 import { publicExitLabels } from '@/components/salon/public-exits';
 import { Button } from '@/components/ui/button';
@@ -50,9 +50,13 @@ import { Notification } from '@/components/ui/notification';
  *
  * Les **messages d'erreur** qu'affiche ce composant sont restés français le
  * temps d'un ticket : `app/actions.ts` les écrivait en dur. Ils viennent
- * désormais du même namespace, sous `home.finder.errors` (#1233), et l'action
- * les résout côté serveur — le champ et son refus se lisent dans la même
- * langue.
+ * désormais du même namespace, sous `home.finder.errors` (#1233).
+ *
+ * Et c'est **ce composant** qui les écrit, au rendu, depuis le motif que
+ * l'action lui rend (#1354) : `useActionState` garde son résultat d'une
+ * soumission à l'autre, et le sélecteur de langue rejoue la route sans
+ * démonter ce formulaire — une phrase résolue côté serveur y restait dans la
+ * langue de la soumission. Le motif, lui, est une donnée.
  */
 
 interface SalonFinderProps {
@@ -72,7 +76,11 @@ const DOORS: readonly { readonly door: SalonDoor; readonly variant: 'accent' | '
 ];
 
 export function SalonFinder({ initialAddress, title }: SalonFinderProps) {
-  const initialState: SalonFinderState = { address: initialAddress, fieldError: null, formError: null };
+  const initialState: SalonFinderState = {
+    address: initialAddress,
+    fieldRefusal: null,
+    formRefusal: null,
+  };
   const [state, formAction, pending] = useActionState(openSalonAction, initialState);
   const [door, setDoor] = useState<SalonDoor>('reservation');
   const t = useTranslations('booking');
@@ -95,6 +103,26 @@ export function SalonFinder({ initialAddress, title }: SalonFinderProps) {
     'back-office': t('home.finder.pending.backOffice'),
   };
 
+  /**
+   * La phrase d'un refus, écrite **ici**, dans la langue de ce rendu (#1354).
+   *
+   * Un `switch` et non `t(\`home.finder.errors.${motif}\`)` : seul `unknown`
+   * prend un paramètre, et le typage des clés de `next-intl` vérifie les
+   * arguments clé par clé — une clé construite les lui ferait perdre de vue.
+   */
+  function refusalPhrase(refusal: SalonFinderRefusal | null): string | undefined {
+    switch (refusal) {
+      case 'empty':
+        return t('home.finder.errors.empty');
+      case 'unknown':
+        return t('home.finder.errors.unknown', { address: state.address });
+      case 'unavailable':
+        return t('home.finder.errors.unavailable');
+      default:
+        return undefined;
+    }
+  }
+
   return (
     <form className="spa-home-finder" action={formAction} aria-labelledby="acces-titre" noValidate>
       <div className="spa-home-finder__heading">
@@ -104,9 +132,9 @@ export function SalonFinder({ initialAddress, title }: SalonFinderProps) {
         <p className="spa-home-finder__lead">{t('home.finder.lead')}</p>
       </div>
 
-      {state.formError === null ? null : (
+      {state.formRefusal === null ? null : (
         <Notification tone="danger" title={t('home.finder.errorTitle')}>
-          <p>{state.formError}</p>
+          <p>{refusalPhrase(state.formRefusal)}</p>
         </Notification>
       )}
 
@@ -121,7 +149,7 @@ export function SalonFinder({ initialAddress, title }: SalonFinderProps) {
         enterKeyHint="go"
         required
         defaultValue={state.address}
-        error={state.fieldError ?? undefined}
+        error={refusalPhrase(state.fieldRefusal)}
       />
 
       <div className="spa-home-finder__doors">
