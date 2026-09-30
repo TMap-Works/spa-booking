@@ -264,7 +264,7 @@ describe('le modèle de vue, hors de React', () => {
 
     expect(volumeQualification(activity, { locale: 'fr' })).toBe('dont 8 annulés · 7 à venir');
     expect(volumeQualification(activity, { locale: 'en' })).toBe(
-      'including 8 cancelled · 7 upcoming',
+      'including 8 canceled · 7 upcoming',
     );
     // Le chiffre, lui, ne dépend d'aucune langue.
     expect(activity.appointments).toBe(17);

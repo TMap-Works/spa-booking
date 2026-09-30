@@ -39,7 +39,7 @@
     "password": "Mot de passe",
     "passwordHint": "Douze caractères au minimum.",
     "confirmation": "Confirmez le mot de passe",
-    "confirmationMismatch": "les deux mots de passe ne correspondent pas",
+    "confirmationMismatch": "Les deux mots de passe ne correspondent pas.",
     "consent": "J’accepte que mes données et celles de mon salon soient traitées pour créer et faire fonctionner mon espace.",
     "consentRequired": "Cochez cette case pour créer votre salon.",
     "submit": "Continuer vers le paiement sécurisé",

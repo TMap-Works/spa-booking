@@ -6,7 +6,7 @@
   },
   "failure": {
     "title": "Planning indisponible",
-    "routeMissing": "L’agenda du back-office n’est pas encore servi par l’API : la grille s’affiche, les rendez-vous suivront."
+    "routeMissing": "Le planning du back-office n’est pas encore servi par l’API : la grille s’affiche, les rendez-vous suivront."
   },
   "toolbar": {
     "viewLegend": "Vue du planning",
@@ -43,11 +43,11 @@
     "detail": "Prestation : {service}. Praticien : {staff}.",
     "status": "Statut : {status}.",
     "reopened": "Ce créneau est de nouveau réservable.",
-    "openRecord": "Ouvrir la fiche de {client}, {time}",
+    "openRecord": "{elision, select, vowel {Ouvrir la fiche d’{client}} other {Ouvrir la fiche de {client}}}, {time}",
     "free": ", libre",
     "freeNow": ", libre, heure courante",
     "freeHint": " — poser un rendez-vous à partir de cette heure",
-    "dropHint": " — déplacer ici le rendez-vous de {client}",
+    "dropHint": "{elision, select, vowel { — déplacer ici le rendez-vous d’{client}} other { — déplacer ici le rendez-vous de {client}}}",
     "currentTime": "heure courante",
     "move": "Déplacer {client}"
   },
@@ -59,18 +59,18 @@
     "periodEmptyTitle": "Aucun rendez-vous sur cette période",
     "periodEmptyDescription": "Rien n’est encore posé ici. Changez de période, ou passez en vue semaine pour voir plus large.",
     "notInstalledTitle": "Ce salon n’est pas encore installé",
-    "notInstalledDescription": "Un rendez-vous se pose sur une prestation, dans l’agenda d’un praticien. Tant que l’un des deux manque, ce planning reste vide — demain comme la semaine prochaine.",
+    "notInstalledDescription": "Un rendez-vous se pose sur une prestation, dans le planning d’un praticien. Tant que l’un des deux manque, ce planning reste vide — demain comme la semaine prochaine.",
     "noStaffTitle": "Aucune fiche praticien n’est ouverte",
-    "noStaffDescription": "Le catalogue est prêt, mais un rendez-vous a besoin de l’agenda de quelqu’un. Ouvrez une fiche praticien : le planning lui donnera sa colonne."
+    "noStaffDescription": "Le catalogue est prêt, mais un rendez-vous a besoin du planning de quelqu’un. Ouvrez une fiche praticien : le planning lui donnera une colonne."
   },
   "move": {
-    "question": "Changer de praticien ? Le rendez-vous de {client} passerait de {from} à {to}, le {moment}.",
+    "question": "{elision, select, vowel {Changer de praticien ? Le rendez-vous d’{client} passerait de {from} à {to}, le {moment}.} other {Changer de praticien ? Le rendez-vous de {client} passerait de {from} à {to}, le {moment}.}}",
     "cancel": "Annuler",
     "confirm": "Confirmer le changement",
     "conflictTitle": "Créneau indisponible — rendez-vous remis en place",
     "refusedTitle": "Report refusé — rendez-vous remis en place",
     "moment": "{day} à {time}",
-    "restored": "Le rendez-vous de {client} est resté le {moment}, chez {staff}.",
+    "restored": "{elision, select, vowel {Le rendez-vous d’{client} est resté le {moment}, chez {staff}.} other {Le rendez-vous de {client} est resté le {moment}, chez {staff}.}}",
     "conflictBody": "Ce créneau n’est pas — ou n’est plus — réservable : il a pu être pris depuis un autre poste, ou sortir des heures du praticien. Ouvrez le rendez-vous pour choisir parmi les créneaux proposés.",
     "goneBody": "Ce rendez-vous n’existe plus : il vient d’être déplacé ou annulé depuis un autre poste. Rechargez le planning."
   },
@@ -125,7 +125,7 @@
   "cancellation": {
     "reportTitle": "Report",
     "cancelTitle": "Annulation",
-    "bornOfReport": "Né d’un report",
+    "bornOfReport": "Issu d’un report",
     "bornOfReportBody": "Ce rendez-vous en remplace un autre, déplacé. Le rendez-vous d’origine est resté au planning, à son heure initiale, marqué annulé.",
     "when": "{outcome} le {moment}",
     "reportBody": "Ce créneau a été libéré par un déplacement, non par une annulation : la cliente a gardé son rendez-vous à une autre heure. Un report ne laisse pas de motif.",
@@ -142,7 +142,7 @@
     "change": "Changer de client",
     "searchHint": "Recherche par nom, téléphone ou e-mail — {min} caractères au moins. Un client inconnu se crée à la volée.",
     "searching": "Recherche en cours…",
-    "results": "{count} fiche(s) trouvée(s).",
+    "results": "{count, plural, =0 {Aucune fiche trouvée.} one {# fiche trouvée.} other {# fiches trouvées.}}",
     "noneTitle": "Aucune fiche pour « {term} »",
     "noneDescription": "Créez la fiche maintenant : le rendez-vous se posera dessus sans quitter le planning.",
     "createRecord": "Créer la fiche",
@@ -198,5 +198,8 @@
     "invalidReschedule": "Le report saisi est invalide.",
     "invalidStatus": "Statut de rendez-vous invalide.",
     "invalidCancelReason": "Le motif d’annulation est invalide."
+  },
+  "metadata": {
+    "title": "Planning"
   }
 }

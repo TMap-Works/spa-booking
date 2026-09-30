@@ -471,7 +471,7 @@ describe('états', () => {
 
     await waitFor(() => {
       expect(screen.getByRole('alert').textContent).toContain(
-        'L’agenda du back-office n’est pas encore servi par l’API',
+        'Le planning du back-office n’est pas encore servi par l’API',
       );
     });
     expect(screen.getByRole('alert').textContent).not.toContain('Cannot GET');
@@ -528,7 +528,7 @@ describe('états', () => {
 
     await waitFor(() => {
       expect(screen.getByRole('alert').textContent).toContain(
-        'L’agenda du back-office n’est pas encore servi par l’API',
+        'Le planning du back-office n’est pas encore servi par l’API',
       );
     });
   });

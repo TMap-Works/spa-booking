@@ -264,7 +264,7 @@ describe('ce que l’écran a le droit d’affirmer', () => {
   it('n’affirme plus rien quand il ne fait que resservir le brouillon', () => {
     renderConfirmation({ restored: true });
 
-    // Une pastille de succès est une affirmation sur l'agenda du salon, que le
+    // Une pastille de succès est une affirmation sur le planning du salon, que le
     // front n'a aucun moyen de vérifier : aucune lecture publique d'un
     // rendez-vous n'existe côté API.
     expect(screen.queryByRole('heading', { name: 'C’est réservé !' })).toBeNull();
@@ -274,7 +274,7 @@ describe('ce que l’écran a le droit d’affirmer', () => {
     expect(avis).toBeDefined();
     // L'autorité nommée est celle qui vaut pour tout le monde : une cliente qui
     // a réservé sans compte n'a pas d'espace client à consulter.
-    expect(avis.parentElement?.textContent).toContain('agenda du salon');
+    expect(avis.parentElement?.textContent).toContain('planning du salon');
     // La sortie, elle, reste offerte à celles qui en ont un.
     expect(screen.getByRole('link', { name: 'Voir mes rendez-vous' })).toBeDefined();
   });

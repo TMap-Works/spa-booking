@@ -1,4 +1,5 @@
 import { MY_APPOINTMENTS_DEFAULT_LIMIT } from '@spa/shared';
+import type { Metadata } from 'next';
 import { getTranslations } from 'next-intl/server';
 import Link from 'next/link';
 
@@ -53,6 +54,19 @@ interface HistoryPageProps {
   readonly params: Promise<{ readonly tenantSlug: string }>;
   /** Le marqueur de renouvellement, comme sur l'onglet voisin — voir `(liste)/page.tsx`. */
   readonly searchParams?: Promise<{ readonly session?: string | readonly string[] }>;
+}
+
+/**
+ * Le titre de l'onglet de cet écran (#1329).
+ *
+ * Le gabarit de l'espace le situe — « … · Mon compte ». Sans ce
+ * titre-ci, l'onglet portait le seul nom de l'espace, et deux écrans ouverts
+ * côte à côte étaient indiscernables.
+ */
+export async function generateMetadata(): Promise<Metadata> {
+  const t = await getTranslations('account');
+
+  return { title: t('metadata.history') };
 }
 
 export default async function AccountHistoryPage({ params, searchParams }: HistoryPageProps) {

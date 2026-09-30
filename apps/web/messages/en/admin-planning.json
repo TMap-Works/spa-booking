@@ -6,7 +6,7 @@
   },
   "failure": {
     "title": "Schedule unavailable",
-    "routeMissing": "The back-office agenda is not served by the API yet: the grid is displayed, the appointments will follow."
+    "routeMissing": "The back-office schedule is not served by the API yet: the grid is displayed, the appointments will follow."
   },
   "toolbar": {
     "viewLegend": "Schedule view",
@@ -43,36 +43,36 @@
     "detail": "Service: {service}. Practitioner: {staff}.",
     "status": "Status: {status}.",
     "reopened": "This slot can be booked again.",
-    "openRecord": "Open {client}’s appointment, {time}",
+    "openRecord": "{elision, select, vowel {Open {client}’s appointment} other {Open {client}’s appointment}}, {time}",
     "free": ", free",
     "freeNow": ", free, current time",
     "freeHint": " — book an appointment from this time",
-    "dropHint": " — move {client}’s appointment here",
+    "dropHint": "{elision, select, vowel { — move {client}’s appointment here} other { — move {client}’s appointment here}}",
     "currentTime": "current time",
     "move": "Move {client}"
   },
   "start": {
-    "catalogLink": "Open the service catalogue",
+    "catalogLink": "Open the service catalog",
     "staffLink": "Open the staff list",
-    "catalogEmptyTitle": "The catalogue is empty",
+    "catalogEmptyTitle": "The catalog is empty",
     "catalogEmptyDescription": "An appointment is booked on a service. Create at least one — duration and price included — before scheduling.",
     "periodEmptyTitle": "No appointments in this period",
     "periodEmptyDescription": "Nothing has been booked here yet. Change the period, or switch to the week view to see further ahead.",
     "notInstalledTitle": "This salon is not set up yet",
-    "notInstalledDescription": "An appointment is booked on a service, in a practitioner’s agenda. As long as either is missing, this schedule stays empty — tomorrow as much as next week.",
+    "notInstalledDescription": "An appointment is booked on a service, in a practitioner’s schedule. As long as either is missing, this schedule stays empty — tomorrow as much as next week.",
     "noStaffTitle": "No practitioner record is open",
-    "noStaffDescription": "The catalogue is ready, but an appointment needs someone’s agenda. Open a practitioner record: the schedule will give them a column."
+    "noStaffDescription": "The catalog is ready, but an appointment needs someone’s schedule. Open a practitioner record: the schedule will give them a column."
   },
   "move": {
-    "question": "Change practitioner? {client}’s appointment would move from {from} to {to}, on {moment}.",
+    "question": "{elision, select, vowel {Change practitioner? {client}’s appointment would move from {from} to {to}, on {moment}.} other {Change practitioner? {client}’s appointment would move from {from} to {to}, on {moment}.}}",
     "cancel": "Cancel",
     "confirm": "Confirm the change",
     "conflictTitle": "Slot unavailable — appointment put back",
     "refusedTitle": "Move refused — appointment put back",
     "moment": "{day} at {time}",
-    "restored": "{client}’s appointment stayed on {moment}, with {staff}.",
+    "restored": "{elision, select, vowel {{client}’s appointment stayed on {moment}, with {staff}.} other {{client}’s appointment stayed on {moment}, with {staff}.}}",
     "conflictBody": "This slot is not — or is no longer — bookable: it may have been taken from another workstation, or fall outside the practitioner’s hours. Open the appointment to choose from the slots on offer.",
-    "goneBody": "This appointment no longer exists: it has just been moved or cancelled from another workstation. Reload the schedule."
+    "goneBody": "This appointment no longer exists: it has just been moved or canceled from another workstation. Reload the schedule."
   },
   "desk": {
     "newTitle": "New appointment",
@@ -85,12 +85,12 @@
     "routeMissing": "Front-desk appointment writing is not served by the API yet: the form is complete, saving will follow.",
     "cancelTitle": "Cancel this appointment",
     "cancelQuestion": "Cancel this appointment? The slot goes straight back on sale, and the cancellation cannot be undone.",
-    "cancelReasonLabel": "Reason for cancelling",
+    "cancelReasonLabel": "Reason for canceling",
     "cancelReasonHint": "Optional, and never shown to the client: this is an internal salon note.",
     "cancelConflict": "This appointment has just been changed from another workstation: reopen it to see its state before trying again.",
     "keep": "Keep this appointment",
     "confirmCancel": "Confirm the cancellation",
-    "cancelling": "Cancelling…",
+    "cancelling": "Canceling…",
     "cancel": "Cancel the appointment",
     "serviceLabel": "Service",
     "serviceHintCancellable": "The service of a booked appointment cannot be changed: its price and duration are fixed at booking. To change it, cancel this appointment at the foot of the drawer, then book a new one.",
@@ -102,7 +102,7 @@
     "dateLabel": "Date",
     "timeLabel": "Start time",
     "slotsLoading": "Reading the available slots…",
-    "slotsHint": "Only the slots the schedule can honour are offered.",
+    "slotsHint": "Only the slots the schedule can honor are offered.",
     "slotsEmpty": "No slot that day for this service. Change the date, the practitioner, or the service.",
     "slotsUnreadable": "The slots offered by the schedule could not be read: type the time by hand, it will be checked when saving.",
     "timeZoneNote": "Times entered and shown in the salon’s time zone — {timeZone}. Storage is in UTC.",
@@ -125,8 +125,8 @@
   "cancellation": {
     "reportTitle": "Move",
     "cancelTitle": "Cancellation",
-    "bornOfReport": "Born of a move",
-    "bornOfReportBody": "This appointment replaces another one that was moved. The original appointment stayed in the schedule, at its initial time, marked cancelled.",
+    "bornOfReport": "Replaces a moved appointment",
+    "bornOfReportBody": "This appointment replaces another one that was moved. The original appointment stayed in the schedule, at its initial time, marked canceled.",
     "when": "{outcome} on {moment}",
     "reportBody": "This slot was freed by a move, not by a cancellation: the client kept her appointment at another time. A move leaves no reason behind.",
     "noReason": "No reason was recorded."
@@ -142,7 +142,7 @@
     "change": "Change client",
     "searchHint": "Search by name, phone or email — {min} characters at least. An unknown client can be created on the spot.",
     "searching": "Searching…",
-    "results": "{count} record(s) found.",
+    "results": "{count, plural, =0 {No record found.} one {# record found.} other {# records found.}}",
     "noneTitle": "No record for “{term}”",
     "noneDescription": "Create the record now: the appointment will be booked on it without leaving the schedule.",
     "createRecord": "Create the record",
@@ -198,5 +198,8 @@
     "invalidReschedule": "The move entered is invalid.",
     "invalidStatus": "Invalid appointment status.",
     "invalidCancelReason": "The cancellation reason is invalid."
+  },
+  "metadata": {
+    "title": "Schedule"
   }
 }

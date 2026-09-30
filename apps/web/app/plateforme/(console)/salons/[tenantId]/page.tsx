@@ -4,6 +4,7 @@ import {
   type PlatformTenantAccount,
   type PlatformTenantDetail,
 } from '@spa/shared';
+import type { Metadata } from 'next';
 import { getLocale, getTranslations } from 'next-intl/server';
 import Link from 'next/link';
 import { notFound, redirect } from 'next/navigation';
@@ -77,6 +78,19 @@ function accountState(account: PlatformTenantAccount): {
 
 function stripeCustomerUrl(customerId: string): string {
   return `https://dashboard.stripe.com/customers/${encodeURIComponent(customerId)}`;
+}
+
+/**
+ * Le titre de l'onglet de cet écran (#1329).
+ *
+ * Le gabarit de l'espace le situe — « … · Console plateforme ». Sans ce
+ * titre-ci, l'onglet portait le seul nom de l'espace, et deux écrans ouverts
+ * côte à côte étaient indiscernables.
+ */
+export async function generateMetadata(): Promise<Metadata> {
+  const t = await getTranslations('platform');
+
+  return { title: t('meta.record') };
 }
 
 export default async function PlatformTenantPage({ params }: PlatformTenantPageProps) {

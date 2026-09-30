@@ -202,7 +202,9 @@ export function ClientPicker({ tenantSlug, selected, onSelect, onExpired }: Clie
           ? t('client.searching')
           : results === null
             ? ''
-            : t('client.results', { count: String(results.length) })}
+            : // Un nombre et non une chaîne : le message accorde son pluriel, et
+              // « 0 fiche(s) trouvée(s) » a cessé d'être une formule (#1329).
+              t('client.results', { count: results.length })}
       </p>
 
       {results !== null && results.length > 0 ? (

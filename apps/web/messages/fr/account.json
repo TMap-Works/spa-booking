@@ -164,7 +164,7 @@
   "announcements": {
     "appointment-cancelled": {
       "title": "Votre rendez-vous est annulé",
-      "body": "Celui du {when} ne figure plus à l’agenda du salon : vous le retrouvez dans l’onglet « Historique »."
+      "body": "Celui du {when} ne figure plus au planning du salon : vous le retrouvez dans l’onglet « Historique »."
     },
     "appointment-rescheduled": {
       "title": "Votre rendez-vous est déplacé",
@@ -176,7 +176,7 @@
     },
     "salon-cancelled": {
       "title": "Le salon a annulé votre rendez-vous",
-      "body": "Celui du {when} ne figure plus à l’agenda du salon : vous le retrouvez dans l’onglet « Historique »."
+      "body": "Celui du {when} ne figure plus au planning du salon : vous le retrouvez dans l’onglet « Historique »."
     }
   },
   "pageError": {
@@ -196,5 +196,13 @@
     "invalidReschedule": "La demande de report est incomplète.",
     "invalidLocale": "Cette langue n’est pas proposée.",
     "sessionExpired": "Votre session a expiré. Reconnectez-vous pour continuer."
+  },
+  "metadata": {
+    "appointments": "Rendez-vous à venir",
+    "history": "Historique",
+    "login": "Se connecter",
+    "register": "Créer mon compte",
+    "profile": "Mes coordonnées",
+    "reschedule": "Reporter mon rendez-vous"
   }
 }

@@ -39,7 +39,7 @@
     "password": "Password",
     "passwordHint": "Twelve characters minimum.",
     "confirmation": "Confirm your password",
-    "confirmationMismatch": "the two passwords do not match",
+    "confirmationMismatch": "The two passwords do not match.",
     "consent": "I agree that my data and my salon’s data may be processed to create and run my workspace.",
     "consentRequired": "Tick this box to create your salon.",
     "submit": "Continue to secure payment",

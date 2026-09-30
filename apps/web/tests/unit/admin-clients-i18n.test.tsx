@@ -234,7 +234,7 @@ describe('le fichier client, rendu en anglais', () => {
     // Le lien est **dans** la phrase, et non une clé à part : c'est ce que
     // `t.rich` préserve, et ce qu'une découpe en deux clés aurait figé dans
     // l'ordre du français.
-    expect(screen.getByRole('link', { name: 'the calendar' })).toBeDefined();
+    expect(screen.getByRole('link', { name: 'the schedule' })).toBeDefined();
   });
 
   it('accorde les libellés comptés selon la langue, et non selon une bascule écrite en dur', async () => {

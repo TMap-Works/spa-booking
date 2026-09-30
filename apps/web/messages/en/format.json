@@ -2,5 +2,5 @@
   "timeZoneMention": "{timeZone} time",
   "durationMinutes": "{minutes} min",
   "durationHours": "{hours} hr",
-  "durationHoursMinutes": "{hours} hr {minutes}"
+  "durationHoursMinutes": "{hours} hr {minutes} min"
 }

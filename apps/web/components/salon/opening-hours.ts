@@ -185,6 +185,28 @@ export function weekdayLabel(
 }
 
 /**
+ * Le même jour **au fil d'une phrase** — « ouvert le lundi », « Open on Monday »
+ * (#1329).
+ *
+ * La casse est celle de la langue, et c'est tout ce qui le distingue de
+ * {@link weekdayLabel} : `Intl` rend « lundi » en français et « Monday » en
+ * anglais, et cette différence **est** la règle typographique de chaque langue.
+ *
+ * Elle existe parce qu'un `toLowerCase()` appliqué au libellé autonome avait
+ * rendu « Open on monday » dans les noms accessibles des vingt-huit champs de la
+ * grille horaire des réglages : une règle française appliquée aux deux langues.
+ * Le repli reste celui de {@link weekdayLabel} — « Jour 8 » garde sa capitale,
+ * faute d'être un mot de la langue.
+ */
+export function weekdayLabelInSentence(
+  weekday: number,
+  display: DisplayLocale,
+  t: HoursTranslator,
+): string {
+  return weekdayName(weekday, display) ?? weekdayLabel(weekday, display, t);
+}
+
+/**
  * Les mêmes jours pour `schema.org/DayOfWeek`.
  *
  * En URL absolue plutôt qu'en nom nu : c'est la forme que la documentation de

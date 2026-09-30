@@ -38,7 +38,7 @@
     "schedule": "Horaire",
     "due": "À encaisser",
     "settled": "Réglé",
-    "fixedPrice": "Montant figé à la réservation. Le total qui fait foi est celui que le serveur recalcule à la validation — le front n’en fait jamais l’arithmétique."
+    "fixedPrice": "Montant figé à la réservation. Le total qui fait foi est celui recalculé à la validation de la vente."
   },
   "badge": {
     "settled": "réglé",
@@ -136,7 +136,7 @@
     "legalIdUnknown": "Identifiant",
     "client": "Client",
     "staff": "Praticien",
-    "cashier": "Caisse",
+    "cashier": "Caissier",
     "linesCaption": "Lignes du reçu",
     "item": "Article",
     "quantity": "Qté",
@@ -195,5 +195,8 @@
   "pdf": {
     "notFound": "Ticket introuvable.",
     "failed": "Le ticket n’a pas pu être produit. Merci de réessayer."
+  },
+  "metadata": {
+    "title": "Encaissement"
   }
 }

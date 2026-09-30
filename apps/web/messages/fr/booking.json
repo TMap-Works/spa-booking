@@ -235,7 +235,7 @@
       "categoriesLabel": "Rubriques du catalogue",
       "unclassified": "Autres prestations",
       "durationLabel": "Durée :",
-      "staffLabel": "Praticiens :",
+      "staffLabel": "{count, plural, one {Praticien :} other {Praticiens :}}",
       "unstaffed": "Aucun praticien — pas de créneau en ligne",
       "priceLabel": "Tarif :",
       "choose": "Choisir",
@@ -436,10 +436,10 @@
       "noteHint": "Allergie, préférence, retard annoncé — facultatif.",
       "submit": "Vérifier ma réservation",
       "errors": {
-        "required": "ce champ est obligatoire",
-        "tooLong": "ce champ fait au plus {max} caractères",
-        "email": "adresse e-mail invalide",
-        "invalid": "cette valeur n’est pas valide"
+        "required": "Ce champ est obligatoire.",
+        "tooLong": "Ce champ fait au plus {max} caractères.",
+        "email": "Saisissez une adresse e-mail valide.",
+        "invalid": "Cette valeur n’est pas valide."
       }
     },
     "consent": {
@@ -479,7 +479,7 @@
         }
       },
       "rights": "L’établissement conserve ces données le temps du suivi de sa clientèle. Vous pouvez les consulter, les corriger ou en demander la suppression à tout moment, depuis votre espace client ou en écrivant à l’établissement.",
-      "error": "cochez cette case pour continuer : sans votre accord, nous ne pouvons pas traiter vos données"
+      "error": "Cochez cette case pour continuer : sans votre accord, nous ne pouvons pas traiter vos données."
     },
     "gateStep": {
       "title": "Identifiez-vous",
@@ -515,9 +515,9 @@
     "confirmationStep": {
       "label": "Confirmation de votre réservation",
       "snapshotTitle": "Votre dernière réservation dans cet onglet",
-      "snapshotBody": "Ce récapitulatif date du moment où vous avez réservé : il n’a pas été relu depuis. Un report ou une annulation faits ailleurs n’y apparaissent pas — c’est l’agenda du salon qui fait foi.",
+      "snapshotBody": "Ce récapitulatif date du moment où vous avez réservé : il n’a pas été relu depuis. Un report ou une annulation faits ailleurs n’y apparaissent pas — c’est le planning du salon qui fait foi.",
       "cancelledTitle": "Votre rendez-vous est annulé",
-      "cancelledLine": "Il ne figure plus à l’agenda du salon. Vous pouvez en prendre un nouveau quand vous le souhaitez.",
+      "cancelledLine": "Il ne figure plus au planning du salon. Vous pouvez en prendre un nouveau quand vous le souhaitez.",
       "pendingTitle": "Demande envoyée",
       "pendingLine": "{confirmation}. {hold}",
       "pendingHold": "Votre créneau est retenu ; rien à faire de votre côté.",
@@ -575,7 +575,7 @@
     },
     "recipients": {
       "title": "Qui d’autre les voit",
-      "team": "<strong>L’équipe de l’établissement</strong> — les personnes qui tiennent l’agenda et le comptoir.",
+      "team": "<strong>L’équipe de l’établissement</strong> — les personnes qui tiennent le planning et le comptoir.",
       "senders": "<strong>Les services d’envoi</strong> — un prestataire d’e-mail et un prestataire de SMS, qui reçoivent votre adresse ou votre numéro le temps de vous transmettre le message, et rien d’autre.",
       "paymentProvider": "<strong>Le prestataire de paiement</strong> — si vous réglez en ligne. Vos données de carte sont saisies chez lui et <strong>n’atteignent jamais nos serveurs</strong> : nous n’en conservons qu’une référence opaque, qui ne permet ni de rejouer un paiement ni de reconstituer un numéro.",
       "noSale": "Aucune donnée n’est vendue, échangée ou cédée à un tiers à des fins commerciales."

@@ -74,7 +74,7 @@ test.describe('Session du back-office', () => {
       await expirerAcces();
 
       await page
-        .getByRole('navigation', { name: 'Sections du tableau de bord' })
+        .getByRole('navigation', { name: 'Sections du back-office' })
         .getByRole('link', { name: 'Réglages' })
         .click();
 

@@ -38,7 +38,7 @@
     "schedule": "Time",
     "due": "Due",
     "settled": "Settled",
-    "fixedPrice": "Amount fixed at booking time. The total that counts is the one the server recalculates on validation — the front end never does that arithmetic."
+    "fixedPrice": "Amount fixed at booking time. The total that counts is the one recalculated when the sale is validated."
   },
   "badge": {
     "settled": "settled",
@@ -57,13 +57,13 @@
     "cashPhrase": "in cash",
     "cardPhrase": "by bank card (terminal)",
     "cardOnlinePhrase": "by bank card (online)",
-    "cashHint": "Recorded with the operator and a timestamp; the till is the reference at reconciliation.",
+    "cashHint": "Recorded with the operator and a timestamp; the register is the reference at reconciliation.",
     "cardHint": "The amount is keyed on the salon’s own bank terminal, which is not wired to the application. No card number is entered, seen or kept.",
     "unavailableTitle": "{method} unavailable"
   },
   "blocker": {
     "nothingToSettleTitle": "Nothing to settle",
-    "cancelled": "This appointment is cancelled: the slot has been released, there is no service left to settle.",
+    "cancelled": "This appointment is canceled: the slot has been released, there is no service left to settle.",
     "alreadySettled": "This appointment has already been settled: a second payment would create one accounting record too many.",
     "onlinePaymentOpen": "An online payment is still in flight on this appointment. Wait for it to conclude — a counter settlement would be refused while it runs.",
     "onlinePaymentFailed": "A failed online payment intent is still attached to this appointment. It must be cleared before settling at the counter."
@@ -81,7 +81,7 @@
     "settledLabel": "Already settled",
     "remainingLabel": "Left to pay",
     "priceDrift": "The receipt total ({ticket}) differs from the amount fixed at booking ({booked}). The receipt is what counts at checkout: announce that amount.",
-    "priceDriftAhead": "This service’s price changed since the booking: the catalogue says {catalogue}, the booking said {booked}. The receipt will be composed at the catalogue price — announce {charged}, and settle a part of it if the client owes something else.",
+    "priceDriftAhead": "This service’s price changed since the booking: the catalog says {catalogue}, the booking said {booked}. The receipt will be composed at the catalog price — announce {charged}, and settle a part of it if the client owes something else.",
     "settlementsTitle": "Recorded settlements",
     "settlementsCaption": "Settlements already recorded on this receipt",
     "settlementReference": "Terminal no. {reference}",
@@ -115,12 +115,12 @@
     "settleTerminalLoading": "Recording the settlement…"
   },
   "pci": {
-    "cash": "No call to the payment provider on this path: the sale is recorded with its operator and its timestamp, and the till is the reference at reconciliation.",
+    "cash": "No call to the payment provider on this path: the sale is recorded with its operator and its timestamp, and the register is the reference at reconciliation.",
     "card": "The salon’s terminal stands alone: the application does not talk to it and receives no card data. No number is entered here, nor written down anywhere else."
   },
   "receipt": {
     "recordedTitle": "Settlement recorded — {amount}",
-    "heading": "Till receipt",
+    "heading": "Register receipt",
     "loading": "Preparing the receipt…",
     "unavailableTitle": "Receipt unavailable",
     "retry": "Try again",
@@ -160,16 +160,16 @@
     "creditNote": "Credit note {index}",
     "settlementReference": "{method} — ref. {reference}",
     "thanks": "Thank you for your visit!",
-    "cashDisclaimer": "Settlement recorded and timestamped, with its operator. The till and the terminal’s printout are the reference at reconciliation."
+    "cashDisclaimer": "Settlement recorded and timestamped, with its operator. The register and the terminal’s printout are the reference at reconciliation."
   },
   "completion": {
     "settled": "Moving the appointment to “completed” stays a salon gesture: the settlement is recorded, the status is changed from the schedule."
   },
   "failure": {
-    "providerUnreachable": "The till did not answer. Nothing was taken: try again in a moment.",
+    "providerUnreachable": "The register did not answer. Nothing was taken: try again in a moment.",
     "alreadySettled": "This receipt has already been settled in full. Reload the screen before carrying on — a second payment would create one accounting record too many.",
-    "notPayable": "This appointment no longer accepts a settlement: it is cancelled. Nothing was taken.",
-    "notSettleable": "This appointment is cancelled: there is no service left to settle.",
+    "notPayable": "This appointment no longer accepts a settlement: it is canceled. Nothing was taken.",
+    "notSettleable": "This appointment is canceled: there is no service left to settle.",
     "overpayment": "That amount is more than what is left to pay on the receipt. Nothing was taken: reload the screen to read the remainder again.",
     "terminalReferenceRefused": "The terminal receipt number was refused: at most 32 alphanumeric characters, and it cannot look like a card number.",
     "tooManyRequests": "Too many requests in a short time. Wait a few seconds before trying again.",
@@ -189,11 +189,14 @@
     "historyWindowInvalid": "The requested period is empty: the end must come after the start.",
     "validation": "The receipt was refused: a line is incomplete or out of bounds. Check the quantities before trying again.",
     "notFound": "A service or an item on the receipt cannot be found in this salon.",
-    "forbidden": "Your account is not allowed to run the till. Ask the salon administrator for access.",
-    "unavailable": "The till is temporarily unreachable. The receipt was not recorded: try again in a moment."
+    "forbidden": "Your account is not allowed to run the register. Ask the salon administrator for access.",
+    "unavailable": "The register is temporarily unreachable. The receipt was not recorded: try again in a moment."
   },
   "pdf": {
     "notFound": "Receipt not found.",
     "failed": "The receipt could not be produced. Please try again."
+  },
+  "metadata": {
+    "title": "Checkout"
   }
 }

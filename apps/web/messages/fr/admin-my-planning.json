@@ -5,7 +5,7 @@
   "title": "Mon planning",
   "denied": {
     "title": "Accès réservé",
-    "hint": "Ce compte n’a pas d’agenda à consulter dans ce salon.",
+    "hint": "Ce compte n’a pas de planning à consulter dans ce salon.",
     "failedTitle": "Planning indisponible"
   },
   "noProfile": {

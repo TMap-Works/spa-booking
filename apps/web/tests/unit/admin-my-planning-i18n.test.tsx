@@ -341,7 +341,7 @@ describe('les gestes de la praticienne, rendus en anglais', () => {
     );
 
     expect(screen.getByRole('button', { name: 'Mark completed' })).toBeDefined();
-    expect(screen.getByRole('button', { name: 'Mark no show' })).toBeDefined();
+    expect(screen.getByRole('button', { name: 'Mark no-show' })).toBeDefined();
   });
 
   /** Le motif du refus se dit dans la langue courante, lui aussi — #1210. */

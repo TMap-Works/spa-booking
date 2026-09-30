@@ -69,5 +69,8 @@
     "failureTitle": "Saving failed",
     "unavailableTitle": "Preference unavailable",
     "unavailableBody": "Your account could not be read just now. Refresh the screen to set your language."
+  },
+  "metadata": {
+    "title": "Establishment settings"
   }
 }

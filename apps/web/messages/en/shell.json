@@ -22,7 +22,8 @@
     "title": "My account",
     "greeting": "Hello {firstName}",
     "signOut": "Sign out",
-    "signingOut": "Signing out…"
+    "signingOut": "Signing out…",
+    "metadataTemplate": "%s · My account"
   },
   "admin": {
     "metadataTitle": "Back office",
@@ -68,6 +69,7 @@
       "signedInAs": "Signed in as:",
       "signOut": "Sign out",
       "signingOut": "Signing out…"
-    }
+    },
+    "metadataTemplate": "%s · Back office"
   }
 }

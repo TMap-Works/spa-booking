@@ -1,3 +1,4 @@
+import type { Metadata } from 'next';
 import { getLocale, getTranslations } from 'next-intl/server';
 import { notFound, redirect } from 'next/navigation';
 
@@ -40,6 +41,19 @@ export const dynamic = 'force-dynamic';
 interface AdminInvitationPageProps {
   readonly params: Promise<{ readonly tenantSlug: string }>;
   readonly searchParams: Promise<Record<string, string | string[] | undefined>>;
+}
+
+/**
+ * Le titre de l'onglet de cet écran (#1329).
+ *
+ * Le gabarit de l'espace le situe — « … · Back-office ». Sans ce
+ * titre-ci, l'onglet portait le seul nom de l'espace, et deux écrans ouverts
+ * côte à côte étaient indiscernables.
+ */
+export async function generateMetadata(): Promise<Metadata> {
+  const t = await getTranslations('admin-auth');
+
+  return { title: t('invitation.metadataTitle') };
 }
 
 export default async function AdminInvitationPage({

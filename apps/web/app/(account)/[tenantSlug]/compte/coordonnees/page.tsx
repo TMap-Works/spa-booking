@@ -1,3 +1,6 @@
+import type { Metadata } from 'next';
+import { getTranslations } from 'next-intl/server';
+
 import { fetchOwnProfile } from '@/lib/api-client';
 import { isRenewalReturn, RENEWAL_PARAM } from '@/lib/session-refresh';
 
@@ -25,6 +28,19 @@ interface ProfilePageProps {
    * test, que Next n'est pas.
    */
   readonly searchParams?: Promise<{ readonly session?: string | readonly string[] }>;
+}
+
+/**
+ * Le titre de l'onglet de cet écran (#1329).
+ *
+ * Le gabarit de l'espace le situe — « … · Mon compte ». Sans ce
+ * titre-ci, l'onglet portait le seul nom de l'espace, et deux écrans ouverts
+ * côte à côte étaient indiscernables.
+ */
+export async function generateMetadata(): Promise<Metadata> {
+  const t = await getTranslations('account');
+
+  return { title: t('metadata.profile') };
 }
 
 export default async function ProfilePage({ params, searchParams }: ProfilePageProps) {

@@ -106,7 +106,7 @@ describe('les statuts de l’abonnement sont traduits (#1105)', () => {
     {
       statut: 'canceled',
       fr: 'Abonnement résilié',
-      en: 'Subscription cancelled',
+      en: 'Subscription canceled',
       action: { fr: 'Réactiver mon abonnement', en: 'Reactivate my subscription' },
     },
     {

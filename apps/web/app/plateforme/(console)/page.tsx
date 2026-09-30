@@ -1,4 +1,5 @@
 import { TENANT_BILLING_STATUSES, type Locale, type PlatformOverview } from '@spa/shared';
+import type { Metadata } from 'next';
 import { getLocale, getTranslations } from 'next-intl/server';
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
@@ -25,6 +26,19 @@ import {
 } from '../paths';
 import { readPlatformAccessToken } from '../session';
 import { PLATFORM_SESSION_END_PATH } from '../session/fin/path';
+
+/**
+ * Le titre de l'onglet de cet écran (#1329).
+ *
+ * Le gabarit de l'espace le situe — « … · Console plateforme ». Sans ce
+ * titre-ci, l'onglet portait le seul nom de l'espace, et deux écrans ouverts
+ * côte à côte étaient indiscernables.
+ */
+export async function generateMetadata(): Promise<Metadata> {
+  const t = await getTranslations('platform');
+
+  return { title: t('meta.dashboard') };
+}
 
 /**
  * Le tableau de bord de l'éditeur — l'écran d'arrivée de la console.

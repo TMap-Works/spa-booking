@@ -116,12 +116,21 @@ const adminFont = Inter({
  * du repli garde le `return main` nu dont #760 fait une prémisse vérifiable.
  */
 
-/** Le titre de l'onglet, dans la langue résolue (#845). */
+/**
+ * Le titre de l'onglet, dans la langue résolue (#845).
+ *
+ * `default` et `template` plutôt qu'un titre nu (#1329) : le back-office a seize
+ * écrans, et ils portaient tous « Back-office » dans l'onglet. Trois onglets
+ * ouverts sur le planning, le fichier client et les réglages étaient alors
+ * indiscernables — et un signet ne disait pas ce qu'il rouvrait. Chaque page pose
+ * désormais son propre titre, que ce gabarit situe : « Planning · Back-office ».
+ * `default` reste pour le layout lui-même, qui n'est l'écran de personne.
+ */
 export async function generateMetadata(): Promise<Metadata> {
   const t = await getTranslations('shell.admin');
 
   return {
-    title: t('metadataTitle'),
+    title: { default: t('metadataTitle'), template: t('metadataTemplate') },
     // Le back-office n'a rien à faire dans un index de recherche : ses pages ne
     // rendent rien sans session, et une URL indexée n'apporte que du trafic qui
     // rebondit sur un écran de connexion.

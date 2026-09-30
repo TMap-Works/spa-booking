@@ -63,7 +63,7 @@
       "action": "Update my card"
     },
     "canceled": {
-      "title": "Subscription cancelled",
+      "title": "Subscription canceled",
       "body": "Your salon is closed: online booking and the back office are suspended. Your services, your team and your client records are kept — everything reopens as soon as you reactivate.",
       "action": "Reactivate my subscription"
     }

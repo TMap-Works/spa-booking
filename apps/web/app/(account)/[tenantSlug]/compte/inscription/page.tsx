@@ -1,4 +1,6 @@
 import type { PublicTenant } from '@spa/shared';
+import type { Metadata } from 'next';
+import { getTranslations } from 'next-intl/server';
 
 import { SalonAuthScreen } from '@/components/auth/salon-auth-screen';
 
@@ -19,6 +21,19 @@ export const dynamic = 'force-dynamic';
 
 interface RegisterPageProps {
   readonly params: Promise<{ readonly tenantSlug: string }>;
+}
+
+/**
+ * Le titre de l'onglet de cet écran (#1329).
+ *
+ * Le gabarit de l'espace le situe — « … · Mon compte ». Sans ce
+ * titre-ci, l'onglet portait le seul nom de l'espace, et deux écrans ouverts
+ * côte à côte étaient indiscernables.
+ */
+export async function generateMetadata(): Promise<Metadata> {
+  const t = await getTranslations('account');
+
+  return { title: t('metadata.register') };
 }
 
 export default async function RegisterPage({ params }: RegisterPageProps) {

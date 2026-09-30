@@ -536,6 +536,29 @@ function spokenClock(slot: number, display: DisplayLocale, words: GridWords): st
   return clockLabel(slot * SLOT_MINUTES, display).replace(':', words.spokenSeparator);
 }
 
+/**
+ * Le point de fin de phrase, jamais doublé — « Praticien : Yanis B. » et non
+ * « Praticien : Yanis B.. » (#1329).
+ *
+ * Le nom accessible d'un bloc est une phrase à trous, et l'un de ces trous
+ * reçoit un nom de praticien. Or un nom d'affichage abrégé finit lui-même par un
+ * point : la ponctuation du message vient alors s'y ajouter, et le lecteur
+ * d'écran marque deux fois la fin de phrase.
+ *
+ * La correction est ici et non dans le catalogue parce que le message a raison :
+ * une phrase finit par un point, et la retirer laisserait « Praticien : Marie
+ * Dupont Statut : … » sans respiration dès que le nom n'est pas abrégé. C'est
+ * l'insertion qui doit se fondre, pas la phrase qui doit renoncer.
+ *
+ * Elle ne touche **que** la paire : les deux bornes de l'expression écartent les
+ * suites plus longues, si bien qu'un point de suspension — « Chargement… » écrit
+ * en trois points — traverse intact. La correction ne peut donc pas déborder sur
+ * une ponctuation qu'elle n'a pas causée.
+ */
+function withoutDoubledPeriod(sentence: string): string {
+  return sentence.replace(/(?<!\.)\.\.(?!\.)/g, '.');
+}
+
 /** « Rina A. » — la vue semaine n'a pas la largeur d'un nom complet. */
 export function shortClientName(client: Appointment['client']): string {
   const initial = client.lastName.charAt(0);
@@ -1282,7 +1305,7 @@ function labelsOf(
     // « Prestation » et « Praticien » sont les mots du tiroir de rendez-vous et
     // du comptoir d'encaissement : le planning nomme les mêmes objets de la même
     // façon, ce que `ds:coherence` demande.
-    detailLabel: fillMessage(words.detail, { service, staff: staffName }),
+    detailLabel: withoutDoubledPeriod(fillMessage(words.detail, { service, staff: staffName })),
     tooltip: `${timeRange} · ${fullClientName} · ${service} · ${staffName}`,
   };
 }

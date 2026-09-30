@@ -704,6 +704,29 @@ describe('la vue semaine dit le praticien et la prestation qu’elle ne montre p
     expect(event?.detailLabel).toBe('Prestation : Soin du visage. Praticien : Hasina.');
   });
 
+  it('ne double pas le point quand le nom du praticien finit déjà par un', () => {
+    // Un nom d'affichage abrégé — « Yanis B. » — apporte sa propre ponctuation,
+    // et celle du message venait s'y ajouter : le lecteur d'écran annonçait
+    // « Yanis B.. Statut : … », deux fins de phrase pour une (#1329).
+    const event = eventsOf(
+      cellsOfWednesday([
+        mercredi({ staff: { id: 'y1', displayName: 'Yanis B.' }, serviceName: 'Barbe' }),
+      ]),
+    )[0];
+
+    expect(event?.detailLabel).toBe('Prestation : Barbe. Praticien : Yanis B.');
+  });
+
+  it('laisse intacte une suite de trois points saisie par le salon', () => {
+    // La correction ne vaut que pour la **paire** : trois points ne sont pas une
+    // ponctuation doublée, et rien ne doit les abréger.
+    const event = eventsOf(
+      cellsOfWednesday([mercredi({ staff: HASINA, serviceName: 'Soin... suite' })]),
+    )[0];
+
+    expect(event?.detailLabel).toBe('Prestation : Soin... suite. Praticien : Hasina.');
+  });
+
   it('rend dans l’infobulle ce que le bloc abrège — l’heure de fin et le nom entier', () => {
     const event = eventsOf(
       cellsOfWednesday([

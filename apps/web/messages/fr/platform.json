@@ -1,6 +1,12 @@
 {
   "meta": {
-    "title": "Console plateforme"
+    "title": "Console plateforme",
+    "template": "%s · Console plateforme",
+    "dashboard": "Vue d’ensemble",
+    "tenants": "Salons",
+    "create": "Ouvrir un salon",
+    "record": "Fiche du salon",
+    "login": "Se connecter"
   },
   "shell": {
     "title": "Console plateforme",
@@ -150,7 +156,7 @@
     },
     "table": {
       "name": "Salon",
-      "address": "Adresse",
+      "address": "Adresse de la page",
       "zoneCurrency": "Fuseau · devise",
       "openedOn": "Ouvert le",
       "billing": "Facturation",
@@ -388,7 +394,7 @@
     "legal": {
       "label": "Identité légale (ticket de caisse)",
       "done": "Raison sociale et identifiant renseignés.",
-      "todo": "Raison sociale ou SIRET / NIF manquant."
+      "todo": "Raison sociale ou identifiant fiscal manquant."
     },
     "firstAppointment": {
       "label": "Premier rendez-vous",

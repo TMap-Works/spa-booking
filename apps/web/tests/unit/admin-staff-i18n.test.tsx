@@ -260,6 +260,6 @@ describe('le panneau des prestations, rendu en anglais', () => {
   it('dit le catalogue vide plutôt que de rendre une liste sans ligne', () => {
     render(<StaffServicesPanel services={[]} staffId="s1" tenantSlug="salon-lotus" />);
 
-    expect(screen.getByText('Empty catalogue')).toBeDefined();
+    expect(screen.getByText('Empty catalog')).toBeDefined();
   });
 });

@@ -15,13 +15,18 @@ import '../../styles/admin/index.css';
  * du texte visible comme un autre. D'où `generateMetadata` plutôt qu'une
  * constante — `getTranslations` est asynchrone, et l'objet `metadata` statique ne
  * peut pas l'attendre.
+ *
+ * `default` et `template` plutôt qu'un titre nu (#1329) : les cinq écrans de la
+ * console portaient tous « Console plateforme », et l'onglet ne disait pas si
+ * l'on regardait la liste des salons ou la fiche de l'un d'eux. Le gabarit situe
+ * le titre que chaque page pose, « Fiche du salon · Console plateforme ».
  */
 
 export async function generateMetadata(): Promise<Metadata> {
   const t = await getTranslations('platform');
 
   return {
-    title: t('meta.title'),
+    title: { default: t('meta.title'), template: t('meta.template') },
     robots: { index: false, follow: false },
   };
 }
