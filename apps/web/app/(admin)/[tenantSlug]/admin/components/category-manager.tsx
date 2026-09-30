@@ -82,14 +82,17 @@ import { useAdminSessionRenewal } from './use-admin-session-renewal';
  *
  * Elles existent pour la raison exposée dans `service-form.tsx` : `zodErrorMap`
  * ne traduit **pas** les messages qu'un schéma du contrat écrit lui-même
- * (`zod-messages.ts` le dit, et c'est voulu), si bien que « ce champ est
- * obligatoire » et « slug attendu en minuscules… » s'affichaient en français
- * sous un formulaire anglais. La règle reste celle du contrat — les bornes du
- * nom sont les siennes, l'adresse est validée par `slugSchema` lui-même ; seule
- * la phrase vient de l'écran.
+ * (`zod-messages.ts` le dit, et c'est voulu), si bien que « slug attendu en
+ * minuscules… » s'affichait en français sous un formulaire anglais. La règle
+ * reste celle du contrat — les bornes du nom sont les siennes, l'adresse est
+ * validée par `slugSchema` lui-même ; seule la phrase vient de l'écran.
+ *
+ * Le refus du **nom vide** a quitté cette liste en #1373 : ce n'était pas une
+ * phrase du schéma mais la phrase générique de `zodErrorMap`, dont le catalogue
+ * portait une copie mot pour mot. Même arbitrage que `service-form.tsx`, où il
+ * est écrit au long.
  */
 interface CategoryFormMessages {
-  readonly nameRequired: string;
   readonly nameTooLong: string;
   readonly slug: string;
   readonly slugReserved: string;
@@ -133,10 +136,12 @@ function slugRefusal(
 
 function categoryFormSchema(messages: CategoryFormMessages) {
   return z.object({
+    // Le plancher sans message : `zodErrorMap` répond, et
+    // `validationPhrases(locale).required` décide seule de la phrase (#1373).
     name: z
       .string()
       .trim()
-      .min(1, { message: messages.nameRequired })
+      .min(1)
       .max(DISPLAY_NAME_MAX_LENGTH, { message: messages.nameTooLong }),
     // Même branchement que `service-form.tsx` : vide vaut « dérive-la du nom »,
     // sinon c'est `slugSchema` qui tranche.
@@ -310,7 +315,8 @@ export function CategoryForm({
   /*
    * Deux sources de refus, et les deux sont dans la langue de l'écran (#849) :
    * les phrases de la fabrique ci-dessus, et celles que **zod** écrit pour les
-   * bornes du contrat — la description trop longue —, par `zodErrorMap`.
+   * bornes du contrat — la description trop longue, et le nom vide depuis
+   * #1373 —, par `zodErrorMap`.
    *
    * `path` et `async` ne sont là que pour le **typage** de
    * `@hookform/resolvers`, qui déclare `ParseParams` entier là où zod n'en lit
@@ -321,7 +327,6 @@ export function CategoryForm({
     () =>
       zodResolver(
         categoryFormSchema({
-          nameRequired: t('errors.nameRequired'),
           nameTooLong: t('errors.nameTooLong', { max: DISPLAY_NAME_MAX_LENGTH }),
           slug: t('errors.slug'),
           slugReserved: t('errors.slugReserved'),

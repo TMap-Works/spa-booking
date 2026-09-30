@@ -97,6 +97,29 @@ import type { Locale } from '../locale/index';
 
 /** Les tournures dont dépendent les bornes — « au moins 3 caractères ». */
 interface Phrases {
+  /**
+   * Le champ laissé vide — et la **seule** source de cette phrase (#1373).
+   *
+   * Trois formulaires du back-office en portaient une copie dans leur catalogue,
+   * mot pour mot identique dans les deux langues, sans que rien ne relie les deux
+   * sources : le nom d'une prestation, celui d'une rubrique, les nom et prénom
+   * d'une fiche cliente. La copie n'était pas un accident — les formulaires ont
+   * bien à écrire les phrases que `zodErrorMap` ne peut pas traduire, celles
+   * qu'un schéma du contrat pose lui-même (voir `messageKey` plus bas) — mais
+   * celle-ci n'en est pas : c'est la phrase générique rendue ici même sur un
+   * `too_small` de plancher 1. Le `.min(1)` de ces trois schémas ne porte donc
+   * plus de message. Deux tests tiennent la décision : un catalogue qui redirait
+   * cette phrase fait rougir `apps/web/tests/unit/messages-glossary.test.ts`, et
+   * un formulaire qui reposerait un message local fait rougir les suites de rendu
+   * qui la **lisent** ici (`admin-catalog-i18n`, `admin-clients-i18n`,
+   * `erreur-de-champ-suit-la-langue`).
+   *
+   * Elle reste un **constat** — « Ce champ est obligatoire. » — là où le
+   * glossaire du produit préfère dire quoi faire. L'arbitrage est écrit dans
+   * `apps/web/messages/README.md` : une phrase générique ne peut pas instruire un
+   * champ qu'elle ne nomme pas, et une phrase par champ serait exactement la
+   * duplication que #1373 retire.
+   */
   readonly required: string;
   readonly invalid: string;
   readonly email: string;

@@ -1,12 +1,13 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import type {
-  Customer,
-  CustomerPage,
-  CustomerSummary,
-  CustomerVisitHistory,
-  PublicTenant,
+import {
+  validationPhrases,
+  type Customer,
+  type CustomerPage,
+  type CustomerSummary,
+  type CustomerVisitHistory,
+  type PublicTenant,
 } from '@spa/shared';
 import { cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -358,13 +359,13 @@ describe('les deux formulaires d’écriture de la fiche, rendus en anglais', ()
 
     // Le refus se lit en anglais, sur le champ. Le schéma du formulaire reprend
     // la **règle** du contrat — plancher à un caractère après découpe des blancs,
-    // plafond à `NAME_MAX_LENGTH` — mais emprunte sa **phrase** au catalogue :
-    // les messages de `nameSchema` sont des littéraux français que `zodErrorMap`
-    // ne traduit pas, et « Ce champ est obligatoire. » s'affichait tel quel sous
-    // ce formulaire anglais. Et l'action ne part pas.
+    // plafond à `NAME_MAX_LENGTH` —, et depuis #1373 sa **phrase** aussi : le
+    // plancher ne porte plus de message, `zodErrorMap(locale)` répond, et
+    // `validationPhrases(locale).required` en décide seule. Elle est donc lue au
+    // contrat et non recopiée ici. Et l'action ne part pas.
     expect(updateCustomerAction).not.toHaveBeenCalled();
-    expect(screen.getByText('This field is required.')).toBeDefined();
+    expect(screen.getByText(validationPhrases('en').required)).toBeDefined();
     expect(screen.queryByText(/caractères/)).toBeNull();
-    expect(screen.queryByText(/obligatoire/)).toBeNull();
+    expect(screen.queryByText(validationPhrases('fr').required)).toBeNull();
   });
 });

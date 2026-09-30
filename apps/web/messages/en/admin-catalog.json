@@ -126,7 +126,6 @@
     "failureTitle": "Saving failed",
     "priceExample": "35.00",
     "errors": {
-      "nameRequired": "This field is required.",
       "nameTooLong": "This field is {max} characters at most.",
       "slug": "An address in lowercase letters, digits and single hyphens is expected.",
       "slugReserved": "This name is reserved by the platform — choose another one.",
@@ -181,7 +180,6 @@
     "savedBody": "The salon’s public page now reflects this information.",
     "failureTitle": "Saving failed",
     "errors": {
-      "nameRequired": "This field is required.",
       "nameTooLong": "This field is {max} characters at most.",
       "slug": "An address in lowercase letters, digits and single hyphens is expected.",
       "slugReserved": "This name is reserved by the platform — choose another one.",

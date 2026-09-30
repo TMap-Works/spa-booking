@@ -108,7 +108,6 @@
     "saving": "Saving…",
     "cancel": "Cancel",
     "errors": {
-      "required": "This field is required.",
       "tooLong": "This field is {max} characters at most."
     }
   },

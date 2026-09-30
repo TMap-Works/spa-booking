@@ -66,34 +66,38 @@ import { useAdminSessionRenewal } from '../../components/use-admin-session-renew
  * les bornes dans la langue de qui saisit.
  */
 
-/** Les deux phrases que ce formulaire écrit lui-même, dans la langue de l'écran. */
+/** La phrase que ce formulaire écrit lui-même, dans la langue de l'écran. */
 interface ContactFormMessages {
-  readonly required: string;
   readonly tooLong: string;
 }
 
 /**
- * Le schéma du formulaire — **les bornes du contrat, les phrases du catalogue**.
+ * Le schéma du formulaire — **les bornes du contrat, le plafond dit au catalogue**.
  *
- * Il n'emploie plus `nameSchema` directement, et c'est le même arbitrage que
+ * Il n'emploie pas `nameSchema` directement, et c'est le même arbitrage que
  * `ServiceForm` (#849) : `zodErrorMap` ne traduit pas les messages qu'un schéma
- * écrit lui-même, et ceux de `nameSchema` sont des littéraux français. « ce
- * champ est obligatoire » s'affichait donc tel quel sous un formulaire anglais —
- * constat fait au navigateur pendant la recette de #852.
+ * écrit lui-même, et ceux de `nameSchema` sont des littéraux français.
  *
  * Ce qui ne change pas : la **règle** reste celle du contrat. Le plancher est le
  * même — un caractère après découpe des blancs —, et le plafond est
- * `NAME_MAX_LENGTH`, lu et non recopié. Seule la phrase change de main.
+ * `NAME_MAX_LENGTH`, lu et non recopié.
  *
- * Traduire les littéraux de `packages/shared` serait la vraie correction ; elle
- * concerne tous les écrans déjà traduits et fait l'objet d'un suivi, pas de ce
- * ticket.
+ * ## Le champ vide redit la phrase du contrat — #1373
+ *
+ * Le plancher portait « Ce champ est obligatoire. », prise au catalogue
+ * `admin-clients`, mot pour mot identique à `validationPhrases(locale).required`
+ * sans que rien ne relie les deux. Ce n'était pas une phrase de `nameSchema` —
+ * c'est la phrase **générique** que `zodErrorMap` rend sur un `too_small` de
+ * plancher 1, traduite dans les deux langues. Le `.min(1)` n'a donc plus de
+ * message, et une seule source en décide. Le plafond garde le sien : sa
+ * formulation n'est pas celle du contrat (« Ce champ fait au plus … » contre
+ * « Ne dépassez pas … »), il n'y a là aucune copie à empêcher.
  */
 function contactFormSchema(messages: ContactFormMessages) {
   const name = z
     .string()
     .trim()
-    .min(1, { message: messages.required })
+    .min(1)
     .max(NAME_MAX_LENGTH, { message: messages.tooLong });
 
   return z.object({
@@ -128,16 +132,15 @@ export function ClientContactForm({ tenantSlug, customer }: ClientContactFormPro
   // sans rien changer. `path` et `async` ne sont là que pour le **typage** de
   // `@hookform/resolvers`, qui déclare `ParseParams` entier là où zod n'en lit
   // qu'une partie.
-  const required = t('errors.required');
   const tooLong = t('errors.tooLong', { max: NAME_MAX_LENGTH });
   const resolver = useMemo(
     () =>
-      zodResolver(contactFormSchema({ required, tooLong }), {
+      zodResolver(contactFormSchema({ tooLong }), {
         errorMap: zodErrorMap(locale),
         path: [],
         async: true,
       }),
-    [locale, required, tooLong],
+    [locale, tooLong],
   );
 
   const {
