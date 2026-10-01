@@ -61,6 +61,7 @@ import {
   rescheduleAppointment,
   updateOwnProfile,
 } from '@/lib/api-client';
+import { unknownTenantRefusal } from '@/lib/tenant-refusal';
 
 import {
   attachAccountLocaleCookies,
@@ -122,17 +123,21 @@ function invalid(message: string): Failure {
  * code suffit donc à leur faire dire la bonne phrase, dans la langue du rendu,
  * sans qu'aucun ait à reconnaître quoi que ce soit de particulier.
  *
- * La phrase posée ici est celle du contrat, comme `failure()` le fait : elle
- * n'est presque jamais affichée telle quelle, mais elle reste ce que le contrat
- * d'une action promet, et un appelant qui n'aurait que le résultat doit y
- * trouver une phrase déjà dans sa langue.
+ * ## Le corps est partagé depuis #1395, le type reste celui d'ici
+ *
+ * Ce refus a vécu en trois copies — celle-ci, celle du back-office, celle du tunnel
+ * public —, et #1395 a tranché en les ramenant à `lib/tenant-refusal.ts`, où
+ * l'arbitrage est écrit. Il est **synchrone et prend la langue**, comme cette
+ * fonction l'a toujours été : un module `'use server'` n'exporte que des fonctions
+ * asynchrones, et les actions d'ici ont déjà lu la langue de la requête pour
+ * `failure()`.
+ *
+ * Ce qui reste ici est le type : `Failure`, c'est-à-dire sans `details` — cet espace
+ * ne lit pas le corps d'erreur de l'API, et le champ du back-office ne descend pas
+ * jusqu'à lui.
  */
 function unknownTenant(locale: Locale): Failure {
-  return {
-    ok: false,
-    code: ERROR_CODES.TENANT_NOT_FOUND,
-    message: errorMessage(ERROR_CODES.TENANT_NOT_FOUND, locale),
-  };
+  return unknownTenantRefusal(locale);
 }
 
 /**
