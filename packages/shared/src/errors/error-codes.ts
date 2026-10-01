@@ -117,7 +117,8 @@
  * La règle se lit donc : **tout code de ce fichier a un émetteur nommé**. Pour
  * les dix familles de domaine, c'est une sous-classe de `DomainError` d'`apps/api`,
  * et `api-error-codes.spec.ts` le vérifie en relisant les sources. Pour la
- * onzième, c'est une action serveur d'`apps/web`, nommée dans la documentation du
+ * onzième, c'est une action serveur — ou, depuis #1394, un Route Handler —
+ * d'`apps/web`, nommée dans la documentation du
  * code — le garde ne peut pas la vérifier de la même façon, puisqu'il chasse
  * précisément les littéraux de codes dans `apps/web` et n'y trouvera donc jamais
  * qu'une lecture de cette constante.
@@ -696,8 +697,11 @@ export const REPORTING_ERROR_CODES = {
 } as const;
 
 /**
- * Les refus que les **actions serveur d'`apps/web`** opposent d'elles-mêmes,
- * avant tout appel à l'API — #1372.
+ * Les refus qu'**`apps/web` oppose lui-même**, avant tout appel à l'API — #1372.
+ *
+ * Ses actions serveur, et depuis #1394 deux de ses **Route Handlers** : la
+ * frontière n'est pas la forme du point d'entrée mais le fait que le refus précède
+ * l'appel. La notice de `TENANT_NOT_FOUND`, ci-dessous, nomme les douze émetteurs.
  *
  * La onzième famille, et la seule dont l'émetteur n'est pas `apps/api`. Elle
  * existe pour une raison précise, et c'est le quatrième critère de #1372 que de
@@ -748,7 +752,7 @@ export const WEB_ACTION_ERROR_CODES = {
   /**
    * L'établissement désigné par l'URL n'est pas un établissement que nous
    * puissions nommer — le seul chemin qui l'émette aujourd'hui est un slug que
-   * `slugSchema` refuse, jugé par l'action avant tout appel.
+   * `slugSchema` refuse, jugé par l'action ou la route avant tout appel.
    *
    * Ses émetteurs sont les modules d'actions serveur d'`apps/web` qui jugent ce
    * slug : le planning et le comptoir depuis #1372, puis le catalogue, les
@@ -756,39 +760,48 @@ export const WEB_ACTION_ERROR_CODES = {
    * et depuis #1379 les deux derniers du back-office — ses actions transverses
    * (`admin/actions.ts` : connexion, déconnexion, réglages de l'établissement,
    * pages hébergées de l'abonnement, acceptation d'invitation) et la langue du
-   * compte connecté (`admin/reglages/actions.ts`). #1391 y ajoute le **neuvième et
+   * compte connecté (`admin/reglages/actions.ts`). #1391 y ajoute le **dixième et
    * dernier**, seul module d'une surface non authentifiée : le tunnel public de
    * réservation (`app/(booking)/[tenantSlug]/reservation/actions.ts`,
    * `loadAvailabilityAction`), qui jugeait le slug du même `if` que sa charge utile
    * et rendait `VALIDATION_ERROR` sous une phrase écrite à lui.
    *
-   * La liste est donc **close**, et sans la réserve que #1379 devait encore
-   * poser : plus aucun module d'actions serveur d'`apps/web` ne juge ce slug
-   * autrement, back-office, espace client et tunnel public confondus.
-   *
-   * « Module d'actions serveur » est à prendre au mot, et le dire vaut mieux que
-   * de laisser croire au compte rond : deux **Route Handlers** jugent encore ce
-   * slug et rendent `VALIDATION_ERROR` sous la phrase de leur geste — la
-   * réservation (`app/(account)/[tenantSlug]/compte/reservation/route.ts`,
-   * `tunnel.actions.bookingIncomplete`) et l'annulation
-   * (`…/compte/rendez-vous/[appointmentId]/annulation/route.ts`, qui le juge en
-   * outre du même `if` que l'identifiant du rendez-vous). Ce sont les deux
+   * Et depuis #1394, les **deux Route Handlers** de l'espace client que #1391
+   * devait encore mettre en réserve : la réservation
+   * (`app/(account)/[tenantSlug]/compte/reservation/route.ts`) et l'annulation
+   * (`…/compte/rendez-vous/[appointmentId]/annulation/route.ts`). Ce sont les deux
    * actions que #1201 et #1207 ont converties en routes, faute de pouvoir joindre
-   * le jeton de la cliente depuis une action ; le défaut les a suivies, et leur
-   * reprise est un autre geste que celui-ci. La troisième route qui juge ce slug,
-   * le PDF de ticket du comptoir
-   * (`…/admin/encaissement/ticket/[saleId]/route.ts`), est hors de cause : elle
-   * rend un `404` sans code de contrat.
+   * le jeton de la cliente depuis une action ; le défaut les avait suivies hors du
+   * périmètre que cette notice auditait, « module d'actions serveur » étant à
+   * prendre au mot.
+   *
+   * La liste est donc close **des deux côtés**, et sans réserve : douze émetteurs,
+   * dix modules d'actions serveur et deux Route Handlers, et plus aucune surface
+   * d'`apps/web` — publique ou authentifiée, action ou route — ne juge ce slug sous
+   * le code du refus de saisie. La troisième route qui le juge, le PDF de ticket du
+   * comptoir (`…/admin/encaissement/ticket/[saleId]/route.ts`), reste hors de
+   * cause : elle rend un `404` sans code de contrat.
    *
    * Ils sont nommés parce que l'invariant de ce fichier l'exige — « tout code de
    * ce fichier a un émetteur nommé » —, et ils le restent : ce code ne vaut que
    * pour le refus rendu par le front, jamais pour une réponse de l'API.
    *
+   * ## Le **statut** des deux routes n'est pas déclaré ici, et c'est la règle
+   *
+   * Un module d'actions ne rend qu'un résultat ; une route porte un statut HTTP, et
+   * #1394 a eu à le trancher — c'est la seule chose que les dix précédents
+   * n'avaient pas eue. Ce n'est pas à ce fichier de le dire : l'en-tête ci-dessus
+   * l'écrit, *« ce fichier n'est pas une table de correspondance vers des statuts
+   * HTTP »*, et l'y inscrire ouvrirait la seconde source de vérité qu'il refuse.
+   * Les deux routes rendent **404**, et la raison se lit dans leurs en-têtes : c'est
+   * déjà ce que l'API répond à cette cause exacte, slug mal formé compris
+   * (`tenant-scope.middleware.ts`).
+   *
    * ## Il ne renseigne personne, et c'est ce qui l'autorise
    *
-   * Il ne dit pas qu'un établissement existe ou non : l'action n'interroge
-   * l'API sur rien pour le rendre, elle constate que le segment d'URL n'a pas la
-   * forme d'une adresse de salon. Aucun oracle, donc, et rien de ce que
+   * Il ne dit pas qu'un établissement existe ou non : ni l'action ni la route
+   * n'interrogent l'API pour le rendre, elles constatent que le segment d'URL n'a
+   * pas la forme d'une adresse de salon. Aucun oracle, donc, et rien de ce que
    * `tenant-isolation` §4 interdit. La frontière d'établissement, elle, reste
    * gardée par l'API et par elle seule, qui refuse la ressource du voisin en
    * `NOT_FOUND` sans jamais la distinguer d'une ressource inexistante.

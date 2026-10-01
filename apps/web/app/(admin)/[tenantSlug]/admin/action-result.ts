@@ -217,12 +217,10 @@
  * saisie.** La liste des émetteurs de `WEB_ACTION_ERROR_CODES.TENANT_NOT_FOUND` est
  * close, et c'est là qu'elle se lit.
  *
- * « Module d'actions serveur » est à prendre au mot, et la réserve est écrite au
- * même endroit que la liste : deux **Route Handlers** de l'espace client jugent
- * encore ce slug sous `VALIDATION_ERROR` — la réservation et l'annulation, que
- * #1201 et #1207 ont converties en routes pour joindre le jeton de la cliente. Le
- * défaut les a suivies hors de la classe que ce fil referme, et leur reprise est un
- * autre geste. Ne pas lire la phrase en gras ci-dessus comme un compte rond.
+ * « Module d'actions serveur » était à prendre au mot, et #1391 avait dû poser la
+ * réserve au même endroit que la liste : deux **Route Handlers** de l'espace client
+ * jugeaient encore ce slug sous `VALIDATION_ERROR`. Elle est retirée — voir la
+ * section suivante, qui est ce qui l'a levée.
  *
  * Ce module-ci n'y est pour rien d'autre que son en-tête, et c'est voulu : le tunnel
  * ne l'emploie pas. Il a son propre fabricant de refus — son `ActionResult` n'a pas
@@ -241,6 +239,43 @@
  * contrat ne sachant pas dire de quelle demande il s'agissait. L'argumentaire
  * complet, surface publique comprise, est en tête de
  * `app/(booking)/[tenantSlug]/reservation/actions.ts`.
+ *
+ * ## …et les deux Route Handlers lèvent la réserve — #1394
+ *
+ * La clôture de #1391 était bornée aux **modules d'actions serveur**, et portait sa
+ * réserve : la réservation
+ * (`app/(account)/[tenantSlug]/compte/reservation/route.ts`) et l'annulation
+ * (`…/compte/rendez-vous/[appointmentId]/annulation/route.ts`) de l'espace client
+ * jugeaient encore le slug sous `VALIDATION_ERROR`, la seconde **du même `if`** que
+ * l'identifiant du rendez-vous. Ce sont les deux actions que #1201 et #1207 ont
+ * converties en routes, faute de pouvoir joindre le jeton de la cliente depuis une
+ * action appelée sur `/{slug}/reservation` ; le défaut les avait suivies hors du
+ * périmètre que cet en-tête auditait.
+ *
+ * Elles portent `TENANT_NOT_FOUND` désormais, le slug jugé seul et en premier, et la
+ * phrase du contrat. **La liste des émetteurs est close des deux côtés** — dix
+ * modules d'actions serveur et deux Route Handlers, soit douze —, et plus aucune
+ * surface d'`apps/web` ne refuse l'établissement inconnu sous le code du refus de
+ * saisie. Elle se lit, comme toujours, dans `WEB_ACTION_ERROR_CODES`
+ * (`packages/shared/src/errors/error-codes.ts`).
+ *
+ * Ce que ces deux-là ont eu à trancher en plus des dix, et qui ne pouvait pas se
+ * déduire d'elles : **le statut HTTP**. Un module d'actions rend un résultat sans
+ * statut — c'est ce que {@link AdminActionResult} est —, une route en porte un, et le
+ * contrat partagé ne le fixe pas (l'en-tête d'`error-codes.ts` : *« ce fichier n'est
+ * pas une table de correspondance vers des statuts HTTP »*). **404 et non 400**,
+ * pour trois raisons qui sont écrites en tête de la route d'annulation : l'API répond
+ * déjà 404 à cette cause exacte, slug mal formé compris
+ * (`tenant-scope.middleware.ts`), la troisième route du dépôt qui juge ce slug le
+ * rend déjà ainsi (`admin/encaissement/ticket/[saleId]/route.ts`), et un 400 dit que
+ * la **charge utile** est mal formée — la confusion même que ce fil a corrigée douze
+ * fois au niveau du code, et qu'il aurait laissée debout au niveau du statut.
+ *
+ * Ce module n'est toujours pas celui que ces routes emploient : elles ont leur propre
+ * fabricant de refus, qui pose un statut en plus du code et du message. Ce qui se dit
+ * ici vaut pour les douze — **un code du contrat, et sa phrase lue dans la table
+ * bilingue** —, et c'est la raison pour laquelle cet en-tête est l'endroit où la
+ * classe se tient.
  */
 
 import { ERROR_CODES, errorMessage, type Locale } from '@spa/shared';
