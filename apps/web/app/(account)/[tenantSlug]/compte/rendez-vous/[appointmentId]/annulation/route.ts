@@ -43,6 +43,59 @@ import type { CancellationOutcome } from './cancellation-request';
  * Même règle que `compte/actions.ts` : `FORBIDDEN` devient `NOT_FOUND`, code et
  * message compris. Rendre le 403 tel quel apprendrait à qui l'obtient que le
  * rendez-vous, lui, existe.
+ *
+ * ## L'établissement illisible se juge seul, et se rend en 404 — #1394
+ *
+ * Cette route était, avec `compte/reservation/route.ts`, l'une des deux surfaces
+ * que la classe ouverte par #1372 et refermée par #1391 avait laissées dehors :
+ * dix **modules d'actions serveur** rendaient `TENANT_NOT_FOUND`, et ces deux
+ * **Route Handlers** jugeaient encore le même slug sous `VALIDATION_ERROR`. Le
+ * défaut les avait suivies quand #1201 et #1207 les ont converties en routes,
+ * faute de pouvoir joindre le jeton de la cliente depuis une action, et il est
+ * sorti du périmètre que les en-têtes d'`admin/action-result.ts` et de
+ * `WEB_ACTION_ERROR_CODES` auditaient — ces deux-là parlaient de « modules
+ * d'actions serveur », au mot près.
+ *
+ * Ici le symptôme était le plus net des douze : le slug se jugeait **du même `if`**
+ * que l'identifiant du rendez-vous, si bien que le refus rendu dépendait de
+ * l'ordre des tests d'un `||`, et qu'un segment d'URL qui ne désigne aucun
+ * établissement se disait « La demande d'annulation est incomplète. ». Les deux
+ * gardes sont séparées, et le slug passe le premier — un identifiant jugé sur une
+ * adresse qui ne mène nulle part enverrait chercher une faute qu'on n'a pas
+ * commise. L'identifiant n'est même plus lu dans ce cas.
+ *
+ * ### Le statut, que ce fichier décide et que le contrat ne dit pas
+ *
+ * Un module d'actions ne rend qu'un résultat ; une route porte un **statut**, et
+ * c'est la seule chose que les dix précédents n'avaient pas eu à trancher. Le
+ * contrat partagé ne le tranche pas pour nous — l'en-tête d'`error-codes.ts`
+ * l'écrit : *« ce fichier n'est pas une table de correspondance vers des statuts
+ * HTTP »*. **404, et non le 400 d'avant** :
+ *
+ * - **l'API répond déjà 404 à cette cause exacte**, slug mal formé compris.
+ *   `tenant-scope.middleware.ts` fond en un seul 404 « slug inconnu »,
+ *   « établissement désactivé », « slug mal formé » et « sous-domaine en
+ *   désaccord », *« quatre refus qu'il n'y a aucune raison de laisser
+ *   distinguer »*. Une route qui refuse **avant** d'appeler doit rendre ce que
+ *   l'appel aurait rendu : en 400, le statut devenait à lui seul le discriminant
+ *   que ce commentaire-là refuse de laisser lire — 400 pour « refusé par
+ *   `slugSchema` », 404 pour « refusé par la table `tenants` » ;
+ * - **c'est déjà ce que rend la troisième route qui juge ce slug**, le PDF de
+ *   ticket du comptoir (`admin/encaissement/ticket/[saleId]/route.ts`), sur le
+ *   même `safeParse` en échec. Elle avait tranché seule ; les deux autres s'y
+ *   alignent ;
+ * - **400 dit que la charge utile est mal formée**, et c'est exactement la
+ *   confusion que ce fil a corrigée dix fois au niveau du *code*. La laisser
+ *   debout au niveau du *statut* l'aurait reconduite d'un cran plus bas.
+ *
+ * Le refus de l'**identifiant**, lui, garde `VALIDATION_ERROR` **et** 400 : c'est
+ * bien une charge utile mal formée, et sa phrase reste celle du catalogue, qui
+ * dit de quelle demande il s'agissait là où le contrat ne le sait pas (règle de
+ * #1391, en tête de `(booking)/[tenantSlug]/reservation/actions.ts`).
+ *
+ * Aucun appelant ne lit le statut, et cela a été vérifié plutôt que supposé :
+ * `cancellation-request.ts` relit le **corps** quel que soit le statut, et
+ * l'écran trie sur le `code`.
  */
 export const dynamic = 'force-dynamic';
 
@@ -67,6 +120,26 @@ function refusalOf(error: unknown, locale: Locale): [string, string, number] {
   return [code, errorMessage(code, locale), status];
 }
 
+/**
+ * Refus faute d'établissement : le slug de l'URL n'en désigne aucun — #1394.
+ *
+ * Le jumeau de ce que le back-office (`admin/action-result.ts`), l'espace client
+ * (`compte/actions.ts`) et le tunnel public (`(booking)/…/reservation/actions.ts`)
+ * rendent déjà, à la seule chose près qu'une route ajoute : le **statut**. Code,
+ * statut et provenance de la phrase sont instruits en tête de ce module.
+ *
+ * La phrase vient du contrat partagé et non du catalogue de cet espace : « Cet
+ * établissement est introuvable. » est exactement ce qu'il y a à dire, et le
+ * contrat le dit dans les deux langues (règle de #1391).
+ */
+function unknownTenant(locale: Locale): NextResponse {
+  return refused(
+    ERROR_CODES.TENANT_NOT_FOUND,
+    errorMessage(ERROR_CODES.TENANT_NOT_FOUND, locale),
+    404,
+  );
+}
+
 export async function POST(
   _request: Request,
   context: { params: Promise<{ tenantSlug: string; appointmentId: string }> },
@@ -74,9 +147,17 @@ export async function POST(
   const { tenantSlug, appointmentId } = await context.params;
   const locale = (await getLocale()) as Locale;
   const slug = slugSchema.safeParse(tenantSlug);
+
+  // Le slug se juge **seul et en premier** (#1394) : il ne partage plus son `if`
+  // avec l'identifiant du rendez-vous, et celui-ci n'est pas même lu tant que
+  // l'adresse ne désigne aucun établissement.
+  if (!slug.success) {
+    return unknownTenant(locale);
+  }
+
   const id = uuidSchema.safeParse(appointmentId);
 
-  if (!slug.success || !id.success) {
+  if (!id.success) {
     const t = await getTranslations('account.errors');
     return refused(ERROR_CODES.VALIDATION_ERROR, t('invalidCancellation'), 400);
   }

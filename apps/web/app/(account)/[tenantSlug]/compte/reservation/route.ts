@@ -73,6 +73,47 @@ import { accountActionAccess } from '../session';
  * la fabrique par pays et le pipe côté API. Ce que l'écran demande à la cliente
  * n'en a jamais dépendu — l'étape « Coordonnées » résume le compte au lieu de le
  * redemander (#1050, #1086).
+ *
+ * ## L'établissement illisible a son code, et son statut est 404 — #1394
+ *
+ * Cette route était, avec l'annulation de l'espace client, l'une des deux
+ * surfaces que la classe ouverte par #1372 et refermée par #1391 avait laissées
+ * dehors : dix **modules d'actions serveur** rendent `TENANT_NOT_FOUND`, et ces
+ * deux **Route Handlers** jugeaient encore le même slug sous `VALIDATION_ERROR`,
+ * sous la phrase de leur geste — ici « Les informations de réservation sont
+ * incomplètes. » pour un segment d'URL que personne n'avait tapé. Le défaut les a
+ * suivies quand #1201 et #1207 les ont converties en routes, et il est sorti du
+ * périmètre que les en-têtes d'`admin/action-result.ts` et de
+ * `WEB_ACTION_ERROR_CODES` auditaient — ceux-là parlaient de « modules d'actions
+ * serveur », au mot près.
+ *
+ * Le partage est celui de #1391, et il tient en une ligne : **l'établissement au
+ * contrat, la charge utile au catalogue.**
+ *
+ * | Refus | Code | Statut | Phrase |
+ * |---|---|---|---|
+ * | le slug n'est pas une adresse de salon | `TENANT_NOT_FOUND` | **404** | contrat, `errorMessage` |
+ * | le corps n'est pas lisible, ou le schéma le refuse | `VALIDATION_ERROR` | 400 | catalogue, `tunnel.actions.bookingIncomplete` |
+ *
+ * Le contrat ne sait pas dire **de quelle** demande il s'agissait ; le tunnel,
+ * oui — d'où la seconde ligne, inchangée. Et « Cet établissement est
+ * introuvable. » est exactement ce qu'il y a à dire de la première, dans les deux
+ * langues.
+ *
+ * ### Pourquoi 404 et non le 400 d'avant
+ *
+ * C'est la seule chose que les dix modules d'actions n'avaient pas eu à
+ * trancher : ils ne rendent qu'un résultat, une route porte un statut. Le contrat
+ * ne le tranche pas pour nous — l'en-tête d'`error-codes.ts` écrit que ce fichier
+ * *« n'est pas une table de correspondance vers des statuts HTTP »*. L'argumentaire
+ * complet est en tête de la route d'annulation ; il tient à trois choses : l'API
+ * répond déjà 404 à cette cause exacte, slug mal formé compris
+ * (`tenant-scope.middleware.ts`), la troisième route du dépôt qui juge ce slug le
+ * rend déjà ainsi (`admin/encaissement/ticket/[saleId]/route.ts`), et un 400 dit
+ * que la **charge utile** est mal formée — la confusion même que ce fil corrige.
+ *
+ * Aucun appelant ne lit le statut : `booking-request.ts` relit le corps quel qu'il
+ * soit, et `summary-step.tsx` trie sur le `code`.
  */
 export const dynamic = 'force-dynamic';
 
@@ -99,23 +140,45 @@ function refusalOf(error: unknown, locale: Locale): [string, string, number] {
   return [code, errorMessage(code, locale), status];
 }
 
+/**
+ * Refus faute d'établissement : le slug de l'URL n'en désigne aucun — #1394.
+ *
+ * Le jumeau de celui de la route d'annulation, et de ceux des dix modules
+ * d'actions serveur. Code, statut et provenance de la phrase sont instruits en
+ * tête de ce module ; l'argumentaire du statut, en tête de
+ * `rendez-vous/[appointmentId]/annulation/route.ts`.
+ *
+ * Il ne consulte pas le catalogue du tunnel, et c'est la décision : la phrase du
+ * contrat nomme l'établissement dans les deux langues, là où le catalogue ne
+ * saurait que redire le refus du geste.
+ */
+function unknownTenant(locale: Locale): NextResponse {
+  return refused(
+    ERROR_CODES.TENANT_NOT_FOUND,
+    errorMessage(ERROR_CODES.TENANT_NOT_FOUND, locale),
+    404,
+  );
+}
+
 export async function POST(
   request: Request,
   context: { params: Promise<{ tenantSlug: string }> },
 ): Promise<NextResponse> {
   const { tenantSlug } = await context.params;
   const locale = (await getLocale()) as Locale;
+  const slug = slugSchema.safeParse(tenantSlug);
+
+  // Le slug se juge **seul et en premier** (#1394), et le catalogue n'est pas même
+  // consulté pour ce refus-là : sa phrase vient du contrat partagé.
+  if (!slug.success) {
+    return unknownTenant(locale);
+  }
+
   // Le catalogue du **tunnel**, et non celui de l'espace client : ces phrases
   // s'affichent au récapitulatif de la réservation, et ce sont exactement celles
   // que l'action serveur d'avant y écrivait. Les redire sous `account.errors`
   // ferait deux libellés pour un même refus (`ds:libelles`).
   const t = await getTranslations('booking');
-  const slug = slugSchema.safeParse(tenantSlug);
-
-  if (!slug.success) {
-    return refused(ERROR_CODES.VALIDATION_ERROR, t('tunnel.actions.bookingIncomplete'), 400);
-  }
-
   const access = await accountActionAccess(slug.data);
 
   if (access.kind === 'expired') {
