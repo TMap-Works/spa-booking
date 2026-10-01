@@ -67,9 +67,12 @@ calendrier au sens propre.
 
 - **Une phrase montrée à quelqu'un commence par une capitale et finit par un
   point** — refus de validation compris. « Saisissez une adresse e-mail
-  valide. », et non « adresse e-mail invalide ». Ce qui est une phrase et ce qui
-  n'en est pas une, c'est la section suivante qui le dit ; le test du glossaire
-  tient la règle sur les refus de validation depuis #1357.
+  valable. », et non « adresse e-mail invalide ». L'exemple est celui du contrat,
+  mot pour mot : « … e-mail **valide**. » est la formulation que les catalogues
+  portaient et que #1376 a retirée, et `PHRASES_RETIREES` interdit désormais de
+  l'afficher (`tests/unit/refus-de-saisie-vient-du-contrat.test.tsx`). Ce qui est
+  une phrase et ce qui n'en est pas une, c'est la section suivante qui le dit ; le
+  test du glossaire tient la règle sur les refus de validation depuis #1357.
 - **Aucun terme d'implémentation à l'écran.** Ni « front end », ni « MVP », ni
   « slug », ni « API ». On dit ce que la personne peut en faire, pas comment
   c'est construit.
@@ -137,39 +140,130 @@ Où en est le catalogue : #1329 avait repris `booking.json`, `signup.json` et
 le test qui le tient. Le test ne lit que `apps/web/messages` ; hors de ce
 répertoire, c'est encore la relecture qui tient la règle.
 
-## Le champ laissé vide : c'est le contrat qui le dit, pas le catalogue
+## Les refus génériques — champ vide, e-mail, choix — viennent du contrat
 
-**Décision de #1373.** Quand un champ obligatoire est laissé vide, la phrase
-affichée vient de `validationPhrases(locale).required`
+**Décision de #1373, élargie par #1376.** Quand un champ est refusé par une des
+tournures **génériques** du contrat — au premier chef le champ obligatoire laissé
+vide —, la phrase affichée vient de `validationPhrases(locale)`
 ([`packages/shared/src/errors/zod-messages.ts`](../../../packages/shared/src/errors/zod-messages.ts)),
-et **d'aucun catalogue**. Trois clés portaient la même phrase, mot pour mot, dans
-les deux langues — `admin-catalog.form.errors.nameRequired`,
+et **d'aucun catalogue**.
+
+**Neuf clés** redisaient une de ces phrases ; aucune n'existe plus. #1373 en a
+retiré trois, toutes du back-office et toutes sur le champ vide —
+`admin-catalog.form.errors.nameRequired`,
 `admin-catalog.categoryForm.errors.nameRequired`,
-`admin-clients.contact.errors.required` — et elles n'existent plus.
+`admin-clients.contact.errors.required`. #1376 en a retiré **six de plus**, sur
+**quatre écrans** du parcours public et de la console que #1373 ne nommait pas :
+
+| Écran | Catalogue | Clés retirées |
+|---|---|---|
+| L'étape de contact du tunnel public | `booking` | `tunnel.contactStep.errors.required`, `.email`, `.invalid` |
+| La connexion de la console | `platform` | `login.fieldErrors.email` |
+| L'ouverture d'un salon | `platform` | `create.fieldErrors.adminEmail` |
+| L'inscription | `signup` | `fieldErrors.email` |
+
+Et sur ces six-là, le risque que #1373 décrivait était **déjà réalisé** sans que
+rien ne le signale : les quatre clés d'adresse e-mail étaient identiques au
+contrat **en anglais** — d'où le silence d'une garde qui ne regardait alors que la
+phrase du champ vide — et en **divergeaient en français**. « Saisissez une adresse
+e-mail **valide**. » au catalogue contre « … e-mail **valable**. » au contrat, et
+« **Indiquez** une adresse … » à l'inscription : trois formulations pour un même
+refus, ce que « une chose, un mot » refuse. Les quatre écrans passent désormais
+`errorMap: zodErrorMap(locale)` à leur résolveur, ce qu'aucun ne faisait : ils
+traduisaient « par champ » depuis leur catalogue, faute d'avoir été repris depuis
+que #1232 a remplacé les phrases du contrat par des clés de message.
 
 La raison pour laquelle ces copies existaient était bonne, mais elle ne valait
-pas pour ce champ-là. Elle vaut pour les phrases qu'un **schéma du contrat écrit
-lui-même** : zod court-circuite ses cartes d'erreurs dès qu'une `issue` porte un
-`message`, si bien que les littéraux français de `slugSchema` s'affichaient tels
-quels sous un formulaire anglais — constat fait au navigateur en #849, et c'est
-pour eux que ces formulaires portent encore leurs propres phrases. « Ce champ est
-obligatoire. » n'est pas de celles-là : c'est la phrase **générique** que
-`zodErrorMap` rend sur un `too_small` de plancher 1, traduite dans les deux
-langues depuis #845. Un `.min(1)` sans message suffit donc à la faire venir, et
-c'est déjà ainsi que le reste du produit procède — `RegisterForm`,
-`StaffMemberForm` (`tests/unit/validation-i18n.test.tsx`).
+pas pour ces champs-là. Elle valait pour les phrases qu'un **schéma du contrat
+écrit lui-même** : zod court-circuite ses cartes d'erreurs dès qu'une `issue`
+porte un `message`, si bien que les littéraux français de `slugSchema`
+s'affichaient tels quels sous un formulaire anglais — constat fait au navigateur
+en #849, et c'est pour eux que ces formulaires portaient leurs propres phrases.
+Ces littéraux n'existent plus : #1232 les a remplacés par des clés de message, et
+la section suivante — « un refus que le contrat **nomme** » — dit ce qu'il est
+advenu des copies qu'ils justifiaient. « Ce champ est obligatoire. » n'a jamais
+été de celles-là : c'est la phrase **générique** que `zodErrorMap` rend sur un
+`too_small` de plancher 1, traduite dans les deux langues depuis #845. Un
+`.min(1)` sans message suffit donc à la faire venir, et c'est déjà ainsi que le
+reste du produit procède — `RegisterForm`, `StaffMemberForm`
+(`tests/unit/validation-i18n.test.tsx`).
 
-Ce qui tient la décision, plutôt qu'une intention : deux tests. Les suites de
-rendu lisent `validationPhrases(locale).required` au lieu de recopier la phrase —
-elles rougissent le jour où un formulaire repose un message local. Et
-[`tests/unit/messages-glossary.test.ts`](../tests/unit/messages-glossary.test.ts)
-refuse qu'une feuille de catalogue redise cette phrase, où que ce soit.
+**La garde, telle qu'elle est.** Elle ne porte pas sur la seule phrase du champ
+vide, mais sur les **dix phrases `string`** de `validationPhrases` — `required`,
+`invalid`, `email`, `url`, `uuid`, `date`, `number`, `integer`, `choice`,
+`unexpected`. Elles sont lues **par énumération** plutôt que recopiées en liste de
+noms : une phrase ajoutée au contrat est tenue le jour où elle est écrite, sans
+qu'il faille revenir l'inscrire dans le test. Les six tournures **paramétrées** —
+`tooShort`, `tooLong`, `tooSmall`, `tooBig`, `tooFew`, `tooMany` — en sont dehors,
+et « ce qui reste au catalogue » dit pourquoi. Et sa liste de dispenses,
+`COPIES_DE_PHRASES_TOLEREES`, est **vide** : il n'y a rien à y tenir. Elle ne l'a
+pas toujours été — #1373 y avait nommé
+`booking.tunnel.contactStep.errors.required`, le temps qu'un ticket vienne
+reprendre le tunnel public, qu'il ne nommait pas —, et #1376 l'a vidée du même
+geste que ce qu'elle dispensait. Un écran qui paraîtrait avoir besoin d'y
+réinscrire une clé est un écran qui redit une phrase que `zodErrorMap(locale)`
+sait déjà dire : le remède est de laisser la carte répondre, jamais d'allonger
+cette liste.
 
-**Ce qui reste au catalogue, et pourquoi.** Le plafond de longueur — « Ce champ
-fait au plus {max} caractères. » — n'est pas le texte du contrat (« Ne dépassez
-pas {max} caractères. ») : ce sont deux formulations différentes d'une même règle,
-pas une copie, il n'y a donc pas de divergence à empêcher, et les unifier serait
-un changement de texte visible hors des trois champs que #1373 nomme.
+**Ce qui tient la décision**, plutôt qu'une intention : **trois tests**.
+
+- [`tests/unit/messages-glossary.test.ts`](../tests/unit/messages-glossary.test.ts)
+  refuse qu'une feuille de catalogue redise une de ces dix phrases, dans l'une ou
+  l'autre langue, où que ce soit — et refuse aussi une dispense devenue inutile.
+- Les suites de rendu **lisent** `validationPhrases(locale).required` au lieu de
+  recopier la phrase (`admin-catalog-i18n`, `admin-clients-i18n`,
+  `erreur-de-champ-suit-la-langue`) : elles rougissent le jour où un formulaire
+  repose un message local.
+- [`tests/unit/refus-de-saisie-vient-du-contrat.test.tsx`](../tests/unit/refus-de-saisie-vient-du-contrat.test.tsx)
+  monte les **quatre écrans** ci-dessus dans les **deux langues** et lit le message
+  **sur le champ** — `${id}-error`, celui d'`aria-describedby` : il prouve du même
+  geste la phrase, sa langue, et le fait qu'elle n'est pas rendue en bloc en tête
+  de page (web-frontend §4). C'est ce que la garde du glossaire ne peut pas tenir :
+  elle est statique, et un écran qui aurait perdu sa clé sans rien mettre à la
+  place la laisserait verte. Quelques cas y rejouent la langue par `rerender`,
+  sans démonter le formulaire — le geste réel du sélecteur de langue —, et une
+  liste de **phrases retirées** y rougit si un écran affiche encore une formulation
+  qu'aucune source ne porte plus. La suite a grandi depuis : #1387 y a ajouté le
+  code de vérification de la console, et #1388 cinq écrans de plus — la fiche d'une
+  prestation, la rubrique du catalogue, les réglages de l'établissement,
+  l'invitation du personnel et la grille d'horaires. Elle est donc le point de
+  rendu commun aux deux sections, celle-ci et la suivante ; chaque `describe` dit
+  le ticket dont il vient.
+
+**Ce qui reste au catalogue, et pourquoi.** Ce qu'un écran dit **autrement ou
+mieux** que le contrat : une autre formulation de la même règle, ou une précision
+qu'une phrase générique ne peut pas donner parce qu'elle ne nomme pas le champ.
+Trois cas, qui couvrent les quatre écrans repris :
+
+- le **plafond de longueur** de l'étape de contact —
+  `booking.tunnel.contactStep.errors.tooLong`, « Ce champ fait au plus {max}
+  caractères. » — n'est pas le texte du contrat (« Ne dépassez pas {max}
+  caractères. ») : ce sont deux formulations différentes d'une même règle, pas une
+  copie, il n'y a donc pas de divergence à empêcher, et les unifier serait un
+  changement de texte visible bien au-delà des neuf clés que #1373 et #1376 ont
+  retirées. C'est la seule clé que ce bloc `errors` porte encore ;
+- la **longueur attendue d'un mot de passe** —
+  `platform.login.fieldErrors.password`, « Le mot de passe fait au moins {min}
+  caractères. », et `signup.fieldErrors.password`, « Votre mot de passe doit
+  faire au moins douze caractères. ». La borne, la phrase générique la dit déjà —
+  `tooShort` l'interpole (« Saisissez au moins 12 caractères. ») : ce qui reste au
+  catalogue, c'est la formulation — le champ nommé, le nombre en lettres, le
+  possessif du parcours d'inscription ;
+- les **phrases par champ** de l'inscription et de l'ouverture d'un salon —
+  `signup.fieldErrors.city`, « Indiquez votre ville. », plutôt que « Ce champ est
+  obligatoire. » ; `signup.fieldErrors.countryCode`, « Choisissez votre pays. »,
+  plutôt que « Choisissez une des options proposées. ». La console en porte les
+  pendants sans le possessif — « Indiquez la ville. », « Choisissez le pays. » —,
+  parce qu'un opérateur ouvre le salon d'un autre. Elles ne redisent rien : elles
+  disent plus.
+
+Un quatrième cas s'y attendrait et n'y est pas : la **forme des six chiffres** du
+code de vérification de la console. Elle y aurait figuré au lendemain de #1376 —
+`platform.login.fieldErrors.totpCode` existait encore —, mais son refus est
+reparti au contrat en #1387, sous la clé `platform.totpCode`. Ce que la console
+garde en propre est `platform.login.totpHint` : une **indication** lue avant toute
+saisie, pas un refus. La section suivante dit pourquoi les deux rôles valent deux
+textes.
 
 **Et la préférence pour « dire quoi faire » ?** Elle ne s'applique pas à ce
 refus-ci, et c'est tranché : cette phrase reste un constat. Trois raisons.
@@ -177,14 +271,17 @@ D'abord, elle est **générique** — une seule phrase pour tous les champs vide
 produit : elle ne peut pas dire « Saisissez le nom de la prestation. » sans
 nommer un champ qu'elle ne connaît pas, et ce que la personne doit faire, la
 position du message sous le champ vide le dit déjà (il y est lié par
-`aria-describedby`). Ensuite, une phrase par champ serait exactement la
-duplication que #1373 retire — trois clés hier, une par champ obligatoire du
-produit demain. Enfin, une instruction générique (« Remplissez ce champ. »)
+`aria-describedby`). Ensuite, une phrase par champ **recopiée au catalogue de
+chaque écran** serait exactement la duplication que #1373 et #1376 retirent —
+neuf clés hier, une par champ obligatoire du produit demain. Ce qu'un écran écrit
+en propre pour **nommer** son champ reste licite, et le paragraphe précédent dit
+lesquels : c'est la copie d'une phrase générique qui est refusée, pas la
+précision. Enfin, une instruction générique (« Remplissez ce champ. »)
 changerait le texte de **tous** les formulaires et de `details.violations` de
 toutes les routes de l'API : c'est un changement de contrat de la taille de
 #1356, pas l'effet de bord d'une déduplication. La préférence garde tout son sens
-là où un refus nomme une faute dont le remède ne se devine pas — « Adresse e-mail
-invalide. » plutôt que « Saisissez une adresse e-mail valable. » —, et ce
+là où un refus nomme une faute dont le remède ne se devine pas — « Saisissez une
+adresse e-mail valable. » plutôt que « Adresse e-mail invalide. » —, et ce
 chantier-là reste ouvert sur la table `VALIDATION_MESSAGES`, comme dit plus bas.
 
 ## Un refus que le contrat **nomme** ne se redit pas non plus
