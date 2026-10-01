@@ -753,17 +753,33 @@ export const WEB_ACTION_ERROR_CODES = {
    * Ses émetteurs sont les modules d'actions serveur d'`apps/web` qui jugent ce
    * slug : le planning et le comptoir depuis #1372, puis le catalogue, les
    * fiches clientes, le personnel, le reporting et l'espace client depuis #1375,
-   * et depuis #1379 les deux derniers — les actions transverses du back-office
+   * et depuis #1379 les deux derniers du back-office — ses actions transverses
    * (`admin/actions.ts` : connexion, déconnexion, réglages de l'établissement,
    * pages hébergées de l'abonnement, acceptation d'invitation) et la langue du
-   * compte connecté (`admin/reglages/actions.ts`). La liste est donc **close pour
-   * les surfaces authentifiées** : plus aucun module d'actions du back-office ni
-   * de l'espace client ne juge ce slug autrement. Reste hors de cette liste le
-   * tunnel public de réservation
-   * (`app/(booking)/[tenantSlug]/reservation/actions.ts`,
-   * `loadAvailabilityAction`), qui juge encore le slug du même `if` que sa charge
-   * utile et rend `VALIDATION_ERROR` avec une phrase écrite à lui — le dire vaut
-   * mieux que de laisser croire au compte rond.
+   * compte connecté (`admin/reglages/actions.ts`). #1391 y ajoute le **neuvième et
+   * dernier**, seul module d'une surface non authentifiée : le tunnel public de
+   * réservation (`app/(booking)/[tenantSlug]/reservation/actions.ts`,
+   * `loadAvailabilityAction`), qui jugeait le slug du même `if` que sa charge utile
+   * et rendait `VALIDATION_ERROR` sous une phrase écrite à lui.
+   *
+   * La liste est donc **close**, et sans la réserve que #1379 devait encore
+   * poser : plus aucun module d'actions serveur d'`apps/web` ne juge ce slug
+   * autrement, back-office, espace client et tunnel public confondus.
+   *
+   * « Module d'actions serveur » est à prendre au mot, et le dire vaut mieux que
+   * de laisser croire au compte rond : deux **Route Handlers** jugent encore ce
+   * slug et rendent `VALIDATION_ERROR` sous la phrase de leur geste — la
+   * réservation (`app/(account)/[tenantSlug]/compte/reservation/route.ts`,
+   * `tunnel.actions.bookingIncomplete`) et l'annulation
+   * (`…/compte/rendez-vous/[appointmentId]/annulation/route.ts`, qui le juge en
+   * outre du même `if` que l'identifiant du rendez-vous). Ce sont les deux
+   * actions que #1201 et #1207 ont converties en routes, faute de pouvoir joindre
+   * le jeton de la cliente depuis une action ; le défaut les a suivies, et leur
+   * reprise est un autre geste que celui-ci. La troisième route qui juge ce slug,
+   * le PDF de ticket du comptoir
+   * (`…/admin/encaissement/ticket/[saleId]/route.ts`), est hors de cause : elle
+   * rend un `404` sans code de contrat.
+   *
    * Ils sont nommés parce que l'invariant de ce fichier l'exige — « tout code de
    * ce fichier a un émetteur nommé » —, et ils le restent : ce code ne vaut que
    * pour le refus rendu par le front, jamais pour une réponse de l'API.
@@ -776,6 +792,16 @@ export const WEB_ACTION_ERROR_CODES = {
    * `tenant-isolation` §4 interdit. La frontière d'établissement, elle, reste
    * gardée par l'API et par elle seule, qui refuse la ressource du voisin en
    * `NOT_FOUND` sans jamais la distinguer d'une ressource inexistante.
+   *
+   * Ce paragraphe a cessé d'être une précaution de principe avec #1391 : jusque-là,
+   * tous les émetteurs étaient des surfaces authentifiées, et il fallait un compte
+   * pour lire la phrase. Le tunnel public, lui, est **indexable et sondable** — un
+   * visiteur sans compte peut la provoquer à volonté, en série. Elle reste sans
+   * valeur pour lui, et pour la raison ci-dessus, qui est la seule qui tienne : ce
+   * refus est rendu **avant tout appel**, sur la seule forme du segment d'URL. Un
+   * slug bien formé mais inconnu ne l'obtient pas — il part vers l'API, qui rend son
+   * `NOT_FOUND` indistinct. Ce qu'un sondeur apprend ici est donc exactement ce que
+   * `slugSchema` est, et `slugSchema` est publié dans ce même paquet.
    *
    * ## Pourquoi il ne réemploie pas `NOT_FOUND`
    *

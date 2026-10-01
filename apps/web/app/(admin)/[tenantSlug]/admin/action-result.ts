@@ -162,13 +162,11 @@
  * authentifiée — back-office ou espace client — ne refuse l'établissement inconnu
  * sous le code du refus de saisie**.
  *
- * Ce qui reste en dehors, et le dire vaut mieux que de laisser croire au compte
- * rond : le tunnel public de réservation
- * (`app/(booking)/[tenantSlug]/reservation/actions.ts`, `loadAvailabilityAction`)
- * juge toujours le slug du même `if` que sa charge utile et rend
- * `VALIDATION_ERROR`. Il n'emploie ni ce module-ci ni `refusalMessage` — il écrit
- * la phrase de son refus depuis son propre catalogue —, si bien que sa reprise est
- * un autre geste que celui-ci, et non une rallonge de ce diff.
+ * Ce qui restait en dehors, et que #1391 a refermé depuis : le tunnel public de
+ * réservation (`app/(booking)/[tenantSlug]/reservation/actions.ts`,
+ * `loadAvailabilityAction`), qui jugeait le slug du même `if` que sa charge utile
+ * et rendait `VALIDATION_ERROR`. Voir la section suivante — sa reprise était un
+ * autre geste que celui-ci, et non une rallonge de ce diff.
  *
  * Trois choses s'y sont décidées, et elles se disent ici parce qu'elles valent
  * pour tout appelant de {@link unknownTenant} :
@@ -208,6 +206,41 @@
  * lui, n'appelle pas le crochet et range `UNAUTHORIZED` dans sa propre table de
  * codes, ce que ce ticket ne touche pas. L'écran d'invitation, enfin, ne renouvelle
  * rien non plus : la session n'y est pas encore ouverte.
+ *
+ * ## …et le tunnel public ferme la classe pour de bon — #1391
+ *
+ * La clôture annoncée par #1379 était bornée aux **surfaces authentifiées**, et
+ * nommait le tunnel public de réservation comme l'exception qui restait. Elle ne
+ * l'est plus : `loadAvailabilityAction` juge le slug seul et en premier, et rend
+ * `TENANT_NOT_FOUND`. **Plus aucun module d'actions serveur d'`apps/web` — publique
+ * ou authentifiée — ne refuse l'établissement inconnu sous le code du refus de
+ * saisie.** La liste des émetteurs de `WEB_ACTION_ERROR_CODES.TENANT_NOT_FOUND` est
+ * close, et c'est là qu'elle se lit.
+ *
+ * « Module d'actions serveur » est à prendre au mot, et la réserve est écrite au
+ * même endroit que la liste : deux **Route Handlers** de l'espace client jugent
+ * encore ce slug sous `VALIDATION_ERROR` — la réservation et l'annulation, que
+ * #1201 et #1207 ont converties en routes pour joindre le jeton de la cliente. Le
+ * défaut les a suivies hors de la classe que ce fil referme, et leur reprise est un
+ * autre geste. Ne pas lire la phrase en gras ci-dessus comme un compte rond.
+ *
+ * Ce module-ci n'y est pour rien d'autre que son en-tête, et c'est voulu : le tunnel
+ * ne l'emploie pas. Il a son propre fabricant de refus — son `ActionResult` n'a pas
+ * de `details`, rien n'y lisant celui du corps d'erreur de l'API — et porte donc un
+ * jumeau local d'`unknownTenant`, comme l'espace client depuis #1375. Ce qui se dit
+ * ici est ce qui vaut pour les trois : **un code du contrat, et sa phrase lue dans
+ * la table bilingue.**
+ *
+ * Ce que #1391 a eu à trancher en plus des huit autres, parce que sa surface n'est
+ * pas la leur : **d'où vient la phrase d'un refus quand le module n'emploie ni ce
+ * fichier ni `refusalMessage`, et écrit la sienne depuis son catalogue.** La règle
+ * retenue est celle que `lib/refusal.ts` encode déjà — le contrat par défaut, le
+ * catalogue de la surface là où elle dit mieux que lui. D'où un partage, et non une
+ * substitution : `TENANT_NOT_FOUND` passe au contrat, tandis que le refus de la
+ * requête de créneaux garde `VALIDATION_ERROR` **et** sa phrase de catalogue, le
+ * contrat ne sachant pas dire de quelle demande il s'agissait. L'argumentaire
+ * complet, surface publique comprise, est en tête de
+ * `app/(booking)/[tenantSlug]/reservation/actions.ts`.
  */
 
 import { ERROR_CODES, errorMessage, type Locale } from '@spa/shared';

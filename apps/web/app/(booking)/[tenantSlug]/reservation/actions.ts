@@ -28,11 +28,53 @@
  * transformée du schéma — instant ramené en UTC, adresse canonisée, téléphone
  * en E.164 — et non le corps reçu du navigateur.
  *
+ * ## La phrase d'un refus vient du contrat, et le catalogue est l'exception — #1391
+ *
+ * C'est la décision que ce ticket avait à prendre avant d'écrire une ligne, parce
+ * que ce module n'emploie ni `admin/action-result.ts` ni `refusalMessage` : il a
+ * son propre fabricant de refus, et il écrivait la phrase de **chacun** depuis son
+ * catalogue. La règle est désormais celle des huit autres modules d'actions :
+ *
+ * > la phrase d'un refus est `errorMessage(code, locale)` du contrat partagé ; le
+ * > catalogue de la surface ne l'écrit que là où cette surface dit **mieux** que le
+ * > contrat.
+ *
+ * Ce n'est pas une règle nouvelle, c'est celle que `lib/refusal.ts` encode depuis
+ * #1327 — `refusalMessage(refusal, locale, own)`, où `own` est l'exception et
+ * `errorMessage` le repli. Ce module la rejoint du côté qui la fabrique, là où
+ * l'écran l'appliquait déjà du côté qui l'affiche.
+ *
+ * Les deux refus que cette action oppose d'elle-même tombent donc de part et
+ * d'autre, et c'est le partage qui compte :
+ *
+ * | Refus | Phrase | Pourquoi |
+ * |---|---|---|
+ * | `VALIDATION_ERROR` — la requête de créneaux | catalogue, `tunnel.actions.availabilityIncomplete` | le contrat ne sait pas dire **de quelle** demande il s'agissait ; l'écran, oui |
+ * | `TENANT_NOT_FOUND` — l'établissement illisible | contrat, par {@link unknownTenant} | « Cet établissement est introuvable. » est exactement ce qu'il y a à dire, et le contrat le dit dans les deux langues |
+ *
+ * **La surface est publique, et cela a été instruit plutôt que supposé.** Une
+ * vitrine est indexable et sondable, et « cet établissement est introuvable » y est
+ * une phrase qu'un visiteur non authentifié peut lire à volonté. Elle ne renseigne
+ * pourtant personne : l'action ne demande **rien** à l'API pour la rendre, elle
+ * constate que le segment d'URL n'a pas la forme d'une adresse de salon
+ * (`slugSchema`). Aucun oracle d'existence, donc, et rien de ce que
+ * `tenant-isolation` §4 interdit — la frontière d'établissement reste gardée par
+ * l'API et par elle seule, qui confond en `NOT_FOUND` la ressource absente et celle
+ * du voisin (`tenant-scope.middleware.ts`). L'instruction complète est en tête de
+ * `WEB_ACTION_ERROR_CODES` (`packages/shared/src/errors/error-codes.ts`).
+ *
+ * Et **aucun écran n'a changé d'une ligne**, ce qui est le résultat qui compte :
+ * `slot-step.tsx` lit déjà le refus par `refusalMessage`, dont le repli est le
+ * contrat, et il ne nomme en propre que `VALIDATION_ERROR`. Un code distinct suffit
+ * donc à lui faire dire la phrase qui nomme l'établissement, dans la langue de son
+ * rendu — comme aux dix-neuf écrans de #1375.
+ *
  * ## La langue (#846, #1298)
  *
  * Les messages de refus **écrits ici** s'affichent tels quels dans le tunnel :
- * ils viennent donc du catalogue, par `getTranslations` — une action serveur
- * est asynchrone, et le crochet n'y a pas cours.
+ * celui qui vient du catalogue le lit donc par `getTranslations` — une action
+ * serveur est asynchrone, et le crochet n'y a pas cours. Lequel vient du catalogue
+ * et lequel du contrat est l'objet de la section ci-dessus.
  *
  * Le message d'une `ApiClientError` était celui de l'API : il traversait cette
  * frontière sans être réécrit. La frontière du ticket d'alors le justifiait — la
@@ -124,15 +166,53 @@ function invalid(message: string): { ok: false; code: string; message: string } 
   return { ok: false, code: ERROR_CODES.VALIDATION_ERROR, message };
 }
 
+/**
+ * Refus faute d'établissement : le slug de l'URL n'en désigne aucun — #1391.
+ *
+ * Le jumeau local d'`unknownTenant()` du back-office
+ * (`app/(admin)/[tenantSlug]/admin/action-result.ts`) et de celui de l'espace
+ * client : ce module a son propre fabricant de refus, pour la raison dite en
+ * tête — son `ActionResult` n'a pas de `details`, puisque rien ici ne lit celui
+ * du corps d'erreur de l'API. La décision et ses raisons sont écrites là-bas et
+ * dans `WEB_ACTION_ERROR_CODES` ; il n'y avait rien à rejuger, sinon **d'où la
+ * phrase vient sur cette surface-ci**, et c'est l'objet de la section « La phrase
+ * d'un refus vient du contrat » en tête de ce module.
+ *
+ * Synchrone et la langue en paramètre, comme {@link failure} et pour la même
+ * raison : les appels à `next-intl/server` restent au seul endroit où la requête
+ * est déjà attendue. Son appelant la lit sur place, et **seulement quand il
+ * refuse** — le chargement qui aboutit n'interroge pas la requête pour une phrase
+ * dont il n'a pas l'usage.
+ */
+function unknownTenant(locale: Locale): { ok: false; code: string; message: string } {
+  return {
+    ok: false,
+    code: ERROR_CODES.TENANT_NOT_FOUND,
+    message: errorMessage(ERROR_CODES.TENANT_NOT_FOUND, locale),
+  };
+}
+
 export async function loadAvailabilityAction(
   tenantSlug: string,
   query: unknown,
 ): Promise<ActionResult<AvailabilityResponse>> {
-  const t = await getTranslations('booking');
   const slug = slugSchema.safeParse(tenantSlug);
+
+  // Le slug se juge **seul et en premier** (#1391). Il partageait le `if` de la
+  // charge utile, si bien que le refus rendu dépendait de l'ordre des tests d'un
+  // `||` — et qu'un segment d'URL qui ne mène nulle part se disait « La demande
+  // de disponibilités est incomplète. ». L'ordre est celui des huit modules
+  // repris, et pour la même raison : une adresse sans établissement rend la
+  // requête sans objet, et reprocher sa plage de dates envoie chercher une faute
+  // qu'on n'a pas commise.
+  if (!slug.success) {
+    return unknownTenant(await getLocale());
+  }
+
+  const t = await getTranslations('booking');
   const parsed = availabilityQuerySchema.safeParse(query);
 
-  if (!slug.success || !parsed.success) {
+  if (!parsed.success) {
     return invalid(t('tunnel.actions.availabilityIncomplete'));
   }
 
