@@ -33,7 +33,8 @@
  * C'est la décision que ce ticket avait à prendre avant d'écrire une ligne, parce
  * que ce module n'emploie ni `admin/action-result.ts` ni `refusalMessage` : il a
  * son propre fabricant de refus, et il écrivait la phrase de **chacun** depuis son
- * catalogue. La règle est désormais celle des huit autres modules d'actions :
+ * catalogue. La règle est désormais celle des autres modules d'actions d'`apps/web`,
+ * ceux que `WEB_ACTION_ERROR_CODES` nomme :
  *
  * > la phrase d'un refus est `errorMessage(code, locale)` du contrat partagé ; le
  * > catalogue de la surface ne l'écrit que là où cette surface dit **mieux** que le
@@ -201,8 +202,8 @@ export async function loadAvailabilityAction(
   // Le slug se juge **seul et en premier** (#1391). Il partageait le `if` de la
   // charge utile, si bien que le refus rendu dépendait de l'ordre des tests d'un
   // `||` — et qu'un segment d'URL qui ne mène nulle part se disait « La demande
-  // de disponibilités est incomplète. ». L'ordre est celui des huit modules
-  // repris, et pour la même raison : une adresse sans établissement rend la
+  // de disponibilités est incomplète. ». L'ordre est celui des modules repris avant
+  // celui-ci, et pour la même raison : une adresse sans établissement rend la
   // requête sans objet, et reprocher sa plage de dates envoie chercher une faute
   // qu'on n'a pas commise.
   if (!slug.success) {

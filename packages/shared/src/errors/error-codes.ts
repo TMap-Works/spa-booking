@@ -118,10 +118,13 @@
  * les dix familles de domaine, c'est une sous-classe de `DomainError` d'`apps/api`,
  * et `api-error-codes.spec.ts` le vérifie en relisant les sources. Pour la
  * onzième, c'est une action serveur — ou, depuis #1394, un Route Handler —
- * d'`apps/web`, nommée dans la documentation du
- * code — le garde ne peut pas la vérifier de la même façon, puisqu'il chasse
- * précisément les littéraux de codes dans `apps/web` et n'y trouvera donc jamais
- * qu'une lecture de cette constante.
+ * d'`apps/web`, nommée dans la documentation du code : `api-error-codes.spec.ts` ne
+ * peut pas la reconnaître, puisqu'il chasse précisément les littéraux de codes dans
+ * `apps/web` et n'y trouvera donc jamais qu'une lecture de cette constante. Ce qui
+ * tient cette onzième notice n'est donc pas lui mais
+ * `apps/web/tests/unit/registre-etablissement-inconnu.test.ts`, posé par #1397 après
+ * qu'un total faux y a survécu à quatre tickets — voir la notice de
+ * `TENANT_NOT_FOUND`.
  *
  * ## Le garde qui empêche la divergence de se rouvrir
  *
@@ -701,7 +704,8 @@ export const REPORTING_ERROR_CODES = {
  *
  * Ses actions serveur, et depuis #1394 deux de ses **Route Handlers** : la
  * frontière n'est pas la forme du point d'entrée mais le fait que le refus précède
- * l'appel. La notice de `TENANT_NOT_FOUND`, ci-dessous, nomme les douze émetteurs.
+ * l'appel. La notice de `TENANT_NOT_FOUND`, ci-dessous, nomme ses émetteurs — et
+ * elle est, depuis #1397, le seul endroit du dépôt qui les compte.
  *
  * La onzième famille, et la seule dont l'émetteur n'est pas `apps/api`. Elle
  * existe pour une raison précise, et c'est le quatrième critère de #1372 que de
@@ -786,10 +790,34 @@ export const WEB_ACTION_ERROR_CODES = {
    * ce fichier a un émetteur nommé » —, et ils le restent : ce code ne vaut que
    * pour le refus rendu par le front, jamais pour une réponse de l'API.
    *
+   * ## Le compte ci-dessus est le seul du dépôt, et il est mesuré — #1397
+   *
+   * La phrase de clôture porte trois nombres, et c'est **ici seulement** qu'ils
+   * s'écrivent. La raison est empirique : ce fil a recopié son total à chaque
+   * maillon, et il s'est périmé à chacun — #1391 s'est annoncé « neuvième et dernier »
+   * alors qu'il était le dixième, faute d'avoir compté #1372 pour deux modules ;
+   * #1394 a corrigé ce nombre-là mais laissé deux en-têtes dire « huit autres » quand
+   * il y en avait neuf, et ses deux propres écritures se contredire sur « dix » et
+   * « douze ». Un total **recopié loin de la liste qu'il totalise** n'a aucun moyen
+   * de rester vrai ; collé à elle, il ne peut pas s'en écarter sans qu'on le voie.
+   * Les en-têtes des émetteurs renvoient donc ici, ou nomment ce dont ils parlent ;
+   * aucun ne compte.
+   *
+   * Et le compte n'est pas seulement unique, il est **vérifié**. C'est ce qui manquait
+   * à cette onzième famille : `api-error-codes.spec.ts` garde les dix autres en
+   * relisant les sous-classes de `DomainError` d'`apps/api`, mais il ne sait pas
+   * reconnaître un émetteur d'`apps/web` — il n'y chasse que les littéraux de codes,
+   * et n'y trouvera jamais qu'une lecture de cette constante. La documentation était
+   * donc la seule barrière, ce qui est exactement comment un total faux a pu y vivre
+   * quatre maillons de suite. `apps/web/tests/unit/registre-etablissement-inconnu.test.ts`
+   * relit les sources d'`apps/web`, dénombre les émetteurs et échoue si l'un des trois
+   * nombres ci-dessus ne correspond plus — ou si un compte de la classe réapparaît
+   * dans un en-tête d'émetteur.
+   *
    * ## Le **statut** des deux routes n'est pas déclaré ici, et c'est la règle
    *
    * Un module d'actions ne rend qu'un résultat ; une route porte un statut HTTP, et
-   * #1394 a eu à le trancher — c'est la seule chose que les dix précédents
+   * #1394 a eu à le trancher — c'est la seule chose que les modules d'actions
    * n'avaient pas eue. Ce n'est pas à ce fichier de le dire : l'en-tête ci-dessus
    * l'écrit, *« ce fichier n'est pas une table de correspondance vers des statuts
    * HTTP »*, et l'y inscrire ouvrirait la seconde source de vérité qu'il refuse.

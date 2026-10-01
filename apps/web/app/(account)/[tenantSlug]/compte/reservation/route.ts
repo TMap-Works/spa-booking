@@ -78,7 +78,7 @@ import { accountActionAccess } from '../session';
  *
  * Cette route était, avec l'annulation de l'espace client, l'une des deux
  * surfaces que la classe ouverte par #1372 et refermée par #1391 avait laissées
- * dehors : dix **modules d'actions serveur** rendent `TENANT_NOT_FOUND`, et ces
+ * dehors : les **modules d'actions serveur** rendent `TENANT_NOT_FOUND`, et ces
  * deux **Route Handlers** jugeaient encore le même slug sous `VALIDATION_ERROR`,
  * sous la phrase de leur geste — ici « Les informations de réservation sont
  * incomplètes. » pour un segment d'URL que personne n'avait tapé. Le défaut les a
@@ -102,7 +102,7 @@ import { accountActionAccess } from '../session';
  *
  * ### Pourquoi 404 et non le 400 d'avant
  *
- * C'est la seule chose que les dix modules d'actions n'avaient pas eu à
+ * C'est la seule chose que les modules d'actions n'avaient pas eu à
  * trancher : ils ne rendent qu'un résultat, une route porte un statut. Le contrat
  * ne le tranche pas pour nous — l'en-tête d'`error-codes.ts` écrit que ce fichier
  * *« n'est pas une table de correspondance vers des statuts HTTP »*. L'argumentaire
@@ -143,9 +143,9 @@ function refusalOf(error: unknown, locale: Locale): [string, string, number] {
 /**
  * Refus faute d'établissement : le slug de l'URL n'en désigne aucun — #1394.
  *
- * Le jumeau de celui de la route d'annulation, et de ceux des dix modules
- * d'actions serveur. Code, statut et provenance de la phrase sont instruits en
- * tête de ce module ; l'argumentaire du statut, en tête de
+ * Le jumeau de celui de la route d'annulation, et de ceux des modules d'actions
+ * serveur que `WEB_ACTION_ERROR_CODES` nomme. Code, statut et provenance de la
+ * phrase sont instruits en tête de ce module ; l'argumentaire du statut, en tête de
  * `rendez-vous/[appointmentId]/annulation/route.ts`.
  *
  * Il ne consulte pas le catalogue du tunnel, et c'est la décision : la phrase du

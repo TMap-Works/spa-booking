@@ -53,7 +53,8 @@
  * `VALIDATION_ERROR`, c'est-à-dire sous la tournure générique du refus de
  * saisie — « Certaines informations sont incomplètes ou mal formées. » pour un
  * segment d'URL que personne n'a tapé. Ils rendent `unknownTenant()` désormais,
- * comme les sept autres modules d'actions du produit depuis #1372 et #1375.
+ * comme les modules d'actions repris depuis #1372 et #1375 — `WEB_ACTION_ERROR_CODES`
+ * les nomme tous, et c'est le seul endroit qui les compte (#1397).
  *
  * **Le slug se juge d'abord, et seul.** Trois de ces cinq sites le jugeaient du
  * même `if` que leur charge utile, si bien que le refus rendu dépendait de
