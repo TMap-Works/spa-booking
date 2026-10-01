@@ -74,6 +74,18 @@ const errorCodesFile = path.join(
 const FACTORY = 'app/(admin)/[tenantSlug]/admin/action-result.ts';
 
 /**
+ * La fabrique **partagée aux trois surfaces** (#1395) — pas davantage un émetteur :
+ * les trois fabricants l'appellent, et son nom (`unknownTenantRefusal`) la tient hors
+ * du dénombrement sans qu'une exception ait à l'en sortir.
+ *
+ * Elle est tout de même relue par la règle « aucun autre fichier du fil ne compte la
+ * classe » : son en-tête porte l'arbitrage du partage, c'est-à-dire exactement le
+ * genre d'écriture où un total se recopie — et sans cette ligne, elle serait le seul
+ * fichier du fil où il pourrait le faire sans rougir.
+ */
+const SHARED_FACTORY = 'lib/tenant-refusal.ts';
+
+/**
  * Les dix modules d'actions serveur, et les deux Route Handlers.
  *
  * Écrits en clair plutôt que déduits du disque, pour la raison qui fait écrire les
@@ -209,6 +221,12 @@ describe('Le registre des émetteurs de WEB_ACTION_ERROR_CODES.TENANT_NOT_FOUND'
     // exactement l'erreur que #1394 a eu à défaire.
     expect(SOURCES).toContain(FACTORY);
     expect(EMITTER_FILES).not.toContain(FACTORY);
+
+    // La fabrique partagée, elle, est hors du compte par son **nom** : relue ici pour
+    // qu'un déplacement ne retire pas en silence le seul fichier du fil que la règle
+    // des comptes ne surveillerait plus.
+    expect(SOURCES).toContain(SHARED_FACTORY);
+    expect(EMITTER_FILES).not.toContain(SHARED_FACTORY);
   });
 
   it("les Route Handlers se distinguent des modules d'actions par leur nom de fichier", () => {
@@ -249,7 +267,7 @@ describe('Le registre des émetteurs de WEB_ACTION_ERROR_CODES.TENANT_NOT_FOUND'
   });
 
   it('ne laisse aucun autre fichier du fil compter la classe', () => {
-    const offenders = [FACTORY, ...EMITTER_FILES].flatMap((file) => {
+    const offenders = [FACTORY, SHARED_FACTORY, ...EMITTER_FILES].flatMap((file) => {
       const source = readFileSync(path.join(webRoot, file), 'utf8');
 
       return [...source.matchAll(CLASS_COUNT)].map((found) => `${file} : « ${found[0]} »`);
