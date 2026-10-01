@@ -126,10 +126,10 @@
  * Ce que `details` dit n'a donc pas changé d'un mot, et c'est voulu : ce ticket
  * ajoute un code, il ne redéfinit pas la garde des quatre écrans.
  *
- * ## …et cinq autres modules d'actions le portent — #1375
+ * ## …et d'autres modules d'actions le portent — #1375
  *
  * #1372 n'avait appliqué le remède qu'au planning et au comptoir, faute de quoi
- * son ticket aurait débordé. Cinq autres modules d'actions jugeaient le même
+ * son ticket aurait débordé. D'autres modules d'actions jugeaient le même
  * slug de la même façon et rendaient encore `invalid(t('…unknownTenant'))` :
  * `catalogue`, `clients`, `personnel`, `reporting`, et l'espace client. Ils
  * portent tous `TENANT_NOT_FOUND` désormais, par {@link unknownTenant} pour les
@@ -229,15 +229,15 @@
  * ici est ce qui vaut pour les trois : **un code du contrat, et sa phrase lue dans
  * la table bilingue.**
  *
- * Ce que #1391 a eu à trancher en plus des huit autres, parce que sa surface n'est
- * pas la leur : **d'où vient la phrase d'un refus quand le module n'emploie ni ce
- * fichier ni `refusalMessage`, et écrit la sienne depuis son catalogue.** La règle
- * retenue est celle que `lib/refusal.ts` encode déjà — le contrat par défaut, le
- * catalogue de la surface là où elle dit mieux que lui. D'où un partage, et non une
- * substitution : `TENANT_NOT_FOUND` passe au contrat, tandis que le refus de la
- * requête de créneaux garde `VALIDATION_ERROR` **et** sa phrase de catalogue, le
- * contrat ne sachant pas dire de quelle demande il s'agissait. L'argumentaire
- * complet, surface publique comprise, est en tête de
+ * Ce que #1391 a eu à trancher en plus des modules repris avant lui, parce que sa
+ * surface n'est pas la leur : **d'où vient la phrase d'un refus quand le module
+ * n'emploie ni ce fichier ni `refusalMessage`, et écrit la sienne depuis son
+ * catalogue.** La règle retenue est celle que `lib/refusal.ts` encode déjà — le
+ * contrat par défaut, le catalogue de la surface là où elle dit mieux que lui. D'où un
+ * partage, et non une substitution : `TENANT_NOT_FOUND` passe au contrat, tandis que
+ * le refus de la requête de créneaux garde `VALIDATION_ERROR` **et** sa phrase de
+ * catalogue, le contrat ne sachant pas dire de quelle demande il s'agissait.
+ * L'argumentaire complet, surface publique comprise, est en tête de
  * `app/(booking)/[tenantSlug]/reservation/actions.ts`.
  *
  * ## …et les deux Route Handlers lèvent la réserve — #1394
@@ -253,29 +253,51 @@
  * périmètre que cet en-tête auditait.
  *
  * Elles portent `TENANT_NOT_FOUND` désormais, le slug jugé seul et en premier, et la
- * phrase du contrat. **La liste des émetteurs est close des deux côtés** — dix
- * modules d'actions serveur et deux Route Handlers, soit douze —, et plus aucune
- * surface d'`apps/web` ne refuse l'établissement inconnu sous le code du refus de
- * saisie. Elle se lit, comme toujours, dans `WEB_ACTION_ERROR_CODES`
- * (`packages/shared/src/errors/error-codes.ts`).
+ * phrase du contrat. **La liste des émetteurs est close des deux côtés** — modules
+ * d'actions serveur et Route Handlers —, et plus aucune surface d'`apps/web` ne
+ * refuse l'établissement inconnu sous le code du refus de saisie. Elle se lit, comme
+ * toujours, dans `WEB_ACTION_ERROR_CODES`
+ * (`packages/shared/src/errors/error-codes.ts`), **qui est aussi le seul endroit où
+ * elle se compte** — voir la section suivante.
  *
- * Ce que ces deux-là ont eu à trancher en plus des dix, et qui ne pouvait pas se
- * déduire d'elles : **le statut HTTP**. Un module d'actions rend un résultat sans
- * statut — c'est ce que {@link AdminActionResult} est —, une route en porte un, et le
- * contrat partagé ne le fixe pas (l'en-tête d'`error-codes.ts` : *« ce fichier n'est
- * pas une table de correspondance vers des statuts HTTP »*). **404 et non 400**,
- * pour trois raisons qui sont écrites en tête de la route d'annulation : l'API répond
- * déjà 404 à cette cause exacte, slug mal formé compris
+ * Ce que ces deux-là ont eu à trancher en plus des modules d'actions, et qui ne
+ * pouvait pas se déduire d'elles : **le statut HTTP**. Un module d'actions rend un
+ * résultat sans statut — c'est ce que {@link AdminActionResult} est —, une route en
+ * porte un, et le contrat partagé ne le fixe pas (l'en-tête d'`error-codes.ts` :
+ * *« ce fichier n'est pas une table de correspondance vers des statuts HTTP »*).
+ * **404 et non 400**, pour trois raisons qui sont écrites en tête de la route
+ * d'annulation : l'API répond déjà 404 à cette cause exacte, slug mal formé compris
  * (`tenant-scope.middleware.ts`), la troisième route du dépôt qui juge ce slug le
  * rend déjà ainsi (`admin/encaissement/ticket/[saleId]/route.ts`), et un 400 dit que
- * la **charge utile** est mal formée — la confusion même que ce fil a corrigée douze
- * fois au niveau du code, et qu'il aurait laissée debout au niveau du statut.
+ * la **charge utile** est mal formée — la confusion même que ce fil a corrigée chez
+ * chacun de ses émetteurs au niveau du code, et qu'il aurait laissée debout au niveau
+ * du statut.
  *
  * Ce module n'est toujours pas celui que ces routes emploient : elles ont leur propre
  * fabricant de refus, qui pose un statut en plus du code et du message. Ce qui se dit
- * ici vaut pour les douze — **un code du contrat, et sa phrase lue dans la table
- * bilingue** —, et c'est la raison pour laquelle cet en-tête est l'endroit où la
+ * ici vaut pour tous les émetteurs — **un code du contrat, et sa phrase lue dans la
+ * table bilingue** —, et c'est la raison pour laquelle cet en-tête est l'endroit où la
  * classe se tient.
+ *
+ * ## …et le compte cesse d'être écrit ici — #1397
+ *
+ * Ce fil a écrit le nombre de ses émetteurs à chaque maillon, et ce nombre s'est périmé
+ * à chacun : #1375 et #1379 l'ont laissé vieillir, #1391 s'est annoncé « neuvième et
+ * dernier » en comptant #1372 pour un module au lieu de deux, #1394 a corrigé ce qu'il
+ * voyait passer sans voir le reste — et deux écritures de cet en-tête et du tunnel
+ * disaient encore « huit autres » quand il y en avait neuf. La cause n'est pas
+ * l'inattention : c'est qu'un total **recopié** loin de la liste qu'il totalise n'a
+ * aucun moyen de rester vrai.
+ *
+ * La règle qui remplace la vigilance : **un seul endroit a le droit de compter**, la
+ * notice de `WEB_ACTION_ERROR_CODES.TENANT_NOT_FOUND`, parce que c'est la seule
+ * écriture qui porte aussi la **liste** — un total collé à sa liste ne peut pas s'en
+ * écarter sans qu'on le voie. Ici et dans les en-têtes des émetteurs, on **nomme** :
+ * la liste quand elle est courte, la notice sinon. Et comme la documentation est la
+ * seule barrière de cette onzième famille — `api-error-codes.spec.ts` ne sait pas
+ * relire les émetteurs d'`apps/web`, il n'y chasse que les littéraux —, la règle est
+ * tenue par un test qui **mesure** :
+ * `apps/web/tests/unit/registre-etablissement-inconnu.test.ts`.
  */
 
 import { ERROR_CODES, errorMessage, type Locale } from '@spa/shared';

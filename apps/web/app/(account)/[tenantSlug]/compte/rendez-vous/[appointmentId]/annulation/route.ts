@@ -48,7 +48,7 @@ import type { CancellationOutcome } from './cancellation-request';
  *
  * Cette route était, avec `compte/reservation/route.ts`, l'une des deux surfaces
  * que la classe ouverte par #1372 et refermée par #1391 avait laissées dehors :
- * dix **modules d'actions serveur** rendaient `TENANT_NOT_FOUND`, et ces deux
+ * les **modules d'actions serveur** rendaient `TENANT_NOT_FOUND`, et ces deux
  * **Route Handlers** jugeaient encore le même slug sous `VALIDATION_ERROR`. Le
  * défaut les avait suivies quand #1201 et #1207 les ont converties en routes,
  * faute de pouvoir joindre le jeton de la cliente depuis une action, et il est
@@ -56,9 +56,9 @@ import type { CancellationOutcome } from './cancellation-request';
  * `WEB_ACTION_ERROR_CODES` auditaient — ces deux-là parlaient de « modules
  * d'actions serveur », au mot près.
  *
- * Ici le symptôme était le plus net des douze : le slug se jugeait **du même `if`**
- * que l'identifiant du rendez-vous, si bien que le refus rendu dépendait de
- * l'ordre des tests d'un `||`, et qu'un segment d'URL qui ne désigne aucun
+ * Ici le symptôme était le plus net de toute la classe : le slug se jugeait **du
+ * même `if`** que l'identifiant du rendez-vous, si bien que le refus rendu dépendait
+ * de l'ordre des tests d'un `||`, et qu'un segment d'URL qui ne désigne aucun
  * établissement se disait « La demande d'annulation est incomplète. ». Les deux
  * gardes sont séparées, et le slug passe le premier — un identifiant jugé sur une
  * adresse qui ne mène nulle part enverrait chercher une faute qu'on n'a pas
@@ -67,7 +67,7 @@ import type { CancellationOutcome } from './cancellation-request';
  * ### Le statut, que ce fichier décide et que le contrat ne dit pas
  *
  * Un module d'actions ne rend qu'un résultat ; une route porte un **statut**, et
- * c'est la seule chose que les dix précédents n'avaient pas eu à trancher. Le
+ * c'est la seule chose que les modules d'actions n'avaient pas eu à trancher. Le
  * contrat partagé ne le tranche pas pour nous — l'en-tête d'`error-codes.ts`
  * l'écrit : *« ce fichier n'est pas une table de correspondance vers des statuts
  * HTTP »*. **404, et non le 400 d'avant** :
@@ -85,8 +85,9 @@ import type { CancellationOutcome } from './cancellation-request';
  *   même `safeParse` en échec. Elle avait tranché seule ; les deux autres s'y
  *   alignent ;
  * - **400 dit que la charge utile est mal formée**, et c'est exactement la
- *   confusion que ce fil a corrigée dix fois au niveau du *code*. La laisser
- *   debout au niveau du *statut* l'aurait reconduite d'un cran plus bas.
+ *   confusion que ce fil a corrigée chez chacun de ses émetteurs au niveau du
+ *   *code*. La laisser debout au niveau du *statut* l'aurait reconduite d'un cran
+ *   plus bas.
  *
  * Le refus de l'**identifiant**, lui, garde `VALIDATION_ERROR` **et** 400 : c'est
  * bien une charge utile mal formée, et sa phrase reste celle du catalogue, qui
