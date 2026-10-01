@@ -384,6 +384,13 @@ describe('fiche d’une prestation', () => {
    * autre prestation porte déjà cette adresse » sur une saisie dont ce qui
    * cloche est la **forme**, et priverait le champ du rejeu qui traduit ce que
    * zod a dit.
+   *
+   * La phrase attendue est lue au **contrat** depuis #1388 :
+   * `resourceSlugSchema` nomme ce refus par `messageKey('identifier.slug')`, et
+   * le catalogue de cet écran n'en porte plus de copie. La lire ici plutôt que
+   * dans `admin-catalog.json` est ce qui fait de ce cas la garde du choix — le
+   * jour où ce formulaire reposerait sa propre phrase, elle ne serait plus
+   * celle-ci.
    */
   it('laisse le refus de forme parler quand l’adresse est reprise mal écrite', async () => {
     updateServiceAction.mockResolvedValue({
@@ -406,13 +413,13 @@ describe('fiche d’une prestation', () => {
     await user.clear(adresse);
     await user.type(adresse, 'Pas Un Slug!');
     await waitFor(() => {
-      expect(messageDuChamp('service-slug')).toBe(adminCatalogFr.form.errors.slug);
+      expect(messageDuChamp('service-slug')).toBe(validationMessage('identifier.slug', 'fr'));
     });
 
     enAnglais();
 
     await waitFor(() => {
-      expect(messageDuChamp('service-slug')).toBe(adminCatalogEn.form.errors.slug);
+      expect(messageDuChamp('service-slug')).toBe(validationMessage('identifier.slug', 'en'));
     });
     expect(nombreDeMessages()).toBe(1);
   });

@@ -49,7 +49,6 @@
   "fieldErrors": {
     "name": "Indiquez le nom de votre salon.",
     "slug": "Minuscules, chiffres et tirets uniquement — 63 caractères au plus.",
-    "slugReserved": "Ce nom est réservé par la plateforme — choisissez-en un autre.",
     "addressLine1": "Indiquez votre adresse.",
     "postalCode": "Ce code postal est trop long.",
     "city": "Indiquez votre ville.",

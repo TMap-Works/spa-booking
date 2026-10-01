@@ -2,6 +2,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
+  validationMessage,
   validationPhrases,
   type PublicService,
   type Service,
@@ -33,8 +34,11 @@ const here = path.dirname(fileURLToPath(import.meta.url));
  *   prestation, sa description, le nom d'une rubrique et celui d'un praticien
  *   sont rendus tels qu'ils sont enregistrés, y compris quand ils sont en
  *   français sur un écran anglais.
- * - **Les refus de saisie viennent du catalogue** et non du contrat partagé,
- *   dont les messages sont des littéraux français.
+ * - **Les refus de saisie arrivent dans la langue de l'écran.** Ceux que le
+ *   contrat **nomme** viennent de lui — le champ vide depuis #1373, les deux
+ *   refus d'adresse depuis #1388 : `zodErrorMap(locale)` les traduit, et cette
+ *   suite les lit au contrat. Ceux que l'écran reformule restent au catalogue —
+ *   la borne de 63 caractères, le montant hors devise.
  *
  * Le rendu d'un écran en anglais demande de remplacer l'amorce de langue des
  * suites, qui les fixe toutes en français (`tests/support/next-intl.ts`) : les
@@ -294,10 +298,12 @@ describe('le formulaire de prestation, rendu en anglais', () => {
    * ici — c'est ce qui fait rougir ce cas le jour où le formulaire reposerait la
    * sienne.
    *
-   * L'adresse publique, elle, garde la phrase de l'écran : celle de `slugSchema`
-   * est un littéral français que `zodErrorMap` ne traduit pas, par conception
-   * (`zod-messages.ts`) — constat fait au navigateur pendant la recette de #849.
-   * C'est le cas suivant qui la tient.
+   * L'adresse publique a suivi en #1388, et pour la même raison : `slugSchema` ne
+   * porte plus de littéral mais une **clé** (`messageKey`, #1232), que
+   * `zodErrorMap(locale)` sait traduire. Les deux cas suivants lisent donc eux aussi
+   * la phrase au contrat. Seule la **borne** de 63 caractères reste au catalogue de
+   * cet écran : elle nomme le champ là où le contrat reste générique
+   * (`messages/README.md`).
    */
   it('dit le champ obligatoire dans la langue, telle que le contrat la porte', async () => {
     const user = userEvent.setup();
@@ -323,12 +329,10 @@ describe('le formulaire de prestation, rendu en anglais', () => {
     await user.type(screen.getByLabelText(/Public address/), 'Pas Un Slug!');
     await user.click(screen.getByRole('button', { name: 'Create the service' }));
 
-    expect(
-      await screen.findByText(
-        'An address in lowercase letters, digits and single hyphens is expected.',
-      ),
-    ).toBeDefined();
-    expect(screen.queryByText(/Adresse attendue en minuscules/)).toBeNull();
+    // Lue au contrat depuis #1388, jamais recopiée : une reformulation de
+    // `identifier.slug` ne fait pas rougir ce cas, elle la suit.
+    expect(await screen.findByText(validationMessage('identifier.slug', 'en'))).toBeDefined();
+    expect(screen.queryByText(validationMessage('identifier.slug', 'fr'))).toBeNull();
     expect(createServiceAction).not.toHaveBeenCalled();
   });
 
@@ -349,13 +353,9 @@ describe('le formulaire de prestation, rendu en anglais', () => {
     await user.click(screen.getByRole('button', { name: 'Create the service' }));
 
     expect(
-      await screen.findByText('This name is reserved by the platform — choose another one.'),
+      await screen.findByText(validationMessage('identifier.slugReserved', 'en')),
     ).toBeDefined();
-    expect(
-      screen.queryByText(
-        'An address in lowercase letters, digits and single hyphens is expected.',
-      ),
-    ).toBeNull();
+    expect(screen.queryByText(validationMessage('identifier.slug', 'en'))).toBeNull();
     expect(createServiceAction).not.toHaveBeenCalled();
   });
 
@@ -531,14 +531,11 @@ describe('les rubriques, rendues en anglais', () => {
     await user.type(screen.getByLabelText(/Public address/), 'Pas Un Slug!');
     await user.click(screen.getByRole('button', { name: 'Create the section' }));
 
-    // Le nom vide : la phrase du contrat depuis #1373, lue et non recopiée.
-    // L'adresse : la phrase de l'écran, `slugSchema` n'étant pas traduisible.
+    // Le nom vide : la phrase du contrat depuis #1373. L'adresse : la phrase du
+    // contrat depuis #1388, `slugSchema` nommant son refus par `messageKey`. Les
+    // deux sont **lues** au contrat, jamais recopiées.
     expect(await screen.findByText(validationPhrases('en').required)).toBeDefined();
-    expect(
-      screen.getByText(
-        'An address in lowercase letters, digits and single hyphens is expected.',
-      ),
-    ).toBeDefined();
+    expect(screen.getByText(validationMessage('identifier.slug', 'en'))).toBeDefined();
     expect(createServiceCategoryAction).not.toHaveBeenCalled();
   });
 });

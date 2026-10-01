@@ -95,21 +95,11 @@ type InviteField = keyof InviteDraft;
  * d'avant sous des étiquettes qui, elles, suivaient le rendu.
  *
  * Ce qui va en état est donc l'`issue` elle-même — un code, un chemin, des
- * bornes : des **données** —, ou la clé de catalogue quand l'écran dit mieux que
- * le contrat. `fieldRefusalMessage` écrit la phrase au rendu.
+ * bornes : des **données** —, et `fieldRefusalMessage` écrit la phrase au rendu.
+ * Toujours une `issue` depuis #1388 : la seule clé de catalogue que cet écran
+ * posait, `invite.phoneInvalid`, redisait `identifier.phone` du contrat.
  */
 type InviteFieldErrors = Partial<Record<InviteField, FieldRefusal>>;
-
-/**
- * La seule phrase que cet écran dise en propre sous un champ.
- *
- * `PhoneField` écrit lui-même la sienne quand il est marqué invalide — elle
- * nomme le pays choisi, ce que le contrat ne sait pas faire (#825) —, si bien
- * que ce motif **marque** le champ plus qu'il ne l'énonce. Il porte tout de même
- * sa clé, et non un marqueur nu : le jour où le champ cessera de dire sa propre
- * phrase, celle du formulaire est déjà là, dans la langue du rendu.
- */
-const PHONE_INVALID_KEY = 'invite.phoneInvalid';
 
 /**
  * Ce que le bandeau du formulaire a à dire, gardé en **motif** — #1327.
@@ -227,13 +217,27 @@ export function StaffInviteForm({ tenantSlug }: { readonly tenantSlug: string })
     // serveur le soin de le compléter avec le pays du salon (#824). Le champ
     // émet déjà un E.164 (#825) : il se juge donc ici, avec la règle de l'API,
     // plutôt que de revenir refusé en bandeau après l'envoi.
-    const phoneRejected = draft.phone !== '' && !e164PhoneSchema.safeParse(draft.phone).success;
+    //
+    // C'est l'`issue` du contrat qui est retenue, et non une clé de catalogue
+    // (#1388) : `e164PhoneSchemaFor` nomme son refus par `messageKey(…)` —
+    // `identifier.phoneInternational` ici, le schéma n'ayant pas de pays par
+    // défaut —, quand `invite.phoneInvalid` redisait, elle, « Numéro de
+    // téléphone invalide. », mot pour mot `identifier.phone` du contrat, dans
+    // les deux langues. Une seconde source pour un refus que le contrat sait
+    // déjà dire, et une clé de catalogue là où une `issue` porte déjà tout ce
+    // qu'il faut pour écrire la phrase au rendu.
+    const phoneRefusal =
+      draft.phone === '' ? null : (e164PhoneSchema.safeParse(draft.phone).error?.issues[0] ?? null);
 
-    if (!parsed.success || phoneRejected) {
+    if (!parsed.success || phoneRefusal !== null) {
       const collected = parsed.success ? {} : collectInviteErrors(parsed.error.issues);
-      const fields: InviteFieldErrors = phoneRejected
-        ? { ...collected, phone: collected.phone ?? { kind: 'key', key: PHONE_INVALID_KEY } }
-        : collected;
+      const fields: InviteFieldErrors =
+        phoneRefusal === null
+          ? collected
+          : {
+              ...collected,
+              phone: collected.phone ?? { kind: 'issue', issue: phoneRefusal },
+            };
 
       setFieldErrors(fields);
       // Le bandeau ne double pas les marques de champ : il ne parle que lorsque
@@ -283,9 +287,15 @@ export function StaffInviteForm({ tenantSlug }: { readonly tenantSlug: string })
   // La carte n'a plus de titre à elle depuis #766 : le formulaire a son propre
   // écran, dont le `<h1>` reprend ce libellé. Le redire ici ferait deux titres
   // pour une seule chose.
-  /** La phrase d'un refus de champ, dans la langue de ce rendu (#1354). */
+  /**
+   * La phrase d'un refus de champ, dans la langue de ce rendu (#1354).
+   *
+   * Sans table de traduction depuis #1388 : cet écran ne dit plus aucun refus de
+   * champ en propre — tous viennent du contrat, sous forme d'`issue`, et
+   * `fieldRefusalMessage` les écrit par `zodErrorMap(locale)`.
+   */
   const fieldMessage = (field: InviteField): string | undefined =>
-    fieldRefusalMessage(fieldErrors[field], locale, () => t(PHONE_INVALID_KEY));
+    fieldRefusalMessage(fieldErrors[field], locale);
 
   return (
     <section className="spa-admin__section spa-admin-form">

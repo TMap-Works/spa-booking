@@ -126,8 +126,6 @@
     "priceExample": "35.00",
     "errors": {
       "nameTooLong": "This field is {max} characters at most.",
-      "slug": "An address in lowercase letters, digits and single hyphens is expected.",
-      "slugReserved": "This name is reserved by the platform — choose another one.",
       "slugTooLong": "This address is {max} characters at most.",
       "minutes": "A whole number of minutes is expected.",
       "positiveDuration": "A duration must be strictly positive.",
@@ -180,8 +178,6 @@
     "failureTitle": "Saving failed",
     "errors": {
       "nameTooLong": "This field is {max} characters at most.",
-      "slug": "An address in lowercase letters, digits and single hyphens is expected.",
-      "slugReserved": "This name is reserved by the platform — choose another one.",
       "slugTooLong": "This address is {max} characters at most."
     },
     "slugTaken": "Another section already carries this address.",
