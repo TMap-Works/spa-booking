@@ -298,6 +298,22 @@
  * relire les émetteurs d'`apps/web`, il n'y chasse que les littéraux —, la règle est
  * tenue par un test qui **mesure** :
  * `apps/web/tests/unit/registre-etablissement-inconnu.test.ts`.
+ *
+ * ## …et le refus se fabrique désormais ailleurs — #1395
+ *
+ * Ce fil a laissé trois fabricants du même refus — celui-ci, celui de l'espace client
+ * et celui du tunnel public —, identiques à la ligne près, et chaque fois acceptés
+ * pour la même raison : les surfaces ont leur propre type de refus, et le `details`
+ * de celui-ci n'a pas de sens chez les deux autres. #1395 a rouvert la question sur
+ * le **nombre** et l'a tranchée en mutualisant : le corps vit dans
+ * `lib/tenant-refusal.ts`, et l'arbitrage avec ses trois raisons y est écrit — c'est
+ * désormais là qu'il se lit, et non ici.
+ *
+ * Ce qui reste ici est ce que cette surface **ajoute** : son type de refus, et
+ * l'asynchronie de {@link unknownTenant}, parce que ses appelants n'ont pas la langue
+ * de la requête sous la main là où ceux des deux autres surfaces l'ont déjà lue. Le
+ * refus rendu, lui, n'a pas changé d'un champ — c'est ce que les suites de la classe,
+ * vertes sans modification, prouvent.
  */
 
 import { ERROR_CODES, errorMessage, type Locale } from '@spa/shared';
@@ -305,6 +321,7 @@ import { getLocale } from 'next-intl/server';
 import type { ZodError } from 'zod';
 
 import { ApiClientError } from '@/lib/api-client';
+import { unknownTenantRefusal } from '@/lib/tenant-refusal';
 
 /**
  * Un refus, tel que les écrans le reçoivent.
@@ -359,18 +376,17 @@ export function invalid(message: string): AdminActionFailure {
  * la phrase de son geste.
  *
  * Asynchrone pour la même raison que {@link failure} et {@link expired} : la
- * phrase vient d'`errorMessage`, qui a besoin de la langue de la requête. Elle
- * n'est d'ailleurs presque jamais affichée telle quelle — les écrans gardent le
- * code et réécrivent la phrase à chaque rendu (#1354) —, mais elle reste ce que
- * le contrat d'une action promet, et un appelant qui n'aurait que le résultat
- * doit y trouver une phrase déjà dans sa langue.
+ * phrase vient d'`errorMessage`, qui a besoin de la langue de la requête, et les
+ * appelants de cette fonction-ci ne l'ont pas lue — c'est la seule chose que cette
+ * surface ajoute au refus partagé, et c'est pourquoi elle reste écrite ici (#1395).
+ *
+ * Le refus lui-même vient de `lib/tenant-refusal.ts`, qui le fabrique pour les trois
+ * surfaces. Le type rendu reste celui d'ici : un refus sans `details` est un
+ * `AdminActionFailure`, puisque le champ y est facultatif — rien ne descend chez les
+ * deux autres surfaces, et rien ne manque à celle-ci.
  */
 export async function unknownTenant(): Promise<AdminActionFailure> {
-  return {
-    ok: false,
-    code: ERROR_CODES.TENANT_NOT_FOUND,
-    message: errorMessage(ERROR_CODES.TENANT_NOT_FOUND, await getLocale()),
-  };
+  return unknownTenantRefusal(await getLocale());
 }
 
 /**

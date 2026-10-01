@@ -126,6 +126,7 @@ import {
 import { getLocale, getTranslations } from 'next-intl/server';
 
 import { ApiClientError, fetchAvailability } from '@/lib/api-client';
+import { unknownTenantRefusal } from '@/lib/tenant-refusal';
 
 export type ActionResult<TData> =
   | { readonly ok: true; readonly data: TData }
@@ -170,27 +171,24 @@ function invalid(message: string): { ok: false; code: string; message: string } 
 /**
  * Refus faute d'établissement : le slug de l'URL n'en désigne aucun — #1391.
  *
- * Le jumeau local d'`unknownTenant()` du back-office
- * (`app/(admin)/[tenantSlug]/admin/action-result.ts`) et de celui de l'espace
- * client : ce module a son propre fabricant de refus, pour la raison dite en
- * tête — son `ActionResult` n'a pas de `details`, puisque rien ici ne lit celui
- * du corps d'erreur de l'API. La décision et ses raisons sont écrites là-bas et
- * dans `WEB_ACTION_ERROR_CODES` ; il n'y avait rien à rejuger, sinon **d'où la
- * phrase vient sur cette surface-ci**, et c'est l'objet de la section « La phrase
- * d'un refus vient du contrat » en tête de ce module.
+ * Le refus a vécu ici en copie, aux côtés de celles du back-office et de l'espace
+ * client — chacune parce que sa surface a son propre type de refus, celui-ci étant
+ * sans `details`, puisque rien ici ne lit celui du corps d'erreur de l'API. #1395 a
+ * tranché sur le **nombre** et les a ramenées à `lib/tenant-refusal.ts` : c'est là
+ * que l'arbitrage est écrit, et là que le refus se fabrique désormais. Ce qu'il y
+ * avait à juger sur cette surface-ci est ailleurs — **d'où la phrase vient** —, et
+ * c'est l'objet de la section « La phrase d'un refus vient du contrat » en tête de
+ * ce module.
  *
  * Synchrone et la langue en paramètre, comme {@link failure} et pour la même
  * raison : les appels à `next-intl/server` restent au seul endroit où la requête
  * est déjà attendue. Son appelant la lit sur place, et **seulement quand il
  * refuse** — le chargement qui aboutit n'interroge pas la requête pour une phrase
- * dont il n'a pas l'usage.
+ * dont il n'a pas l'usage. C'est aussi la forme que la fabrique partagée a retenue,
+ * et pour ce motif-là.
  */
 function unknownTenant(locale: Locale): { ok: false; code: string; message: string } {
-  return {
-    ok: false,
-    code: ERROR_CODES.TENANT_NOT_FOUND,
-    message: errorMessage(ERROR_CODES.TENANT_NOT_FOUND, locale),
-  };
+  return unknownTenantRefusal(locale);
 }
 
 export async function loadAvailabilityAction(
