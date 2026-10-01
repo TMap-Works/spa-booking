@@ -106,7 +106,7 @@ soumission. Deux formes le désignent, et deux seulement :
 2. **La clé est inscrite au registre `REFUS_HORS_BLOC`** de
    [`tests/unit/messages-glossary.test.ts`](../tests/unit/messages-glossary.test.ts).
    Ce registre est là pour les refus qui **précèdent** la convention —
-   `admin-settings.hours.pair`, `admin-staff.invite.phoneInvalid`,
+   `admin-settings.hours.pair`, `admin-staff.invite.invalid`,
    `admin-catalog.categoryForm.slugTaken`. Les ranger sous `errors` demanderait
    de renommer leurs clés dans les composants qui les lisent, ce qui n'a pas sa
    place dans un ticket de chaînes. La liste est **fermée** : elle n'exempte
@@ -217,33 +217,30 @@ précédent, qui compare les catalogues aux phrases **fixes** de
 qui lit la phrase au contrat plutôt que de la recopier — sans lui, un écran
 pourrait avoir perdu sa clé et n'afficher plus rien.
 
-**L'arbitrage, et il est explicite : la garde part avec huit dispenses.** #1387
-portait sur l'empreinte `contracts:shared, web/identity` ; son recensement a
-trouvé huit autres feuilles qui redisent une phrase fixe de
-`VALIDATION_MESSAGES`, sur quatre catalogues qu'il ne pouvait pas toucher —
-d'autres tickets du même jalon y travaillaient en parallèle. Elles sont inscrites
-nommément, avec leur motif, dans `COPIES_DE_MESSAGES_TOLEREES`, et **#1388** les
-écoule :
+**La garde est sans exception, et `COPIES_DE_MESSAGES_TOLEREES` est vide.**
+Décision de #1388. Il n'y a pas de liste de dispensations à tenir, et il n'y en a
+plus : une feuille de catalogue qui redit une phrase fixe de `VALIDATION_MESSAGES`
+est un défaut, dans n'importe quel namespace et dans n'importe laquelle des deux
+langues. Le remède est toujours le même — poser `messageKey(…)` sur le schéma du
+contrat, retirer la clé des deux catalogues, laisser `zodErrorMap(locale)`
+répondre, et faire lire la phrase au contrat par la suite de rendu qui la cite —,
+jamais d'inscrire une exception.
 
-| Clé | Redit | Divergence déjà installée |
-|---|---|---|
-| `admin-catalog.form.errors.slug` | `identifier.slug` | oui, en anglais |
-| `admin-catalog.form.errors.slugReserved` | `identifier.slugReserved` | oui, en anglais |
-| `admin-catalog.categoryForm.errors.slug` | `identifier.slug` | oui, en anglais |
-| `admin-catalog.categoryForm.errors.slugReserved` | `identifier.slugReserved` | oui, en anglais |
-| `admin-settings.address.countryFormat` | `identifier.countryCode` | non |
-| `admin-staff.invite.phoneInvalid` | `identifier.phone` | non |
-| `admin-staff.schedule.overlap` | `availability.scheduleOverlap` | non |
-| `signup.fieldErrors.slugReserved` | `identifier.slugReserved` | oui, en anglais |
+Cela n'a pas toujours été le cas, et l'historique dit pourquoi la liste existait :
+#1387 portait sur l'empreinte `contracts:shared, web/identity`, et son recensement
+avait trouvé huit autres feuilles fautives sur cinq écrans qu'il ne pouvait pas
+toucher — d'autres tickets du même jalon y travaillaient en parallèle. Les inscrire
+nommément, avec leur motif, valait mieux que de ne pas poser la garde : une
+neuvième copie écrite le lendemain rougissait, et les huit restantes étaient
+écrites noir sur blanc. **#1388 les a écoulées toutes les huit**, et la liste est
+partie avec elles. C'est le même arbitrage, et la même fin, que
+`booking.tunnel.contactStep.errors.required` : laissée en dispense par #1373 le
+temps qu'un ticket vienne reprendre le tunnel public, reprise par #1376 du même
+geste que la dispense.
 
-C'est le même arbitrage que celui de #1373, qui avait laissé
-`booking.tunnel.contactStep.errors.required` en dispense le temps qu'un ticket
-vienne reprendre le tunnel public — et #1376 l'a reprise du même geste que la
-dispense. Le motif n'est pas la commodité : chacune de ces huit clés demande de
-reprendre le **formulaire** qui l'affiche et la suite de rendu qui la cite, pas
-seulement une ligne de JSON. Poser la garde maintenant et nommer ce qui reste
-vaut mieux que de ne rien poser — une neuvième copie écrite demain rougit, et les
-huit restantes sont écrites noir sur blanc.
+Si un écran paraît avoir besoin d'y réinscrire une clé, c'est un écran qui redit
+une phrase que le contrat sait déjà dire : la liste reste vide, et c'est le schéma
+qu'on corrige.
 
 **Ce qui n'est pas concerné.** Trois cas, et ils ne sont pas des oublis.
 
@@ -257,7 +254,17 @@ huit restantes sont écrites noir sur blanc.
   où le contrat dit « Saisissez au moins {min} caractères. » : elle **nomme le
   champ**, ce qu'une phrase générique ne peut pas faire. Même chose pour
   `admin-settings.hours.order` et pour `platform.create.fieldErrors.slugReserved`,
-  proches sans être identiques.
+  proches sans être identiques. #1388 en a laissé deux de plus là où il retirait
+  leurs voisines : `admin-catalog.form.errors.slugTooLong` — « Cette adresse fait
+  au plus {max} caractères. » — et `signup.fieldErrors.slug`, qui annonce la borne
+  de 63 caractères que le motif du contrat ne dit pas. Un cas de
+  `refus-de-saisie-vient-du-contrat.test.tsx` interdit qu'un ticket de
+  déduplication les emporte au passage. Troisième voisine laissée en place :
+  `admin-staff.schedule.endBeforeStart` — « La fin d'une plage doit suivre son
+  début. » — là où `availability.scheduleRangeOrder` dit « … doit être strictement
+  postérieure à son début. ». Les deux disent la même règle, aucune ne redit
+  l'autre, et la grille garde la formulation courte qui tient sous une ligne de
+  saisie.
 - Les **indications**, qui ne sont pas des refus. `platform.login.totpHint` — « Les
   six chiffres affichés par votre application d'authentification. » — est le texte
   d'aide posé sous le champ, lu **avant** toute saisie ; le refus, lui, ne paraît

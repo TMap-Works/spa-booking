@@ -51,8 +51,9 @@ import { loadMessages, type MessageTree } from '@/i18n/messages';
  * une feuille de catalogue ne redit pas une phrase que le contrat partagé porte
  * déjà. Elles regardent les deux tables de `zod-messages.ts`, chacune avec sa
  * propre dispense — `validationPhrases` depuis #1373 et #1376, `VALIDATION_MESSAGES`
- * depuis #1387. Voir {@link phrasesFixesDuContrat} et
- * {@link phrasesNommeesParLeContrat}.
+ * depuis #1387. Les deux dispenses sont **vides** : #1376 a écoulé celle de la
+ * première, #1388 les huit de la seconde. Voir
+ * {@link phrasesFixesDuContrat} et {@link phrasesNommeesParLeContrat}.
  */
 
 /** Les feuilles d'un catalogue, par clé aplatie. */
@@ -244,7 +245,6 @@ const REFUS_HORS_BLOC: ReadonlySet<string> = new Set([
   'admin-clients.list.search.tooShort',
   'admin-clients.list.search.tooLong',
   // Les réglages de l'établissement — adresse postale et horaires d'ouverture.
-  'admin-settings.address.countryFormat',
   'admin-settings.address.incomplete',
   'admin-settings.address.invalid',
   'admin-settings.hours.format',
@@ -253,14 +253,16 @@ const REFUS_HORS_BLOC: ReadonlySet<string> = new Set([
   'admin-settings.hours.emptyDay',
   'admin-settings.hours.invalid',
   // Le personnel — invitation, fiche praticien, semaine de travail, absences.
-  'admin-staff.invite.phoneInvalid',
   'admin-staff.invite.invalid',
   'admin-staff.member.accountRequired',
   'admin-staff.member.invalid',
   'admin-staff.profile.invalid',
   'admin-staff.schedule.incomplete',
   'admin-staff.schedule.tooMany',
-  'admin-staff.schedule.overlap',
+  // `schedule.overlap` n'y est plus : #1388 l'a retirée du catalogue, le
+  // recouvrement étant dit par `VALIDATION_MESSAGES` — voir
+  // `scheduleRefusalMessage`. Le cas « n'inscrit au registre hors bloc que des
+  // clés qui existent » l'aurait rappelé tout seul.
   'admin-staff.schedule.endBeforeStart',
   'admin-staff.schedule.invalid',
   'admin-staff.timeOff.missingFrom',
@@ -464,7 +466,7 @@ describe('le registre des refus de validation (#1357)', () => {
 
     // Et les deux formes qu'elle tient : le bloc nommé, et le registre.
     expect(estUnRefus('admin-catalog.form.errors.nameTooLong')).toBe(true);
-    expect(estUnRefus('admin-staff.schedule.overlap')).toBe(true);
+    expect(estUnRefus('admin-staff.schedule.endBeforeStart')).toBe(true);
 
     // Le registre désigne des clés une à une : le voisin d'un refus inscrit
     // n'en devient pas un. `hours.timezone` est une mention sous le champ.
@@ -681,64 +683,41 @@ function phrasesNommeesParLeContrat(locale: Locale): ReadonlyMap<string, string>
  * Les copies d'une phrase **nommée** par le contrat que la garde laisse passer,
  * avec le motif de chacune — une dispense se justifie ou n'existe pas.
  *
- * **Elle n'est pas vide, et c'est délibéré.** #1387 a refermé la copie de son
- * empreinte — `contracts:shared, web/identity` — et le recensement qu'il a mené
- * en a trouvé huit autres, sur quatre catalogues qu'il ne pouvait pas toucher :
- * trois écrans du back-office et l'inscription. Les inscrire ici plutôt que de les
- * corriger au passage est le même arbitrage que celui de #1373, qui avait laissé
- * `booking.tunnel.contactStep.errors.required` en dispense le temps qu'un ticket
- * vienne reprendre le tunnel public — et #1376 l'a effectivement reprise, du même
- * geste que la dispense.
+ * **Elle est vide, et la garde est désormais sans exception** — premier critère de
+ * #1388, écrit noir sur blanc dans `messages/README.md`.
  *
- * Le motif n'est pas « c'est long » : chacune de ces huit clés demande de reprendre
- * le **formulaire** qui l'affiche et la suite de rendu qui la cite, pas seulement
- * une ligne de JSON. Poser la garde maintenant et nommer ce qui reste vaut mieux
- * que de ne rien poser : une copie écrite demain rougit ici, et les huit restantes
- * sont écrites noir sur blanc plutôt que découvertes par un recensement de plus.
+ * ## Les huit qu'elle a portées, et par où elles sont parties
  *
- * **Cinq d'entre elles ont déjà divergé**, exactement comme `platform.totpCode` :
- * les quatre clés d'adresse du catalogue des prestations et celle de l'inscription
- * sont identiques au contrat en français et en divergent en anglais. C'est la
- * mesure du risque, et c'est ce que porte **#1388**, qui écoule cette liste.
+ * #1387 a refermé la copie de son empreinte — `contracts:shared, web/identity` —
+ * et le recensement qu'il a mené en a trouvé huit autres, sur quatre catalogues
+ * qu'il ne pouvait pas toucher : trois écrans du back-office et l'inscription. Les
+ * inscrire ici plutôt que de les corriger au passage était le même arbitrage que
+ * celui de #1373, qui avait laissé `booking.tunnel.contactStep.errors.required` en
+ * dispense le temps qu'un ticket vienne reprendre le tunnel public — et #1376 l'a
+ * effectivement reprise, du même geste que la dispense.
  *
- * Ce qui la fait maigrir est le régime, et non la chance : un écran qui a besoin
- * d'y inscrire une clé est un écran qui redit une phrase que `zodErrorMap(locale)`
- * sait déjà dire. Le remède est de laisser la carte répondre.
+ * **#1388 les a écoulées toutes les huit** : les quatre clés d'adresse du catalogue
+ * des prestations et de ses rubriques, le code pays des réglages, le numéro de
+ * téléphone de l'invitation, le nom réservé de l'inscription, et le recouvrement de
+ * la grille d'horaires. Chacune demandait bien ce que le motif annonçait —
+ * reprendre le **formulaire** ou le module qui l'affiche et la suite de rendu qui
+ * la cite, pas seulement une ligne de JSON —, et cinq d'entre elles avaient
+ * effectivement déjà divergé en anglais, exactement comme `platform.totpCode`.
+ *
+ * La huitième, `admin-staff.schedule.overlap`, est la seule que n'écrivait pas un
+ * formulaire : elle venait de `scheduleRefusalMessage`
+ * (`lib/admin/staff-schedule.ts`), un validateur pur lu hors de React, qui rend
+ * désormais `validationMessage('availability.scheduleOverlap', locale)`.
+ *
+ * ## Ce qui la garde vide est le régime, et non la chance
+ *
+ * Un écran qui aurait besoin d'y inscrire une clé est un écran qui redit une phrase
+ * que `zodErrorMap(locale)` sait déjà dire — le remède est de poser `messageKey(…)`
+ * sur le schéma et de laisser la carte répondre, jamais d'allonger cette liste.
+ * Même régime que {@link COPIES_DE_PHRASES_TOLEREES}, vide pour la même raison
+ * depuis #1376.
  */
-const COPIES_DE_MESSAGES_TOLEREES: ReadonlyMap<string, string> = new Map([
-  [
-    'admin-catalog.form.errors.slug',
-    'redit identifier.slug en fr, en diverge en en — hors empreinte de #1387, repris par #1388',
-  ],
-  [
-    'admin-catalog.form.errors.slugReserved',
-    'redit identifier.slugReserved en fr, en diverge en en — hors empreinte de #1387, repris par #1388',
-  ],
-  [
-    'admin-catalog.categoryForm.errors.slug',
-    'redit identifier.slug en fr, en diverge en en — hors empreinte de #1387, repris par #1388',
-  ],
-  [
-    'admin-catalog.categoryForm.errors.slugReserved',
-    'redit identifier.slugReserved en fr, en diverge en en — hors empreinte de #1387, repris par #1388',
-  ],
-  [
-    'admin-settings.address.countryFormat',
-    'redit identifier.countryCode dans les deux langues — hors empreinte de #1387, repris par #1388',
-  ],
-  [
-    'admin-staff.invite.phoneInvalid',
-    'redit identifier.phone dans les deux langues — hors empreinte de #1387, repris par #1388',
-  ],
-  [
-    'admin-staff.schedule.overlap',
-    'redit availability.scheduleOverlap dans les deux langues — hors empreinte de #1387, repris par #1388',
-  ],
-  [
-    'signup.fieldErrors.slugReserved',
-    'redit identifier.slugReserved en fr, en diverge en en — hors empreinte de #1387, repris par #1388',
-  ],
-]);
+const COPIES_DE_MESSAGES_TOLEREES: ReadonlyMap<string, string> = new Map<string, string>();
 
 describe('un refus nommé par le contrat n’a qu’une source (#1387)', () => {
   for (const locale of LOCALES) {
@@ -775,10 +754,15 @@ describe('un refus nommé par le contrat n’a qu’une source (#1387)', () => {
    * La dispense s'éteint d'elle-même le jour où la copie est reprise.
    *
    * **Une** langue suffit à la justifier, là où la garde de #1376 les exige
-   * toutes : c'est précisément ce que le recensement de #1387 a montré. Cinq de
-   * ces huit clés sont identiques au contrat en français et en divergent en
-   * anglais — exiger les deux langues rendrait la dispense « inutile » alors que
-   * la copie est bien là, et le cas rougirait pour la mauvaise raison.
+   * toutes : c'est précisément ce que le recensement de #1387 a montré. Cinq des
+   * huit clés qu'il a inscrites étaient identiques au contrat en français et en
+   * divergeaient en anglais — exiger les deux langues rendrait la dispense
+   * « inutile » alors que la copie est bien là, et le cas rougirait pour la
+   * mauvaise raison.
+   *
+   * La liste étant vide depuis #1388, ce cas ne juge plus rien et passe par
+   * vacuité : c'est **l'état attendu**, et c'est lui qui rougira le jour où
+   * quelqu'un y réinscrira une clé sans la copie correspondante.
    */
   it('ne garde de dispense que pour une copie qui existe encore', () => {
     const inutiles: string[] = [];
