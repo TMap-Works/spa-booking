@@ -1,4 +1,4 @@
-import type { StaffScheduleEntry } from '@spa/shared';
+import { validationMessage, type StaffScheduleEntry } from '@spa/shared';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -88,8 +88,12 @@ describe('le verdict rendu avant l’appel', () => {
     if (!verdict.ok) {
       expect(verdict.rowId).toBeNull();
       // Le verdict porte le **motif** depuis #1354 ; la phrase s'écrit à part,
-      // dans la langue qu'on lui demande.
-      expect(scheduleRefusalMessage(verdict.refusalKey, FR)).toMatch(/recouvrent/i);
+      // dans la langue qu'on lui demande — et elle est **lue au contrat** depuis
+      // #1388, `setStaffScheduleRequestSchema` nommant ce refus par
+      // `messageKey('availability.scheduleOverlap')`.
+      expect(scheduleRefusalMessage(verdict.refusalKey, FR)).toBe(
+        validationMessage('availability.scheduleOverlap', FR),
+      );
     }
   });
 

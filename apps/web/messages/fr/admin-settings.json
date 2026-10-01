@@ -20,7 +20,6 @@
     "regionHint": "NY, QC… ou le nom complet. Facultatif.",
     "country": "Pays",
     "countryHint": "Code à deux lettres : FR, BE, MG…",
-    "countryFormat": "Code pays ISO 3166-1 alpha-2 attendu (« FR »).",
     "incomplete": "Renseignez la rue, la ville et le pays, ou laissez l’adresse entièrement vide.",
     "invalid": "L’adresse saisie est invalide."
   },

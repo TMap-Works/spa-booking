@@ -126,8 +126,6 @@
     "priceExample": "35,00",
     "errors": {
       "nameTooLong": "Ce champ fait au plus {max} caractères.",
-      "slug": "Adresse attendue en minuscules, chiffres et tirets simples.",
-      "slugReserved": "Ce nom est réservé par la plateforme — choisissez-en un autre.",
       "slugTooLong": "Cette adresse fait au plus {max} caractères.",
       "minutes": "Nombre entier de minutes attendu.",
       "positiveDuration": "Une durée doit être strictement positive.",
@@ -180,8 +178,6 @@
     "failureTitle": "L’enregistrement a échoué",
     "errors": {
       "nameTooLong": "Ce champ fait au plus {max} caractères.",
-      "slug": "Adresse attendue en minuscules, chiffres et tirets simples.",
-      "slugReserved": "Ce nom est réservé par la plateforme — choisissez-en un autre.",
       "slugTooLong": "Cette adresse fait au plus {max} caractères."
     },
     "slugTaken": "Une autre rubrique porte déjà cette adresse.",

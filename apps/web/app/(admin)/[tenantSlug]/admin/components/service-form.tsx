@@ -6,11 +6,13 @@ import {
   DISPLAY_NAME_MAX_LENGTH,
   SLUG_MAX_LENGTH,
   longTextSchema,
+  messageKey,
   resourceSlugSchema,
   slugSchema,
   zodErrorMap,
   type CreateServiceRequest,
   type Locale,
+  type ValidationMessageKey,
   type Service,
   type ServiceCategory,
   type UpdateServiceRequest,
@@ -142,6 +144,24 @@ import { useAdminSessionRenewal } from './use-admin-session-renewal';
  * Ce que la gérante **saisit**, en revanche, ne se traduit jamais : le nom, la
  * description et le nom des rubriques du `<select>` sont rendus tels qu'ils sont
  * enregistrés.
+ *
+ * ## Ce que #1388 reprend : l'adresse refusée redisait le contrat
+ *
+ * Deux des quatre phrases ci-dessus n'étaient pas de celles que le contrat laisse
+ * à l'écran : `identifier.slug` et `identifier.slugReserved` sont **nommées** par
+ * `resourceSlugSchema` et `slugSchema` eux-mêmes, par `messageKey(…)` depuis
+ * #1232, et `zodErrorMap(locale)` sait donc les dire dans les deux langues. Le
+ * catalogue en portait une copie — identique au contrat en français, et **déjà
+ * divergente en anglais**, « An address in lowercase letters… is expected. »
+ * contre « Address expected in lowercase letters… ». Le même champ disait deux
+ * phrases selon que le refus venait du schéma partagé ou du formulaire.
+ *
+ * Le `superRefine` ci-dessous ne pose donc plus de `message` pour ces deux
+ * refus-là : il **reporte la clé** que le contrat a posée, et la carte d'erreurs
+ * du résolveur la traduit. Seule la borne de longueur garde sa phrase de
+ * catalogue — « Cette adresse fait au plus {max} caractères. » nomme le champ là
+ * où le contrat reste générique, c'est une reformulation et non une copie
+ * (`messages/README.md`).
  */
 
 /**
@@ -153,8 +173,6 @@ import { useAdminSessionRenewal } from './use-admin-session-renewal';
  */
 interface ServiceFormMessages {
   readonly nameTooLong: string;
-  readonly slug: string;
-  readonly slugReserved: string;
   readonly slugTooLong: string;
   readonly minutes: string;
   readonly positiveDuration: string;
@@ -162,9 +180,10 @@ interface ServiceFormMessages {
 }
 
 /**
- * Pourquoi `slugSchema` a refusé cette adresse, dit dans la langue de l'écran.
+ * Ce que le contrat reproche à cette adresse : la **clé** du refus qu'il nomme,
+ * ou `'tooLong'` pour la seule borne dont la phrase reste au catalogue.
  *
- * Une seule phrase pour les trois causes serait **fausse** dans deux cas sur
+ * Une clé unique pour les trois causes serait **fausse** dans deux cas sur
  * trois : « minuscules, chiffres et tirets simples » sous `www`, qui n'a rien
  * d'autre que des minuscules, ne dit pas à la gérante ce qu'elle doit corriger —
  * et c'est un nom réservé de la plateforme qu'elle vient de saisir. Le verdict
@@ -173,13 +192,15 @@ interface ServiceFormMessages {
  * réservé et la faute de forme rendent tous deux un `custom` depuis #1232, et se
  * départagent en rejouant `resourceSlugSchema` (voir ci-dessous).
  *
+ * Une clé et non une phrase depuis #1388 : le contrat porte les deux, et les
+ * recopier au catalogue de cet écran en faisait une seconde source.
+ *
  * Même écriture dans `category-manager.tsx` : ce qui serait mis en commun n'est
  * pas la règle — elle est déjà partagée — mais un branchement de formulaire.
  */
-function slugRefusal(
-  value: string,
-  messages: Pick<ServiceFormMessages, 'slug' | 'slugReserved' | 'slugTooLong'>,
-): string | null {
+type SlugRefusal = ValidationMessageKey | 'tooLong';
+
+function slugRefusal(value: string): SlugRefusal | null {
   const parsed = slugSchema.safeParse(value);
 
   if (parsed.success) {
@@ -187,7 +208,7 @@ function slugRefusal(
   }
 
   if (parsed.error.issues.some((issue) => issue.code === 'too_big')) {
-    return messages.slugTooLong;
+    return 'tooLong';
   }
 
   /*
@@ -202,7 +223,9 @@ function slugRefusal(
    * `custom`. Le code ne les distinguait plus, et `www` se serait vu reprocher
    * une minuscule qu'il a déjà.
    */
-  return resourceSlugSchema.safeParse(value).success ? messages.slugReserved : messages.slug;
+  return resourceSlugSchema.safeParse(value).success
+    ? 'identifier.slugReserved'
+    : 'identifier.slug';
 }
 
 /**
@@ -233,22 +256,30 @@ function serviceFormSchema(
       .min(1)
       .max(DISPLAY_NAME_MAX_LENGTH, { message: messages.nameTooLong }),
     // Vide vaut « laisse le serveur dériver l'adresse du nom ». Sinon, c'est
-    // `slugSchema` qui tranche — la règle reste celle du contrat, seule sa
-    // phrase vient de l'écran. Le `trim`/`toLowerCase` est celui que
-    // `slugSchema` applique : sans lui, une adresse saisie en capitales partirait
-    // telle quelle vers l'API. Même écriture dans `category-manager.tsx`, à
-    // cinq lignes près : ce qui y serait mis en commun n'est pas la règle —
-    // elle est déjà partagée — mais un branchement de formulaire.
+    // `slugSchema` qui tranche — la règle est la sienne, et depuis #1388 la
+    // phrase aussi : l'`issue` porte la **clé** qu'il a posée, sans message, ce
+    // qui laisse `zodErrorMap(locale)` la traduire. Le `trim`/`toLowerCase` est
+    // celui que `slugSchema` applique : sans lui, une adresse saisie en
+    // capitales partirait telle quelle vers l'API. Même écriture dans
+    // `category-manager.tsx`, à cinq lignes près : ce qui y serait mis en commun
+    // n'est pas la règle — elle est déjà partagée — mais un branchement de
+    // formulaire.
     slug: z
       .string()
       .trim()
       .toLowerCase()
       .superRefine((value, ctx) => {
-        const refusal = value === '' ? null : slugRefusal(value, messages);
+        const refusal = value === '' ? null : slugRefusal(value);
 
-        if (refusal !== null) {
-          ctx.addIssue({ code: z.ZodIssueCode.custom, message: refusal });
+        if (refusal === null) {
+          return;
         }
+
+        ctx.addIssue(
+          refusal === 'tooLong'
+            ? { code: z.ZodIssueCode.custom, message: messages.slugTooLong }
+            : { code: z.ZodIssueCode.custom, ...messageKey(refusal) },
+        );
       }),
     description: longTextSchema,
     categoryId: z.string(),
@@ -352,8 +383,6 @@ export function ServiceForm({
       zodResolver(
         serviceFormSchema(currency, display, {
           nameTooLong: t('errors.nameTooLong', { max: DISPLAY_NAME_MAX_LENGTH }),
-          slug: t('errors.slug'),
-          slugReserved: t('errors.slugReserved'),
           slugTooLong: t('errors.slugTooLong', { max: SLUG_MAX_LENGTH }),
           minutes: t('errors.minutes'),
           positiveDuration: t('errors.positiveDuration'),

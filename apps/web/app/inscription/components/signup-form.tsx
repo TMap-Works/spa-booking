@@ -336,10 +336,19 @@ export function SignupForm() {
       return error.message;
     }
 
-    // Le nom réservé — voir {@link CUSTOM_FIELD_ERROR}. Une faute de forme rend
-    // le même code depuis #1232 : c'est la valeur saisie qui les départage.
+    /*
+     * Le nom réservé — voir {@link CUSTOM_FIELD_ERROR}. Une faute de forme rend
+     * le même code depuis #1232 : c'est la valeur saisie qui les départage.
+     *
+     * La phrase vient du **contrat** depuis #1388 : `slugSchema` nomme ce refus
+     * par `messageKey('identifier.slugReserved')`, et `fieldErrors.slugReserved`
+     * en portait une copie — identique en français, **divergente en anglais**.
+     * `error.message` est donc déjà la bonne phrase, dans la langue de ce rendu.
+     * La faute de **forme**, elle, garde la phrase du catalogue juste en dessous :
+     * elle nomme la borne de 63 caractères, ce que le contrat ne dit pas.
+     */
     if (name === 'slug' && refusedBy === CUSTOM_FIELD_ERROR && slugReserved(watch('slug'))) {
-      return t('fieldErrors.slugReserved');
+      return error.message;
     }
 
     const key = FIELD_ERROR_KEYS[name];

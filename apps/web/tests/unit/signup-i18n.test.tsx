@@ -1,4 +1,4 @@
-import { ERROR_CODES, SUBSCRIPTION_PLAN } from '@spa/shared';
+import { ERROR_CODES, SUBSCRIPTION_PLAN, validationMessage } from '@spa/shared';
 import { cleanup, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -297,6 +297,10 @@ describe('les messages de validation suivent la langue de l’écran (#1105)', (
     // (`DNS_LABEL_PATTERN`) et sa **disponibilité** (`RESERVED_TENANT_SLUGS`).
     // Un message unique par champ dirait à qui saisit `support` d'employer des
     // minuscules et des tirets — qu'il a déjà écrits.
+    //
+    // La phrase est **lue au contrat** depuis #1388 : `slugSchema` nomme ce refus
+    // par `messageKey('identifier.slugReserved')`, et la copie que le catalogue en
+    // portait — divergente en anglais — n'existe plus.
     for (const langue of ['fr', 'en'] as const) {
       fixerLangue(langue);
       const user = frappe();
@@ -305,12 +309,9 @@ describe('les messages de validation suivent la langue de l’écran (#1105)', (
       await user.type(champ(LABELS[langue].slug), 'support');
       await user.click(screen.getByRole('button', { name: LABELS[langue].submit }));
 
-      const reserve =
-        langue === 'fr'
-          ? 'Ce nom est réservé par la plateforme — choisissez-en un autre.'
-          : 'This name is reserved by the platform — please choose another one.';
-
-      expect(await screen.findByText(reserve)).toBeDefined();
+      expect(
+        await screen.findByText(validationMessage('identifier.slugReserved', langue)),
+      ).toBeDefined();
       cleanup();
     }
   });

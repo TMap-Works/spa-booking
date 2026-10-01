@@ -30,6 +30,7 @@ import {
   MAX_STAFF_SCHEDULE_ENTRIES,
   END_OF_DAY_LOCAL_TIME,
   setStaffScheduleRequestSchema,
+  validationMessage,
   type IsoWeekday,
   type Locale,
   type SetStaffScheduleRequest,
@@ -204,11 +205,30 @@ export type ScheduleValidation =
  * Le plafond de plages est **inséré** ici et non rangé avec le motif : c'est une
  * constante du contrat, que celui qui écrit la phrase lit aussi bien que celui
  * qui l'a refusée.
+ *
+ * ## Le recouvrement se lit au contrat, et non au catalogue — #1388
+ *
+ * `availability.scheduleOverlap` est **nommé** par `setStaffScheduleRequestSchema`
+ * lui-même (`messageKey`, #1232), et `VALIDATION_MESSAGES` en porte la phrase dans
+ * les deux langues. Le catalogue `admin-staff` en gardait une copie mot pour mot —
+ * « Deux plages du même jour se recouvrent. », « Two ranges on the same day
+ * overlap. » —, c'est-à-dire deux sources non reliées pour un même refus : le jour
+ * où l'une bougeait, la grille disait autre chose que l'API qui rejoue le même
+ * schéma. La phrase est donc lue au contrat, et la clé a quitté les deux feuilles.
+ *
+ * Les trois autres motifs restent au catalogue, et ce n'est pas un oubli :
+ * `incomplete` nomme une ligne à demi remplie que le schéma ne saurait rattacher à
+ * personne, `tooMany` reformule la borne en nommant la semaine, et `invalid` est le
+ * repli d'une faute de forme. Aucune des trois ne redit une phrase du contrat.
  */
 export function scheduleRefusalMessage(
   key: ScheduleRefusalKey,
   locale: Locale = STAFF_FALLBACK_LOCALE,
 ): string {
+  if (key === 'overlap') {
+    return validationMessage('availability.scheduleOverlap', locale);
+  }
+
   const words = staffWords(locale).schedule;
 
   return key === 'tooMany'

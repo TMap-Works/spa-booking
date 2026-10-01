@@ -1,4 +1,4 @@
-import type { StaffTimeOff } from '@spa/shared';
+import { validationMessage, type StaffTimeOff } from '@spa/shared';
 import { cleanup, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -106,7 +106,21 @@ describe('les jours de la semaine de travail', () => {
  * langues —, à ceci près que la phrase est demandée au rendu.
  */
 describe('le verdict rendu sur la grille d’horaires', () => {
-  it('dit le recouvrement dans la langue de la session, et non dans celle du contrat', () => {
+  /**
+   * Le recouvrement est la seule de ces phrases qui vienne du **contrat** (#1388).
+   *
+   * `setStaffScheduleRequestSchema` nomme ce refus par
+   * `messageKey('availability.scheduleOverlap')`, et `VALIDATION_MESSAGES` en porte
+   * la phrase dans les deux langues : le catalogue en gardait une copie mot pour
+   * mot, c'est-à-dire une seconde source. Elle est donc **lue au contrat** ici, et
+   * non recopiée — un littéral rougirait le jour où le contrat reformulerait, pour
+   * la mauvaise raison.
+   *
+   * Le second `expect` est ce qui empêche la lecture de devenir une tautologie : si
+   * `scheduleRefusalMessage` cessait de tenir compte de la langue, les deux appels
+   * rendraient la même phrase et le cas le dirait.
+   */
+  it('dit le recouvrement dans la langue de la session, en le lisant au contrat', () => {
     const recouvrement = lignes(
       { weekday: 1, startsAt: '09:00', endsAt: '13:00' },
       { weekday: 1, startsAt: '12:00', endsAt: '18:00' },
@@ -118,9 +132,14 @@ describe('le verdict rendu sur la grille d’horaires', () => {
     if (!verdict.ok) {
       // La faute porte sur la paire : aucune des deux lignes n'est désignée.
       expect(verdict.rowId).toBeNull();
-      expect(scheduleRefusalMessage(verdict.refusalKey, 'fr')).toMatch(/recouvrent/i);
+      expect(scheduleRefusalMessage(verdict.refusalKey, 'fr')).toBe(
+        validationMessage('availability.scheduleOverlap', 'fr'),
+      );
       expect(scheduleRefusalMessage(verdict.refusalKey, 'en')).toBe(
-        'Two ranges on the same day overlap.',
+        validationMessage('availability.scheduleOverlap', 'en'),
+      );
+      expect(scheduleRefusalMessage(verdict.refusalKey, 'en')).not.toBe(
+        scheduleRefusalMessage(verdict.refusalKey, 'fr'),
       );
     }
   });

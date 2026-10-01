@@ -12,6 +12,7 @@ import {
   e164PhoneSchema,
   isCountryCodeAlpha2,
   localeSchema,
+  messageKey,
   openingHoursSchema,
   postalAddressSchema,
   zodErrorMap,
@@ -227,7 +228,6 @@ interface SettingsCopy {
   readonly pair: string;
   readonly order: string;
   readonly emptyDay: string;
-  readonly countryFormat: string;
   readonly addressIncomplete: string;
 }
 
@@ -318,15 +318,22 @@ function settingsFormSchema(copy: SettingsCopy) {
         // passe ici pour échouer à l'envoi sur un champ que rien ne désigne. Le
         // message reste le même : « code pays ISO 3166-1 alpha-2 attendu » est
         // exact pour une forme fautive comme pour un pays inventé.
+        //
+        // Et il vient du **contrat** depuis #1388 : `countryCodeSchema` nomme ce
+        // refus par `messageKey('identifier.countryCode')`, et le catalogue de cet
+        // écran en portait une copie mot pour mot, dans les deux langues. La clé
+        // se reporte donc ici sans phrase, ce qui laisse `zodErrorMap(locale)`
+        // répondre.
         country: z.union([
           z.literal(''),
           z
             .string()
             .trim()
             .toUpperCase()
-            .refine((value): boolean => isCountryCodeAlpha2(value), {
-              message: copy.countryFormat,
-            }),
+            .refine(
+              (value): boolean => isCountryCodeAlpha2(value),
+              messageKey('identifier.countryCode'),
+            ),
         ]),
         days: z.array(daySchema),
       })
@@ -504,7 +511,6 @@ export function TenantSettingsForm({ tenantSlug, tenant }: TenantSettingsFormPro
           pair: t('hours.pair'),
           order: t('hours.order'),
           emptyDay: t('hours.emptyDay'),
-          countryFormat: t('address.countryFormat'),
           addressIncomplete: t('address.incomplete'),
         }),
         { errorMap: zodErrorMap(locale), path: [], async: true },

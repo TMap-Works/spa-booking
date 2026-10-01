@@ -6,11 +6,13 @@ import {
   DISPLAY_NAME_MAX_LENGTH,
   SLUG_MAX_LENGTH,
   longTextSchema,
+  messageKey,
   resourceSlugSchema,
   slugSchema,
   zodErrorMap,
   type Locale,
   type ServiceCategory,
+  type ValidationMessageKey,
 } from '@spa/shared';
 import { useLocale, useTranslations } from 'next-intl';
 import Link from 'next/link';
@@ -91,24 +93,28 @@ import { useAdminSessionRenewal } from './use-admin-session-renewal';
  * phrase du schéma mais la phrase générique de `zodErrorMap`, dont le catalogue
  * portait une copie mot pour mot. Même arbitrage que `service-form.tsx`, où il
  * est écrit au long.
+ *
+ * Les deux refus d'**adresse** l'ont quittée en #1388, et pour la raison
+ * symétrique : `identifier.slug` et `identifier.slugReserved` sont nommés par
+ * `resourceSlugSchema` et `slugSchema` eux-mêmes (`messageKey`, #1232), donc
+ * traduits par `zodErrorMap(locale)`. Le catalogue en gardait une copie, déjà
+ * divergente en anglais. Seule la borne de longueur reste ici — elle **nomme le
+ * champ** là où le contrat reste générique, c'est une reformulation.
  */
 interface CategoryFormMessages {
   readonly nameTooLong: string;
-  readonly slug: string;
-  readonly slugReserved: string;
   readonly slugTooLong: string;
 }
 
 /**
- * Pourquoi `slugSchema` a refusé cette adresse — même écriture, et même raison,
- * que `slugRefusal` de `service-form.tsx` : une phrase unique dirait « minuscules,
+ * Ce que le contrat reproche à cette adresse — même écriture, et même raison, que
+ * `slugRefusal` de `service-form.tsx` : une clé unique dirait « minuscules,
  * chiffres et tirets simples » d'un `tarifs` qui n'a que des minuscules, et la
  * gérante n'aurait aucun moyen d'apprendre que c'est un nom réservé.
  */
-function slugRefusal(
-  value: string,
-  messages: Pick<CategoryFormMessages, 'slug' | 'slugReserved' | 'slugTooLong'>,
-): string | null {
+type SlugRefusal = ValidationMessageKey | 'tooLong';
+
+function slugRefusal(value: string): SlugRefusal | null {
   const parsed = slugSchema.safeParse(value);
 
   if (parsed.success) {
@@ -116,7 +122,7 @@ function slugRefusal(
   }
 
   if (parsed.error.issues.some((issue) => issue.code === 'too_big')) {
-    return messages.slugTooLong;
+    return 'tooLong';
   }
 
   /*
@@ -131,7 +137,9 @@ function slugRefusal(
    * `custom`. Le code ne les distinguait plus, et `www` se serait vu reprocher
    * une minuscule qu'il a déjà.
    */
-  return resourceSlugSchema.safeParse(value).success ? messages.slugReserved : messages.slug;
+  return resourceSlugSchema.safeParse(value).success
+    ? 'identifier.slugReserved'
+    : 'identifier.slug';
 }
 
 function categoryFormSchema(messages: CategoryFormMessages) {
@@ -144,17 +152,24 @@ function categoryFormSchema(messages: CategoryFormMessages) {
       .min(1)
       .max(DISPLAY_NAME_MAX_LENGTH, { message: messages.nameTooLong }),
     // Même branchement que `service-form.tsx` : vide vaut « dérive-la du nom »,
-    // sinon c'est `slugSchema` qui tranche.
+    // sinon c'est `slugSchema` qui tranche — et qui **nomme** son refus, la
+    // phrase venant de `zodErrorMap(locale)` (#1388).
     slug: z
       .string()
       .trim()
       .toLowerCase()
       .superRefine((value, ctx) => {
-        const refusal = value === '' ? null : slugRefusal(value, messages);
+        const refusal = value === '' ? null : slugRefusal(value);
 
-        if (refusal !== null) {
-          ctx.addIssue({ code: z.ZodIssueCode.custom, message: refusal });
+        if (refusal === null) {
+          return;
         }
+
+        ctx.addIssue(
+          refusal === 'tooLong'
+            ? { code: z.ZodIssueCode.custom, message: messages.slugTooLong }
+            : { code: z.ZodIssueCode.custom, ...messageKey(refusal) },
+        );
       }),
     description: longTextSchema,
   });
@@ -315,8 +330,8 @@ export function CategoryForm({
   /*
    * Deux sources de refus, et les deux sont dans la langue de l'écran (#849) :
    * les phrases de la fabrique ci-dessus, et celles que **zod** écrit pour les
-   * bornes du contrat — la description trop longue, et le nom vide depuis
-   * #1373 —, par `zodErrorMap`.
+   * refus du contrat — la description trop longue, le nom vide depuis #1373, les
+   * deux refus d'adresse depuis #1388 —, par `zodErrorMap`.
    *
    * `path` et `async` ne sont là que pour le **typage** de
    * `@hookform/resolvers`, qui déclare `ParseParams` entier là où zod n'en lit
@@ -328,8 +343,6 @@ export function CategoryForm({
       zodResolver(
         categoryFormSchema({
           nameTooLong: t('errors.nameTooLong', { max: DISPLAY_NAME_MAX_LENGTH }),
-          slug: t('errors.slug'),
-          slugReserved: t('errors.slugReserved'),
           slugTooLong: t('errors.slugTooLong', { max: SLUG_MAX_LENGTH }),
         }),
         { errorMap: zodErrorMap(locale), path: [], async: true },

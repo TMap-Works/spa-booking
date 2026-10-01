@@ -20,7 +20,6 @@
     "regionHint": "NY, QC… or the full name. Optional.",
     "country": "Country",
     "countryHint": "Two-letter code: FR, BE, MG…",
-    "countryFormat": "ISO 3166-1 alpha-2 country code expected (“FR”).",
     "incomplete": "Fill in the street, the city and the country, or leave the address entirely empty.",
     "invalid": "The address entered is invalid."
   },
