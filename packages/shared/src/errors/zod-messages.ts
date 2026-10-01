@@ -98,27 +98,61 @@ import type { Locale } from '../locale/index';
 /** Les tournures dont dépendent les bornes — « au moins 3 caractères ». */
 interface Phrases {
   /**
-   * Le champ laissé vide — et la **seule** source de cette phrase (#1373).
+   * Le champ laissé vide — une des **dix tournures génériques** dont ce module
+   * est la source unique (#1373, élargie par #1376).
    *
-   * Trois formulaires du back-office en portaient une copie dans leur catalogue,
-   * mot pour mot identique dans les deux langues, sans que rien ne relie les deux
-   * sources : le nom d'une prestation, celui d'une rubrique, les nom et prénom
-   * d'une fiche cliente. La copie n'était pas un accident — les formulaires ont
-   * bien à écrire les phrases que `zodErrorMap` ne peut pas traduire, celles
-   * qu'un schéma du contrat pose lui-même (voir `messageKey` plus bas) — mais
-   * celle-ci n'en est pas : c'est la phrase générique rendue ici même sur un
-   * `too_small` de plancher 1. Le `.min(1)` de ces trois schémas ne porte donc
-   * plus de message. Deux tests tiennent la décision : un catalogue qui redirait
-   * cette phrase fait rougir `apps/web/tests/unit/messages-glossary.test.ts`, et
-   * un formulaire qui reposerait un message local fait rougir les suites de rendu
-   * qui la **lisent** ici (`admin-catalog-i18n`, `admin-clients-i18n`,
-   * `erreur-de-champ-suit-la-langue`).
+   * Neuf clés de catalogue redisaient une de ces tournures génériques ; aucune
+   * n'existe plus. #1373 en a retiré trois, toutes du back-office et toutes sur
+   * le champ vide : le nom d'une prestation, celui d'une rubrique, les nom et
+   * prénom d'une fiche cliente. #1376 en a retiré six de plus, sur quatre écrans
+   * que #1373 ne nommait pas — l'étape de contact du tunnel public, la connexion
+   * de la console, l'ouverture d'un salon, l'inscription —, et la décision a
+   * changé de taille au passage : elle ne porte pas sur la seule phrase du champ
+   * vide, mais sur les **dix phrases `string`** de cette table — `required`,
+   * `invalid`, `email`, `url`, `uuid`, `date`, `number`, `integer`, `choice`,
+   * `unexpected`. Les six tournures paramétrées plus bas (`tooShort` et ses
+   * pareilles) en restent dehors : un catalogue les écrit avec un argument ICU,
+   * et les deux textes ne s'égalisent pour aucune valeur.
+   *
+   * La copie n'était pas un accident — les formulaires ont bien à écrire les
+   * phrases que `zodErrorMap` ne peut pas traduire, celles qu'un schéma du
+   * contrat pose lui-même (voir `messageKey` plus bas) — mais celle-ci n'en est
+   * pas : c'est la phrase générique rendue ici même sur un `too_small` de
+   * plancher 1. Le `.min(1)` de ces schémas ne porte donc plus de message, et les
+   * quatre écrans de #1376 passent `errorMap: zodErrorMap(locale)` à leur
+   * résolveur, ce qu'aucun ne faisait.
+   *
+   * **Trois tests** tiennent la décision, et il en faut trois :
+   *
+   * - `apps/web/tests/unit/messages-glossary.test.ts` rougit si une feuille de
+   *   catalogue redit **une des dix phrases `string`** ci-dessus, dans l'une ou
+   *   l'autre langue. Elles y sont lues par énumération, si bien qu'une phrase
+   *   ajoutée ici est tenue le jour où elle est écrite ; mais la garde est
+   *   **statique**, et un écran qui aurait perdu sa clé sans rien mettre à la
+   *   place la laisserait verte.
+   * - les suites de rendu qui **lisent** `validationPhrases(locale).required` au
+   *   lieu de la recopier (`admin-catalog-i18n`, `admin-clients-i18n`,
+   *   `erreur-de-champ-suit-la-langue`) rougissent le jour où un formulaire
+   *   repose un message local.
+   * - `apps/web/tests/unit/refus-de-saisie-vient-du-contrat.test.tsx` monte ces
+   *   écrans — et les cas que #1387 et #1388 y ont ajoutés — dans les **deux
+   *   langues**, et lit le message **sur le champ**, celui
+   *   qu'`aria-describedby` désigne — le même repère que
+   *   `erreur-de-champ-suit-la-langue`, pris du même côté. Elle prouve d'un même
+   *   geste la phrase, sa langue et le fait qu'elle n'est pas affichée en bloc en
+   *   tête de page (web-frontend §4). Elle est la **seule** à le faire pour les
+   *   quatre écrans de #1376 — aucune des suites du point précédent ne les monte.
+   *   C'est ce que la garde statique ne peut pas remplacer.
    *
    * Elle reste un **constat** — « Ce champ est obligatoire. » — là où le
    * glossaire du produit préfère dire quoi faire. L'arbitrage est écrit dans
    * `apps/web/messages/README.md` : une phrase générique ne peut pas instruire un
-   * champ qu'elle ne nomme pas, et une phrase par champ serait exactement la
-   * duplication que #1373 retire.
+   * champ qu'elle ne nomme pas, et la **recopier** au catalogue de chaque écran
+   * serait exactement la duplication que #1373 et #1376 retirent. Ce qu'un écran
+   * écrit en propre pour **nommer** son champ reste licite — « Indiquez votre
+   * ville. » plutôt que « Ce champ est obligatoire. », et le README dit
+   * lesquelles : c'est la copie d'une phrase générique qui est refusée, pas la
+   * précision.
    */
   readonly required: string;
   readonly invalid: string;
