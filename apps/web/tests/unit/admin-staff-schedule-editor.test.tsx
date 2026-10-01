@@ -1,4 +1,4 @@
-import type { StaffSchedule } from '@spa/shared';
+import { validationMessage, type StaffSchedule } from '@spa/shared';
 import { cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -131,7 +131,11 @@ describe('la grille hebdomadaire — les gestes', () => {
     await user.click(screen.getByRole('button', { name: /Enregistrer la semaine/ }));
 
     expect(setStaffScheduleAction).not.toHaveBeenCalled();
-    expect(await screen.findByText(/recouvrent/i)).toBeDefined();
+    // La phrase est **lue au contrat** depuis #1388 : le catalogue n'en porte
+    // plus de copie, et un littéral recopié ici en aurait refait une.
+    expect(
+      await screen.findByText(validationMessage('availability.scheduleOverlap', 'fr')),
+    ).toBeDefined();
   });
 
   it('n’enregistre qu’une fois sur un double clic', async () => {
