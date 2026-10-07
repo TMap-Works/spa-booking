@@ -1,6 +1,12 @@
 import { z } from 'zod';
 
-import { displayNameSchema, longTextSchema, nameSchema, uuidSchema } from '../common/identifiers';
+import {
+  displayNameSchema,
+  longTextSchema,
+  nameSchema,
+  storedPhoneSchema,
+  uuidSchema,
+} from '../common/identifiers';
 import {
   calendarDateSchema,
   durationMinutesSchema,
@@ -105,29 +111,74 @@ export const myStaffProfileSchema = staffMemberSchema;
 export type MyStaffProfile = z.infer<typeof myStaffProfileSchema>;
 
 /**
- * La cliente d'une ligne de planning : prénom, et **initiale** du nom.
+ * La cliente d'une ligne de planning : de quoi la recevoir, l'appeler, et ne
+ * pas lui faire ce qui lui est contre-indiqué.
  *
- * Le praticien a besoin de reconnaître qui il reçoit, pas de tenir le fichier
- * client — c'est la minimisation du CDC §5.1 appliquée à l'écran le plus ouvert
- * du salon, celui qu'on consulte en cabine, tablette à la main. Le nom complet
- * reste servi à l'agenda du comptoir (`userSummarySchema`), qui vit derrière la
- * même garde mais sert un autre geste : décrocher, rappeler, encaisser.
+ * ## Ce que ce schéma portait, et pourquoi il ne le porte plus — #1404
  *
- * `id` en est absent pour la même raison : de cette ligne-là, on ne remonte pas
- * à une fiche.
+ * Il portait `firstName` + `lastInitial`, et rien d'autre : « le praticien a
+ * besoin de reconnaître qui il reçoit, pas de tenir le fichier client », la
+ * minimisation du CDC §5.1 appliquée à l'écran le plus ouvert du salon. La
+ * campagne de QA du 02/10 a montré que cette minimisation **ne protégeait
+ * rien** : la même praticienne, avec le même jeton, lit déjà nom complet,
+ * téléphone et e-mail dans « Clients ». `customers:read:own` lui est accordée en
+ * toutes lettres par `apps/api/src/modules/identity/permissions.ts` — « Le
+ * praticien a besoin de la fiche de la personne qu'il va recevoir — allergie,
+ * préférence — et d'aucune autre ». Minimiser **ici seulement** ne retirait donc
+ * aucune donnée à personne : cela obligeait la praticienne à ouvrir un second
+ * écran pour lire ce que le premier avait le droit de lui dire, et une allergie
+ * se découvrait après le soin plutôt qu'avant.
  *
- * L'initiale est **un caractère**, jamais suivi d'un point : la ponctuation est
- * une décision d'affichage, et la figer ici aurait obligé le front à la retirer
- * pour composer autre chose. `max(1)` et non `length(1)` : la colonne
- * `users.last_name` est `NOT NULL` et `nameSchema` en exige au moins un
- * caractère, si bien que la chaîne vide ne devrait jamais sortir — mais un
- * contrat qui la refuserait ferait échouer la lecture d'un planning entier pour
- * une ligne historique mal formée, ce qui est le mauvais arbitrage.
+ * La minimisation reste celle du CDC §5.1, et elle se mesure désormais à la
+ * **personne** plutôt qu'à l'écran : ce contrat ne rend que ce que
+ * `customers:read:own` ouvre déjà, et toujours **borné aux rendez-vous du
+ * praticien** — la route ne sait pas nommer une autre cliente que les siennes.
+ * Ce qui reste dehors le reste : ni e-mail, ni adresse, ni historique, ni état
+ * de délivrabilité. Le même écart est ouvert pour l'agenda du comptoir sous
+ * #977, et sera tranché là-bas.
+ *
+ * ## `id` est là pour une raison précise, et une seule
+ *
+ * Remonter à la fiche — le lien « Voir la fiche » du détail déplié
+ * (BM-AGENDA-09). Ce n'est pas un identifiant à rejouer en écriture : aucune
+ * route de ce contrat ne le reçoit, et l'ouvrir dans « Clients » repasse par la
+ * garde de portée de `crm`, qui refuse une fiche qui n'est pas de sa clientèle.
  */
 export const myStaffAppointmentClientSchema = z
   .object({
+    /** De quoi ouvrir sa fiche, et rien de plus — voir l'en-tête. */
+    id: uuidSchema,
     firstName: nameSchema,
-    lastInitial: z.string().max(1),
+    lastName: nameSchema,
+    /**
+     * Son numéro, ou `null` — une fiche saisie au comptoir peut n'en porter
+     * aucun (`users.phone` est nullable).
+     *
+     * `.nullable()` et non `.optional()`, comme `customerSummarySchema` : l'API
+     * émet toujours la clé, et un front qui distingue « absente » de « vide »
+     * finit par afficher `undefined`.
+     *
+     * `storedPhoneSchema` et non `phoneSchema` : c'est une **sortie**, et elle
+     * doit pouvoir rendre un numéro déjà en base qu'un plancher de chiffres
+     * posé depuis refuserait — sans quoi la lecture d'un planning entier
+     * échouerait sur une ligne historique.
+     */
+    phone: storedPhoneSchema.nullable(),
+    /**
+     * L'alerte de sa fiche — allergie, contre-indication —, ou `null`.
+     *
+     * C'est `users.internal_note`, le « notes internes distinctes des
+     * informations visibles du client » du CDC §2.3, et le champ porte ici le
+     * **même nom** que dans `customerSchema` : une donnée, un nom, quel que soit
+     * l'écran qui la lit. Ce que l'écran en fait — un bandeau au-dessus des
+     * notes plutôt qu'une ligne parmi elles (BM-COMPTOIR-05) — est une décision
+     * d'affichage, et la figer dans le contrat l'aurait rendue non révocable.
+     *
+     * À ne pas confondre avec `staffNote` de `myStaffAppointmentSchema` : celle-là
+     * est la note de **ce rendez-vous**, celle-ci vaut pour la personne et
+     * survit à tous ses rendez-vous.
+     */
+    internalNote: longTextSchema.nullable(),
   })
   .strict();
 
@@ -142,6 +193,12 @@ export type MyStaffAppointmentClient = z.infer<typeof myStaffAppointmentClientSc
  * chaque champ servi ici répond à « qu'est-ce que je fais à cette heure-là, et
  * pour qui ». Les champs écartés ont leur route, gardée au même rang : l'agenda
  * du comptoir.
+ *
+ * **Sauf sur un bloc, depuis #1404** : `client` y est plus riche que celui du
+ * comptoir, qui s'en tient au *summary*. L'inversion n'est pas un oubli — c'est
+ * le praticien qui prépare la cabine, et c'est à lui que l'alerte de la fiche
+ * manquait. Le raisonnement est écrit en tête de
+ * `myStaffAppointmentClientSchema`, et l'écart ouvert pour le comptoir est #977.
  *
  * `startsAt` / `endsAt` sont l'intervalle **facturé** — le soin —, comme partout
  * dans ce contrat : l'intervalle occupé, tampons de cabine compris, est la

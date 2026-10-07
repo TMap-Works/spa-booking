@@ -15,7 +15,10 @@
  *    porte parce que ce schéma décrit une réponse de **back-office**, servie au
  *    rang `staff` ; `customerSummarySchema`, qui alimente les listes et les
  *    imbrications, ne la porte pas. Aucun schéma du parcours public ne la
- *    référence, et c'est une propriété qui se vérifie en lisant ce fichier.
+ *    référence. Ce fichier n'en est plus le seul juge depuis #1404 :
+ *    `myStaffAppointmentClientSchema` (`./staff-portal`) la porte aussi, pour
+ *    l'alerte du planning du praticien — même rang, même borne, et c'est la
+ *    seule autre résidence du champ dans le contrat.
  * 3. **Aucun schéma ne porte `tenantId`.** Il est résolu depuis la requête. Voir
  *    l'en-tête de `./tenant`.
  *
