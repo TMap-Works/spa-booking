@@ -14,7 +14,19 @@ import {
 import { minutesToWallClock } from './opening-hours';
 
 /**
- * L'adresse, **composée** depuis les cinq colonnes — ou `undefined` (#343).
+ * Le morceau d'adresse tel qu'il a été **écrit**, ou `null` s'il ne l'a pas été.
+ *
+ * Même règle qu'`isWrittenPart` dans `@spa/shared` — privé à son module, donc
+ * recopié ici plutôt qu'importé : un morceau est écrit s'il n'est ni nul, ni
+ * fait d'espaces. Pourquoi cela ne se réduit pas à `=== null` : voir
+ * `toPostalAddress` ci-dessous.
+ */
+function writtenPart(part: string | null): string | null {
+  return part === null || part.trim() === '' ? null : part;
+}
+
+/**
+ * L'adresse, **composée** depuis les six colonnes — ou `undefined` (#343).
  *
  * Le triplet `line1` / `city` / `countryCode` décide : les trois renseignés,
  * l'adresse sort ; l'un manquant, elle n'existe pas. La base tient déjà cette
@@ -33,6 +45,18 @@ import { minutesToWallClock } from './opening-hours';
  *
  * Exportée pour être vérifiée en test — sa seule règle intéressante est celle
  * du triplet, et elle ne se voit pas depuis un statut HTTP.
+ *
+ * ## Pourquoi la chaîne vide compte autant que `null` ici
+ *
+ * Les deux frontières d'écriture refusent désormais `''` sur un complément
+ * d'adresse (`platform/dto/platform.dto.ts`, `dto/tenant-settings.dto.ts`,
+ * #1335/#1340), mais une colonne à `''` reste possible : une ligne écrite avant
+ * ces bornes, une reprise de données, un import. Omettre seulement sur
+ * `=== null` rendrait alors `postalCode: ''`, que `postalAddressSchema` — qui
+ * exige au moins un caractère — refuse : la vitrine du salon devient
+ * inaccessible, en `INTERNAL_ERROR`. La lecture écarte donc ce que l'écriture
+ * refuse, plutôt que de faire dépendre une page publique de l'ancienneté de la
+ * ligne.
  */
 export function toPostalAddress(tenant: {
   addressLine1: string | null;
@@ -42,17 +66,24 @@ export function toPostalAddress(tenant: {
   region: string | null;
   countryCode: string | null;
 }): PostalAddressDto | undefined {
-  if (tenant.addressLine1 === null || tenant.city === null || tenant.countryCode === null) {
+  const line1 = writtenPart(tenant.addressLine1);
+  const city = writtenPart(tenant.city);
+  const country = writtenPart(tenant.countryCode);
+  const line2 = writtenPart(tenant.addressLine2);
+  const postalCode = writtenPart(tenant.postalCode);
+  const region = writtenPart(tenant.region);
+
+  if (line1 === null || city === null || country === null) {
     return undefined;
   }
 
   return {
-    line1: tenant.addressLine1,
-    ...(tenant.addressLine2 === null ? {} : { line2: tenant.addressLine2 }),
-    ...(tenant.postalCode === null ? {} : { postalCode: tenant.postalCode }),
-    city: tenant.city,
-    ...(tenant.region === null ? {} : { region: tenant.region }),
-    country: tenant.countryCode,
+    line1,
+    ...(line2 === null ? {} : { line2 }),
+    ...(postalCode === null ? {} : { postalCode }),
+    city,
+    ...(region === null ? {} : { region }),
+    country,
   };
 }
 
