@@ -56,6 +56,67 @@
   color: var(--spa-color-text-muted);
 }
 
+/* --- La barre de période (#1405) ------------------------------------------ */
+
+/*
+ * Le retour « Aujourd'hui » **désactivé** reste plat.
+ *
+ * C'est l'état où l'écran s'ouvre — la période affichée contient déjà la journée
+ * du salon —, donc l'état que la praticienne voit le plus souvent. La règle
+ * générique du bouton le peint alors en aplat gris bordé
+ * (`components/button.css`, « Désactivé »), ce qui en faisait le bloc le plus
+ * lourd d'une rangée où il est, actif, un simple lien en texte : une pastille
+ * pleine attire l'œil sur le seul contrôle qui ne mène nulle part.
+ *
+ * On ne touche pas à la règle générique : sur un bouton `accent` ou `neutral`,
+ * l'aplat gris est précisément ce qui remplace la couleur qu'on retire. C'est la
+ * variante `quiet` — sans fond ni bordure au repos — qui n'a rien à neutraliser,
+ * et la teinte atténuée du texte suffit à la dire inerte. `disabled` reste
+ * exposé aux technologies d'assistance, l'information n'est donc jamais portée
+ * par la seule couleur (WCAG 1.4.1).
+ *
+ * Portée à cet écran parce qu'il est le seul à passer `todayIsCurrent` à
+ * `PeriodNav` ; le jour où le planning du salon le passera, la règle montera
+ * d'un cran dans `admin/shell.css`, avec la barre qu'elle habille.
+ */
+.spa-my-planning .spa-admin-toolbar .spa-button--quiet:disabled {
+  background-color: transparent;
+  border-color: transparent;
+}
+
+@media (width < 48rem) {
+  /*
+   * Les quatre contrôles sur une seule rangée à 360 px.
+   *
+   * Sous 48 rem la rangée s'enroule (`admin/shell.css`), et la date la faisait
+   * déborder : « ‹ » et la date tenaient la première ligne, « › » passait seul à
+   * la seconde, à côté d'« Aujourd'hui ». Deux chevrons séparés ne se lisent plus
+   * comme un couple, et c'est précisément ce que la barre promet.
+   *
+   * `flex-basis: 0` plutôt qu'un `flex-shrink` : une ligne de flex se compose sur
+   * la taille **hypothétique** des éléments, avant tout rétrécissement — un
+   * libellé qu'on autorise seulement à rétrécir provoque quand même le retour à
+   * la ligne. À base nulle, la date ne pèse plus rien dans ce calcul, puis occupe
+   * tout ce que les trois boutons laissent et s'enroule à l'intérieur.
+   *
+   * `max-content` borne cette reprise : sans elle, une date courte étirerait sa
+   * boîte sur toute la rangée et rejetterait le « › » à l'autre bout, ce qui
+   * séparerait de nouveau les deux chevrons — dans l'autre sens.
+   *
+   * Le plancher de 7 rem est ce qui garde la date lisible. Sans lui, la base
+   * nulle la laissait se réduire à ce que les trois boutons voulaient bien
+   * lâcher — mesuré à 55 px au navigateur, soit « Mer. / 7 oct. / 2026 » sur
+   * trois lignes. Avec lui, c'est le retour au jour courant qui passe à la ligne
+   * quand la place manque, et c'est le bon arbitrage : il est le seul des quatre
+   * contrôles qu'on ne lit pas, et il est souvent désactivé.
+   */
+  .spa-my-planning .spa-admin-toolbar__group > .spa-admin-toolbar__caption {
+    flex: 1 1 0;
+    min-inline-size: 7rem;
+    max-inline-size: max-content;
+  }
+}
+
 /* --- La surface unique ---------------------------------------------------- */
 
 /*
@@ -93,44 +154,33 @@
   box-shadow: inset 3px 0 0 0 var(--spa-color-accent);
 }
 
+/*
+ * `center` et non `baseline` : la colonne porte un `.spa-date-block`, c'est-à-
+ * dire une boîte de trois lignes, et non plus trois `<span>` posés sur la même
+ * ligne de base. Alignée par la base, cette boîte aurait fait descendre les
+ * horaires au niveau de son mois.
+ */
 .spa-my-day__rail {
   display: flex;
   flex-wrap: wrap;
-  align-items: baseline;
+  align-items: center;
   gap: var(--spa-space-1) var(--spa-space-3);
 }
 
-.spa-my-day__date {
-  display: flex;
-  align-items: baseline;
-  gap: var(--spa-space-2);
+/*
+ * Le titre d'une journée ne porte plus qu'un bloc de date (#1405) — celui du
+ * design system, `components/ui/date-block.tsx`. L'écran en redessinait un à
+ * l'identique sous `.spa-my-day__date`, avec ses trois morceaux et leurs trois
+ * règles ; il ne reste ici qu'à neutraliser la marge du `<h2>`.
+ *
+ * Le quantième de la journée courante y perd son accent, et c'est voulu : la
+ * section porte déjà son liseré et sa pastille « Aujourd'hui », soit deux
+ * marques pour la même chose. L'accent est rare, donc il désigne (BM-VISUEL-01).
+ */
+.spa-my-day__heading {
   margin: 0;
-  font-size: var(--spa-font-size-md);
-  font-weight: var(--spa-font-weight-regular);
-}
-
-.spa-my-day__weekday {
-  font-size: var(--spa-font-size-xs);
-  font-weight: var(--spa-font-weight-semibold);
-  letter-spacing: var(--spa-letter-spacing-wide);
-  text-transform: uppercase;
-  color: var(--spa-color-text-muted);
-}
-
-.spa-my-day__number {
-  font-size: var(--spa-font-size-xl);
-  font-weight: var(--spa-font-weight-semibold);
-  line-height: var(--spa-line-height-tight);
-  font-variant-numeric: tabular-nums;
-}
-
-.spa-my-day--today .spa-my-day__number {
-  color: var(--spa-color-accent-text);
-}
-
-.spa-my-day__month {
-  font-size: var(--spa-font-size-sm);
-  color: var(--spa-color-text-muted);
+  font-size: inherit;
+  font-weight: inherit;
 }
 
 .spa-my-day__today {

@@ -11,6 +11,7 @@ import Link from 'next/link';
 import { getLocale, getTranslations } from 'next-intl/server';
 
 import { telUri } from '@/components/salon/salon-contact';
+import { DateBlock } from '@/components/ui/date-block';
 import { NavTabs } from '@/components/ui/nav-tabs';
 import {
   ApiClientError,
@@ -24,7 +25,6 @@ import { statusModifier } from '@/lib/admin/calendar-grid';
 import {
   MY_PLANNING_VIEWS,
   UPCOMING_DAYS,
-  agendaDate,
   appointmentsByDay,
   bookedCount,
   clientLabel,
@@ -46,6 +46,7 @@ import {
   formatCalendarDate,
   formatDuration,
   formatTimeInTimeZone,
+  formattingLocale,
   type DisplayLocale,
 } from '@/lib/format';
 import { formatPhoneForDisplay } from '@/lib/phone';
@@ -117,6 +118,28 @@ import { adminCalendarPath, adminMyPlanningPath } from '../paths';
  *     de journée — mais une fois, entre les deux chevrons ;
  *   - la barre dit ce que la période pèse, annulés exclus.
  *
+ * ## Ce que la barre tenait encore de travers (#1405)
+ *
+ * La promesse « une fois, entre les deux chevrons » n'était pas tenue en vue
+ * Jour : la barre annonçait « Vendredi 2 octobre 2026 », et la journée unique
+ * qu'elle coiffe réécrivait la même date juste dessous. Une vue qui ne montre
+ * **qu'un** jour n'a pas à le nommer deux fois — sa colonne de date ne porte
+ * donc plus qu'un titre masqué, pour que la section garde son nom accessible.
+ * Les deux vues qui en montrent plusieurs, elles, en ont besoin : chaque journée
+ * y porte sa date, et c'est le **bloc de date du design system**
+ * (`components/ui/date-block.tsx`) qui la dessine. L'écran le redessinait à
+ * l'identique sous `.spa-my-day__date` — trois morceaux, les mêmes abréviations,
+ * la même date entière masquée — là où un composant existait déjà.
+ *
+ * Deux conséquences de plus, toutes deux relevées à 360 px :
+ *
+ *   - le libellé de la vue Jour est **court** (« Ven. 2 oct. 2026 ») là où la
+ *     date entière chassait le chevron « › » seul à la ligne sous « ‹ » ;
+ *   - le retour « Aujourd'hui » désactivé était peint par la règle générique du
+ *     bouton — aplat gris plein, bordure comprise —, ce qui en faisait le bloc
+ *     le plus lourd de la barre alors qu'actif c'est un simple lien. Il reste
+ *     plat et atténué (`styles/admin/my-planning.css`).
+ *
  * Le reste est dans `styles/admin/my-planning.css`, qui porte le détail de la
  * mise en page et la discipline de l'accent — il était sur chaque ligne, il ne
  * reste que là où il désigne (BM-VISUEL-01).
@@ -158,15 +181,27 @@ interface MyPlanningPageProps {
 /**
  * Ce qu'annonce la barre de période.
  *
- * Les deux vues datées empruntent `rangeLabel` — le libellé du planning du
- * salon et de l'encaissement. Il n'y a ainsi qu'une écriture d'une période dans
- * le back-office, et la semaine s'y dit « 21 – 27 septembre 2026 » là où cet
- * écran l'écrivait en toutes lettres des deux côtés : à 360 px, les
- * cinquante-quatre caractères de « Du lundi 21 septembre 2026 au dimanche 27
- * septembre 2026 » chassaient les deux chevrons sur trois lignes.
+ * La **semaine** emprunte `rangeLabel` — le libellé du planning du salon et de
+ * l'encaissement. Il n'y a ainsi qu'une écriture d'une semaine dans le
+ * back-office, et elle s'y dit « 21 – 27 septembre 2026 » là où cet écran
+ * l'écrivait en toutes lettres des deux côtés : à 360 px, les cinquante-quatre
+ * caractères de « Du lundi 21 septembre 2026 au dimanche 27 septembre 2026 »
+ * chassaient les deux chevrons sur trois lignes.
  *
  * `rangeLabel` compte la semaine du lundi par défaut — c'est aussi ce que
  * `planningRange` demande à l'API, et les deux ne peuvent donc pas diverger.
+ *
+ * Le **jour**, lui, s'écrit court — « Ven. 2 oct. 2026 » et non la date
+ * entière que rend `rangeLabel`. C'est la suite du même raisonnement, poussée
+ * d'un cran parce que le constat s'est répété (#1405) : vingt-trois caractères
+ * dans une rangée de 360 px qui porte déjà deux chevrons et un retour au jour
+ * courant, et le « › » passait seul à la ligne sous le « ‹ ». Rien n'est perdu
+ * — jour de la semaine, quantième, mois et année sont tous là, abrégés — et
+ * l'écran ne montre qu'une journée dans cette vue, qui n'a donc pas d'autre
+ * endroit où lire sa date.
+ *
+ * Le planning du salon garde `rangeLabel` dans ses deux vues : il affiche une
+ * grille horaire, pas une journée unique, et sa barre n'a pas le même voisinage.
  *
  * « À venir » n'est pas une période datée mais un horizon : son libellé reste
  * une phrase du catalogue, paramétrée par la borne de l'API.
@@ -177,9 +212,46 @@ function periodLabel(
   t: MyPlanningTranslator,
   display: DisplayLocale,
 ): string {
-  return view === 'a-venir'
-    ? t('period.upcoming', { days: UPCOMING_DAYS })
-    : rangeLabel(view, anchor, display);
+  if (view === 'a-venir') return t('period.upcoming', { days: UPCOMING_DAYS });
+  // La vue Jour est le cas particulier, et c'est elle qu'on nomme : `rangeLabel`
+  // — l'écriture d'une période partagée avec le planning du salon et
+  // l'encaissement — reste le défaut, pour qu'une vue datée ajoutée demain
+  // hérite d'elle et non du libellé d'une journée unique.
+  if (view === 'jour') return shortDayLabel(anchor, display);
+
+  return rangeLabel(view, anchor, display);
+}
+
+/**
+ * « Ven. 2 oct. 2026 » — la journée en abrégé, dans la langue et la région de
+ * l'écran.
+ *
+ * Mise en forme **en UTC** sur minuit, comme `formatCalendarDate` et
+ * `agendaDate` : une date civile est déjà celle de l'établissement, et la
+ * reprojeter dans un fuseau la décalerait d'un jour à l'est de Greenwich.
+ *
+ * La première lettre est mise en capitale parce qu'`Intl` rend « ven. » en
+ * français et que la barre ouvre une phrase — c'est ce que `rangeLabel` fait
+ * déjà de son côté pour la vue Jour du planning du salon.
+ *
+ * Écrit ici et non dans `lib/admin/my-planning.ts`, où le reste de ce que cet
+ * écran décide d'une date se trouve : ce ticket a pour empreinte la barre de
+ * période et l'écran, pas la bibliothèque — deux tickets du même jalon se
+ * partagent l'arborescence. Le déplacement, et la suppression d'`agendaDate`
+ * que ce diff laisse sans appelant de production, sont notés dans la PR.
+ */
+function shortDayLabel(day: CalendarDate, display: DisplayLocale): string {
+  const text = new Intl.DateTimeFormat(formattingLocale(display.locale, display.countryCode), {
+    timeZone: 'UTC',
+    weekday: 'short',
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+  }).format(new Date(`${day}T00:00:00Z`));
+
+  return text.length === 0
+    ? text
+    : `${text.charAt(0).toLocaleUpperCase(display.locale)}${text.slice(1)}`;
 }
 
 export default async function MyPlanningPage({ params, searchParams }: MyPlanningPageProps) {
@@ -347,6 +419,10 @@ export default async function MyPlanningPage({ params, searchParams }: MyPlannin
               nextId={next?.id ?? null}
               now={now}
               schedule={schedule}
+              // La vue Jour n'en montre qu'une : la barre l'a déjà nommée, entre
+              // ses deux chevrons. Les deux autres en alignent plusieurs, et
+              // chacune doit se reconnaître d'un coup d'œil (#1405).
+              showDate={view !== 'jour'}
               showSchedule={view !== 'a-venir'}
               t={t}
               tenantSlug={tenantSlug}
@@ -402,6 +478,7 @@ function MyDay({
   nextId,
   now,
   schedule,
+  showDate,
   showSchedule,
   t,
   tenantSlug,
@@ -414,6 +491,14 @@ function MyDay({
   readonly nextId: string | null;
   readonly now: Date;
   readonly schedule: MyStaffSchedule;
+  /**
+   * La journée porte son bloc de date.
+   *
+   * Faux en vue Jour, où l'écran n'en aligne qu'une et où la barre de période
+   * l'annonce déjà : le titre de la section reste alors écrit pour les lecteurs
+   * d'écran, mais plus rien ne le redit à l'œil (#1405).
+   */
+  readonly showDate: boolean;
   readonly showSchedule: boolean;
   readonly t: MyPlanningTranslator;
   readonly tenantSlug: string;
@@ -422,7 +507,6 @@ function MyDay({
   const bounds = dayBoundsInTimeZone(day, schedule.timezone);
   const work = workingDay(schedule, day, bounds.start, bounds.end, display);
   const headingId = `jour-${day}`;
-  const date = agendaDate(day, display);
 
   return (
     <section
@@ -433,20 +517,26 @@ function MyDay({
           colonne à leur gauche dès 48 rem. Elle porte tout ce qui vaut pour la
           journée entière : sa date, ses horaires, ses absences. */}
       <div className="spa-my-day__rail">
-        <h2 className="spa-my-day__date" id={headingId}>
-          {/* La date entière pour qui écoute l'écran, les abréviations pour qui le
-              regarde : « mer. 23 sept. » ne s'annonce pas, il se lit. */}
-          <span className="spa-visually-hidden">{formatCalendarDate(day, display)}</span>
-          <span aria-hidden="true" className="spa-my-day__weekday">
-            {date.weekday}
-          </span>
-          <span aria-hidden="true" className="spa-my-day__number">
-            {date.number}
-          </span>
-          <span aria-hidden="true" className="spa-my-day__month">
-            {date.month}
-          </span>
-        </h2>
+        {/* Le bloc de date du design system, et non un troisième dessin du même
+            objet : l'écran en redessinait un à l'identique — trois morceaux, les
+            mêmes abréviations, la même date entière en texte masqué — alors que
+            la bande de jours du tunnel et l'historique d'une fiche cliente
+            emploient déjà `DateBlock` (#1044, #1405). Il porte la date entière
+            pour qui écoute l'écran et les abréviations pour qui le regarde, ce
+            qui fait de lui le nom accessible de la section.
+
+            En vue Jour il n'y a rien à distinguer — une seule journée, déjà
+            nommée par la barre : le titre reste, masqué, pour que
+            `aria-labelledby` ait de quoi s'accrocher. */}
+        {showDate ? (
+          <h2 className="spa-my-day__heading" id={headingId}>
+            <DateBlock date={day} display={display} />
+          </h2>
+        ) : (
+          <h2 className="spa-visually-hidden" id={headingId}>
+            {formatCalendarDate(day, display)}
+          </h2>
+        )}
         {day === today ? <span className="spa-my-day__today">{t('day.today')}</span> : null}
         {/* La journée se lit dans l'ordre que `workingDay` lui donne : ses plages
             encore travaillées, et l'absence qui coupe l'une d'elles juste après
