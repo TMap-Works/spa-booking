@@ -160,6 +160,43 @@ describe('PublicTenantService', () => {
     });
   });
 
+  it('omet un complément d’adresse vide comme un complément absent — #1340', async () => {
+    // Les deux frontières d'écriture refusent `''` depuis #1335/#1340, mais une
+    // ligne écrite avant ces bornes, ou posée par une reprise de données, peut en
+    // porter une. Les rendre telles quelles ferait échouer
+    // `postalAddressSchema` — qui exige au moins un caractère — et rendrait la
+    // vitrine du salon inaccessible en `INTERNAL_ERROR`. La lecture écarte donc
+    // ce que l'écriture refuse.
+    const vitrine = await runWithTenant(TENANT_A, async () =>
+      serviceOver({
+        ...FICHE,
+        ...ADRESSE,
+        addressLine2: '',
+        postalCode: '   ',
+        region: '',
+      }).currentTenant(),
+    );
+
+    expect(vitrine.address).toEqual({
+      line1: '12 rue des Lilas',
+      city: 'Paris',
+      country: 'FR',
+    });
+  });
+
+  it('ne sert aucune adresse quand le triplet est vide plutôt que nul — #1340', async () => {
+    // Même raison, côté triplet : `line1: ''` passerait la garde `=== null` et
+    // sortirait dans la réponse, où le schéma du contrat le refuse. Un salon dont
+    // la ligne porte des colonnes vides est servi **sans** adresse, comme un
+    // salon qui n'en a jamais saisi.
+    const vitrine = await runWithTenant(TENANT_A, async () =>
+      serviceOver({ ...FICHE, ...ADRESSE, addressLine1: '' }).currentTenant(),
+    );
+
+    expect(vitrine.address).toBeUndefined();
+    expect(Object.keys(vitrine)).not.toContain('address');
+  });
+
   it('publie l’État quand la colonne le porte, et l’omet sinon — #1335', async () => {
     // La colonne est hors du triplet de complétude : un salon américain sans
     // État reste servi, et sa vitrine écrit « New York 10118 » sans virgule.
