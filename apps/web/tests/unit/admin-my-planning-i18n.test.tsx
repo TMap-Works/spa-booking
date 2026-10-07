@@ -370,21 +370,56 @@ function gestes(props: {
   );
 }
 
+/**
+ * Les noms accessibles des quatre gestes, en anglais — #1406.
+ *
+ * Ils portent la cliente et l'heure là où le libellé visible reste court, et le
+ * **nom contient le libellé tel quel** (WCAG 2.5.3) : « Mark completed » d'un
+ * seul tenant, et non « Mark Rina Andriamena's appointment completed », où une
+ * commande vocale ne trouverait plus rien.
+ */
+const nom = {
+  completed: 'Mark completed — Rina Andriamena’s 4:00 PM appointment',
+  noShow: 'Mark no-show — Rina Andriamena’s 4:00 PM appointment',
+  confirm: 'Confirm the appointment for Rina Andriamena at 4:00 PM',
+  back: 'Go back — Rina Andriamena’s 4:00 PM appointment',
+} as const;
+
 describe('les gestes de la praticienne, rendus en anglais', () => {
   it('nomme la confirmation comme un acte, et le reste comme un constat', () => {
     render(gestes({ renderedAt: SOIN_COMMENCE, status: 'pending' }));
 
     // « Confirm the appointment » nomme le geste que le praticien pose ;
     // « Mark completed » constate ce qui a eu lieu au salon (#917).
-    expect(screen.getByRole('button', { name: 'Confirm the appointment' })).toBeDefined();
+    expect(screen.getByRole('button', { name: nom.confirm })).toBeDefined();
     expect(screen.queryByRole('button', { name: /Confirmer/u })).toBeNull();
   });
 
   it('compose « Marquer honoré » avec le statut du module de vocabulaire', () => {
     render(gestes({ renderedAt: SOIN_COMMENCE, status: 'confirmed' }));
 
-    expect(screen.getByRole('button', { name: 'Mark completed' })).toBeDefined();
-    expect(screen.getByRole('button', { name: 'Mark no-show' })).toBeDefined();
+    expect(screen.getByRole('button', { name: nom.completed })).toBeDefined();
+    expect(screen.getByRole('button', { name: nom.noShow })).toBeDefined();
+  });
+
+  /**
+   * Le nom nomme le rendez-vous, le libellé visible reste court — #1406, en
+   * anglais comme en français.
+   *
+   * Les deux catalogues sont tenus par la même contrainte : le nom accessible
+   * **contient** le libellé visible tel quel (WCAG 2.5.3), et la traduction qui
+   * intercalerait la cliente au milieu du verbe la casserait sans rien casser de
+   * visible.
+   */
+  it('porte la cliente et l’heure dans le nom accessible, pas dans le libellé visible', () => {
+    render(gestes({ renderedAt: SOIN_COMMENCE, status: 'confirmed' }));
+
+    const constat = screen.getByRole('button', { name: nom.completed });
+
+    expect(constat.textContent).toBe('Mark completed');
+    expect(nom.completed).toContain('Mark completed');
+    expect(nom.confirm).toContain('Confirm the appointment');
+    expect(nom.back).toContain('Go back');
   });
 
   /**
@@ -398,7 +433,7 @@ describe('les gestes de la praticienne, rendus en anglais', () => {
   it('pose la question du constat en anglais, cliente et heure nommées', async () => {
     render(gestes({ renderedAt: SOIN_COMMENCE, status: 'confirmed' }));
 
-    await userEvent.click(screen.getByRole('button', { name: 'Mark no-show' }));
+    await userEvent.click(screen.getByRole('button', { name: nom.noShow }));
 
     expect(markStatus).not.toHaveBeenCalled();
     expect(
@@ -406,7 +441,7 @@ describe('les gestes de la praticienne, rendus en anglais', () => {
         'Mark Rina Andriamena’s 4:00 PM appointment as no-show? This choice is final.',
       ),
     ).toBeDefined();
-    expect(screen.getByRole('button', { name: 'Go back' })).toBeDefined();
+    expect(screen.getByRole('button', { name: nom.back })).toBeDefined();
   });
 
   /** Le motif du refus se dit dans la langue courante, lui aussi — #1210. */
@@ -414,7 +449,7 @@ describe('les gestes de la praticienne, rendus en anglais', () => {
     figerLHorloge(AVANT_LE_SOIN);
     render(gestes({ renderedAt: AVANT_LE_SOIN, status: 'confirmed' }));
 
-    expect(screen.getByRole('button', { name: 'Mark completed' })).toHaveProperty(
+    expect(screen.getByRole('button', { name: nom.completed })).toHaveProperty(
       'disabled',
       true,
     );
@@ -427,7 +462,7 @@ describe('les gestes de la praticienne, rendus en anglais', () => {
     markStatus.mockResolvedValue({ ok: true, data: {} });
     render(gestes({ renderedAt: AVANT_LE_SOIN, status: 'pending' }));
 
-    await userEvent.click(screen.getByRole('button', { name: 'Confirm the appointment' }));
+    await userEvent.click(screen.getByRole('button', { name: nom.confirm }));
 
     await waitFor(() => {
       expect(refresh).toHaveBeenCalledTimes(1);
@@ -448,8 +483,8 @@ describe('les gestes de la praticienne, rendus en anglais', () => {
 
     // Deux appuis : le premier pose la question du constat, le second y répond
     // (#1409).
-    await userEvent.click(screen.getByRole('button', { name: 'Mark completed' }));
-    await userEvent.click(screen.getByRole('button', { name: 'Mark completed' }));
+    await userEvent.click(screen.getByRole('button', { name: nom.completed }));
+    await userEvent.click(screen.getByRole('button', { name: nom.completed }));
 
     expect(await screen.findByRole('alert')).toHaveProperty(
       'textContent',
