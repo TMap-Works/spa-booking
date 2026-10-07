@@ -11,6 +11,8 @@
   "noProfile": {
     "title": "Pas encore de fiche praticien",
     "body": "Votre compte n’est rattaché à aucune fiche praticien : aucun rendez-vous ne peut vous être attribué. Demandez à la gérance de créer votre fiche dans « Personnel ».",
+    "managerBody": "Votre compte n’est rattaché à aucune fiche praticien : aucun rendez-vous ne peut vous être attribué. Vous gérez le personnel de ce salon — créez votre fiche vous-même.",
+    "createRecord": "Créer ma fiche praticien",
     "openCalendar": "Ouvrir le planning du salon"
   },
   "tabsLabel": "Vue du planning",

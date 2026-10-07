@@ -1,5 +1,6 @@
 import {
   ERROR_CODES,
+  hasAtLeastRole,
   type CalendarDate,
   type MyStaffAgenda,
   type MyStaffAppointment,
@@ -62,6 +63,7 @@ import { PeriodNav } from '../components/period-nav';
 import { adminLoadFailure, requireAdminAccessToken } from '../guard';
 import { loadAdminShell } from '../layout';
 import { adminCalendarPath, adminMyPlanningPath } from '../paths';
+import { adminNewStaffMemberPath } from '../personnel/paths';
 
 /**
  * « Mon planning » — l'emploi du temps du praticien connecté (#813).
@@ -174,6 +176,41 @@ import { adminCalendarPath, adminMyPlanningPath } from '../paths';
  * Le reste est dans `styles/admin/my-planning.css`, qui porte le détail de la
  * mise en page et la discipline de l'accent — il était sur chaque ligne, il ne
  * reste que là où il désigne (BM-VISUEL-01).
+ *
+ * ## Le compte sans fiche praticien, et à qui l'écran parle (#1411)
+ *
+ * `GET /v1/me/staff-profile` répond 404 à tout compte du salon qui n'a pas de
+ * fiche praticien — y compris une gérante ou une administratrice, qui en
+ * obtiennent une parce qu'elles donnent aussi des soins. L'écran leur disait
+ * « Demandez à la gérance de créer votre fiche dans « Personnel » » : la
+ * gérance, c'est elle, et le seul bouton de l'état vide ouvrait le planning du
+ * salon — pas « Personnel », qu'elle a pourtant dans son rail.
+ *
+ * Le message et l'action dépendent donc du **rang**, et le seuil est
+ * `manager` : c'est celui de `POST /v1/staff` (`catalog/staff.controller.ts`,
+ * `@AuthAtLeast('MANAGER')`), et c'est celui que `personnel/nouveau/page.tsx`
+ * relit déjà avant de servir son formulaire. Le rang plutôt qu'une permission
+ * parce que la création d'une fiche n'en consomme aucune — `accounts:read` n'ouvre
+ * que l'annuaire —, et parce que deux conditions écrites séparément pour la même
+ * route finissent par diverger.
+ *
+ * Ce qui en découle, et qui est la conduite déjà tranchée au rang praticien
+ * (#1176) — **un état vide ne propose pas un écran fermé au rôle, et il nomme le
+ * vrai motif** :
+ *
+ *   - à partir de `manager`, le texte dit qu'elle tient le personnel de ce salon
+ *     et l'action accentuée mène à la création de sa fiche. Son propre compte
+ *     figure dans la liste des comptes rattachables, `manager` étant un rôle du
+ *     personnel (`STAFF_ROLES`) : le geste aboutit, il ne promet pas un 403 ;
+ *   - au rang praticien, rien ne change — « demandez à la gérance » est le vrai
+ *     motif, et aucun lien ne lui est offert ;
+ *   - une panne de `GET /auth/me` rabat le shell sur `staff` (`OUTAGE_ROLE`) et
+ *     donc sur le second message. C'est le bon sens du doute : on ne propose pas
+ *     un geste sur un rang qu'on ignore.
+ *
+ * La sortie « Ouvrir le planning du salon » reste, derrière `agenda:read:all` qui
+ * la conditionnait déjà, mais en action **secondaire** : elle ne répond pas à la
+ * question que l'écran pose.
  *
  * ## La langue (#1104)
  *
@@ -371,6 +408,12 @@ export default async function MyPlanningPage({ params, searchParams }: MyPlannin
     ]);
   } catch (error) {
     if (error instanceof ApiClientError && error.code === ERROR_CODES.STAFF_PROFILE_NOT_FOUND) {
+      // Qui tient le personnel de ce salon n'a personne à qui demander : le rang
+      // décide du message et de l'action. Le seuil, la raison d'un rang plutôt
+      // que d'une permission, et ce qu'un shell muet donne : en tête de fichier,
+      // « Le compte sans fiche praticien, et à qui l'écran parle » (#1411).
+      const managesStaff = shell !== null && hasAtLeastRole(shell.role, 'manager');
+
       return (
         <section aria-labelledby="mon-planning-titre" className="spa-my-planning">
           <h1 className="spa-admin__title" id="mon-planning-titre">
@@ -378,7 +421,20 @@ export default async function MyPlanningPage({ params, searchParams }: MyPlannin
           </h1>
           <div className="spa-empty-state">
             <p className="spa-empty-state__title">{t('noProfile.title')}</p>
-            <p className="spa-empty-state__description">{t('noProfile.body')}</p>
+            <p className="spa-empty-state__description">
+              {managesStaff ? t('noProfile.managerBody') : t('noProfile.body')}
+            </p>
+            {/* L'action d'abord, et accentuée : c'est le geste qui fait sortir de
+                cet état. La sortie vers le planning du salon la suit, en retrait
+                — regarder la journée des autres ne crée aucune fiche. */}
+            {managesStaff ? (
+              <Link
+                className="spa-button spa-button--accent"
+                href={adminNewStaffMemberPath(tenantSlug)}
+              >
+                <span className="spa-button__label">{t('noProfile.createRecord')}</span>
+              </Link>
+            ) : null}
             {shell?.permissions?.includes('agenda:read:all') === true ? (
               <Link className="spa-button spa-button--neutral" href={adminCalendarPath(tenantSlug)}>
                 <span className="spa-button__label">{t('noProfile.openCalendar')}</span>
