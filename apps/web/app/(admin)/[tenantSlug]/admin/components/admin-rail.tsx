@@ -4,7 +4,7 @@ import type { Locale, Permission, UserRole } from '@spa/shared';
 import { useLocale, useTranslations } from 'next-intl';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import type { FocusEvent } from 'react';
+import { useEffect, useState, type FocusEvent } from 'react';
 
 import { Icon, type IconName } from '@/components/ui/icon';
 import { LinkPending } from '@/components/ui/link-pending';
@@ -149,8 +149,45 @@ function isKeyboardFocus(entry: Element): boolean {
 }
 
 /**
+ * Le pied de rail, désigné par le replieur qui l'ouvre (#1403).
+ *
+ * Un identifiant fixe plutôt qu'un `useId` : le rail est unique dans la page —
+ * le layout n'en rend qu'un, et `admin-login-layout.test.mjs` l'exécute — et
+ * `aria-controls` doit nommer un élément qui existe, ce qu'un identifiant
+ * stable rend lisible aussi bien dans la maquette que dans le DOM servi.
+ */
+const RAIL_FOOTER_ID = 'spa-admin-rail-footer';
+
+/**
  * La barre latérale du back-office — navigation, contexte du salon, session
  * (#48).
+ *
+ * ## Ce qu'elle devient sous 48 rem : une barre compacte (#1403)
+ *
+ * Le rail déplié mesurait près de 290 px de haut sur un téléphone — marque,
+ * bandeau de navigation, puis un pied enroulé sur quatre rangs : changement
+ * d'établissement, fuseau, carte du compte, « Se déconnecter », Français /
+ * English. Ajoutés à la barre haute et à l'en-tête de l'écran, ces 290 px
+ * repoussaient **le premier rendez-vous de la journée** sous la ligne de
+ * flottaison : à 360 × 780, « Mon planning » s'ouvrait sur une coquille et pas
+ * une seule ligne d'agenda. Le défaut était celui de la coquille, et il frappait
+ * les seize écrans du back-office.
+ *
+ * Le pied passe donc derrière un **replieur** — le bouton de compte, à droite de
+ * la marque —, et il n'y a plus que deux rangs avant le contenu. Ce sont bien
+ * les réglages du poste qu'on replie, et non une section du sommaire : la
+ * navigation, elle, reste dépliée et à portée de pouce, parce que c'est par elle
+ * qu'on circule.
+ *
+ * Le repli est **décidé par le CSS** et non par ce composant : le pied est
+ * toujours rendu, et `data-open` ne fait que porter l'état du replieur jusqu'à
+ * `styles/admin/shell.css`, qui l'honore sous 48 rem et l'ignore au-dessus. Un
+ * rendu conditionnel aurait effacé le pied du rail large, où il n'y a rien à
+ * replier — et une requête de média lue en JavaScript aurait fait diverger le
+ * HTML du serveur de celui du client.
+ *
+ * Il se referme au changement d'écran : le rail survit à la navigation, et un
+ * menu laissé ouvert aurait repris la place qu'on vient de rendre à l'agenda.
  *
  * ## Pourquoi ce composant est client, et lui seul
  *
@@ -233,6 +270,14 @@ export function AdminRail({
   const pathname = usePathname();
   const t = useTranslations('shell.admin.rail');
   const locale = useLocale() as Locale;
+  // Le pied replié par défaut : c'est l'état dans lequel la barre compacte
+  // rend sa hauteur au contenu, et le seul qui vaille à l'ouverture d'un écran.
+  const [sessionOpen, setSessionOpen] = useState(false);
+  // Le rail n'est pas démonté par une navigation — c'est tout l'intérêt d'un
+  // layout —, et le pied laissé ouvert survivrait donc à l'écran qu'on quitte.
+  useEffect(() => {
+    setSessionOpen(false);
+  }, [pathname]);
   // Deux filtres, et ils ne disent pas la même chose : le rang écarte ce qui est
   // au-dessus de l'appelant, les permissions écartent ce que le rang ne sait pas
   // exprimer — un praticien est bien au rang `staff`, et n'a pourtant ni le
@@ -291,6 +336,42 @@ export function AdminRail({
           <span className="spa-admin__brand">{brand}</span>
           <span className="spa-admin__brand-caption">{t('caption')}</span>
         </span>
+        {/*
+         * Le replieur du pied de rail (#1403) — invisible au-dessus de 48 rem,
+         * où le pied est déjà sous les yeux et n'a rien à ouvrir.
+         *
+         * Son nom accessible est celui du compte connecté, pas un « Menu » :
+         * c'est ce qu'il y a derrière, et c'est la seule chose qui distingue ce
+         * bouton des autres pour qui l'entend annoncer. Les mêmes chaînes que la
+         * carte du pied le nomment, si bien que les deux ne peuvent pas
+         * diverger — et quand `/auth/me` n'a pas répondu, il dit la panne plutôt
+         * que d'annoncer quelqu'un (#755).
+         *
+         * `aria-label` plutôt qu'un texte masqué : la phrase de panne est déjà
+         * écrite **une fois** dans le pied, et la redire en contenu la ferait
+         * lire deux fois à qui déplie le rail large — où ce bouton n'existe même
+         * pas. Un nom accessible n'est pas du contenu : il nomme le contrôle
+         * sans ajouter une seconde occurrence au texte de la page.
+         */}
+        <button
+          aria-controls={RAIL_FOOTER_ID}
+          aria-expanded={sessionOpen}
+          aria-label={
+            userName === null ? t('accountUnverified') : `${t('signedInAs')} ${userName}`
+          }
+          className="spa-admin__rail-toggle"
+          onClick={() => setSessionOpen((open) => !open)}
+          type="button"
+        >
+          {userName === null ? (
+            <Icon name="user" />
+          ) : (
+            <span aria-hidden="true" className="spa-admin__avatar">
+              {initialsOf(userName)}
+            </span>
+          )}
+          <Icon className="spa-admin__rail-toggle-caret" name="chevron-down" />
+        </button>
       </div>
 
       <div className="spa-admin__nav">
@@ -304,7 +385,17 @@ export function AdminRail({
         ))}
       </div>
 
-      <div className="spa-admin__rail-footer">
+      {/*
+        `data-open` porte l'état du replieur, et rien de plus : c'est
+        `styles/admin/shell.css` qui en tire une conséquence, sous 48 rem
+        seulement (#1403). Au-dessus, le pied est visible quelle que soit sa
+        valeur — il n'y a pas de barre compacte à dégager.
+      */}
+      <div
+        className="spa-admin__rail-footer"
+        data-open={sessionOpen ? 'true' : 'false'}
+        id={RAIL_FOOTER_ID}
+      >
         <EstablishmentSwitcher currentSlug={tenantSlug} establishments={establishments} />
         {/*
          * Le fuseau est affiché en permanence et non au survol : toutes les

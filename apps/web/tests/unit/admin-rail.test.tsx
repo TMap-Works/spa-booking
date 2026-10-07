@@ -205,9 +205,15 @@ describe('rail — le bandeau du téléphone', () => {
   it('amène l’entrée atteinte au clavier entièrement en vue', async () => {
     renderRail({ role: 'admin' });
 
-    // La reproduction du ticket : autant de tabulations que d'entrées (huit
-    // depuis le tableau de bord) mènent à la dernière entrée du sommaire.
-    for (let index = 0; index < 8; index += 1) {
+    /*
+     * La reproduction du ticket : autant de tabulations que d'entrées (huit
+     * depuis le tableau de bord) mènent à la dernière entrée du sommaire — plus
+     * une pour le replieur du compte, qui ouvre le rang de la marque depuis
+     * #1403. Il est hors du rendu au-dessus de 48 rem, mais jsdom n'applique
+     * aucune feuille de style : il est ici toujours tabulable, et le compte doit
+     * en tenir compte.
+     */
+    for (let index = 0; index < 9; index += 1) {
       await userEvent.tab();
     }
 
@@ -225,6 +231,15 @@ describe('rail — le bandeau du téléphone', () => {
     // le défaut frappait toute entrée que le bord coupe, d'où un cadrage demandé
     // à chaque prise de focus et non sur la seule fin du bandeau.
     renderRail({ role: 'admin' });
+
+    // Le replieur du compte ouvre l'ordre de tabulation (#1403) : il est le
+    // dernier élément du rang de la marque, qui précède le bandeau. Il n'est pas
+    // dans le bandeau, et ne réclame donc aucun cadrage.
+    await userEvent.tab();
+    expect(document.activeElement).toBe(
+      screen.getByRole('button', { name: 'Connecté·e : Hasina R.' }),
+    );
+    expect(scrollIntoView).not.toHaveBeenCalled();
 
     // Les sections sont rangées par usage : le groupe « Au quotidien » ouvre
     // sur le tableau de bord, puis le planning.
@@ -299,6 +314,96 @@ describe('rail — le contexte du salon', () => {
     expect(within(switcher).getByRole('link', { name: 'Villa Ravinala' }).getAttribute('href')).toBe(
       '/villa-ravinala/admin/calendrier',
     );
+  });
+});
+
+/*
+ * La barre compacte des petits écrans (#1403).
+ *
+ * Ce que la suite peut prouver ici, et ce qu'elle ne peut pas : jsdom n'applique
+ * aucune feuille de style et ne connaît aucune requête de média. Que le pied
+ * **disparaisse** sous 48 rem relève donc du CSS (`styles/admin/shell.css`) et de
+ * la recette au navigateur, pas de l'unitaire. Ce qui se vérifie ici est le
+ * contrat que le CSS consomme : un replieur nommé, qui désigne le pied, dit son
+ * état, le retourne au clic, et le referme quand on change d'écran.
+ */
+describe('rail — la barre compacte des petits écrans', () => {
+  it('replie le pied de session par défaut et le désigne depuis son bouton', () => {
+    renderRail();
+
+    const toggle = screen.getByRole('button', { name: 'Connecté·e : Hasina R.' });
+
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+
+    // `aria-controls` doit nommer un élément qui existe : une référence pendante
+    // ne se voit nulle part et n'annonce rien.
+    const controlled = toggle.getAttribute('aria-controls');
+    expect(controlled).not.toBeNull();
+    const footer = document.getElementById(controlled as string);
+    expect(footer).not.toBeNull();
+    expect(footer?.getAttribute('data-open')).toBe('false');
+
+    // C'est bien le pied qui est replié — établissement, fuseau, compte,
+    // déconnexion, langue —, et non le sommaire : la navigation reste dépliée.
+    expect(within(footer as HTMLElement).getByRole('button', { name: 'Se déconnecter' }))
+      .toBeDefined();
+    expect(screen.getByRole('link', { name: 'Planning' })).toBeDefined();
+  });
+
+  it('ouvre puis referme le pied au clic, et le dit sur les deux nœuds', async () => {
+    renderRail();
+
+    const toggle = screen.getByRole('button', { name: 'Connecté·e : Hasina R.' });
+    const footer = document.getElementById(toggle.getAttribute('aria-controls') as string);
+
+    await userEvent.click(toggle);
+
+    expect(toggle.getAttribute('aria-expanded')).toBe('true');
+    expect(footer?.getAttribute('data-open')).toBe('true');
+
+    await userEvent.click(toggle);
+
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+    expect(footer?.getAttribute('data-open')).toBe('false');
+  });
+
+  it('referme le pied quand l’écran change', async () => {
+    // Le rail vit dans le layout : une navigation ne le démonte pas, et un pied
+    // laissé ouvert reprendrait la hauteur qu'on vient de rendre à l'agenda.
+    const { rerender } = renderRail();
+    const toggle = screen.getByRole('button', { name: 'Connecté·e : Hasina R.' });
+
+    await userEvent.click(toggle);
+    expect(toggle.getAttribute('aria-expanded')).toBe('true');
+
+    pathname = '/maison-lotus/admin/mon-planning';
+    rerender(
+      <AdminRail
+        establishments={[LOTUS]}
+        role="manager"
+        tenantSlug="maison-lotus"
+        timeZone="Indian/Antananarivo"
+        userName="Hasina R."
+      />,
+    );
+
+    expect(
+      screen.getByRole('button', { name: 'Connecté·e : Hasina R.' }).getAttribute('aria-expanded'),
+    ).toBe('false');
+  });
+
+  it('dit la panne plutôt que d’annoncer quelqu’un quand le compte manque', () => {
+    // #755 : le rail se peint sans compte, et n'invente personne. Le nom du
+    // replieur vient d'`aria-label` et non d'un texte masqué — la phrase de
+    // panne reste écrite une seule fois dans la page, dans le pied.
+    renderRail({ userName: null });
+
+    expect(
+      screen
+        .getByRole('button', { name: /Compte non vérifié/ })
+        .getAttribute('aria-expanded'),
+    ).toBe('false');
+    expect(screen.getAllByText(/Compte non vérifié/)).toHaveLength(1);
   });
 });
 

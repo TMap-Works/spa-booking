@@ -128,10 +128,33 @@
 }
 
 /*
+ * Le replieur du pied de rail (#1403).
+ *
+ * Il n'existe que sous 48 rem — au-dessus, le pied est déjà sous les yeux, et un
+ * bouton pour l'ouvrir n'ouvrirait rien. `display: none` le retire du rendu
+ * **et** de l'ordre de tabulation, ce qu'aucune forme de masquage visuel ne fait
+ * : un bouton inerte attrapé au `Tab` au milieu du sommaire serait pire que son
+ * absence.
+ */
+.spa-admin__rail-toggle {
+  display: none;
+}
+
+/*
  * Pied de barre : le salon courant et son fuseau. Le fuseau est affiché en
  * permanence et non au survol — toutes les heures du back-office sont écrites
  * dans le fuseau du salon, et un opérateur qui consulte depuis ailleurs doit
  * pouvoir le constater sans le chercher.
+ *
+ * « En permanence » vaut au palier large, et plus sous 48 rem depuis #1403 : le
+ * pied y est replié derrière le bouton de compte, et le fuseau est donc à une
+ * tape. Ce n'est pas un oubli, c'est l'arbitrage du ticket — ces 290 px de pied
+ * poussaient le premier rendez-vous de la journée hors du premier écran, et
+ * l'issue nomme le fuseau parmi ce qu'il faut replier. Ce n'est pas non plus la
+ * seule mention : la barre haute écrit la date du jour **dans ce fuseau**, et
+ * les écrans qui affichent des heures — planning, encaissement — le redisent
+ * dans leur propre barre d'outils (`admin-toolbar__hint`). Le constat reste
+ * donc faisable sur téléphone sans ouvrir ce pied.
  */
 .spa-admin__rail-footer {
   margin-block-start: auto;
@@ -796,6 +819,77 @@
   }
 
   /*
+   * Le rail devient une **barre compacte** : deux rangs, et c'est tout (#1403).
+   *
+   * Ce qu'il y avait avant le contenu sur un téléphone : la marque, le bandeau
+   * de navigation, puis le pied enroulé sur quatre rangs — changement
+   * d'établissement, fuseau, carte du compte, « Se déconnecter », Français /
+   * English — soit près de 290 px. Ajoutés à la barre haute et à l'en-tête de
+   * l'écran, ils repoussaient le premier rendez-vous de « Mon planning » sous la
+   * ligne de flottaison d'un 360 × 780 : la praticienne ouvrait son agenda sur
+   * une coquille, sans une ligne d'agenda. C'est la coquille qui était en cause,
+   * et donc les seize écrans du back-office à la fois.
+   *
+   * Ce qui se replie est le **pied**, et lui seul : ce sont les réglages du
+   * poste, qu'on ouvre une fois par journée. La navigation reste dépliée — c'est
+   * par elle qu'on circule, et la cacher derrière un geste aurait rendu le
+   * back-office plus pénible sur le support où il est déjà le plus étroit.
+   *
+   * Le bouton se range au bout du rang de la marque, qui est déjà une rangée
+   * flex : `margin-inline-start: auto` suffit, aucune mise en page n'est à
+   * refaire. Sa cible fait `--spa-target-min-size` dans les deux sens (WCAG 2.2
+   * AA 2.5.8), ce qui fixe la hauteur du premier rang à 44 px.
+   *
+   * Ses couleurs sont celles du **chrome** et non celles de la surface inversée.
+   * `admin/modern.css` repeint le rail en `--spa-color-chrome` (rampe froide),
+   * là où les jetons `-inverse` appartiennent à la rampe neutre chaude : en
+   * thème sombre `--spa-color-text-inverse-muted` tombe à `#4f4a44`, soit
+   * 2,2:1 pour le chevron sur `#0c1210` (WCAG 1.4.11 en exige 3:1), et
+   * `--spa-color-surface-inverse-raised` y devient `#e6e0da` — une pastille
+   * presque blanche au milieu d'un rail presque noir. `contrast.test.mjs` ne
+   * l'attrape pas : il vérifie des **paires déclarées**, et « inversé sur
+   * chrome » n'en est pas une. Les paires employées ici, elles, y sont — c'est
+   * la même correction que `.spa-admin__rail-footer .spa-button--quiet` a déjà
+   * reçue, pour exactement la même raison.
+   */
+  .spa-admin__rail-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--spa-space-2);
+    flex: none;
+    margin-inline-start: auto;
+    min-inline-size: var(--spa-target-min-size);
+    min-block-size: var(--spa-target-min-size);
+    padding-inline: var(--spa-space-2);
+    border: 0;
+    border-radius: var(--spa-radius-full);
+    background-color: transparent;
+    color: var(--spa-color-text-on-chrome-muted);
+    cursor: pointer;
+  }
+
+  .spa-admin__rail-toggle:hover {
+    background-color: var(--spa-color-chrome-raised);
+    color: var(--spa-color-text-on-chrome);
+  }
+
+  /*
+   * Le chevron dit le sens du geste — vers le bas tant que le pied est replié,
+   * retourné quand il est ouvert. Il lit `aria-expanded` et non une classe : la
+   * flèche ne peut alors pas montrer l'inverse de ce qui est annoncé, puisqu'il
+   * n'y a qu'une source. Le même raisonnement qu'`aria-current` sur le sommaire.
+   */
+  .spa-admin__rail-toggle-caret {
+    inline-size: 1rem;
+    block-size: 1rem;
+    transition: transform var(--spa-duration-fast) var(--spa-easing-standard);
+  }
+
+  .spa-admin__rail-toggle[aria-expanded='true'] .spa-admin__rail-toggle-caret {
+    transform: rotate(180deg);
+  }
+
+  /*
    * Le sommaire passe en bandeau qui défile — une rangée de 44 px — plutôt qu'en
    * rangée qui s'enroule : sept entrées enroulées à 360 px occupent trois lignes
    * et repoussent le contenu sous la ligne de flottaison, alors que le
@@ -862,6 +956,22 @@
     padding-block-start: var(--spa-space-3);
   }
 
+  /*
+   * Le pied replié (#1403) — et c'est ici, dans le palier, que le repli existe.
+   *
+   * `display: none` et non une hauteur nulle : le pied porte quatre contrôles —
+   * établissement, déconnexion, les deux langues —, et un conteneur simplement
+   * rapetissé les aurait laissés dans l'ordre de tabulation, atteignables au
+   * `Tab` sans que rien ne se voie. C'est aussi ce qui retire le bloc de l'arbre
+   * d'accessibilité, en accord avec l'`aria-expanded="false"` du replieur.
+   *
+   * Hors de ce palier, `data-open` ne décide de rien : le pied reste la colonne
+   * de réglages du rail large, et il n'y a pas de barre compacte à dégager.
+   */
+  .spa-admin__rail-footer[data-open='false'] {
+    display: none;
+  }
+
   .spa-admin__topbar {
     flex-wrap: wrap;
     padding-block: var(--spa-space-2);
@@ -884,11 +994,23 @@
 
 @media (max-width: 30rem) {
   /*
-   * Le nom du salon est déjà écrit douze pixels plus bas, dans le sélecteur
-   * d'établissement du pied de rail — et celui-là, on peut le manœuvrer. À cette
-   * largeur le bandeau n'a pas la place de le dire deux fois.
+   * Le nom du salon est déjà écrit juste en dessous, en exergue de la barre
+   * haute (`.spa-admin-topbar__eyebrow`). À cette largeur le rang de la marque
+   * n'a pas la place de le dire deux fois : il ne garde que le monogramme et le
+   * replieur du compte.
+   *
+   * Il le disait auparavant dans le sélecteur d'établissement du pied de rail,
+   * douze pixels plus bas — ce pied est désormais replié par défaut sous 48 rem
+   * (#1403), et la barre haute est la seule mention qui reste visible sans un
+   * geste.
+   *
+   * Le sélecteur porte `.spa-admin__rail` parce qu'`admin/modern.css`, chargée
+   * après celle-ci, déclare `.spa-admin__rail .spa-admin__brand { display:
+   * block }` : à une classe de moins, ce repli n'en était pas un — une requête
+   * de média n'ajoute aucune spécificité, et le nom du salon restait écrit deux
+   * fois à 360 px.
    */
-  .spa-admin__brand {
+  .spa-admin__rail .spa-admin__brand {
     display: none;
   }
 
