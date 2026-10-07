@@ -6,6 +6,7 @@ import { usePathname } from 'next/navigation';
 import { useMemo } from 'react';
 
 import { useAppointmentFeed } from '@/components/live/appointment-feed';
+import { withCancelledShown } from '@/lib/admin/my-planning';
 import { calendarDateInTimeZone } from '@/lib/booking/calendar';
 import { formatDateTimeInTimeZone, type DisplayLocale } from '@/lib/format';
 
@@ -59,6 +60,18 @@ interface AdminLiveAnnouncementsProps {
  * de la fiche publique du salon, que seul le layout a chargée — d'où la
  * propriété `countryCode`, descendue du shell. Le **fuseau** reste celui de
  * l'établissement et ne dépend d'aucune des deux.
+ *
+ * ## Le lien mène à la ligne qu'il nomme (#1435)
+ *
+ * Depuis #1410, « Mon planning » **masque les annulés** par défaut. Le lien de
+ * l'avis d'annulation menait donc à une journée où le rendez-vous qu'il venait
+ * de nommer n'apparaissait pas : il demande à présent l'affichage des annulés,
+ * par `withCancelledShown` — le composeur de ce paramètre, écrit auprès de la
+ * fonction qui le relit (`lib/admin/my-planning.ts`).
+ *
+ * Sur **la seule annonce `appointment-cancelled`**. L'autre nomme un rendez-vous
+ * actif, qu'une liste montre sans rien demander : lui ouvrir les annulés
+ * ajouterait à son écran d'arrivée des lignes dont il ne parle pas.
  */
 export function AdminLiveAnnouncements({
   tenantSlug,
@@ -95,8 +108,13 @@ export function AdminLiveAnnouncements({
       subject: formatDateTimeInTimeZone(event.startsAt, timeZone, display),
       path,
       href: readsEstablishmentAgenda
-        ? adminCalendarPath(tenantSlug, { date })
-        : adminMyPlanningPath(tenantSlug, { date }),
+        ? // Le planning du salon n'a pas encore cet interrupteur — c'est #982
+          // qui le livrera, et ce lien gagnera le même paramètre ce jour-là.
+          adminCalendarPath(tenantSlug, { date })
+        : withCancelledShown(
+            adminMyPlanningPath(tenantSlug, { date }),
+            kind === 'appointment-cancelled',
+          ),
     });
   });
 
