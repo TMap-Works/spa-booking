@@ -647,6 +647,41 @@ export interface AgendaClientSummary {
   readonly lastName: string;
 }
 
+/**
+ * La cliente telle que la **lecture** d'agenda la rend — le *summary*, plus de
+ * quoi l'appeler et de quoi savoir ce qui lui est contre-indiqué (#1404).
+ *
+ * ## Pourquoi deux formes, et non un champ de plus sur la première
+ *
+ * Parce que les deux surfaces servies par cette lecture n'en rendent pas autant.
+ * `AgendaAppointmentView` — l'agenda du **comptoir** — rend `appointmentSchema`,
+ * dont le bloc `client` est un *summary* : y faire entrer le téléphone et
+ * l'alerte serait le ticket #977, pas celui-ci. Le planning du **praticien**,
+ * lui, les rend, parce que c'est lui qui prépare la cabine.
+ *
+ * Les deux champs sont lus sur la **même requête** que les noms : les résoudre
+ * après coup aurait fait une lecture de fiche par ligne de planning, sur un écran
+ * qui en montre une semaine. Deux colonnes de plus dans un `select` déjà fait ne
+ * coûtent rien ; `agendaView` les laisse simplement de côté.
+ *
+ * ## Ce que `AgendaClientSummary` ne garantit pas
+ *
+ * La séparation des deux formes **documente** l'intention ; elle ne la force
+ * pas. `tsc` accepte `client: record.client` dans le littéral d'
+ * `AgendaAppointmentView` : le contrôle de propriété excédentaire ne vaut que
+ * pour un littéral frais, et une référence de type `AgendaClientRecord` est
+ * structurellement assignable à `AgendaClientSummary`. La projection champ par
+ * champ d'`agendaView` est donc nécessaire, et c'est l'assertion `toEqual` d'
+ * `appointments-agenda.spec.ts` — trois clés sur `row.client`, pas quatre — qui
+ * refuse la régression.
+ */
+export interface AgendaClientRecord extends AgendaClientSummary {
+  /** Son numéro, `null` quand la fiche n'en porte pas. */
+  readonly phone: string | null;
+  /** L'alerte de sa fiche — `users.internal_note` —, `null` quand il n'y en a pas. */
+  readonly internalNote: string | null;
+}
+
 /** Le praticien d'une ligne d'agenda — `staffMemberSummarySchema`. */
 export interface AgendaStaffSummary {
   readonly id: string;
@@ -696,7 +731,7 @@ export interface AgendaServiceSummary {
  * essais (tenant-isolation §4).
  */
 export interface AgendaAppointmentRecord extends AppointmentRecord {
-  readonly client: AgendaClientSummary;
+  readonly client: AgendaClientRecord;
   readonly staff: AgendaStaffSummary;
   readonly service: AgendaServiceSummary;
   /** Note interne du praticien, `null` quand il n'y en a pas. */
@@ -959,10 +994,21 @@ export interface MyStaffRangeInput {
   readonly to: string | null;
 }
 
-/** La cliente d'une ligne de planning — prénom, et initiale du nom (CDC §5.1). */
+/**
+ * La cliente d'une ligne de planning — `myStaffAppointmentClientSchema`.
+ *
+ * Elle portait prénom + initiale du nom jusqu'à #1404 ; l'en-tête du contrat
+ * partagé dit pourquoi cette minimisation-là ne protégeait rien, et ce qui reste
+ * dehors.
+ */
 export interface MyStaffAppointmentClientView {
+  readonly id: string;
   readonly firstName: string;
-  readonly lastInitial: string;
+  readonly lastName: string;
+  /** Son numéro, `null` quand la fiche n'en porte pas. */
+  readonly phone: string | null;
+  /** L'alerte de sa fiche, `null` quand il n'y en a pas — jamais `staffNote`. */
+  readonly internalNote: string | null;
 }
 
 /**

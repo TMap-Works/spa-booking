@@ -47,7 +47,13 @@ interface MyAgendaRow {
   readonly endsAt: string;
   readonly utcOffsetMinutes: number;
   readonly service: { readonly id: string; readonly name: string; readonly durationMinutes: number };
-  readonly client: { readonly firstName: string; readonly lastInitial: string };
+  readonly client: {
+    readonly id: string;
+    readonly firstName: string;
+    readonly lastName: string;
+    readonly phone: string | null;
+    readonly internalNote: string | null;
+  };
   readonly clientNote?: string;
   readonly staffNote?: string;
 }
@@ -72,7 +78,7 @@ interface MyScheduleBody {
 
 describe('GET /api/v1/me/*', () => {
   let harness: MyStaffHarness;
-  /** La cliente du rendez-vous semé — son nom sert l'assertion d'initiale. */
+  /** La cliente du rendez-vous semé — sa fiche sert l'assertion du bloc `client`. */
   let clientId: string;
 
   /** Le prochain mardi, dix heures — le jour où le praticien travaille. */
@@ -87,6 +93,8 @@ describe('GET /api/v1/me/*', () => {
       firstName: 'Camille',
       lastName: 'durand',
       email: 'camille@example.test',
+      phone: '+33 6 00 00 00 02',
+      internalNote: 'Allergie aux huiles essentielles d’agrumes.',
     }).id;
   });
 
@@ -189,14 +197,25 @@ describe('GET /api/v1/me/*', () => {
         name: 'Massage 60 min',
         durationMinutes: SERVICE_DURATION_MINUTES,
       });
-      // Prénom et **initiale**, en capitale : le nom semé est en minuscules.
-      expect(row.client).toEqual({ firstName: 'Camille', lastInitial: 'D' });
+      // La cliente telle que #1404 la sert : nom **entier** — tel qu'écrit, le
+      // contrat ne met pas de capitale —, numéro, alerte de la fiche, et de quoi
+      // l'ouvrir. Le téléphone garde ses espaces : c'est une sortie, et c'est
+      // l'écran qui resserre la destination `tel:`.
+      expect(row.client).toEqual({
+        id: clientId,
+        firstName: 'Camille',
+        lastName: 'durand',
+        phone: '+33 6 00 00 00 02',
+        internalNote: 'Allergie aux huiles essentielles d’agrumes.',
+      });
       expect(row.clientNote).toBe('Allergie aux huiles d’amande');
       expect(row.staffNote).toBe('Prévoir la cabine du fond');
       // Ce qu'un planning ne montre pas, et que l'agenda du comptoir montre :
       expect(row).not.toHaveProperty('price');
       expect(row).not.toHaveProperty('staff');
       expect(row).not.toHaveProperty('dataConsentAt');
+      // Ce que la fiche cliente garde pour elle, et que cette route n'ouvre pas :
+      expect(row.client).not.toHaveProperty('email');
     });
 
     it('sert la journée courante du salon quand aucune borne n’est donnée', async () => {

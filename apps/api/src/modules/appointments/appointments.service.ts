@@ -1605,7 +1605,17 @@ function agendaView(record: AgendaAppointmentRecord): AgendaAppointmentView {
     id: record.id,
     reference: record.reference,
     status: record.status,
-    client: record.client,
+    // Les trois champs du *summary*, nommés un par un — et non `record.client`
+    // répandu tel quel. La lecture rend depuis #1404 le téléphone et l'alerte de
+    // la fiche, que le planning du praticien affiche ; `appointmentSchema` ne les
+    // déclare pas, et les laisser passer ici les aurait fait sortir sur
+    // `GET /appointments` sans que personne l'ait décidé. C'est #977 qui tranche
+    // pour cette route-là.
+    client: {
+      id: record.client.id,
+      firstName: record.client.firstName,
+      lastName: record.client.lastName,
+    },
     staff: record.staff,
     service: {
       id: record.service.id,

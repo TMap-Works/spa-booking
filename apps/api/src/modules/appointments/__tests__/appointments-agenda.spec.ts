@@ -348,11 +348,19 @@ describe('AppointmentsService.listAgenda', () => {
         email: 'camille@example.test',
         firstName: 'Camille',
         lastName: 'Durand',
+        // La lecture d'agenda joint désormais les deux (#1404) : la fiche en porte
+        // donc, pour que l'assertion ci-dessous prouve que la **projection** les
+        // laisse de côté, et non que la fixture était vide.
+        phone: '+33 6 00 00 00 02',
+        internalNote: 'Allergie aux huiles essentielles d’agrumes.',
       });
       seed('2026-03-04T10:00:00.000Z', { clientId: cliente.id, priceAmountMinor: 7500 });
 
       const [row] = await listAgenda(repository, { from: '2026-03-04' });
 
+      // Le *summary* et rien d'autre : `appointmentSchema` ne déclare ni téléphone
+      // ni alerte, et élargir la sortie du comptoir est l'objet de #977. `toEqual`
+      // refuse la clé de trop — c'est ce qui tient la frontière ici.
       expect(row?.client).toEqual({ id: cliente.id, firstName: 'Camille', lastName: 'Durand' });
       expect(row?.staff).toEqual({ id: STAFF, displayName: 'Camille' });
       expect(row?.service).toEqual({

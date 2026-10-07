@@ -244,6 +244,12 @@ export class MyStaffService {
    * Volontairement plus étroit que la ligne d'agenda : ni prix, ni `staff`
    * imbriqué — il sait qui il est —, ni motif d'annulation, ni preuve de
    * consentement. Ce sont des données de registre, et elles ont leur route.
+   *
+   * Plus étroit, mais pas sur la cliente : depuis #1404 le bloc `client` est
+   * **plus riche** que celui de l'agenda du comptoir, qui s'en tient au
+   * *summary*. L'inversion est volontaire et le contrat partagé la motive — c'est
+   * le praticien qui prépare la cabine, et le téléphone comme l'alerte lui sont
+   * déjà ouverts par `customers:read:own`.
    */
   private appointmentView(
     record: AgendaAppointmentRecord,
@@ -266,9 +272,16 @@ export class MyStaffService {
         name: record.service.name,
         durationMinutes: record.service.durationMinutes,
       },
+      // La cliente telle que #1404 la sert : nom complet, numéro, alerte de sa
+      // fiche et de quoi l'ouvrir. Ce que la praticienne lit déjà dans
+      // « Clients » avec le même jeton — `customers:read:own` —, et que le
+      // planning lui faisait chercher sur un second écran.
       client: {
+        id: record.client.id,
         firstName: record.client.firstName,
-        lastInitial: initialOf(record.client.lastName),
+        lastName: record.client.lastName,
+        phone: record.client.phone,
+        internalNote: record.client.internalNote,
       },
       ...(record.clientNote === null ? {} : { clientNote: record.clientNote }),
       // Servie ici pour la raison qui la sert au comptoir : c'est un champ de
@@ -277,32 +290,4 @@ export class MyStaffService {
       ...(record.staffNote === null ? {} : { staffNote: record.staffNote }),
     };
   }
-}
-
-/**
- * L'initiale d'un nom de famille — un caractère, en capitale, sans point.
- *
- * ## Pourquoi `Array.from` deux fois plutôt que `charAt(0).toUpperCase()`
- *
- * Deux pièges, et chacun casse le contrat s'il n'est pas traité :
- *
- * 1. `charAt(0)` rend une **demi-paire de substitution** sur un nom qui commence
- *    hors du plan multilingue de base — l'initiale devient un caractère de
- *    remplacement à l'affichage. `Array.from` itère par point de code ;
- * 2. `'ß'.toUpperCase()` rend `'SS'`, deux caractères là où le contrat en
- *    déclare au plus un. La seconde itération ne garde que le premier.
- *
- * La chaîne vide est rendue pour un nom vide. Elle ne devrait pas se produire —
- * `users.last_name` est `NOT NULL` et `nameSchema` exige un caractère — mais
- * lever ici aurait fait échouer un planning entier pour une ligne historique mal
- * formée, ce que `myStaffAppointmentClientSchema` accepte délibérément.
- */
-function initialOf(lastName: string): string {
-  const first = Array.from(lastName.trim())[0];
-
-  if (first === undefined) {
-    return '';
-  }
-
-  return Array.from(first.toUpperCase())[0] ?? first;
 }

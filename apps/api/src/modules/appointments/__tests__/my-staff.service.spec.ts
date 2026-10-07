@@ -202,13 +202,25 @@ describe('MyStaffService', () => {
       expect(agenda.appointments.map((row) => row.utcOffsetMinutes)).toEqual([120, 60]);
     });
 
-    it('réduit la cliente à son prénom et à l’initiale de son nom', async () => {
+    /*
+     * La cliente, telle que #1404 la sert : nom entier, numéro, alerte de la
+     * fiche et de quoi l'ouvrir.
+     *
+     * Le test qui précédait vérifiait l'inverse — « réduit la cliente à son
+     * prénom et à l'initiale de son nom », `'ß'.toUpperCase()` compris. Il n'a pas
+     * été corrigé mais **remplacé** : la propriété qu'il tenait n'existe plus,
+     * parce que la minimisation qu'elle appliquait ne protégeait rien (la même
+     * praticienne lit déjà la fiche entière avec `customers:read:own`).
+     */
+    it('sert la cliente avec son nom entier, son numéro et l’alerte de sa fiche', async () => {
       const repository = staffedRepository();
       const client = repository.seedClient({
         tenantId: TENANT,
         email: 'camille@example.test',
         firstName: 'Camille',
         lastName: 'ßeck',
+        phone: '+33 6 00 00 00 02',
+        internalNote: 'Allergie aux huiles essentielles d’agrumes.',
       });
 
       repository.seedAppointment({
@@ -223,8 +235,49 @@ describe('MyStaffService', () => {
         serviceWith(repository).agenda({ userId: USER, from: '2026-10-20', to: '2026-10-20' }),
       );
 
-      // `'ß'.toUpperCase()` rend `'SS'` : un caractère au plus, jamais deux.
-      expect(agenda.appointments[0]?.client).toEqual({ firstName: 'Camille', lastInitial: 'S' });
+      expect(agenda.appointments[0]?.client).toEqual({
+        id: client.id,
+        firstName: 'Camille',
+        lastName: 'ßeck',
+        phone: '+33 6 00 00 00 02',
+        internalNote: 'Allergie aux huiles essentielles d’agrumes.',
+      });
+    });
+
+    /*
+     * Les deux champs facultatifs sont **`null`**, jamais absents : le contrat les
+     * déclare `.nullable()` et non `.optional()`, et un front qui distingue
+     * « absent » de « vide » finit par afficher `undefined` là où il voulait
+     * écrire « Pas de numéro ».
+     */
+    it('rend `null` — et non une clé absente — sur une fiche sans numéro ni alerte', async () => {
+      const repository = staffedRepository();
+      const client = repository.seedClient({
+        tenantId: TENANT,
+        email: 'sans-numero@example.test',
+        firstName: 'Rina',
+        lastName: 'Andriamena',
+      });
+
+      repository.seedAppointment({
+        tenantId: TENANT,
+        staffId: STAFF,
+        clientId: client.id,
+        startsAt: new Date('2026-10-20T08:00:00.000Z'),
+        endsAt: new Date('2026-10-20T09:00:00.000Z'),
+      });
+
+      const agenda = await runWithTenant(TENANT, async () =>
+        serviceWith(repository).agenda({ userId: USER, from: '2026-10-20', to: '2026-10-20' }),
+      );
+
+      expect(agenda.appointments[0]?.client).toEqual({
+        id: client.id,
+        firstName: 'Rina',
+        lastName: 'Andriamena',
+        phone: null,
+        internalNote: null,
+      });
     });
 
     it('complète la borne haute par la borne basse', async () => {
