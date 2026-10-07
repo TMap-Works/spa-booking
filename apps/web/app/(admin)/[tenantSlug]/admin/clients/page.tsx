@@ -5,6 +5,7 @@ import {
   type CustomerSummary,
   type CustomerVisitHistory,
   type Locale,
+  type Permission,
   type PublicTenant,
   type TimeZone,
 } from '@spa/shared';
@@ -34,6 +35,7 @@ import {
 import { formatPhoneForDisplay } from '@/lib/phone';
 
 import { adminLoadFailure, requireAdminAccessToken } from '../guard';
+import { loadAdminShell, type AdminShell } from '../layout';
 import { adminCalendarPath } from '../paths';
 import {
   customerContactLine,
@@ -108,6 +110,45 @@ import { adminClientsPath } from './paths';
  * ne ferme pas l'écran, il vide un bloc. C'est `restrictedHistory` qui le
  * distingue, au plus près de l'appel ; tous les autres refus continuent de
  * passer par `adminLoadFailure`.
+ *
+ * ## Et l'écriture n'a pas le même seuil que la lecture — #1423
+ *
+ * Rendre la fiche atteignable au rang `STAFF` a du même coup rendu atteignables
+ * les deux formulaires qu'elle porte. Tous deux postent `updateCustomerAction`
+ * → `PATCH /api/v1/customers/:id`, au seuil `customers:write` — réservé à
+ * `MANAGER` et `ADMIN` par l'[ADR 0013](../../../../../../docs/adr/0013-matrice-de-permissions-par-role.md),
+ * « des décisions **sur** le fichier, pas des lectures dedans ». Une praticienne
+ * saisissait donc un numéro, cliquait « Enregistrer », et ne récoltait qu'un
+ * refus — après avoir saisi.
+ *
+ * La règle tenue ici : **un formulaire affiché aboutit, ou n'est pas affiché**.
+ * `customers:write` manquant, les deux formulaires ne sont pas rendus — pas
+ * désactivés : un champ `disabled` reste dans le DOM, se réactive au premier
+ * outil de développement, et promet encore un geste. Ce que la praticienne perd,
+ * c'est le geste ; ce qu'elle garde, c'est la donnée :
+ *
+ * - la **note interne** reste lisible, en lecture seule (`NoteReadOnly`). C'est
+ *   précisément ce que `customers:read:own` existe pour donner — « le praticien
+ *   a besoin de la fiche de la personne qu'il va recevoir : allergie,
+ *   préférence ». La masquer aurait retiré l'information qu'on vient chercher
+ *   avant de préparer la cabine ;
+ * - les **coordonnées** restent affichées dans l'en-tête de la fiche, qui ne les
+ *   tient pas du formulaire ; seul le bouton « Modifier les coordonnées »
+ *   disparaît.
+ *
+ * Cette garde ne **protège** rien, et c'est l'ADR qui le dit : la seule
+ * frontière est celle de l'API, et `PATCH /customers/:id` continue d'exiger
+ * `customers:write` pour tout le monde. Elle évite de proposer un geste dont le
+ * refus est acquis d'avance — exactement ce que la liste servie par `/auth/me`
+ * est là pour permettre.
+ *
+ * Les permissions effectives viennent de `loadAdminShell`, que le layout a déjà
+ * appelée pour peindre le rail : `cache` la mémoïse sur la durée du rendu, cette
+ * seconde lecture ne coûte donc aucun aller-retour. Elles permettent au passage
+ * d'**éviter** l'appel d'historique dont le 403 est acquis d'avance quand
+ * `customers:read:all` manque — `restrictedHistory` reste en place pour le cas
+ * où la liste serait inconnue, et c'est la garde de l'API qui fait foi dans les
+ * deux cas.
  *
  * ## La langue de l'écran, et celle de la cliente — #852
  *
@@ -207,14 +248,42 @@ export default async function ClientsPage({ params, searchParams }: ClientsPageP
   // l'encaissement et le planning (#458).
   let tenant: PublicTenant;
   let directory: CustomerPage;
+  /*
+   * Les permissions effectives du compte — #1423.
+   *
+   * Lues sur le shell du back-office, que le layout appelle déjà pour peindre le
+   * rail : `loadAdminShell` est mémoïsée par `cache`, cette seconde lecture ne
+   * déclenche donc aucun appel de plus. Elle part avec les deux autres plutôt
+   * qu'avant elles — une attente en série sur une valeur déjà en vol aurait
+   * ajouté un palier à l'écran qu'on ouvre le plus souvent.
+   *
+   * `null` ne veut pas dire « aucun droit » mais « la liste n'a pas pu être
+   * lue » — une panne de `GET /auth/me` pendant que les autres lectures passent.
+   * Les deux décisions qui en dépendent la traitent donc différemment, et chacune
+   * dans le sens qui ne trompe personne :
+   *
+   * - l'**écriture** demande une permission *prouvée* : sans liste, pas de
+   *   formulaire. Proposer « Enregistrer » sur une liste qu'on n'a pas lue
+   *   reviendrait à reposer le défaut de ce ticket sur un autre incident. C'est
+   *   le même arbitrage que le rail, qui se rabat alors sur le rang le plus bas ;
+   * - la **lecture** de l'historique, elle, part quand même : son refus est déjà
+   *   rattrapé par `restrictedHistory`, et s'abstenir d'appeler sur un doute
+   *   priverait une gérante de son agrégat pour une panne qui ne la concerne pas.
+   */
+  let shell: AdminShell | null;
   try {
-    [tenant, directory] = await Promise.all([
+    [shell, tenant, directory] = await Promise.all([
+      loadAdminShell(tenantSlug),
       fetchPublicTenant(tenantSlug),
       searchCustomers(accessToken, { ...(term === null ? {} : { q: term }), page }),
     ]);
   } catch (error) {
     return adminLoadFailure(error, tenantSlug, denial);
   }
+
+  const permissions: readonly Permission[] | null = shell?.permissions ?? null;
+  const canWriteCustomers = permissions?.includes('customers:write') === true;
+  const aggregateDenied = permissions !== null && !permissions.includes('customers:read:all');
 
   /*
    * La langue de mise en forme des dates, des heures et des montants (#852).
@@ -247,7 +316,12 @@ export default async function ClientsPage({ params, searchParams }: ClientsPageP
       // des deux lectures a été refusée.
       const [customer, history] = await Promise.all([
         fetchCustomer(accessToken, customerId),
-        fetchCustomerHistory(accessToken, customerId).catch(restrictedHistory),
+        // L'appel est **sauté** quand la liste des permissions dit le refus
+        // d'avance (#1423) : le bloc rendu est le même, et l'aller-retour en
+        // moins est celui d'une requête dont on connaissait déjà la réponse.
+        aggregateDenied
+          ? null
+          : fetchCustomerHistory(accessToken, customerId).catch(restrictedHistory),
       ]);
       record = { customer, history };
     } catch (error) {
@@ -334,10 +408,12 @@ export default async function ClientsPage({ params, searchParams }: ClientsPageP
             )
           ) : (
             <ClientRecord
+              canWrite={canWriteCustomers}
               customer={record.customer}
               display={display}
               history={record.history}
               languages={languages}
+              roleKnown={permissions !== null}
               t={t}
               tenantSlug={tenantSlug}
               timeZone={tenant.timezone}
@@ -593,20 +669,34 @@ function DirectoryPager({
  * place à un état explicite, et rien d'autre ne change. Les coordonnées, les
  * badges, l'avis de suppression et la note interne ne viennent pas de cette
  * lecture-là : ils restent affichés, parce qu'ils ont été obtenus.
+ *
+ * `canWrite` dit, depuis #1423, si le compte détient `customers:write`. C'est la
+ * seule chose dont dépendent les deux formulaires d'écriture : à `false`, le
+ * bouton d'édition des coordonnées n'est pas rendu et la note passe en lecture
+ * seule. Un seul drapeau pour les deux, parce qu'une seule permission les ouvre
+ * tous les deux — en poser un par formulaire aurait laissé croire à deux seuils.
+ *
+ * `roleKnown` ne change rien à ce qui est rendu : il dit seulement si l'absence
+ * d'écriture s'explique **par le rôle** — liste de permissions lue — ou par le
+ * doute d'une panne, et c'est la légende de la note qui en dépend.
  */
 function ClientRecord({
+  canWrite,
   customer,
   display,
   history,
   languages,
+  roleKnown,
   t,
   tenantSlug,
   timeZone,
 }: {
+  readonly canWrite: boolean;
   readonly customer: Customer;
   readonly display: DisplayLocale;
   readonly history: CustomerVisitHistory | null;
   readonly languages: LanguagesTranslator;
+  readonly roleKnown: boolean;
   readonly t: ClientsTranslator;
   readonly tenantSlug: string;
   readonly timeZone: TimeZone;
@@ -653,8 +743,14 @@ function ClientRecord({
         </div>
         {/* La clé remonte le composant quand on passe d'une fiche à l'autre :
             sans elle, React conserverait l'état du formulaire précédent et le
-            volet d'édition resterait ouvert sur la nouvelle cliente. */}
-        <ClientContactForm key={customer.id} customer={customer} tenantSlug={tenantSlug} />
+            volet d'édition resterait ouvert sur la nouvelle cliente.
+
+            Rien du tout sans `customers:write` (#1423) : les coordonnées sont
+            juste au-dessus, en lecture, et c'est le **geste** d'édition qui
+            disparaît — pas la donnée. */}
+        {canWrite ? (
+          <ClientContactForm key={customer.id} customer={customer} tenantSlug={tenantSlug} />
+        ) : null}
       </div>
 
       {/*
@@ -688,12 +784,16 @@ function ClientRecord({
         <VisitCounters display={display} summary={history.summary} t={t} timeZone={timeZone} />
       )}
 
-      <ClientNoteForm
-        key={customer.id}
-        customerId={customer.id}
-        internalNote={customer.internalNote}
-        tenantSlug={tenantSlug}
-      />
+      {canWrite ? (
+        <ClientNoteForm
+          key={customer.id}
+          customerId={customer.id}
+          internalNote={customer.internalNote}
+          tenantSlug={tenantSlug}
+        />
+      ) : (
+        <NoteReadOnly internalNote={customer.internalNote} roleKnown={roleKnown} t={t} />
+      )}
 
       <div>
         <h3 className="spa-admin__section-title">{t('record.history.title')}</h3>
@@ -720,6 +820,84 @@ function ClientRecord({
           <VisitHistory display={display} history={history} t={t} timeZone={timeZone} />
         )}
       </div>
+    </div>
+  );
+}
+
+/**
+ * La note interne **lue** et non écrite — #1423.
+ *
+ * Ce que `ClientNoteForm` rend quand le compte n'a pas `customers:write` : le
+ * même titre et la même mention « Interne au salon », le texte de la note à la
+ * place du champ, et aucun bouton. Le formulaire n'est pas désactivé, il n'est
+ * pas là — un `textarea` grisé reste dans le DOM, se réactive d'un clic dans les
+ * outils de développement, et continue de promettre un geste que l'API refusera.
+ *
+ * Un Server Component, et non une variante du formulaire : il n'y a plus aucun
+ * état à tenir, et faire descendre `react-hook-form` et `zod` dans le bundle
+ * d'une praticienne pour afficher un paragraphe serait payer l'écriture à qui
+ * n'écrit pas (web-frontend §1).
+ *
+ * ## Un état vide, plutôt qu'un bloc muet
+ *
+ * Une fiche sans note n'affiche pas un cadre vide : elle dit qu'il n'y a rien
+ * d'écrit. C'est le motif d'état vide déjà employé par l'historique de cet
+ * écran, et il répond à la question qu'on se pose en arrivant — « la note
+ * manque-t-elle, ou est-ce mon rôle qui me la cache ? ».
+ *
+ * Les classes sont celles que la feuille de style admin porte déjà
+ * (`styles/admin/client.css`, maquette `mockups/admin/fiche-client.html`) :
+ * cet écran n'en invente aucune, et la suite des maquettes refuserait une classe
+ * qu'aucune maquette n'exerce.
+ */
+function NoteReadOnly({
+  internalNote,
+  roleKnown,
+  t,
+}: {
+  readonly internalNote: string | null;
+  /**
+   * `true` quand la liste des permissions a bien été lue — et donc que la
+   * lecture seule vient **du rôle** et non d'un doute.
+   *
+   * C'est ce qui décide de la légende : « en lecture seule pour votre rôle »
+   * serait faux pour une gérante que seule une panne de `GET /auth/me` a privée
+   * de ses formulaires — elle lirait, juste en dessous, l'agrégat que cette même
+   * phrase dit réservé aux comptes de gestion.
+   */
+  readonly roleKnown: boolean;
+  readonly t: ClientsTranslator;
+}) {
+  // Une note vide est une note absente : la chaîne vide ne descend pas jusqu'à
+  // la colonne par le formulaire (`client-note-form.tsx`), mais `longTextSchema`
+  // l'accepte à l'API — et un cadre vide est exactement le bloc muet que cet
+  // état vide existe pour éviter.
+  const note = internalNote === null || internalNote.trim() === '' ? null : internalNote;
+
+  return (
+    <div className="spa-admin-notes">
+      <h3 className="spa-admin__section-title">
+        {t('note.title')} <span className="spa-admin-notes__private">{t('note.private')}</span>
+      </h3>
+
+      {note === null ? (
+        <div className="spa-empty-state">
+          <p className="spa-empty-state__title">{t('note.readOnly.emptyTitle')}</p>
+          <p className="spa-empty-state__description">{t('note.readOnly.emptyDescription')}</p>
+        </div>
+      ) : (
+        <div className="spa-admin-notes__item">
+          <p className="spa-admin-notes__body">{note}</p>
+        </div>
+      )}
+
+      {/* Pourquoi il n'y a rien à enregistrer, dit une fois — et seulement quand
+          une note existe : sous l'état vide, l'explication est déjà dans sa
+          description, et la répéter aurait fait deux phrases pour une absence.
+          Rien non plus quand le rôle est inconnu : la phrase l'invoque. */}
+      {note === null || !roleKnown ? null : (
+        <p className="spa-admin-toolbar__hint">{t('note.readOnly.hint')}</p>
+      )}
     </div>
   );
 }

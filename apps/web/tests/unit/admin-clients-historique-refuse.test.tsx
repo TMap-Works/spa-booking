@@ -82,6 +82,25 @@ vi.mock('next/navigation', () => ({
   usePathname: () => '/salon-lotus/admin/clients',
 }));
 
+/**
+ * Le shell du back-office, dont l'écran lit les permissions effectives depuis
+ * #1423.
+ *
+ * Il rend ici la liste d'une **gérante**, et ce n'est pas une contradiction avec
+ * la praticienne que cette suite met en scène : ce qu'elle éprouve est le
+ * rattrapage du 403, c'est-à-dire le filet qui agit quand la liste et l'API ne
+ * disent pas la même chose — liste illisible, droit retiré entre deux rendus,
+ * seuil de route changé côté serveur. Avec une liste qui annonce déjà le refus,
+ * l'appel ne partirait pas et il n'y aurait plus de 403 à rattraper : c'est
+ * `admin-clients-ecriture-refusee` qui couvre ce chemin-là.
+ */
+vi.mock('@/app/(admin)/[tenantSlug]/admin/layout', () => ({
+  loadAdminShell: () =>
+    Promise.resolve({
+      permissions: ['customers:read:own', 'customers:read:all', 'customers:write'],
+    }),
+}));
+
 import ClientsPage from '@/app/(admin)/[tenantSlug]/admin/clients/page';
 
 const SLUG = 'salon-lotus';

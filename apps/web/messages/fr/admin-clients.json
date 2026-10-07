@@ -122,7 +122,12 @@
     "label": "Ce que le salon doit savoir",
     "hint": "Préférences, allergies, sensibilités. Jamais transmise au client — ni dans un e-mail, ni dans un SMS. Enregistrer remplace la note précédente ; vider le champ l’efface.",
     "save": "Enregistrer la note",
-    "saving": "Enregistrement…"
+    "saving": "Enregistrement…",
+    "readOnly": {
+      "hint": "En lecture seule pour votre rôle : une note interne engage le salon entier, seuls les comptes de gestion l’écrivent.",
+      "emptyTitle": "Aucune note interne",
+      "emptyDescription": "Rien n’a encore été écrit sur cette fiche. Un gestionnaire peut y porter ce que le salon doit savoir — préférences, allergies, sensibilités."
+    }
   },
   "actions": {
     "unknownCustomer": "Fiche client inconnue.",

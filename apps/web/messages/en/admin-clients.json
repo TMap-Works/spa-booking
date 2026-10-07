@@ -122,7 +122,12 @@
     "label": "What the salon should know",
     "hint": "Preferences, allergies, sensitivities. Never sent to the client — not by email, not by SMS. Saving replaces the previous note; clearing the field deletes it.",
     "save": "Save the note",
-    "saving": "Saving…"
+    "saving": "Saving…",
+    "readOnly": {
+      "hint": "Read-only for your role: an internal note commits the whole salon, so only manager accounts write it.",
+      "emptyTitle": "No internal note yet",
+      "emptyDescription": "Nothing has been written about this client. A manager can add what the salon should know — preferences, allergies, sensitivities."
+    }
   },
   "actions": {
     "unknownCustomer": "Unknown client record.",
