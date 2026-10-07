@@ -343,6 +343,18 @@ describe('le détail d’un rendez-vous et ses états vides', () => {
     expect(planning('fr')('noProfile.openCalendar')).toBe('Ouvrir le planning du salon');
     expect(planning('en')('noProfile.openCalendar')).toBe('Open the salon schedule');
   });
+
+  it('traduit le geste offert à qui gère le personnel du salon', () => {
+    // Le second message de cet état vide, et son action — #1411. Les deux
+    // langues le portent, et le texte du rang gérant ne redit pas « demandez à
+    // la gérance », ce qui est tout l'objet du ticket.
+    expect(planning('fr')('noProfile.createRecord')).toBe('Créer ma fiche praticien');
+    expect(planning('en')('noProfile.createRecord')).toBe('Create my practitioner record');
+    expect(planning('fr')('noProfile.managerBody')).toContain('gérez le personnel');
+    expect(planning('fr')('noProfile.managerBody')).not.toContain('Demandez à la gérance');
+    expect(planning('en')('noProfile.managerBody')).toContain('manage this salon’s staff');
+    expect(planning('en')('noProfile.managerBody')).not.toContain('Ask the salon management');
+  });
 });
 
 /**
