@@ -157,6 +157,42 @@ import { adminCalendarPath, adminMyPlanningPath } from '../paths';
  * ouvre. La langue et la région — le pays de l'établissement, lu sur la coquille
  * du back-office — ne disent que la façon d'écrire une heure, jamais quelle heure
  * il est (`CLAUDE.md`).
+ *
+ * ## L'écart d'hydratation de la vue Semaine — l'instrument, pas l'écran (#1407)
+ *
+ * Une campagne de QA a relevé ici, au chargement de `?vue=semaine`, le
+ * « A tree hydrated but some attributes of the server rendered HTML didn't match
+ * the client properties » de React. Rien n'a été corrigé dans cet écran, et c'est
+ * le résultat de l'enquête, consigné pour que la prochaine campagne ne la
+ * recommence pas.
+ *
+ * Le diff que React joint à son message ne nomme **qu'un** attribut, et il n'est
+ * pas dans cette page : `style={{caret-color:"transparent"}}`, sur les trois
+ * boutons radio du sélecteur de thème de la barre du back-office
+ * (`components/ui/theme-toggle.tsx`). Trois faits le rattachent au navigateur de
+ * recette et non au produit :
+ *
+ *   - `caret-color` ne s'écrit nulle part sous `apps/` ni `packages/` ;
+ *   - `playwright-core` le pose en ligne, `!important`, sur chaque
+ *     `input, textarea, [contenteditable]` avant une capture d'écran — c'est le
+ *     masquage du curseur de saisie, actif par défaut —, puis le **retire** après
+ *     coup. Une capture prise pendant que React hydrate laisse donc l'attribut
+ *     dans le DOM au moment précis où il est comparé ;
+ *   - un relevé voisin de la même série porte la trace du retrait : le même
+ *     message, avec `style={{}}` pour seul écart — l'attribut vidé que la
+ *     restauration laisse derrière elle.
+ *
+ * Rechargée sans capture concurrente, la vue Semaine de ce même écran — semaine
+ * peuplée, rendez-vous confirmé et ses gestes montés — rend une console vide.
+ * C'est le critère du ticket, et il est tenu sans qu'une ligne de cette page
+ * change.
+ *
+ * Ce qu'il ne fallait surtout pas faire : poser un `suppressHydrationWarning`.
+ * Il aurait éteint le témoin sur les seuls champs capables de signaler, demain,
+ * une vraie divergence — une heure mise en forme dans le fuseau du poste plutôt
+ * que dans celui du salon, par exemple, qui est le défaut que `CLAUDE.md` classe
+ * en sévérité haute. Le défaut est dans la façon de mesurer : il se répare du
+ * côté de l'outil de recette, pas du côté de l'écran mesuré.
  */
 
 export const dynamic = 'force-dynamic';
