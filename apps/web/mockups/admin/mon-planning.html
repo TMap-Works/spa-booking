@@ -50,6 +50,10 @@
               parce que la période ouverte est déjà aujourd'hui — c'est l'état
               où l'écran s'ouvre, et le laisser actif le faisait se presser sans
               que rien ne bouge.
+
+              Désactivé, il reste **plat** (#1405) : l'aplat gris bordé de la
+              règle générique en faisait le bloc le plus lourd de la rangée,
+              alors qu'actif c'est un simple lien en texte.
             -->
             <div class="spa-admin-toolbar">
               <div class="spa-admin-toolbar__group">
@@ -79,11 +83,19 @@
             <div class="spa-my-agenda">
               <section class="spa-my-day spa-my-day--today" aria-labelledby="jour-2026-09-18">
                 <div class="spa-my-day__rail">
-                  <h2 class="spa-my-day__date" id="jour-2026-09-18">
-                    <span class="spa-visually-hidden">vendredi 18 septembre 2026</span>
-                    <span class="spa-my-day__weekday" aria-hidden="true">ven.</span>
-                    <span class="spa-my-day__number" aria-hidden="true">18</span>
-                    <span class="spa-my-day__month" aria-hidden="true">sept.</span>
+                  <!--
+                    Le bloc de date du design system (`components/ui/date-block.tsx`,
+                    #1044), et non un second dessin du même objet : l'écran en
+                    redessinait un à l'identique sous `.spa-my-day__date` (#1405).
+                    C'est son texte masqué qui donne son nom à la section.
+                  -->
+                  <h2 class="spa-my-day__heading" id="jour-2026-09-18">
+                    <time class="spa-date-block" datetime="2026-09-18">
+                      <span class="spa-date-block__weekday" aria-hidden="true">ven</span>
+                      <span class="spa-date-block__day" aria-hidden="true">18</span>
+                      <span class="spa-date-block__month" aria-hidden="true">sept</span>
+                      <span class="spa-visually-hidden">vendredi 18 septembre 2026</span>
+                    </time>
                   </h2>
                   <span class="spa-my-day__today">Aujourd’hui</span>
                   <p class="spa-my-day__hours">
@@ -213,11 +225,13 @@
 
               <section class="spa-my-day" aria-labelledby="jour-2026-09-19">
                 <div class="spa-my-day__rail">
-                  <h2 class="spa-my-day__date" id="jour-2026-09-19">
-                    <span class="spa-visually-hidden">samedi 19 septembre 2026</span>
-                    <span class="spa-my-day__weekday" aria-hidden="true">sam.</span>
-                    <span class="spa-my-day__number" aria-hidden="true">19</span>
-                    <span class="spa-my-day__month" aria-hidden="true">sept.</span>
+                  <h2 class="spa-my-day__heading" id="jour-2026-09-19">
+                    <time class="spa-date-block" datetime="2026-09-19">
+                      <span class="spa-date-block__weekday" aria-hidden="true">sam</span>
+                      <span class="spa-date-block__day" aria-hidden="true">19</span>
+                      <span class="spa-date-block__month" aria-hidden="true">sept</span>
+                      <span class="spa-visually-hidden">samedi 19 septembre 2026</span>
+                    </time>
                   </h2>
                   <!--
                     JOURNÉE D'ABSENCE. L'absence couvre les deux plages : elle
@@ -236,11 +250,13 @@
               -->
               <section class="spa-my-day" aria-labelledby="jour-2026-09-20">
                 <div class="spa-my-day__rail">
-                  <h2 class="spa-my-day__date" id="jour-2026-09-20">
-                    <span class="spa-visually-hidden">dimanche 20 septembre 2026</span>
-                    <span class="spa-my-day__weekday" aria-hidden="true">dim.</span>
-                    <span class="spa-my-day__number" aria-hidden="true">20</span>
-                    <span class="spa-my-day__month" aria-hidden="true">sept.</span>
+                  <h2 class="spa-my-day__heading" id="jour-2026-09-20">
+                    <time class="spa-date-block" datetime="2026-09-20">
+                      <span class="spa-date-block__weekday" aria-hidden="true">dim</span>
+                      <span class="spa-date-block__day" aria-hidden="true">20</span>
+                      <span class="spa-date-block__month" aria-hidden="true">sept</span>
+                      <span class="spa-visually-hidden">dimanche 20 septembre 2026</span>
+                    </time>
                   </h2>
                   <p class="spa-my-day__hours">Salon fermé</p>
                 </div>
