@@ -23,7 +23,9 @@
     "upcoming": "Les {days} prochains jours"
   },
   "toolbar": {
-    "load": "{count, plural, =0 {Aucun rendez-vous} one {# rendez-vous} other {# rendez-vous}}"
+    "load": "{count, plural, =0 {Aucun rendez-vous} one {# rendez-vous} other {# rendez-vous}}",
+    "showCancelled": "Afficher les annulés ({count})",
+    "hideCancelled": "Masquer les annulés ({count})"
   },
   "nav": {
     "previousDay": "Jour précédent",
