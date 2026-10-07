@@ -10,6 +10,7 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import { getLocale, getTranslations } from 'next-intl/server';
 
+import { telUri } from '@/components/salon/salon-contact';
 import { NavTabs } from '@/components/ui/nav-tabs';
 import {
   ApiClientError,
@@ -46,8 +47,10 @@ import {
   formatTimeInTimeZone,
   type DisplayLocale,
 } from '@/lib/format';
+import { formatPhoneForDisplay } from '@/lib/phone';
 import { isRenewalReturn, RENEWAL_PARAM } from '@/lib/session-refresh';
 
+import { adminClientsPath } from '../clients/paths';
 import { MyAppointmentActions, MyPlanningAutoRefresh } from '../components/my-planning-client';
 import { PeriodNav } from '../components/period-nav';
 import { adminLoadFailure, requireAdminAccessToken } from '../guard';
@@ -70,6 +73,20 @@ import { adminCalendarPath, adminMyPlanningPath } from '../paths';
  * Une liste par journée plutôt qu'une grille horaire : entre deux soins, la
  * praticienne veut savoir **qui** vient **quand**, pas mesurer des colonnes.
  * Un appui sur un rendez-vous déplie son détail — référence, notes, gestes.
+ *
+ * ## Ce que le détail déplié dit de la cliente (#1404)
+ *
+ * Il ne disait que « Bruno N. » et la référence : ni numéro, ni alerte, ni chemin
+ * vers la fiche. Il porte désormais, dans cet ordre, **l'alerte de la fiche
+ * au-dessus des notes** (allergie, contre-indication), le **téléphone
+ * cliquable**, la référence, les notes, puis un lien **« Voir la fiche »**
+ * (BM-AGENDA-09, BM-COMPTOIR-05).
+ *
+ * Rien de cela n'ouvre une donnée nouvelle à la praticienne : `customers:read:own`
+ * lui donne déjà la fiche des personnes qu'elle reçoit, et elle lisait ces trois
+ * champs dans « Clients » — sur un second écran, après le soin. L'arbitrage et ce
+ * qui reste dehors sont écrits une seule fois, dans
+ * `myStaffAppointmentClientSchema` du contrat partagé.
  *
  * ## Trois vues
  *
@@ -503,7 +520,45 @@ function MyAppointment({
         </span>
       </summary>
       <div className="spa-my-appointment__details">
+        {/*
+         * L'alerte de la fiche — allergie, contre-indication — **au-dessus** des
+         * notes et non parmi elles (BM-COMPTOIR-05) : c'est la seule ligne du
+         * tiroir qui change ce qu'on fait du produit qu'on va poser sur la peau,
+         * et une liste de définitions l'aurait rangée à hauteur de la référence
+         * du rendez-vous. Son libellé est **écrit**, pas seulement suggéré par
+         * l'aplat ambre : une alerte qui ne tiendrait qu'à une couleur
+         * disparaîtrait en impression grise comme pour un daltonien (WCAG 1.4.1).
+         */}
+        {appointment.client.internalNote === null ? null : (
+          <p className="spa-my-appointment__alert">
+            {/* Deux éléments et non un texte nu après le libellé : collés, ils
+                s'annonceraient « Alerte de la ficheAllergie… » d'une seule
+                haleine, et la grille n'aurait rien à espacer. */}
+            <strong>{t('appointment.clientAlert')}</strong>
+            <span>{appointment.client.internalNote}</span>
+          </p>
+        )}
         <dl className="spa-my-appointment__facts">
+          {/*
+           * Le téléphone avant la référence : entre deux soins, la question est
+           * « comment je la joins », pas « quel est son code ». Cliquable, parce
+           * que l'écran se consulte sur le téléphone qui va composer le numéro —
+           * `telUri` est le point d'écriture unique d'un `tel:` du front, et il
+           * retire les séparateurs que RFC 3966 n'admet pas. Le libellé, lui,
+           * garde l'écriture lisible du numéro.
+           */}
+          <div>
+            <dt>{t('appointment.phone')}</dt>
+            <dd>
+              {appointment.client.phone === null ? (
+                t('appointment.noPhone')
+              ) : (
+                <a href={telUri(appointment.client.phone)}>
+                  {formatPhoneForDisplay(appointment.client.phone)}
+                </a>
+              )}
+            </dd>
+          </div>
           <div>
             <dt>{t('appointment.reference')}</dt>
             <dd>{appointment.reference}</dd>
@@ -519,6 +574,45 @@ function MyAppointment({
             </div>
           )}
         </dl>
+        {/*
+         * « Voir la fiche » — le reste de ce que la praticienne a le droit de
+         * lire : préférences, historique, langue (BM-AGENDA-09). Le chemin vient
+         * d'`adminClientsPath` et n'est pas concaténé ici ; la fiche s'ouvre dans
+         * le volet de droite du fichier client, et la garde de portée de `crm`
+         * refusera une fiche qui n'est pas de sa clientèle.
+         *
+         * ## Ce que l'écran d'arrivée ne tient pas encore
+         *
+         * `GET /customers/:id` s'ouvre bien au rang praticien
+         * (`customers:read:own`), mais `clients/page.tsx` charge **aussi**
+         * `GET /customers/:id/history`, qui exige `customers:read:all`. Le 403
+         * qui en revient n'est pas un 404, donc `adminLoadFailure` remplace la
+         * page entière par « Accès refusé » : le praticien qui suit ce lien
+         * n'atteint pas la fiche. Y remédier demande de rendre l'historique
+         * facultatif sur cet écran-là ; ce qu'il montre à sa place au rang
+         * praticien est une décision de produit, et elle reste à prendre.
+         *
+         * Le nom accessible du lien porte **celui de la cliente** : trois
+         * rendez-vous dépliés offriraient autrement trois liens « Voir la fiche »
+         * indiscernables dans la liste des liens d'un lecteur d'écran (WCAG
+         * 2.4.4).
+         *
+         * Il **contient** le libellé visible, et c'est une contrainte sur les
+         * deux catalogues : WCAG 2.5.3 demande que `openRecordOf` porte
+         * `openRecord` tel quel, sans l'intercaler. D'où « View record for
+         * {name} » plutôt que « View {name}'s record », où le nom coupe le
+         * libellé en deux et où une commande vocale « click View record » ne
+         * trouverait plus rien.
+         */}
+        <div className="spa-my-appointment__actions">
+          <Link
+            aria-label={t('appointment.openRecordOf', { name: clientLabel(appointment) })}
+            className="spa-button spa-button--quiet"
+            href={adminClientsPath(tenantSlug, { customerId: appointment.client.id })}
+          >
+            <span className="spa-button__label">{t('appointment.openRecord')}</span>
+          </Link>
+        </div>
         {/* L'heure du soin part telle quelle, et l'instant du rendu avec elle :
             la règle « on ne constate pas ce qui n'a pas eu lieu » est lue par le
             composant, dans le contrat partagé, et non recalculée ici (#1210).

@@ -317,6 +317,41 @@
   padding: 0 var(--spa-space-2) var(--spa-space-4);
 }
 
+/*
+ * L'alerte de la fiche — allergie, contre-indication (#1404, BM-COMPTOIR-05).
+ *
+ * Un bandeau, et le premier élément du tiroir : c'est la seule ligne qui change
+ * ce qu'on va poser sur la peau, et la ranger dans la liste de définitions
+ * l'aurait mise à hauteur de la référence du rendez-vous.
+ *
+ * L'aplat ambre ne porte **jamais** l'information seul — « Alerte de la fiche »
+ * est écrit devant (WCAG 1.4.1), comme « Interne au salon » l'est sur la fiche
+ * cliente. `--spa-color-warning` sur `--spa-color-warning-surface` est le couple
+ * déjà employé par l'encaissement et le planning du salon ; le corps du texte
+ * garde la couleur de texte ordinaire, l'ambre n'étant lisible qu'en petite
+ * quantité.
+ */
+.spa-my-appointment__alert {
+  display: grid;
+  gap: 0.125rem;
+  margin: 0;
+  padding: var(--spa-space-2) var(--spa-space-3);
+  border-inline-start: 3px solid var(--spa-color-warning);
+  border-radius: var(--spa-radius-sm);
+  background-color: var(--spa-color-warning-surface);
+  font-size: var(--spa-font-size-sm);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.spa-my-appointment__alert strong {
+  font-size: var(--spa-font-size-xs);
+  font-weight: var(--spa-font-weight-semibold);
+  letter-spacing: var(--spa-letter-spacing-wide);
+  text-transform: uppercase;
+  color: var(--spa-color-warning);
+}
+
 .spa-my-appointment__facts {
   display: grid;
   gap: var(--spa-space-3);

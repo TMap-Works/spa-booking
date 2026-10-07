@@ -104,7 +104,7 @@
                         </span>
                         <span class="spa-my-appointment__what">
                           <strong>Massage suédois</strong>
-                          <span>Rina A. · 1 h</span>
+                          <span>Rina Andriamena · 1 h</span>
                         </span>
                         <span class="spa-my-appointment__tags">
                           <span class="spa-admin-badge spa-admin-badge--confirmed">Confirmé</span>
@@ -112,10 +112,27 @@
                         </span>
                       </summary>
                       <div class="spa-my-appointment__details">
+                        <!-- L'alerte de la fiche, au-dessus des notes et non
+                             parmi elles : c'est la seule ligne qui change ce
+                             qu'on va poser sur la peau. Son libellé est écrit,
+                             l'aplat ambre ne porte jamais l'information seul. -->
+                        <p class="spa-my-appointment__alert">
+                          <strong>Alerte de la fiche</strong>
+                          <span>Allergie aux huiles essentielles d’agrumes.</span>
+                        </p>
                         <dl class="spa-my-appointment__facts">
+                          <div><dt>Téléphone</dt><dd><a href="tel:+33600000002">+33 6 00 00 00 02</a></dd></div>
                           <div><dt>Référence</dt><dd>RDV-JJH5-96</dd></div>
                           <div><dt>Note de la cliente</dt><dd>Préfère une pression légère.</dd></div>
                         </dl>
+                        <!-- Le reste de ce que la praticienne a le droit de lire
+                             — préférences, historique — est à un lien, pas à un
+                             second écran à retrouver. -->
+                        <div class="spa-my-appointment__actions">
+                          <a class="spa-button spa-button--quiet" href="#" aria-label="Voir la fiche de Rina Andriamena">
+                            <span class="spa-button__label">Voir la fiche</span>
+                          </a>
+                        </div>
                         <div class="spa-my-appointment__actions">
                           <button class="spa-button spa-button--neutral" type="button">
                             <span class="spa-button__label">Marquer honoré</span>
@@ -136,7 +153,7 @@
                         </span>
                         <span class="spa-my-appointment__what">
                           <strong>Soin visage</strong>
-                          <span>Voahangy R. · 45 min</span>
+                          <span>Voahangy Rakoto · 45 min</span>
                         </span>
                         <span class="spa-my-appointment__tags">
                           <span class="spa-admin-badge spa-admin-badge--cancelled">Annulé</span>

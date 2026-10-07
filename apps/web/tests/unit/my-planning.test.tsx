@@ -57,7 +57,13 @@ function appointment(overrides: Partial<MyStaffAppointment> = {}): MyStaffAppoin
     endsAt: '2026-09-18T09:00:00.000Z',
     utcOffsetMinutes: 120,
     service: { id: 'bbbbbbbb-0000-4000-8000-000000000002', name: 'Massage suédois', durationMinutes: 60 },
-    client: { firstName: 'Rina', lastInitial: 'A' },
+    client: {
+      id: 'ffffffff-0000-4000-8000-000000000006',
+      firstName: 'Rina',
+      lastName: 'Andriamena',
+      phone: '+33 6 00 00 00 02',
+      internalNote: 'Allergie aux huiles essentielles d’agrumes.',
+    },
     ...overrides,
   };
 }
@@ -148,8 +154,13 @@ describe('les rendez-vous', () => {
     expect(kept.map((item) => item.id)).toEqual(['x2']);
   });
 
-  it('nomme la cliente par son prénom et son initiale', () => {
-    expect(clientLabel(appointment())).toBe('Rina A.');
+  /*
+   * Le nom **entier** depuis #1404 : « Rina A. » obligeait la praticienne à
+   * ouvrir « Clients » pour savoir qui elle reçoit, alors qu'elle y lisait déjà
+   * ce nom avec le même jeton.
+   */
+  it('nomme la cliente par son nom entier', () => {
+    expect(clientLabel(appointment())).toBe('Rina Andriamena');
   });
 
   it('désigne le prochain encore attendu, et non le premier de la liste', () => {
