@@ -229,8 +229,24 @@ export class CustomerSummaryDto implements CustomerSummary {
 /**
  * Fiche cliente complète — ce que rend `GET /customers/:id`.
  *
- * `internalNote` n'apparaît que sur cette forme, servie au rang `STAFF` et
- * au-dessus. Aucune route du parcours public ne la référence.
+ * `internalNote` y est servie au rang `STAFF` et au-dessus — mais pas
+ * seulement ici : `myStaffAppointmentClientSchema` la porte depuis #1404
+ * (`GET /me/appointments`, `agenda:read:own`, rang `staff`) et
+ * `CustomerDataExportDto` la restitue dans le dossier d'accès RGPD
+ * (`GET /customers/:id/export`, `customers:read:all`, **rang gérant**). Trois
+ * réponses gardées, inventoriées une fois pour toutes par le commentaire de
+ * `users.internal_note` dans `prisma/schema.prisma`. Ce qui tient sans réserve :
+ * aucune route du parcours public ne la référence, et toutes ces sorties sont
+ * sous session de back-office.
+ *
+ * L'exactitude compte ici plus qu'ailleurs, mais pas pour la raison qu'on
+ * suppose : ce bloc-ci **n'est pas** publié — le plugin Swagger ne reprend que
+ * les `description` des `@ApiProperty`, et `components.schemas.CustomerDto` sort
+ * sans `description` (vérifié sur `/api/docs-json`). Ce qui est publié est la
+ * ligne de l'`@ApiProperty` d'`internalNote`, dix lignes plus bas ; elle se
+ * borne à « jamais servie au parcours public », et c'est exact. La vigilance
+ * porte donc sur la frontière entre les deux : une exclusivité périmée recopiée
+ * d'ici vers cette `description` deviendrait, elle, une affirmation publique.
  *
  * Elle porte **deux champs que `customerSchema` ne décrit pas** —
  * `marketingConsent` et `marketingConsentAt`, ajoutés par #81. C'est pourquoi
