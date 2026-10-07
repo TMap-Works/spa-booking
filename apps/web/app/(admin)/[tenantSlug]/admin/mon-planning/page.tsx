@@ -668,13 +668,22 @@ function MyAppointment({
             la règle « on ne constate pas ce qui n'a pas eu lieu » est lue par le
             composant, dans le contrat partagé, et non recalculée ici (#1210).
             `renderedAt` est la graine de son horloge — c'est ce qui rend le
-            premier rendu du navigateur identique à celui-ci. */}
+            premier rendu du navigateur identique à celui-ci.
+
+            La cliente et l'heure **écrite** partent avec : c'est ce que la
+            question d'un constat définitif nomme (#1409), et les deux sont
+            composées ici — le nom par `clientLabel`, l'heure par le formateur du
+            fuseau de l'établissement, exactement la chaîne que le résumé de la
+            ligne affiche. Les recomposer dans le navigateur les exposerait au
+            fuseau du poste. */}
         <MyAppointmentActions
           appointmentId={appointment.id}
+          clientName={clientLabel(appointment)}
           renderedAt={now.toISOString()}
           startsAt={appointment.startsAt}
           status={appointment.status}
           tenantSlug={tenantSlug}
+          timeLabel={formatTimeInTimeZone(appointment.startsAt, timeZone, display)}
         />
       </div>
     </details>

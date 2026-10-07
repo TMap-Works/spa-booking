@@ -67,7 +67,7 @@
                 </button>
               </div>
               <div class="spa-admin-toolbar__group spa-admin-toolbar__spacer">
-                <span class="spa-admin-toolbar__hint">2 rendez-vous</span>
+                <span class="spa-admin-toolbar__hint">3 rendez-vous</span>
               </div>
             </div>
 
@@ -138,6 +138,53 @@
                             <span class="spa-button__label">Marquer honoré</span>
                           </button>
                           <button class="spa-button spa-button--quiet" type="button">
+                            <span class="spa-button__label">Marquer non honoré</span>
+                          </button>
+                        </div>
+                      </div>
+                    </details>
+                  </li>
+                  <li>
+                    <!-- Le second temps d'un constat définitif (#1409) : le
+                         premier appui sur « Marquer non honoré » ne marque rien,
+                         il pose la question en nommant la cliente et l'heure, et
+                         les deux gestes cèdent la place à leurs réponses. C'est
+                         le montage que le tiroir du comptoir tient déjà pour
+                         l'annulation — voir rendez-vous.html. -->
+                    <details class="spa-my-appointment" open>
+                      <summary class="spa-my-appointment__summary">
+                        <span class="spa-my-appointment__time">
+                          <strong>11:15</strong>
+                          <span>12:00</span>
+                        </span>
+                        <span class="spa-my-appointment__what">
+                          <strong>Barbe sculptée</strong>
+                          <span>Bruno Nirina · 45 min</span>
+                        </span>
+                        <span class="spa-my-appointment__tags">
+                          <span class="spa-admin-badge spa-admin-badge--confirmed">Confirmé</span>
+                        </span>
+                      </summary>
+                      <div class="spa-my-appointment__details">
+                        <dl class="spa-my-appointment__facts">
+                          <div><dt>Téléphone</dt><dd><a href="tel:+33600000003">+33 6 00 00 00 03</a></dd></div>
+                          <div><dt>Référence</dt><dd>RDV-K2PT-41</dd></div>
+                          <div><dt>Note de la cliente</dt><dd>Aucune</dd></div>
+                        </dl>
+                        <div class="spa-my-appointment__actions">
+                          <a class="spa-button spa-button--quiet" href="#" aria-label="Voir la fiche de Bruno Nirina">
+                            <span class="spa-button__label">Voir la fiche</span>
+                          </a>
+                        </div>
+                        <div class="spa-my-appointment__actions">
+                          <p class="spa-my-appointment__confirm">
+                            Marquer le rendez-vous de Bruno Nirina à 11:15 non honoré ?
+                            Ce choix est définitif.
+                          </p>
+                          <button class="spa-button spa-button--quiet" type="button">
+                            <span class="spa-button__label">Revenir</span>
+                          </button>
+                          <button class="spa-button spa-button--accent" type="button">
                             <span class="spa-button__label">Marquer non honoré</span>
                           </button>
                         </div>
