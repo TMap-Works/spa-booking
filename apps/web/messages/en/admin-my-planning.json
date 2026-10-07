@@ -11,6 +11,8 @@
   "noProfile": {
     "title": "No practitioner record yet",
     "body": "Your account is not linked to any practitioner record: no appointment can be assigned to you. Ask the salon management to create your record under “Staff”.",
+    "managerBody": "Your account is not linked to any practitioner record: no appointment can be assigned to you. You manage this salon’s staff — create your record yourself.",
+    "createRecord": "Create my practitioner record",
     "openCalendar": "Open the salon schedule"
   },
   "tabsLabel": "Schedule view",
