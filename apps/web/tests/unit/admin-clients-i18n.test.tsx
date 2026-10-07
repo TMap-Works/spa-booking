@@ -80,6 +80,20 @@ vi.mock('next/navigation', () => ({
   usePathname: () => '/salon-lotus/admin/clients',
 }));
 
+/*
+ * Le shell du back-office, dont l'écran lit les permissions effectives depuis
+ * #1423 : la session de cette suite est celle du **comptoir**, qui écrit les
+ * fiches. C'est ce qui garde les deux formulaires à l'écran, dont cette suite
+ * éprouve les libellés anglais. La variante sans `customers:write` est couverte
+ * par `admin-clients-ecriture-refusee`.
+ */
+vi.mock('@/app/(admin)/[tenantSlug]/admin/layout', () => ({
+  loadAdminShell: () =>
+    Promise.resolve({
+      permissions: ['customers:read:own', 'customers:read:all', 'customers:write'],
+    }),
+}));
+
 import ClientsPage from '@/app/(admin)/[tenantSlug]/admin/clients/page';
 import { ClientContactForm } from '@/app/(admin)/[tenantSlug]/admin/clients/components/client-contact-form';
 import { ClientNoteForm } from '@/app/(admin)/[tenantSlug]/admin/clients/components/client-note-form';
