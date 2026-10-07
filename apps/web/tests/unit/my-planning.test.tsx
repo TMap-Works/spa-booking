@@ -14,16 +14,20 @@ import {
   agendaDate,
   appointmentsByDay,
   bookedCount,
+  cancelledCount,
   clientLabel,
   dayBoundsInTimeZone,
   daysOf,
   mondayOfDate,
   nextAppointment,
   parseMyPlanningView,
+  parseShowCancelled,
   planningRange,
   shiftPlanningAnchor,
   showsToday,
   upcomingOnly,
+  withCancelledShown,
+  withoutCancelled,
   workingDay,
 } from '@/lib/admin/my-planning';
 
@@ -223,6 +227,68 @@ describe('les rendez-vous', () => {
         appointment({ id: 'x3', status: 'cancelled' }),
       ]),
     ).toBe(2);
+  });
+});
+
+/*
+ * #1410 — quatre lignes « Annulé » s'empilaient sur un lundi sous une barre qui
+ * annonçait « Aucun rendez-vous ». Ils quittent la grille, pas l'écran
+ * (BM-AGENDA-11) : l'interrupteur les rappelle, et son état vit dans l'adresse.
+ */
+describe('les annulés masqués par défaut', () => {
+  const liste = [
+    appointment(),
+    appointment({ id: 'x2', status: 'cancelled' }),
+    appointment({ id: 'x3', status: 'no_show' }),
+    appointment({ id: 'x4', status: 'cancelled' }),
+  ];
+
+  it('retire les annulés de la liste, et laisse les autres états terminaux', () => {
+    // « Non honoré » reste : c'est un rendez-vous qui a eu lieu, ou qui aurait
+    // dû — l'annulé, lui, est un créneau qui s'est libéré.
+    expect(withoutCancelled(liste).map((item) => item.id)).toEqual([
+      'aaaaaaaa-0000-4000-8000-000000000001',
+      'x3',
+    ]);
+    expect(withoutCancelled([])).toEqual([]);
+  });
+
+  it('dénombre ce que l’interrupteur montrerait', () => {
+    expect(cancelledCount(liste)).toBe(2);
+    // À zéro, l'écran ne rend pas l'interrupteur du tout.
+    expect(cancelledCount([appointment()])).toBe(0);
+    expect(cancelledCount([])).toBe(0);
+  });
+
+  it('ne les montre que sur « ?annules=1 », comme le filtre du catalogue', () => {
+    expect(parseShowCancelled(undefined)).toBe(false);
+    expect(parseShowCancelled('')).toBe(false);
+    expect(parseShowCancelled('0')).toBe(false);
+    // Ni « true », ni un paramètre nu : une seule écriture, celle que l'écran
+    // produit lui-même.
+    expect(parseShowCancelled('true')).toBe(false);
+    expect(parseShowCancelled('1')).toBe(true);
+  });
+
+  it('pose et retire son paramètre sans toucher à la vue ni à la date', () => {
+    const semaine = '/maison-lotus/admin/mon-planning?vue=semaine&date=2026-09-28';
+
+    expect(withCancelledShown(semaine, true)).toBe(`${semaine}&annules=1`);
+    // Le retour à l'état masqué rend l'adresse d'origine, au caractère près :
+    // c'est elle que l'on partage et que la garde de session mémorise.
+    expect(withCancelledShown(`${semaine}&annules=1`, false)).toBe(semaine);
+    // Une période par défaut n'a pas de `?` : c'est l'interrupteur qui l'ouvre,
+    // et qui le referme.
+    expect(withCancelledShown('/maison-lotus/admin/mon-planning', true)).toBe(
+      '/maison-lotus/admin/mon-planning?annules=1',
+    );
+    expect(withCancelledShown('/maison-lotus/admin/mon-planning', false)).toBe(
+      '/maison-lotus/admin/mon-planning',
+    );
+    // Idempotent : deux appels ne posent pas deux fois le paramètre.
+    expect(withCancelledShown(withCancelledShown(semaine, true), true)).toBe(
+      `${semaine}&annules=1`,
+    );
   });
 });
 

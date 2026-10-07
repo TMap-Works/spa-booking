@@ -79,6 +79,53 @@ export function parseMyPlanningView(raw: string | undefined): MyPlanningView {
     : 'jour';
 }
 
+/**
+ * Le paramètre d'adresse de l'interrupteur « Afficher les annulés » (#1410).
+ *
+ * En français comme `vue`, `date` et `actives` : les paramètres visibles de ce
+ * back-office le sont tous, et un `?cancelled=1` au milieu d'un `?vue=semaine`
+ * se lirait comme une fuite de l'implémentation.
+ *
+ * Dans l'adresse et non dans un état local, pour la raison qui y met la vue et
+ * la date : l'écran s'ouvre sur un téléphone entre deux soins, et le
+ * rafraîchissement d'une minute (`MY_PLANNING_REFRESH_MS`) comme un
+ * renouvellement de session doivent retrouver la liste telle qu'elle était —
+ * annulés montrés compris.
+ */
+export const SHOW_CANCELLED_PARAM = 'annules';
+
+/** Les annulés sont-ils demandés ? Non, sauf `?annules=1` — comme `?actives=1`. */
+export function parseShowCancelled(raw: string | undefined): boolean {
+  return raw === '1';
+}
+
+/**
+ * Le même écran, annulés montrés ou masqués.
+ *
+ * `path` vient d'`adminMyPlanningPath` — le point d'écriture unique de l'adresse
+ * de cet écran — et cette fonction n'y ajoute, ou n'y laisse, que le paramètre
+ * de l'interrupteur. Elle est écrite ici, auprès de `parseShowCancelled` qui le
+ * relit, plutôt que dans `admin/paths.ts` : ce ticket a pour empreinte l'écran
+ * et sa bibliothèque, pas les chemins du back-office entier, que deux tickets du
+ * même jalon se partagent. Le jour où le planning du salon gagnera le même
+ * interrupteur (#982), les deux paramètres monteront ensemble dans `paths.ts`.
+ *
+ * `URLSearchParams` et non une concaténation : le chemin porte déjà `vue` et
+ * `date` le cas échéant, et c'est lui qui décide de son `?` ou de son `&`.
+ */
+export function withCancelledShown(path: string, shown: boolean): string {
+  const [base = path, query = ''] = path.split('?');
+  const search = new URLSearchParams(query);
+
+  if (shown) {
+    search.set(SHOW_CANCELLED_PARAM, '1');
+  } else {
+    search.delete(SHOW_CANCELLED_PARAM);
+  }
+
+  return search.size === 0 ? base : `${base}?${search.toString()}`;
+}
+
 /** L'horizon de la vue « À venir » : trente et un jours, la borne de l'API. */
 export const UPCOMING_DAYS = 31;
 
@@ -229,14 +276,46 @@ export function nextAppointment(
 }
 
 /**
+ * La même liste, annulés retirés — ce que la liste montre par défaut (#1410).
+ *
+ * Ils y restaient tous, barrés et grisés, au motif que la praticienne doit
+ * savoir qu'un créneau s'est libéré. Mais l'information ne se périme pas, elle :
+ * une journée où trois clientes se sont décommandées affichait quatre lignes
+ * pour un seul soin, et la barre de période annonçait « Aucun rendez-vous »
+ * au-dessus de quatre lignes « Annulé » — le compte, lui, les excluait déjà.
+ *
+ * Ils quittent donc la grille, **pas l'écran** (BM-AGENDA-11) : l'interrupteur
+ * « Afficher les annulés (n) » de la barre les rappelle, et c'est
+ * `cancelledCount` qui le dénombre. Une annulation faite par erreur se retrouve
+ * ainsi en un geste, sans encombrer la lecture des quatre-vingt-dix-neuf autres
+ * consultations de la journée.
+ */
+export function withoutCancelled(
+  appointments: readonly MyStaffAppointment[],
+): readonly MyStaffAppointment[] {
+  return appointments.filter((appointment) => appointment.status !== 'cancelled');
+}
+
+/**
+ * Combien d'annulés une période porte — ce que l'interrupteur annonce entre
+ * parenthèses, et ce qui décide de son existence : à zéro, il n'y a rien à
+ * montrer, et un contrôle inerte dans une barre de quatre contrôles se lit comme
+ * une panne.
+ */
+export function cancelledCount(appointments: readonly MyStaffAppointment[]): number {
+  return appointments.length - withoutCancelled(appointments).length;
+}
+
+/**
  * Ce que pèse une période : ses rendez-vous, les annulés exceptés.
  *
- * Un rendez-vous annulé reste affiché — la praticienne doit savoir qu'un
- * créneau s'est libéré — mais il ne charge plus sa journée, et le compter le
- * ferait mentir.
+ * Un rendez-vous annulé ne charge pas la journée de la praticienne, et le
+ * compter le ferait mentir. Le compte reste donc celui des soins attendus même
+ * quand l'interrupteur de #1410 remet les annulés à l'écran — c'est la même
+ * exclusion, lue une seule fois par `withoutCancelled`.
  */
 export function bookedCount(appointments: readonly MyStaffAppointment[]): number {
-  return appointments.filter((appointment) => appointment.status !== 'cancelled').length;
+  return withoutCancelled(appointments).length;
 }
 
 /**

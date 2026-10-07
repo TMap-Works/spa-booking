@@ -70,8 +70,22 @@
                   <span class="spa-button__label">Aujourd’hui</span>
                 </button>
               </div>
+              <!--
+                LE COMPTE, PUIS L'INTERRUPTEUR DES ANNULÉS (#1410,
+                BM-AGENDA-11). Le compte n'a jamais porté les annulés : deux
+                soins attendus ce vendredi, et un rendez-vous annulé que
+                l'interrupteur remet à l'écran — c'est l'état montré ici, d'où
+                « Masquer ». Masqués, il dit « Afficher les annulés (1) » ; sans
+                aucun annulé dans la période, il n'est pas rendu du tout.
+
+                Un lien et non une case à cocher : le filtre vit dans l'adresse
+                (`?annules=1`), comme la vue et la date.
+              -->
               <div class="spa-admin-toolbar__group spa-admin-toolbar__spacer">
-                <span class="spa-admin-toolbar__hint">3 rendez-vous</span>
+                <span class="spa-admin-toolbar__hint">2 rendez-vous</span>
+                <a class="spa-button spa-button--quiet" href="mon-planning.html">
+                  <span class="spa-button__label">Masquer les annulés (1)</span>
+                </a>
               </div>
             </div>
 

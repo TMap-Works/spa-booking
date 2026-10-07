@@ -27,16 +27,20 @@ import {
   UPCOMING_DAYS,
   appointmentsByDay,
   bookedCount,
+  cancelledCount,
   clientLabel,
   dayBoundsInTimeZone,
   daysOf,
   myPlanningViewLabels,
   nextAppointment,
   parseMyPlanningView,
+  parseShowCancelled,
   planningRange,
   shiftPlanningAnchor,
   showsToday,
   upcomingOnly,
+  withCancelledShown,
+  withoutCancelled,
   workingDay,
   type MyPlanningView,
   type WorkingLine,
@@ -140,6 +144,33 @@ import { adminCalendarPath, adminMyPlanningPath } from '../paths';
  *     le plus lourd de la barre alors qu'actif c'est un simple lien. Il reste
  *     plat et atténué (`styles/admin/my-planning.css`).
  *
+ * ## Un annulé quitte la grille, pas l'écran (#1410, BM-AGENDA-11)
+ *
+ * Ils restaient tous dans la liste, barrés et grisés, au motif que la
+ * praticienne doit savoir qu'un créneau s'est libéré. Une campagne de QA a
+ * relevé ce que cela donne au bout de quelques jours : quatre lignes « Annulé »
+ * empilées sur un lundi, sous une barre de période qui annonçait « Aucun
+ * rendez-vous » — le compte, lui, les excluait déjà (`bookedCount`). On lisait
+ * donc une journée chargée là où il n'y avait rien.
+ *
+ * Ils sont désormais **masqués par défaut**, et un interrupteur « Afficher les
+ * annulés (n) » les rappelle depuis la barre de période. Trois choix qui se
+ * voient :
+ *
+ *   - l'état vit dans l'adresse (`?annules=1`), comme la vue et la date : le
+ *     rafraîchissement d'une minute de l'écran et un renouvellement de session
+ *     rendent la main sur la liste qu'on regardait, et le lien se partage ;
+ *   - l'interrupteur n'existe que si la période porte un annulé — un contrôle
+ *     qui ne change rien se lit comme une panne — et il **compte** ce qu'il
+ *     montrerait, pour qu'on sache s'il vaut le clic ;
+ *   - la vue « À venir » ne bouge pas : elle ne gardait déjà que les rendez-vous
+ *     encore attendus, annulés exclus par définition (`upcomingOnly`).
+ *
+ * Il est rendu par cet écran et non par `PeriodNav`, la barre partagée avec le
+ * planning du salon : celui-ci attend le même interrupteur (#982), et c'est ce
+ * ticket-là qui lui donnera un emplacement de filtre, en une seule fois pour les
+ * deux écrans.
+ *
  * Le reste est dans `styles/admin/my-planning.css`, qui porte le détail de la
  * mise en page et la discipline de l'accent — il était sur chaque ligne, il ne
  * reste que là où il désigne (BM-VISUEL-01).
@@ -210,6 +241,8 @@ interface MyPlanningPageProps {
   readonly searchParams: Promise<{
     readonly vue?: string;
     readonly date?: string;
+    /** `1` quand l'interrupteur « Afficher les annulés » est enclenché (#1410). */
+    readonly annules?: string;
     readonly session?: string | readonly string[];
   }>;
 }
@@ -297,10 +330,17 @@ export default async function MyPlanningPage({ params, searchParams }: MyPlannin
   const locale = await getLocale();
   const view = parseMyPlanningView(query.vue);
   const requested = parseCalendarDate(query.date);
-  const here = adminMyPlanningPath(tenantSlug, {
+  const showCancelled = parseShowCancelled(query.annules);
+  // La période ouverte, sans l'interrupteur : c'est la base des deux adresses
+  // qui suivent, et la seule construite par `adminMyPlanningPath`.
+  const period = adminMyPlanningPath(tenantSlug, {
     view,
     ...(requested === null ? {} : { date: requested }),
   });
+  // L'adresse où l'on est — annulés compris : un renouvellement de session doit
+  // rendre la main sur la liste qu'on regardait, et non sur celle d'avant le
+  // clic (#1410, même raison que le filtre du catalogue).
+  const here = withCancelledShown(period, showCancelled);
   const renewal = { returnTo: here, attempted: isRenewalReturn(query[RENEWAL_PARAM]) };
   const accessToken = await requireAdminAccessToken(tenantSlug, here);
 
@@ -362,8 +402,15 @@ export default async function MyPlanningPage({ params, searchParams }: MyPlannin
   const today = todayInTimeZone(zone);
   const anchor = requested ?? today;
   const viewLabels = myPlanningViewLabels(locale);
-  const shown =
+  // Ce que la période porte, avant l'interrupteur. « À venir » n'en garde déjà
+  // que les rendez-vous encore attendus — annulés exclus par définition —, et
+  // l'interrupteur n'y a donc rien à proposer : son compte y vaut zéro, et c'est
+  // ce qui l'efface de la barre sans qu'un cas particulier ait à le dire.
+  const inPeriod =
     view === 'a-venir' ? upcomingOnly(agenda.appointments, now) : agenda.appointments;
+  // Les annulés quittent la grille, pas l'écran (#1410, BM-AGENDA-11).
+  const cancelled = cancelledCount(inPeriod);
+  const shown = showCancelled ? inPeriod : withoutCancelled(inPeriod);
   const byDay = appointmentsByDay(shown, zone);
   const days = view === 'a-venir' ? [...byDay.keys()] : daysOf(agenda.from, agenda.to);
   // Le prochain rendez-vous est désigné sur **toute** la période affichée et non
@@ -384,10 +431,18 @@ export default async function MyPlanningPage({ params, searchParams }: MyPlannin
 
       <NavTabs
         items={MY_PLANNING_VIEWS.map((candidate) => ({
-          href: adminMyPlanningPath(tenantSlug, {
-            view: candidate,
-            ...(requested === null || candidate === 'a-venir' ? {} : { date: requested }),
-          }),
+          // L'interrupteur des annulés suit la vue comme la date la suit, et pour
+          // la même raison : on change d'onglet sans vouloir rouvrir ce qu'on
+          // venait de refermer. Il tombe sur « À venir », qui n'affiche que les
+          // rendez-vous encore attendus — un `?annules=1` y resterait écrit dans
+          // l'adresse sans rien y changer (#1410).
+          href: withCancelledShown(
+            adminMyPlanningPath(tenantSlug, {
+              view: candidate,
+              ...(requested === null || candidate === 'a-venir' ? {} : { date: requested }),
+            }),
+            candidate !== 'a-venir' && showCancelled,
+          ),
           label: viewLabels[candidate],
           current: candidate === view,
         }))}
@@ -412,20 +467,31 @@ export default async function MyPlanningPage({ params, searchParams }: MyPlannin
           <PeriodNav
             label={periodLabel(view, anchor, t, display)}
             next={{
-              href: adminMyPlanningPath(tenantSlug, {
-                view,
-                date: shiftPlanningAnchor(view, anchor, 1),
-              }),
+              href: withCancelledShown(
+                adminMyPlanningPath(tenantSlug, {
+                  view,
+                  date: shiftPlanningAnchor(view, anchor, 1),
+                }),
+                showCancelled,
+              ),
             }}
             nextLabel={view === 'semaine' ? t('nav.nextWeek') : t('nav.nextDay')}
             previous={{
-              href: adminMyPlanningPath(tenantSlug, {
-                view,
-                date: shiftPlanningAnchor(view, anchor, -1),
-              }),
+              href: withCancelledShown(
+                adminMyPlanningPath(tenantSlug, {
+                  view,
+                  date: shiftPlanningAnchor(view, anchor, -1),
+                }),
+                showCancelled,
+              ),
             }}
             previousLabel={view === 'semaine' ? t('nav.previousWeek') : t('nav.previousDay')}
-            today={{ href: adminMyPlanningPath(tenantSlug, { view }) }}
+            today={{
+              href: withCancelledShown(
+                adminMyPlanningPath(tenantSlug, { view }),
+                showCancelled,
+              ),
+            }}
             todayIsCurrent={showsToday(agenda.from, agenda.to, today)}
           />
         )}
@@ -434,6 +500,42 @@ export default async function MyPlanningPage({ params, searchParams }: MyPlannin
           <span className="spa-admin-toolbar__hint">
             {t('toolbar.load', { count: bookedCount(shown) })}
           </span>
+          {/*
+           * L'interrupteur des annulés — #1410, BM-AGENDA-11.
+           *
+           * Après le compte et non avant : c'est lui qui répond à la question que
+           * le compte soulève. « Aucun rendez-vous · Afficher les annulés (4) »
+           * se lit d'une traite, là où quatre lignes barrées sous un compte à
+           * zéro se contredisaient.
+           *
+           * Un lien et non une case à cocher : l'écran est rendu par le serveur
+           * et le filtre vit dans l'adresse, comme la vue et la date
+           * (web-frontend §1). Son libellé **dit l'état où il mène** — « Afficher »
+           * quand ils sont masqués, « Masquer » quand ils sont là —, ce qui lui
+           * suffit comme nom accessible : un `aria-pressed` n'existe pas sur un
+           * lien, et le dupliquer en `aria-label` n'ajouterait rien à ce qui est
+           * déjà écrit.
+           *
+           * Absent quand la période n'en porte aucun : il n'y aurait rien à
+           * montrer, et un contrôle qui ne change rien se lit comme une panne.
+           *
+           * Dans la barre de cet écran et non dans `PeriodNav` : la barre est
+           * partagée avec le planning du salon, qui attend le même interrupteur
+           * (#982) — c'est là qu'elle gagnera un emplacement de filtre, en une
+           * seule fois pour les deux écrans.
+           */}
+          {cancelled === 0 ? null : (
+            <Link
+              className="spa-button spa-button--quiet"
+              href={withCancelledShown(period, !showCancelled)}
+            >
+              <span className="spa-button__label">
+                {showCancelled
+                  ? t('toolbar.hideCancelled', { count: cancelled })
+                  : t('toolbar.showCancelled', { count: cancelled })}
+              </span>
+            </Link>
+          )}
         </div>
       </div>
 
