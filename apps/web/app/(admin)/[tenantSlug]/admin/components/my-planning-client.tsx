@@ -138,6 +138,24 @@ export function MyPlanningAutoRefresh() {
  * **Confirmer, en revanche, reste en un appui** : `confirmed` n'est pas terminal
  * — le cycle de vie en laisse partir l'annulation comme les deux constats —, et
  * une question posée sur un geste réversible apprend à les expédier toutes.
+ *
+ * ## Chaque geste nomme son rendez-vous — #1406
+ *
+ * « Mon planning » déplie ses lignes avec un `<details>`, et rien ne les
+ * referme les unes les autres : trois rendez-vous ouverts offrent trois
+ * « Marquer honoré » et trois « Confirmer le rendez-vous » que la liste des
+ * boutons d'un lecteur d'écran ne distingue pas. Le libellé visible, lui, n'a
+ * rien à dire de plus — la ligne qui le porte montre déjà l'heure et la
+ * cliente, et la répéter sous chaque bouton alourdirait l'écran pour tout le
+ * monde.
+ *
+ * Le **nom accessible** porte donc la cliente et l'heure, et le libellé visible
+ * reste court (WCAG 2.4.6). C'est au mot près le montage du lien « Voir la
+ * fiche » de la même ligne (`openRecordOf`, `mon-planning/page.tsx`), et la
+ * même contrainte pèse sur les catalogues : WCAG 2.5.3 demande que le nom
+ * **contienne** le libellé visible tel quel, sans l'intercaler — d'où
+ * « Marquer honoré — rendez-vous de Rina Andriamena à 10:05 », où « Marquer
+ * honoré » reste d'un seul tenant et reste prononçable par une commande vocale.
  */
 export function MyAppointmentActions({
   tenantSlug,
@@ -208,6 +226,34 @@ export function MyAppointmentActions({
   const recordable = (target: AppointmentStatus): boolean =>
     canRecordAppointmentOutcome(target, startsAt, now ?? BEFORE_ANY_HOUR);
   const waiting = now !== null && actions.some((action) => !recordable(action.status));
+  /**
+   * Le nom accessible d'un geste — la cliente et l'heure en plus du libellé
+   * visible (#1406, voir l'en-tête).
+   *
+   * Une seule fonction pour les deux temps du constat : la réponse du second
+   * temps porte le même libellé visible que le geste du premier, elle doit donc
+   * porter le même nom accessible. Deux expressions séparées auraient divergé au
+   * premier changement de formulation.
+   *
+   * Elle reprend aussi la **phrase d'attente** tant que ce geste-là est en vol,
+   * et ce n'est pas une redite : le design system annonce « Enregistrement… »
+   * par un `spa-visually-hidden` placé *dans* le bouton (`Button`, #845), et un
+   * `aria-label` évince le contenu du bouton du calcul du nom accessible. Sans
+   * cette reprise, `loadingLabel` serait mort sur ces trois boutons — l'écran
+   * dirait encore « Marquer honoré » pendant que le serveur écrit le constat.
+   */
+  const actionName = (target: AppointmentStatus): string => {
+    const name =
+      target === 'confirmed'
+        ? t('actions.confirmOf', { client: clientName, time: timeLabel })
+        : t('actions.markOf', {
+            client: clientName,
+            status: appointmentStatusLabelInSentence(target, locale),
+            time: timeLabel,
+          });
+
+    return pending === target ? `${name} ${t('actions.saving')}` : name;
+  };
 
   if (actions.length === 0) {
     return null;
@@ -264,7 +310,12 @@ export function MyAppointmentActions({
             // page. Il va au geste **inoffensif** — un `Entrée` resté enfoncé ne
             // doit pas écrire le constat qu'on vient tout juste de questionner.
             autoFocus
+            // « Revenir » se répète d'une ligne dépliée à l'autre comme les deux
+            // constats : son nom accessible nomme donc lui aussi le rendez-vous
+            // qu'il abandonne (#1406). La question reste sa **description** — le
+            // nom dit sur quoi on revient, elle dit ce qu'on y aurait écrit.
             aria-describedby={questionId}
+            aria-label={t('actions.markBackOf', { client: clientName, time: timeLabel })}
             disabled={pending !== null}
             onClick={() => {
               // Le geste qu'on abandonne reprendra le focus au rendu suivant :
@@ -279,6 +330,7 @@ export function MyAppointmentActions({
           <Button
             // L'accent, et il est seul : pendant la question, la réponse est
             // l'action principale de la ligne (`styles/README.md`).
+            aria-label={actionName(confirming)}
             loading={pending === confirming}
             loadingLabel={t('actions.saving')}
             onClick={() => void mark(confirming)}
@@ -300,6 +352,9 @@ export function MyAppointmentActions({
             // remontant — voir `returned`. `false` partout ailleurs : ces boutons
             // ne sont remontés qu'à ce moment-là, et jamais au premier rendu.
             autoFocus={returned === action.status}
+            // La cliente et l'heure dans le nom, pas dans le libellé visible —
+            // #1406, voir l'en-tête de ce composant.
+            aria-label={actionName(action.status)}
             disabled={(pending !== null && pending !== action.status) || !recordable(action.status)}
             key={action.status}
             loading={pending === action.status}
