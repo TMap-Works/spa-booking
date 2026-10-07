@@ -16,6 +16,21 @@
             <span class="spa-admin__brand">Maison Lotus</span>
             <span class="spa-admin__brand-caption">Back-office</span>
           </span>
+          <!--
+            BARRE COMPACTE SOUS 48 REM (#1403). Au-dessus de ce palier, ce
+            bouton n'existe pas : le pied de rail est déjà sous les yeux. Sous
+            48 rem, le rail se réduit à deux rangs — la marque et ce replieur,
+            puis le bandeau de navigation — et c'est lui qui ouvre le pied :
+            établissement, fuseau, compte, déconnexion, langue. Réduire la
+            fenêtre de cette maquette sous 768 px le fait apparaître.
+
+            Son nom accessible est celui du compte connecté — c'est ce qu'il y a
+            derrière —, et le chevron lit `aria-expanded` plutôt qu'une classe.
+          -->
+          <button class="spa-admin__rail-toggle" type="button" aria-expanded="false" aria-controls="spa-admin-rail-footer" aria-label="Connectée : Hasina R.">
+            <span class="spa-admin__avatar" aria-hidden="true">HR</span>
+            <svg class="spa-icon spa-admin__rail-toggle-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="m6 9 6 6 6-6"/></svg>
+          </button>
         </div>
         <div class="spa-admin__nav">
           <div class="spa-admin__nav-group">
@@ -30,7 +45,12 @@
             <a class="spa-admin__nav-link" href="personnel.html"><svg class="spa-icon spa-admin__nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="8"/></svg>Personnel</a>
           </div>
         </div>
-        <div class="spa-admin__rail-footer">
+        <!--
+          `data-open` porte l'état du replieur ci-dessus, et rien de plus : seul
+          le palier ≤ 48 rem en tire une conséquence (`styles/admin/shell.css`).
+          Ici, à largeur de maquette, le pied se lit tel quel.
+        -->
+        <div class="spa-admin__rail-footer" id="spa-admin-rail-footer" data-open="false">
           <strong>Maison Lotus — Antananarivo</strong>
           <span class="spa-admin__rail-meta"><svg class="spa-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="8"/></svg><span>Fuseau du salon : Indian/Antananarivo (UTC+3)</span></span>
           <div class="spa-admin__user">
