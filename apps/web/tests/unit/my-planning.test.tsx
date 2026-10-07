@@ -393,18 +393,34 @@ function figerLHorloge(instant: string): void {
   vi.spyOn(Date, 'now').mockReturnValue(Date.parse(instant));
 }
 
+/**
+ * Les gestes de la ligne, rendus comme la page serveur les rend.
+ *
+ * La cliente et l'heure **écrite** en font partie depuis #1409 : c'est ce que la
+ * question d'un constat définitif nomme, et la page les compose — le nom par
+ * `clientLabel`, l'heure par le formateur du fuseau de l'établissement.
+ */
+function gestes(props: {
+  readonly status: Parameters<typeof MyAppointmentActions>[0]['status'];
+  readonly renderedAt: string;
+}) {
+  return (
+    <MyAppointmentActions
+      appointmentId="aaaaaaaa-0000-4000-8000-000000000001"
+      clientName="Rina Andriamena"
+      renderedAt={props.renderedAt}
+      startsAt={DEBUT}
+      status={props.status}
+      tenantSlug="maison-lotus"
+      timeLabel="16:00"
+    />
+  );
+}
+
 describe('les gestes de la praticienne sur son rendez-vous', () => {
   it('offre « honoré » inerte, avec son motif, tant que le rendez-vous n’a pas commencé', () => {
     figerLHorloge(AVANT);
-    render(
-      <MyAppointmentActions
-        appointmentId="aaaaaaaa-0000-4000-8000-000000000001"
-        renderedAt={AVANT}
-        startsAt={DEBUT}
-        status="confirmed"
-        tenantSlug="maison-lotus"
-      />,
-    );
+    render(gestes({ renderedAt: AVANT, status: 'confirmed' }));
 
     // Inerte plutôt qu'absent : un bouton qui disparaît ne dit pas pourquoi.
     const honore = screen.getByRole('button', { name: 'Marquer honoré' });
@@ -420,22 +436,26 @@ describe('les gestes de la praticienne sur son rendez-vous', () => {
    * Confirmer est une **décision**, pas un constat : elle se prend précisément
    * avant l'heure, et l'horloge ne la borne pas.
    */
-  it('laisse confirmer un rendez-vous à venir', () => {
+  it('laisse confirmer un rendez-vous à venir', async () => {
     figerLHorloge(AVANT);
-    render(
-      <MyAppointmentActions
-        appointmentId="aaaaaaaa-0000-4000-8000-000000000001"
-        renderedAt={AVANT}
-        startsAt={DEBUT}
-        status="pending"
-        tenantSlug="maison-lotus"
-      />,
-    );
+    markStatus.mockResolvedValue({ ok: true, data: {} });
+    render(gestes({ renderedAt: AVANT, status: 'pending' }));
 
-    expect(screen.getByRole('button', { name: 'Confirmer le rendez-vous' })).toHaveProperty(
-      'disabled',
-      false,
-    );
+    const confirmer = screen.getByRole('button', { name: 'Confirmer le rendez-vous' });
+    expect(confirmer).toHaveProperty('disabled', false);
+
+    // Et il part au **premier** appui : `confirmed` n'est pas terminal, le cycle
+    // de vie laisse encore annuler, déplacer et constater après lui. Questionner
+    // un geste réversible apprendrait à expédier les questions (#1409).
+    await userEvent.click(confirmer);
+
+    await waitFor(() => {
+      expect(markStatus).toHaveBeenCalledWith(
+        'maison-lotus',
+        'aaaaaaaa-0000-4000-8000-000000000001',
+        { status: 'confirmed' },
+      );
+    });
   });
 
   /**
@@ -448,15 +468,7 @@ describe('les gestes de la praticienne sur son rendez-vous', () => {
    */
   it('ne s’ouvre pas sur une pendule de poste en avance', () => {
     figerLHorloge('2026-09-19T14:05:00.000Z');
-    render(
-      <MyAppointmentActions
-        appointmentId="aaaaaaaa-0000-4000-8000-000000000001"
-        renderedAt={AVANT}
-        startsAt={DEBUT}
-        status="confirmed"
-        tenantSlug="maison-lotus"
-      />,
-    );
+    render(gestes({ renderedAt: AVANT, status: 'confirmed' }));
 
     expect(screen.getByRole('button', { name: 'Marquer honoré' })).toHaveProperty(
       'disabled',
@@ -465,24 +477,59 @@ describe('les gestes de la praticienne sur son rendez-vous', () => {
     expect(screen.getByText(/attendez l’heure du rendez-vous/i)).toBeDefined();
   });
 
-  it('marque le rendez-vous honoré, puis relit l’écran', async () => {
+  /**
+   * Le premier appui ne marque rien — #1409.
+   *
+   * Les deux constats sont terminaux : une cliente honorée marquée absente ne se
+   * rattrape pas, l'annulation elle-même étant refusée depuis un état terminal.
+   * La question nomme donc la cliente et l'heure, faute de quoi trois rendez-vous
+   * dépliés poseraient trois questions indiscernables.
+   */
+  it('ne marque rien au premier appui : il pose la question, cliente et heure nommées', async () => {
+    figerLHorloge(APRES);
+    render(gestes({ renderedAt: APRES, status: 'confirmed' }));
+
+    await userEvent.click(screen.getByRole('button', { name: 'Marquer non honoré' }));
+
+    expect(markStatus).not.toHaveBeenCalled();
+    expect(
+      screen.getByText(
+        'Marquer le rendez-vous de Rina Andriamena à 16:00 non honoré ? Ce choix est définitif.',
+      ),
+    ).toBeDefined();
+    // Les deux gestes ont cédé la place aux deux réponses : laisser « Marquer
+    // honoré » à portée pendant qu'on répond sur l'autre est ce qui fait cliquer
+    // à côté.
+    expect(screen.queryByRole('button', { name: 'Marquer honoré' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Revenir' })).toBeDefined();
+  });
+
+  it('revient de la question sans rien écrire, et rend les deux gestes', async () => {
+    figerLHorloge(APRES);
+    render(gestes({ renderedAt: APRES, status: 'confirmed' }));
+
+    await userEvent.click(screen.getByRole('button', { name: 'Marquer non honoré' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Revenir' }));
+
+    expect(markStatus).not.toHaveBeenCalled();
+    expect(screen.getByRole('button', { name: 'Marquer honoré' })).toBeDefined();
+    expect(screen.queryByRole('button', { name: 'Revenir' })).toBeNull();
+  });
+
+  it('marque le rendez-vous honoré une fois la question confirmée, puis relit l’écran', async () => {
     figerLHorloge(APRES);
     markStatus.mockResolvedValue({ ok: true, data: {} });
-    render(
-      <MyAppointmentActions
-        appointmentId="aaaaaaaa-0000-4000-8000-000000000001"
-        renderedAt={APRES}
-        startsAt={DEBUT}
-        status="confirmed"
-        tenantSlug="maison-lotus"
-      />,
-    );
+    render(gestes({ renderedAt: APRES, status: 'confirmed' }));
 
+    // Deux appuis, et le second porte le même libellé que le premier : la réponse
+    // dit ce qu'elle fait (#1409).
+    await userEvent.click(screen.getByRole('button', { name: 'Marquer honoré' }));
     await userEvent.click(screen.getByRole('button', { name: 'Marquer honoré' }));
 
     await waitFor(() => {
       expect(refresh).toHaveBeenCalledTimes(1);
     });
+    expect(markStatus).toHaveBeenCalledTimes(1);
     expect(markStatus).toHaveBeenCalledWith('maison-lotus', 'aaaaaaaa-0000-4000-8000-000000000001', {
       status: 'completed',
     });
@@ -495,16 +542,9 @@ describe('les gestes de la praticienne sur son rendez-vous', () => {
       code: 'FORBIDDEN',
       message: 'Ce rendez-vous n’est pas le vôtre.',
     });
-    render(
-      <MyAppointmentActions
-        appointmentId="aaaaaaaa-0000-4000-8000-000000000001"
-        renderedAt={APRES}
-        startsAt={DEBUT}
-        status="confirmed"
-        tenantSlug="maison-lotus"
-      />,
-    );
+    render(gestes({ renderedAt: APRES, status: 'confirmed' }));
 
+    await userEvent.click(screen.getByRole('button', { name: 'Marquer honoré' }));
     await userEvent.click(screen.getByRole('button', { name: 'Marquer honoré' }));
 
     // La phrase vient du **code** et non du `message` de l'action (#1354) : ce
@@ -531,16 +571,9 @@ describe('les gestes de la praticienne sur son rendez-vous', () => {
       message: 'Un rendez-vous qui n’a pas commencé ne peut pas être marqué « honoré ».',
       details: { notStarted: true, startsAt: DEBUT, now: AVANT },
     });
-    render(
-      <MyAppointmentActions
-        appointmentId="aaaaaaaa-0000-4000-8000-000000000001"
-        renderedAt={APRES}
-        startsAt={DEBUT}
-        status="confirmed"
-        tenantSlug="maison-lotus"
-      />,
-    );
+    render(gestes({ renderedAt: APRES, status: 'confirmed' }));
 
+    await userEvent.click(screen.getByRole('button', { name: 'Marquer honoré' }));
     await userEvent.click(screen.getByRole('button', { name: 'Marquer honoré' }));
 
     expect(await screen.findByRole('alert')).toHaveProperty(

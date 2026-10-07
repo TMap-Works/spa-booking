@@ -347,17 +347,32 @@ function figerLHorloge(instant: string): void {
   vi.spyOn(Date, 'now').mockReturnValue(Date.parse(instant));
 }
 
+/**
+ * Les gestes de la ligne, rendus comme la page serveur les rend — cliente et
+ * heure comprises, que la question d'un constat définitif nomme (#1409).
+ */
+function gestes(props: {
+  readonly status: Parameters<typeof MyAppointmentActions>[0]['status'];
+  readonly renderedAt: string;
+}) {
+  return (
+    <MyAppointmentActions
+      appointmentId="aaaaaaaa-0000-4000-8000-000000000001"
+      clientName="Rina Andriamena"
+      renderedAt={props.renderedAt}
+      startsAt={DEBUT_DU_SOIN}
+      status={props.status}
+      tenantSlug="maison-lotus"
+      // L'heure telle que la page l'écrit en anglais américain — c'est elle que
+      // la question cite, et non une recomposition dans le navigateur.
+      timeLabel="4:00 PM"
+    />
+  );
+}
+
 describe('les gestes de la praticienne, rendus en anglais', () => {
   it('nomme la confirmation comme un acte, et le reste comme un constat', () => {
-    render(
-      <MyAppointmentActions
-        appointmentId="aaaaaaaa-0000-4000-8000-000000000001"
-        renderedAt={SOIN_COMMENCE}
-        startsAt={DEBUT_DU_SOIN}
-        status="pending"
-        tenantSlug="maison-lotus"
-      />,
-    );
+    render(gestes({ renderedAt: SOIN_COMMENCE, status: 'pending' }));
 
     // « Confirm the appointment » nomme le geste que le praticien pose ;
     // « Mark completed » constate ce qui a eu lieu au salon (#917).
@@ -366,32 +381,38 @@ describe('les gestes de la praticienne, rendus en anglais', () => {
   });
 
   it('compose « Marquer honoré » avec le statut du module de vocabulaire', () => {
-    render(
-      <MyAppointmentActions
-        appointmentId="aaaaaaaa-0000-4000-8000-000000000001"
-        renderedAt={SOIN_COMMENCE}
-        startsAt={DEBUT_DU_SOIN}
-        status="confirmed"
-        tenantSlug="maison-lotus"
-      />,
-    );
+    render(gestes({ renderedAt: SOIN_COMMENCE, status: 'confirmed' }));
 
     expect(screen.getByRole('button', { name: 'Mark completed' })).toBeDefined();
     expect(screen.getByRole('button', { name: 'Mark no-show' })).toBeDefined();
   });
 
+  /**
+   * La question d'un constat définitif parle anglais elle aussi — #1409.
+   *
+   * Elle compose trois sources : le verbe et la tournure viennent du catalogue de
+   * l'écran, le statut de `lib/appointment-status.ts` — seul endroit du front où
+   * ce vocabulaire s'écrit —, et l'heure de la page serveur, qui seule tient le
+   * fuseau de l'établissement.
+   */
+  it('pose la question du constat en anglais, cliente et heure nommées', async () => {
+    render(gestes({ renderedAt: SOIN_COMMENCE, status: 'confirmed' }));
+
+    await userEvent.click(screen.getByRole('button', { name: 'Mark no-show' }));
+
+    expect(markStatus).not.toHaveBeenCalled();
+    expect(
+      screen.getByText(
+        'Mark Rina Andriamena’s 4:00 PM appointment as no-show? This choice is final.',
+      ),
+    ).toBeDefined();
+    expect(screen.getByRole('button', { name: 'Go back' })).toBeDefined();
+  });
+
   /** Le motif du refus se dit dans la langue courante, lui aussi — #1210. */
   it('dit en anglais pourquoi les deux constats sont éteints', () => {
     figerLHorloge(AVANT_LE_SOIN);
-    render(
-      <MyAppointmentActions
-        appointmentId="aaaaaaaa-0000-4000-8000-000000000001"
-        renderedAt={AVANT_LE_SOIN}
-        startsAt={DEBUT_DU_SOIN}
-        status="confirmed"
-        tenantSlug="maison-lotus"
-      />,
-    );
+    render(gestes({ renderedAt: AVANT_LE_SOIN, status: 'confirmed' }));
 
     expect(screen.getByRole('button', { name: 'Mark completed' })).toHaveProperty(
       'disabled',
@@ -404,15 +425,7 @@ describe('les gestes de la praticienne, rendus en anglais', () => {
 
   it('confirme le rendez-vous, puis relit l’écran', async () => {
     markStatus.mockResolvedValue({ ok: true, data: {} });
-    render(
-      <MyAppointmentActions
-        appointmentId="aaaaaaaa-0000-4000-8000-000000000001"
-        renderedAt={AVANT_LE_SOIN}
-        startsAt={DEBUT_DU_SOIN}
-        status="pending"
-        tenantSlug="maison-lotus"
-      />,
-    );
+    render(gestes({ renderedAt: AVANT_LE_SOIN, status: 'pending' }));
 
     await userEvent.click(screen.getByRole('button', { name: 'Confirm the appointment' }));
 
@@ -431,16 +444,11 @@ describe('les gestes de la praticienne, rendus en anglais', () => {
     // nomme le refus. Le silence du serveur, lui, n'a pas de message à reprendre —
     // c'est l'écran qui le dit, donc le catalogue.
     markStatus.mockRejectedValue(new Error('socket hang up'));
-    render(
-      <MyAppointmentActions
-        appointmentId="aaaaaaaa-0000-4000-8000-000000000001"
-        renderedAt={SOIN_COMMENCE}
-        startsAt={DEBUT_DU_SOIN}
-        status="confirmed"
-        tenantSlug="maison-lotus"
-      />,
-    );
+    render(gestes({ renderedAt: SOIN_COMMENCE, status: 'confirmed' }));
 
+    // Deux appuis : le premier pose la question du constat, le second y répond
+    // (#1409).
+    await userEvent.click(screen.getByRole('button', { name: 'Mark completed' }));
     await userEvent.click(screen.getByRole('button', { name: 'Mark completed' }));
 
     expect(await screen.findByRole('alert')).toHaveProperty(
