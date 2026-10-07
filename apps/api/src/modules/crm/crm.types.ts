@@ -56,12 +56,21 @@ export interface CustomerSummary {
 }
 
 /**
- * Fiche cliente complète — la forme de `GET /customers/:id`.
+ * Fiche cliente complète — la forme de `GET /customers/:id`, servie au rang
+ * `STAFF` et au-dessus.
  *
- * `internalNote` n'apparaît que sur cette forme-ci, servie au rang `STAFF` et
- * au-dessus. C'est la moitié applicative du « notes internes distinctes des
- * informations visibles du client » ; l'autre moitié est la colonne, que rien
- * du parcours public ne lit.
+ * `internalNote` n'est pas réservée à cette forme-ci :
+ * `MyStaffAppointmentClientView` la porte depuis #1404, pour l'alerte du
+ * planning du praticien, et `CustomerDataExport` la restitue dans le dossier
+ * d'accès RGPD. Trois réponses gardées en tout — l'inventaire, écritures
+ * comprises, est tenu par le commentaire de `users.internal_note` dans
+ * `prisma/schema.prisma`, et c'est là qu'il faut le lire plutôt qu'ici : une
+ * énumération de plus serait une de plus à tenir à jour.
+ *
+ * Ce qui tient : aucune de ces sorties n'est ouverte au parcours public, et
+ * toutes sont sous session de back-office. C'est la moitié applicative du
+ * « notes internes distinctes des informations visibles du client » ; l'autre
+ * moitié est la colonne, que rien du parcours public ne lit.
  */
 export interface Customer extends CustomerSummary {
   internalNote: string | null;
@@ -353,9 +362,21 @@ export interface CustomerDataExport {
    *
    * Elle est dans l'export, et ce n'est pas une négligence : le droit d'accès
    * porte sur les données **concernant** la personne, sans exception pour celles
-   * qu'on aurait préféré garder pour soi. C'est aussi ce qui donne son sens à
-   * son autre propriété — elle ne sort par aucune autre porte que celle-ci et
-   * `GET /customers/:id`, toutes deux gardées.
+   * qu'on aurait préféré garder pour soi.
+   *
+   * Ce qui donne son sens à cette restitution est que les portes de sortie sont
+   * comptées et toutes gardées. Elles sont **trois** depuis #1404, et non deux :
+   *
+   * - celle-ci, `GET /customers/:id/export` — `customers:read:all`, donc au
+   *   **rang gérant** et non `staff` ;
+   * - `GET /customers/:id` — `customerSchema` / `CustomerDto`,
+   *   `customers:read:own` ou `:all`, rang `staff` ;
+   * - `GET /me/appointments` — `myStaffAppointmentClientSchema`,
+   *   `agenda:read:own`, rang `staff`.
+   *
+   * Aucune n'est ouverte au parcours public ; toutes sont sous session de
+   * back-office. L'inventaire de référence, écritures comprises, est le
+   * commentaire de `users.internal_note` dans `prisma/schema.prisma`.
    */
   internalNote: string | null;
   /** Tous les rendez-vous, du plus ancien au plus récent. */

@@ -1660,9 +1660,17 @@ export async function createCustomer(
 /**
  * Une fiche cliente — `GET /customers/:id`, rang `STAFF`.
  *
- * C'est la seule lecture qui porte `internalNote` : la liste ne la transporte
- * pas, et aucun schéma du parcours public ne la référence. Une note interne ne
- * sort donc de l'API que sur ce chemin-ci, et sous session.
+ * Elle porte `internalNote`, et ce n'est pas la seule lecture qui la porte : la
+ * liste ne la transporte pas, mais `fetchMyAgenda` la reçoit aussi depuis
+ * #1404 — chaque rendez-vous du planning du praticien joint la note par
+ * `myStaffAppointmentClientSchema`. Trois réponses gardées la servent en tout,
+ * et l'inventaire tenu à jour est le commentaire de `users.internal_note` dans
+ * `apps/api/prisma/schema.prisma` : y renvoyer plutôt que le recopier ici est
+ * délibéré — c'est le seul endroit qui voie toutes les sorties à la fois, et
+ * une liste dupliquée ici reprendrait du retard au prochain appelant.
+ *
+ * Ce qui reste vrai de bout en bout : aucun schéma du parcours public ne la
+ * référence. Une note interne ne sort de l'API que sous session de back-office.
  *
  * **404** est un cas nominal ici, pas une panne : l'écran l'affiche comme une
  * fiche introuvable. Voir le bloc ci-dessus pour ce que ce 404 recouvre.
