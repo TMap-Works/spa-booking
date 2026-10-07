@@ -87,6 +87,8 @@
       "title": "Visit history",
       "emptyTitle": "No visit yet",
       "emptyDescription": "The history fills up as soon as a first appointment is booked — completed, canceled or missed.",
+      "restrictedTitle": "Visit history not available to your role",
+      "restrictedDescription": "The aggregated history and its counters cover every practitioner, so they are reserved for salon manager accounts. Everything above — contact details, language, internal note — is complete; ask a manager for the visit summary.",
       "staffRemoved": "practitioner no longer at the salon",
       "withStaff": "with {name}",
       "clientNote": "Client note, written when booking",
