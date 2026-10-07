@@ -301,6 +301,18 @@ describe('le fichier client, rendu en anglais', () => {
     expect(screen.getByText('No visit yet')).toBeDefined();
   });
 
+  it('dit l’historique fermé à ce rôle dans la langue, sans fermer la fiche', async () => {
+    // Le refus partiel de #1416 : la phrase de l'état est au catalogue des deux
+    // côtés, comme tout ce que cet écran écrit. La **branche de rendu**, elle,
+    // est éprouvée par `admin-clients-historique-refuse`.
+    const { ApiClientError } = await import('@/lib/api-client');
+    fetchCustomerHistory.mockRejectedValue(new ApiClientError('FORBIDDEN', 'interdit', 403));
+    render(await ouvrirFichier({ fiche: FICHE_ID }));
+
+    expect(screen.getByText('Visit history not available to your role')).toBeDefined();
+    expect(screen.getByText(/reserved for salon manager accounts/)).toBeDefined();
+  });
+
   it('dit la fiche introuvable sans jamais dire qu’elle existe ailleurs', async () => {
     const { ApiClientError } = await import('@/lib/api-client');
     fetchCustomer.mockRejectedValue(new ApiClientError('NOT_FOUND', 'introuvable', 404));
