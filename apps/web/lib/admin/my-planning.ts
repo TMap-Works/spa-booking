@@ -272,17 +272,134 @@ export function clientLabel(appointment: MyStaffAppointment): string {
   return `${appointment.client.firstName} ${appointment.client.lastName}`.trim();
 }
 
+/** Une ligne du rail de date : une plage de travail, ou une absence. */
+export interface WorkingLine {
+  /**
+   * « 09:00 – 12:00 » pour une plage de travail, dans la convention du pays du
+   * salon — « 9:00 AM – 12:00 PM » à New York (#1345) ; « 16:00 – 17:00 ·
+   * Formation » pour une absence.
+   */
+  readonly text: string;
+  /** Vrai quand la ligne dit une absence, et non du travail. */
+  readonly timeOff: boolean;
+}
+
 /** Ce que le praticien a à savoir de sa journée, avant ses rendez-vous. */
 export interface WorkingDay {
   /** Le salon est fermé ce jour de la semaine. */
   readonly closed: boolean;
   /**
-   * Ses plages de travail, dans la convention du pays du salon — « 09:00 – 12:00 »
-   * à Paris, « 9:00 AM – 12:00 PM » à New York (#1345). Vide : il ne travaille pas.
+   * Ce que la journée dit d'elle-même, **dans l'ordre où cela se lit** : chaque
+   * plage encore travaillée, suivie de l'absence qui la coupe. Vide quand il n'a
+   * pas de plage ce jour-là, ou quand le salon est fermé.
    */
-  readonly hours: readonly string[];
-  /** Ses absences qui touchent la journée — « 14:00 – 16:00 · Formation ». */
-  readonly absences: readonly string[];
+  readonly lines: readonly WorkingLine[];
+  /**
+   * L'absence a emporté toutes ses plages : il ne travaille pas ce jour-là, et
+   * les lignes ne disent plus que son absence. C'est ce qui permet à l'écran de
+   * l'annoncer « Absente — Formation » au lieu de « Absence : … » posé à côté
+   * d'horaires qu'elle n'honorera pas (#1408).
+   */
+  readonly away: boolean;
+}
+
+/** Une plage de minutes comptées depuis minuit dans le fuseau du salon. */
+interface MinuteSpan {
+  readonly from: number;
+  readonly to: number;
+}
+
+/**
+ * « 09:00 » → 540, « 24:00 » → 1440.
+ *
+ * Lecture directe, sans le `wallMinutesOrNull` de `@spa/shared` : celui-là est
+ * un garde de validation, il n'est pas dans le baril public du contrat, et ces
+ * heures-ci arrivent déjà validées par `staffScheduleEntrySchema`. Les bornes de
+ * fin valent `24:00` par convention du contrat, que l'arithmétique porte sans
+ * cas particulier.
+ */
+function wallMinutes(wall: string): number {
+  const [hours = '0', minutes = '0'] = wall.split(':');
+
+  return Number(hours) * 60 + Number(minutes);
+}
+
+/**
+ * Décalage de `timeZone` par rapport à UTC **à cet instant-là**, en millisecondes.
+ *
+ * Mesuré et non tabulé : on lit l'instant à l'horloge du fuseau, on relit ces
+ * champs comme s'ils étaient UTC, et on prend l'écart. `hourCycle: 'h23'` et non
+ * `hour12: false` : les deux se contredisent sur certains moteurs, et `hour12`
+ * seul peut rendre `24` pour minuit.
+ */
+function offsetInTimeZone(instant: Date, timeZone: TimeZone): number {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    hourCycle: 'h23',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  }).formatToParts(instant);
+  const value = (type: string): number =>
+    Number(parts.find((part) => part.type === type)?.value ?? '0');
+  const asUtc = Date.UTC(
+    value('year'),
+    value('month') - 1,
+    value('day'),
+    value('hour'),
+    value('minute'),
+    value('second'),
+  );
+
+  return asUtc - instant.getTime();
+}
+
+/**
+ * L'heure qu'affiche l'horloge du salon à cet instant, en minutes depuis le
+ * minuit de la journée affichée.
+ *
+ * **La même unité que `wallMinutes`**, et c'est tout l'objet de cette fonction :
+ * les plages de travail portent des heures murales, les absences des instants, et
+ * les comparer exige qu'elles comptent la même chose. Les minutes **écoulées**
+ * depuis `dayStart` ne le font pas : une journée de changement d'heure dure 23 ou
+ * 25 heures, et l'absence de 14 h – 19 h y tombait à 900 – 1200 ou 780 – 1080
+ * là où la plage de 14 h – 19 h vaut 840 – 1140 — la plage n'était alors plus
+ * vue comme couverte, et l'écran réaffichait côte à côte les horaires et
+ * l'absence que #1408 venait justement de fondre. Corriger de l'écart de
+ * décalage entre les deux instants rend l'heure murale, et porte au passage la
+ * borne de fin de journée à `24:00` comme la convention du contrat l'écrit.
+ */
+function dayMinutesInTimeZone(instant: number, dayStart: Date, timeZone: TimeZone): number {
+  const drift =
+    offsetInTimeZone(new Date(instant), timeZone) - offsetInTimeZone(dayStart, timeZone);
+
+  return (instant - dayStart.getTime() + drift) / 60_000;
+}
+
+/**
+ * Les plages fondues en plages disjointes, triées.
+ *
+ * Ce qui permet de dire qu'une plage de travail est **entièrement** couverte :
+ * deux absences bout à bout — 09:00 – 13:00 puis 13:00 – 19:00 — emportent la
+ * journée alors qu'aucune des deux ne la couvre à elle seule, et les comparer
+ * une par une l'aurait laissée s'afficher comme travaillée.
+ */
+function mergeSpans(spans: readonly MinuteSpan[]): readonly MinuteSpan[] {
+  const merged: { from: number; to: number }[] = [];
+
+  for (const span of [...spans].sort((left, right) => left.from - right.from)) {
+    const last = merged.at(-1);
+    if (last !== undefined && span.from <= last.to) {
+      last.to = Math.max(last.to, span.to);
+    } else {
+      merged.push({ from: span.from, to: span.to });
+    }
+  }
+
+  return merged;
 }
 
 /**
@@ -292,6 +409,30 @@ export interface WorkingDay {
  * Une absence qui déborde la journée s'affiche bornée à celle-ci : « toute la
  * journée » quand elle la couvre entière, plutôt qu'une heure de début tombée
  * trois jours plus tôt.
+ *
+ * ## L'absence se retranche des horaires (#1408)
+ *
+ * Les deux listes étaient rendues côte à côte, sans se parler : un vendredi
+ * d'absence complète annonçait « 09:00 – 13:00 / 14:00 – 19:00 », puis
+ * « Absence : Toute la journée · Formation » en dessous — on lisait d'abord
+ * qu'elle travaillait. Un dimanche de fermeture disait « Salon fermé » **et**
+ * « Absence : Toute la journée », deux fois la même chose.
+ *
+ * La journée se compose donc en une seule liste ordonnée, sur trois règles :
+ *
+ * - **le salon fermé emporte tout** — ni plage ni absence à lire, « Salon
+ *   fermé » dit déjà qu'elle ne reçoit personne ;
+ * - **une plage entièrement couverte disparaît** — l'absence prend sa place, et
+ *   `away` dit à l'écran de l'annoncer comme telle ;
+ * - **les lignes se rangent dans l'heure**, plages et absences mêlées : une
+ *   absence partielle tombe ainsi contre la plage qu'elle ampute, au lieu d'être
+ *   reléguée sous la journée entière.
+ *
+ * Les deux natures d'heure se comparent en **minutes d'horloge depuis le minuit
+ * du salon** : les plages portent des heures murales, les absences des instants
+ * (`myStaffScheduleSchema`), et `dayMinutesInTimeZone` ramène les secondes aux
+ * premières — et non les minutes écoulées depuis `dayStart`, qui décalent d'une
+ * heure entière tout ce qui suit un changement d'heure.
  *
  * `display` porte la langue **et la région de l'établissement** (#1104) : les
  * deux mots composés ici viennent du catalogue, et les heures d'une absence sont
@@ -321,13 +462,19 @@ export function workingDay(
 ): WorkingDay {
   const words = CATALOG[display.locale].schedule;
   const weekday = isoWeekdayOf(day);
-  const hours = schedule.entries
+
+  if (schedule.closedWeekdays.includes(weekday)) {
+    return { closed: true, lines: [], away: false };
+  }
+
+  const shifts = schedule.entries
     .filter((entry) => entry.weekday === weekday)
     .sort((left, right) => left.startsAt.localeCompare(right.startsAt))
-    .map(
-      (entry) =>
-        `${formatWallTime(entry.startsAt, display, words.midnight)} – ${formatWallTime(entry.endsAt, display, words.midnight)}`,
-    );
+    .map((entry) => ({
+      from: wallMinutes(entry.startsAt),
+      to: wallMinutes(entry.endsAt),
+      text: `${formatWallTime(entry.startsAt, display, words.midnight)} – ${formatWallTime(entry.endsAt, display, words.midnight)}`,
+    }));
 
   const absences = schedule.timeOff
     .filter(
@@ -338,13 +485,39 @@ export function workingDay(
       const start = Math.max(Date.parse(off.startsAt), dayStart.getTime());
       const end = Math.min(Date.parse(off.endsAt), dayEnd.getTime());
       const whole = start === dayStart.getTime() && end === dayEnd.getTime();
+      // Une absence du jour entier dit son motif, et rien de plus : « Absente —
+      // Formation » se lit, « Absente — Toute la journée · Formation » se
+      // déchiffre. Sans motif, il reste le seul mot qui apprenne quelque chose.
       const span = whole
-        ? words.allDay
+        ? (off.reason ?? words.allDay)
         : `${formatTimeInTimeZone(new Date(start).toISOString(), schedule.timezone, display)} – ${formatTimeInTimeZone(new Date(end).toISOString(), schedule.timezone, display)}`;
-      return off.reason === null ? span : `${span} · ${off.reason}`;
-    });
+      return {
+        from: dayMinutesInTimeZone(start, dayStart, schedule.timezone),
+        to: dayMinutesInTimeZone(end, dayStart, schedule.timezone),
+        text: whole || off.reason === null ? span : `${span} · ${off.reason}`,
+      };
+    })
+    .sort((left, right) => left.from - right.from);
 
-  return { closed: schedule.closedWeekdays.includes(weekday), hours, absences };
+  const busy = mergeSpans(absences);
+  // Les deux natures de ligne se rangent dans l'heure, et c'est ce qui place
+  // l'absence contre la plage qu'elle coupe : une absence de 16 h tombe après la
+  // plage de 14 h, sans avoir à les apparier. À heure égale, la plage passe
+  // devant — on travaille d'abord, on s'absente ensuite.
+  const lines: readonly WorkingLine[] = [
+    ...shifts
+      .filter((shift) => !busy.some((span) => span.from <= shift.from && span.to >= shift.to))
+      .map((shift) => ({ from: shift.from, text: shift.text, timeOff: false })),
+    ...absences.map((absence) => ({ from: absence.from, text: absence.text, timeOff: true })),
+  ]
+    .sort((left, right) => left.from - right.from || Number(left.timeOff) - Number(right.timeOff))
+    .map(({ text, timeOff }) => ({ text, timeOff }));
+
+  return {
+    closed: false,
+    lines,
+    away: lines.length > 0 && lines.every((line) => line.timeOff),
+  };
 }
 
 /**
@@ -359,33 +532,9 @@ export function dayBoundsInTimeZone(
   day: CalendarDate,
   timeZone: TimeZone,
 ): { readonly start: Date; readonly end: Date } {
-  const offsetAt = (instant: Date): number => {
-    const parts = new Intl.DateTimeFormat('en-US', {
-      timeZone,
-      hourCycle: 'h23',
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit',
-      second: '2-digit',
-    }).formatToParts(instant);
-    const value = (type: string): number =>
-      Number(parts.find((part) => part.type === type)?.value ?? '0');
-    const asUtc = Date.UTC(
-      value('year'),
-      value('month') - 1,
-      value('day'),
-      value('hour'),
-      value('minute'),
-      value('second'),
-    );
-    return asUtc - instant.getTime();
-  };
-
   const midnight = (date: CalendarDate): Date => {
     const utcMidnight = new Date(`${date}T00:00:00.000Z`);
-    return new Date(utcMidnight.getTime() - offsetAt(utcMidnight));
+    return new Date(utcMidnight.getTime() - offsetInTimeZone(utcMidnight, timeZone));
   };
 
   return { start: midnight(day), end: midnight(addCalendarDays(day, 1)) };
