@@ -5,6 +5,7 @@ import {
   LONG_TEXT_MAX_LENGTH,
   MAX_APPOINTMENT_RANGE_DAYS,
   NAME_MAX_LENGTH,
+  PHONE_MAX_LENGTH,
   REASON_MAX_LENGTH,
   UTC_OFFSET_MINUTES_MAX,
   UTC_OFFSET_MINUTES_MIN,
@@ -154,19 +155,52 @@ export class MyStaffProfileDto implements StaffProfileView {
   public isActive!: boolean;
 }
 
-/** La cliente d'une ligne de planning — prénom, et initiale du nom (CDC §5.1). */
+/**
+ * La cliente d'une ligne de planning — de quoi la recevoir, l'appeler et savoir
+ * ce qui lui est contre-indiqué (#1404).
+ *
+ * Portait prénom + initiale du nom jusque-là ; l'en-tête de
+ * `myStaffAppointmentClientSchema` dit pourquoi cette minimisation ne protégeait
+ * rien, et ce qui reste dehors — ni e-mail, ni adresse, ni historique.
+ */
 export class MyStaffAppointmentClientDto implements MyStaffAppointmentClientView {
+  @ApiProperty({
+    format: 'uuid',
+    description:
+      'De quoi ouvrir sa fiche depuis le planning, et rien de plus : aucune ' +
+      'route de cet espace ne reçoit cet identifiant.',
+  })
+  public id!: string;
+
   @ApiProperty({ example: 'Camille', maxLength: NAME_MAX_LENGTH })
   public firstName!: string;
 
+  @ApiProperty({ example: 'Durand', maxLength: NAME_MAX_LENGTH })
+  public lastName!: string;
+
   @ApiProperty({
-    example: 'D',
-    maxLength: 1,
+    example: '+33 6 00 00 00 02',
+    maxLength: PHONE_MAX_LENGTH,
+    nullable: true,
+    type: String,
     description:
-      'Initiale du nom, en capitale et **sans point** — la ponctuation est une ' +
-      'décision d’affichage. Le nom complet reste servi à l’agenda du comptoir.',
+      'Son numéro, tel que le salon l’a écrit — `null` quand la fiche n’en ' +
+      'porte pas. Jamais normalisé en E.164: c’est une sortie, et la forme ' +
+      'lisible est celle qu’on relit au téléphone.',
   })
-  public lastInitial!: string;
+  public phone!: string | null;
+
+  @ApiProperty({
+    example: 'Allergie aux huiles essentielles d’agrumes.',
+    maxLength: LONG_TEXT_MAX_LENGTH,
+    nullable: true,
+    type: String,
+    description:
+      'L’alerte de sa fiche — `users.internal_note` —, `null` quand il n’y en ' +
+      'a pas. À ne pas confondre avec `staffNote`, qui est la note de **ce** ' +
+      'rendez-vous.',
+  })
+  public internalNote!: string | null;
 }
 
 /** La prestation d'une ligne de planning — ni prix courant, ni tampons. */

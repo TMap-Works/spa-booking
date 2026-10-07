@@ -44,9 +44,14 @@
   },
   "appointment": {
     "reference": "Reference",
+    "clientAlert": "Client record alert",
+    "phone": "Phone",
+    "noPhone": "No phone number",
     "clientNote": "Client’s note",
     "noNote": "None",
     "staffNote": "Internal note",
+    "openRecord": "View record",
+    "openRecordOf": "View record for {name}",
     "next": "Next"
   },
   "schedule": {

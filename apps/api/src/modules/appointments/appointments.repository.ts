@@ -196,7 +196,25 @@ const AGENDA_SELECT = {
   // `APPOINTMENT_SELECT` l'aurait fait charger sur les six lectures du module,
   // dont l'historique public de #47.
   dataConsentAt: true,
-  client: { select: { id: true, firstName: true, lastName: true } },
+  // Le téléphone et l'alerte de la fiche (#1404). Lus **sur cette jointure** et
+  // non par une seconde lecture : le planning du praticien en a besoin ligne par
+  // ligne, et résoudre la fiche après coup aurait fait une requête par
+  // rendez-vous sur un écran qui en affiche une semaine. Deux colonnes de plus
+  // sur une jointure déjà faite ne changent pas le plan d'exécution.
+  //
+  // Ce que cela n'ouvre pas : la sortie du comptoir. `agendaView` projette les
+  // trois premiers champs et eux seuls, et élargir `appointmentSchema` est
+  // l'objet de #977.
+  //
+  // Ce qui tient cette frontière est un **test**, et non le type : `tsc` laisse
+  // passer `client: record.client`, parce que le contrôle de propriété
+  // excédentaire ne s'applique qu'aux littéraux frais et qu'une référence de
+  // type `AgendaClientRecord` est assignable à `AgendaClientSummary`. C'est
+  // l'assertion `toEqual` d'`appointments-agenda.spec.ts` — trois clés, pas
+  // quatre — qui refuse la régression.
+  client: {
+    select: { id: true, firstName: true, lastName: true, phone: true, internalNote: true },
+  },
   staff: { select: { id: true, displayName: true } },
   service: {
     select: {

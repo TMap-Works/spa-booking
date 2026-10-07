@@ -185,6 +185,15 @@ interface StoredClient {
    * double qui l'ignorerait ferait passer pour vert le seul cas qui compte.
    */
   locale: Locale | null;
+  /**
+   * L'alerte de la fiche — `users.internal_note` —, `null` par défaut (#1404).
+   *
+   * Portée par le stock parce que la **lecture** d'agenda la joint désormais, et
+   * que c'est elle que le planning du praticien affiche en bandeau. Un double qui
+   * la laisserait hors de la ligne rendrait vert un planning qui n'alerte de
+   * rien.
+   */
+  internalNote: string | null;
 }
 
 /**
@@ -257,6 +266,8 @@ export class FakeAppointmentsRepository {
     role?: UserRole;
     /** `null` par défaut — « aucune préférence enregistrée » (#844). */
     locale?: Locale | null;
+    /** `null` par défaut — la fiche ne porte aucune alerte (#1404). */
+    internalNote?: string | null;
   }): StoredClient {
     const client: StoredClient = {
       tenantId: input.tenantId,
@@ -267,6 +278,7 @@ export class FakeAppointmentsRepository {
       phone: input.phone ?? null,
       role: input.role ?? 'CLIENT',
       locale: input.locale ?? null,
+      internalNote: input.internalNote ?? null,
     };
     this.clients.push(client);
     return client;
@@ -813,6 +825,10 @@ export class FakeAppointmentsRepository {
         id: stored.clientId,
         firstName: client?.firstName ?? 'Cliente',
         lastName: client?.lastName ?? 'Anonyme',
+        // Jointes comme les noms, sur la même résolution (#1404) : le planning du
+        // praticien les rend, l'agenda du comptoir les laisse de côté.
+        phone: client?.phone ?? null,
+        internalNote: client?.internalNote ?? null,
       },
       staff: { id: stored.staffId, displayName: stored.display.staffDisplayName },
       service: {

@@ -254,11 +254,22 @@ export function showsToday(
   return from <= today && today <= to;
 }
 
-/** « Rina A. » — la cliente telle que l'API la sert au praticien. */
+/**
+ * « Rina Andriamena » — la cliente telle que l'API la sert au praticien.
+ *
+ * Le nom **entier** depuis #1404. Il s'écrivait « Rina A. », au motif que le
+ * praticien n'a pas à tenir le fichier client ; la même praticienne lit déjà le
+ * nom complet et le téléphone dans « Clients » avec le même jeton, et l'abréger
+ * ici ne retirait la donnée à personne — cela l'obligeait seulement à changer
+ * d'écran pour savoir qui elle reçoit. Le contrat partagé porte le raisonnement
+ * entier (`myStaffAppointmentClientSchema`).
+ *
+ * `trim` sur la composition et non sur chaque moitié : les deux colonnes sont
+ * `NOT NULL` et `nameSchema` exige un caractère de chacune, mais une ligne
+ * historique mal formée doit rendre un nom lisible plutôt qu'une espace en trop.
+ */
 export function clientLabel(appointment: MyStaffAppointment): string {
-  return appointment.client.lastInitial === ''
-    ? appointment.client.firstName
-    : `${appointment.client.firstName} ${appointment.client.lastInitial}.`;
+  return `${appointment.client.firstName} ${appointment.client.lastName}`.trim();
 }
 
 /** Ce que le praticien a à savoir de sa journée, avant ses rendez-vous. */
