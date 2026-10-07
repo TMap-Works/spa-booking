@@ -61,9 +61,12 @@
   },
   "actions": {
     "confirm": "Confirmer le rendez-vous",
+    "confirmOf": "Confirmer le rendez-vous de {client} à {time}",
     "mark": "Marquer {status}",
+    "markOf": "Marquer {status} — rendez-vous de {client} à {time}",
     "markQuestion": "Marquer le rendez-vous de {client} à {time} {status} ? Ce choix est définitif.",
     "markBack": "Revenir",
+    "markBackOf": "Revenir — rendez-vous de {client} à {time}",
     "saving": "Enregistrement…",
     "serverSilent": "Le serveur ne répond pas. Réessayez dans un instant.",
     "notStarted": "Ce rendez-vous n’a pas commencé : attendez l’heure du rendez-vous pour dire s’il a été honoré.",
