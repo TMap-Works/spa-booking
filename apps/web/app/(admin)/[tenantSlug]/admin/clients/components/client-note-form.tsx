@@ -29,10 +29,29 @@ import { useAdminSessionRenewal } from '../../components/use-admin-session-renew
  * tourne son écran vers la cliente. Le doute sur ce point conduirait à ne plus
  * rien écrire, et la fonctionnalité perdrait son intérêt.
  *
- * Ce que l'écran affirme, l'API le tient : `internalNote` n'est portée que par
- * `customerSchema`, servi au rang `staff`. Ni la liste, ni aucun schéma du
- * parcours public ne la référencent — il n'existe aucune route par laquelle
- * elle pourrait sortir vers une cliente.
+ * Ce que l'écran affirme, l'API le tient — et ce que l'API tient est une borne
+ * de **rang**, non une borne de schéma unique. `internalNote` a deux résidences
+ * dans le contrat partagé depuis #1404 : `customerSchema`, cette fiche-ci, et
+ * `myStaffAppointmentClientSchema` (`@spa/shared`, `./staff-portal`), l'alerte
+ * du planning du praticien. Les deux sont servies au rang `staff`. S'y ajoute
+ * une troisième sortie, hors contrat partagé parce qu'aucun écran ne la lit : le
+ * dossier d'accès RGPD (`CustomerDataExportDto`, `GET /customers/:id/export`),
+ * réservé à `customers:read:all` — donc au rang gérant. Ni la liste
+ * (`customerSummarySchema`), ni aucun schéma du parcours public ne la
+ * référencent — il n'existe donc aucune route par laquelle elle pourrait sortir
+ * vers une cliente.
+ *
+ * La lecture s'est donc élargie, l'**écriture** non : `crm` reste le seul module
+ * qui écrive la colonne, et cet écran la seule surface du back-office qui la
+ * poste **en pratique** — via `updateCustomerAction`. Le mot compte :
+ * `createDeskClientAction` l'accepterait aussi, parce que
+ * `createCustomerRequestSchema` la porte en `.optional()`, et c'est seulement le
+ * tiroir de création du planning qui ne l'envoie pas. Ajouter le champ là-bas
+ * ouvrirait un second chemin d'écriture sans rien casser — à décider, pas à
+ * subir. Le planning du praticien, lui, ne fait que la lire, et l'agenda du
+ * comptoir la charge sans la rendre : `agendaView` y projette le *summary* de la
+ * cliente et rien d'autre. Ce qui s'écrit ici est donc ce qui s'affichera
+ * là-bas, et nulle part ailleurs.
  *
  * ## Une seule note, et non un fil
  *

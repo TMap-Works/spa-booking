@@ -702,11 +702,30 @@ model User {
   /// Note interne du fichier client — #56, CDC §2.3 « notes » du module `crm`.
   ///
   /// « Notes internes **distinctes des informations visibles du client** » est
-  /// l'énoncé du critère, et cette colonne en est la moitié durable : elle
-  /// n'est écrite et lue que par le module `crm`, ne figure dans aucune
-  /// projection servie au parcours public, et n'apparaît dans aucun log — le
-  /// jeton `note` est dans la liste de rédaction de
+  /// l'énoncé du critère, et cette colonne en est la moitié durable : elle ne
+  /// figure dans aucune projection servie au parcours public, et n'apparaît
+  /// dans aucun log — le jeton `note` est dans la liste de rédaction de
   /// `common/logging/redaction.ts` (RGPD, CDC §5.1).
+  ///
+  /// L'écriture et la lecture n'ont pas le même périmètre, et les confondre
+  /// ferait chercher au mauvais endroit :
+  ///
+  /// - **écrite** par le module `crm` seul — `crm.repository.ts` en est l'unique
+  ///   point d'écriture applicatif. `prisma/seed.ts` la pose aussi, mais sur un
+  ///   jeu d'essai : ce n'est pas un chemin de production, et c'est la seule
+  ///   exception à chercher avant de conclure qu'une note vient du comptoir ;
+  /// - **lue** par deux modules depuis #1404 : `crm`, qui la sert sur la fiche
+  ///   complète (`customerSchema`, rang `staff`) **et** dans le dossier d'accès
+  ///   RGPD (`CustomerDataExportDto`, `customer-export.service.ts`) — celui-là
+  ///   derrière `customers:read:all`, donc au rang gérant et non `staff` —, et
+  ///   `appointments`, qui la joint dans l'`AGENDA_SELECT` de son repository
+  ///   pour l'alerte du planning du praticien
+  ///   (`myStaffAppointmentClientSchema`, rang `staff`).
+  ///
+  /// Charger n'est pas rendre : `agendaView` projette le *summary* de la
+  /// cliente — identifiant, prénom, nom — et rien d'autre, de sorte que
+  /// l'agenda du comptoir ne l'expose pas. Cette frontière est tenue par
+  /// l'assertion `toEqual` d'`appointments-agenda.spec.ts`, et non par le type.
   ///
   /// Portée par `users` plutôt que par une neuvième table : une fiche cliente
   /// **est** une ligne `users` de rôle `CLIENT`, le CDC §1.4 borne le MVP à un
