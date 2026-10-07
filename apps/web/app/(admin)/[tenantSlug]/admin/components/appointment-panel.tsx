@@ -5,6 +5,7 @@ import {
   REASON_MAX_LENGTH,
   canRecordAppointmentOutcome,
   isAppointmentNotStartedRefusal,
+  isOutcomeAppointmentStatus,
   type Appointment,
   type AppointmentStatus,
   type CalendarDate,
@@ -13,6 +14,7 @@ import {
   // Aliasé : `Notification` est aussi le composant du design system que ce
   // fichier importe deux lignes plus bas.
   type Notification as NotificationTrace,
+  type OutcomeAppointmentStatus,
   type Service,
   type ServiceStaffMember,
   type TimeZone,
@@ -57,7 +59,12 @@ import {
   catalogEmptyDescription,
   catalogEmptyTitle,
 } from '@/lib/admin/calendar-start';
-import { formatDateTimeInTimeZone, formatMoney, type DisplayLocale } from '@/lib/format';
+import {
+  formatDateTimeInTimeZone,
+  formatMoney,
+  formatTimeInTimeZone,
+  type DisplayLocale,
+} from '@/lib/format';
 import { refusalMessage } from '@/lib/refusal';
 
 import {
@@ -386,6 +393,24 @@ export function AppointmentPanel({
   // honoré ».
   const [confirmingCancel, setConfirmingCancel] = useState(false);
   const [cancelReason, setCancelReason] = useState('');
+  /**
+   * Le constat dont la question est posée, ou `null` — #1409.
+   *
+   * Même montage en deux temps que l'annulation juste au-dessus, et pour une
+   * raison plus forte encore : `completed` et `no_show` sont **terminaux** dans
+   * `APPOINTMENT_STATUS_TRANSITIONS`, si bien qu'un constat posé par erreur ne se
+   * reprend pas — même l'annulation, qui rattrapait un rendez-vous mal saisi, est
+   * refusée depuis un état terminal. Le pied mettait ces deux gestes à quelques
+   * pixels l'un de l'autre et les appliquait au premier clic.
+   *
+   * Le **statut visé** plutôt qu'un booléen : c'est lui que la question nomme et
+   * que la réponse écrit.
+   *
+   * `confirmed` n'y passe pas : confirmer est réversible — le cycle de vie laisse
+   * encore annuler, déplacer et constater après —, et questionner un geste
+   * réversible apprend à expédier les questions.
+   */
+  const [confirmingMark, setConfirmingMark] = useState<OutcomeAppointmentStatus | null>(null);
   // Le journal d'envois du rendez-vous (#70). `null` couvre les deux cas où il
   // n'y a rien à montrer — pas encore lu, et création — que la section distingue
   // de l'échec de lecture.
@@ -712,7 +737,11 @@ export function AppointmentPanel({
     // soumission se soumet alors **de lui-même** sur `Entrée` : le rendez-vous
     // qu'on est en train d'annuler partait au report, sans passer par aucune
     // des gardes que portait le bouton disparu.
-    if (confirmingCancel) {
+    //
+    // La question d'un constat (#1409) retire « Enregistrer » du pied pour la
+    // même raison, et doit donc fermer la même porte : sans cela, `Entrée` sur
+    // la date déplacerait le rendez-vous qu'on est en train de clore.
+    if (confirmingCancel || confirmingMark !== null) {
       return;
     }
 
@@ -760,6 +789,7 @@ export function AppointmentPanel({
     );
   }, [
     confirmingCancel,
+    confirmingMark,
     chosen,
     day,
     time,
@@ -1096,6 +1126,36 @@ export function AppointmentPanel({
           />
         )}
 
+        {/* La question d'un constat définitif — #1409.
+
+            Au même endroit que celle de l'annulation, juste en dessous : les deux
+            attendent une réponse, et c'est le haut du tiroir qu'on lit avant
+            d'aller chercher les boutons du pied.
+
+            Elle **nomme la cliente et l'heure** du soin, et c'est le point : le
+            tiroir est ouvert sur un rendez-vous, mais le comptoir en ouvre et en
+            referme à la chaîne, et « Confirmer ? » ne dirait pas lequel on est en
+            train de clore. L'heure est celle que l'API rend — l'intervalle
+            facturé, celui que la cliente lit sur sa confirmation —, ramenée au
+            fuseau de l'établissement et jamais à celui du poste.
+
+            En `warning` comme l'annulation, et non en `danger` : rien n'a échoué,
+            et constater un rendez-vous honoré est le cours normal des choses. Ce
+            que le ton dit est qu'on ne le reprendra pas. */}
+        {confirmingMark === null || editing === null ? null : (
+          <div className="spa-admin-appointment__conflict">
+            <Notification tone="warning" title={t('desk.markTitle')}>
+              <p id={`${formId}-constat`}>
+                {t('desk.markQuestion', {
+                  client: `${editing.client.firstName} ${editing.client.lastName}`,
+                  status: appointmentStatusLabelInSentence(confirmingMark, locale),
+                  time: formatTimeInTimeZone(editing.startsAt, timeZone, display),
+                })}
+              </p>
+            </Notification>
+          </div>
+        )}
+
         {/* La question d'annulation, et le motif qui l'accompagne — #754.
 
             Dans le corps et non dans le pied : le motif est une saisie, et une
@@ -1386,15 +1446,64 @@ export function AppointmentPanel({
         )}
       </div>
 
-      {/* Le pied, en deux visages — #754.
+      {/* Le pied, en trois visages — #754, #1409.
 
           Pendant la confirmation d'annulation, il ne porte que la réponse à la
           question posée. Les autres actions sont retirées, et c'est délibéré :
           « Enregistrer » y déplacerait le rendez-vous qu'on est en train
           d'annuler, et « Marquer honoré » le solderait. Laisser trois issues
-          ouvertes à une question fermée est ce qui fait cliquer à côté. */}
+          ouvertes à une question fermée est ce qui fait cliquer à côté.
+
+          Le même arbitrage vaut mot pour mot pour la question d'un constat
+          (#1409), et il y vaut dans les deux sens : « Marquer non honoré » ne doit
+          pas rester à portée pendant qu'on répond sur « Marquer honoré ». */}
       <div className="spa-admin-panel__footer">
-        {confirmingCancel ? (
+        {confirmingMark !== null ? (
+          <>
+            <Button
+              variant="quiet"
+              // Le focus suit la question, comme il suit celle de l'annulation —
+              // qui le pose sur le champ de motif (#754). Le bouton qu'on vient
+              // d'activer a disparu du pied avec le premier temps : sans reprise,
+              // le focus retombe sur `document.body`, Échap — posé sur la région
+              // du tiroir — cesse de le refermer et la tabulation repart du haut
+              // de la page (#617). Il va au geste **inoffensif** : un `Entrée`
+              // resté enfoncé ne doit pas écrire le constat qu'on vient tout
+              // juste de questionner.
+              autoFocus
+              // « Revenir » ne dit pas à lui seul sur quoi l'on revient : le
+              // bouton qui prend le focus annonce la question avec lui.
+              aria-describedby={`${formId}-constat`}
+              disabled={saving}
+              onClick={() => {
+                setConfirmingMark(null);
+                // Le bouton qu'on vient d'activer disparaît avec la question :
+                // sans reprise du focus, Échap cesserait de refermer le tiroir et
+                // la tabulation repartirait du haut de la page (#617, #754).
+                drawerRef.current?.focus();
+              }}
+            >
+              {t('desk.markBack')}
+            </Button>
+            <Button
+              // L'accent, et il est seul dans ce visage du pied : pendant la
+              // question, la réponse est l'action principale du tiroir
+              // (`styles/README.md`, « Variantes »).
+              variant="accent"
+              loading={saving}
+              onClick={() => {
+                void mark(confirmingMark);
+              }}
+            >
+              {/* Le même libellé qu'au premier temps : une réponse générique —
+                  « Oui », « Confirmer » — obligerait à relire la question pour
+                  savoir lequel des deux constats on écrit. */}
+              {t('desk.mark', {
+                status: appointmentStatusLabelInSentence(confirmingMark, locale),
+              })}
+            </Button>
+          </>
+        ) : confirmingCancel ? (
           <>
             <Button
               variant="quiet"
@@ -1454,7 +1563,15 @@ export function AppointmentPanel({
                     // notification du corps le dit à tout le monde.
                     disabled={!canRecord(action.status)}
                     title={canRecord(action.status) ? undefined : t('desk.notStartedHint')}
+                    // Un constat ne s'écrit pas au premier clic : il se demande
+                    // (#1409). La confirmation du rendez-vous, elle, part
+                    // directement — elle n'est pas terminale.
                     onClick={() => {
+                      if (isOutcomeAppointmentStatus(action.status)) {
+                        setConfirmingMark(action.status);
+                        return;
+                      }
+
                       void mark(action.status);
                     }}
                   >

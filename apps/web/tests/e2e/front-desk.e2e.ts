@@ -259,6 +259,12 @@ test.describe('Comptoir', () => {
       // Le soin est commencé : le tiroir ouvre le geste, il ne le grise pas.
       await expect(constat).toBeEnabled({ timeout: 20_000 });
       await constat.click();
+
+      // Le premier clic ne marque rien : il pose la question, en nommant la
+      // cliente et l'heure du soin (#1409). Le constat est terminal — il faut
+      // deux gestes pour l'écrire, et le second porte le même libellé.
+      await expect(panneau.getByText('Ce choix est définitif')).toBeVisible();
+      await panneau.getByRole('button', { name: 'Marquer non honoré' }).click();
       await expect(panneau).toBeHidden({ timeout: 20_000 });
     });
 

@@ -377,6 +377,34 @@
   gap: var(--spa-space-2);
 }
 
+/*
+ * La question d'un constat définitif — #1409.
+ *
+ * Elle prend la ligne entière de la boîte d'actions (`flex-basis: 100%`) : elle
+ * nomme la cliente, l'heure et le constat, c'est-à-dire une phrase, et la
+ * laisser se partager la ligne avec ses deux réponses l'aurait réduite à une
+ * colonne de quelques mots sur un téléphone.
+ *
+ * Même couple d'alerte que `__alert` juste au-dessus — `--spa-color-warning` sur
+ * `--spa-color-warning-surface`, le couple du planning du salon et de
+ * l'encaissement : les deux disent « lisez avant d'agir ». La couleur ne porte
+ * pourtant rien seule (WCAG 1.4.1) — la phrase pose une question, et les deux
+ * boutons qui la suivent y répondent ; un affichage en gris la laisse entière.
+ *
+ * `--spa-font-weight-semibold` et non la graisse du corps : elle remplace deux
+ * boutons, et doit se lire avant qu'un pouce ne reparte sur le suivant.
+ */
+.spa-my-appointment__confirm {
+  flex-basis: 100%;
+  margin: 0;
+  padding: var(--spa-space-2) var(--spa-space-3);
+  border-inline-start: 3px solid var(--spa-color-warning);
+  border-radius: var(--spa-radius-sm);
+  background-color: var(--spa-color-warning-surface);
+  font-size: var(--spa-font-size-sm);
+  font-weight: var(--spa-font-weight-semibold);
+}
+
 /* --- Au-delà du téléphone -------------------------------------------------- */
 
 /*

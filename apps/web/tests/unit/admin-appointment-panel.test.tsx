@@ -145,6 +145,22 @@ async function enregistrerArme(nom: string): Promise<HTMLElement> {
   return bouton;
 }
 
+/**
+ * Pose un constat **jusqu'au bout** — les deux temps de #1409.
+ *
+ * `completed` et `no_show` sont terminaux : le premier clic ne marque rien, il
+ * pose la question dans le corps du tiroir et remplace les gestes du pied par
+ * leurs réponses. La réponse porte le même libellé que le geste — « la réponse
+ * dit ce qu'elle fait » —, d'où les deux clics sur le même nom.
+ */
+async function constater(
+  user: ReturnType<typeof userEvent.setup>,
+  nom: string,
+): Promise<void> {
+  await user.click(screen.getByRole('button', { name: nom }));
+  await user.click(screen.getByRole('button', { name: nom }));
+}
+
 const CREATION: DeskTarget = {
   kind: 'create',
   day: '2026-08-26',
@@ -420,7 +436,7 @@ describe('cinquième critère — marquer honoré et non honoré', () => {
 
     const { onReload, onClose } = renderPanel({ kind: 'edit', appointment: CONFIRME });
 
-    await user.click(screen.getByRole('button', { name: 'Marquer non honoré' }));
+    await constater(user, 'Marquer non honoré');
 
     await waitFor(() => {
       expect(markDeskAppointmentStatusAction).toHaveBeenCalledWith(SLUG, CONFIRME.id, {
@@ -429,6 +445,82 @@ describe('cinquième critère — marquer honoré et non honoré', () => {
     });
     expect(onReload).toHaveBeenCalledTimes(1);
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
+ * Un constat définitif se demande avant de s'écrire — #1409.
+ *
+ * `completed` et `no_show` sont terminaux dans `APPOINTMENT_STATUS_TRANSITIONS` :
+ * un constat posé par erreur ne se reprend pas, et même l'annulation — qui
+ * rattrapait un rendez-vous mal saisi — est refusée depuis un état terminal. Le
+ * pied mettait pourtant les deux gestes à quelques pixels l'un de l'autre et les
+ * appliquait au premier clic.
+ *
+ * La question **nomme la cliente et l'heure** du soin : le comptoir ouvre et
+ * referme des tiroirs à la chaîne, et « Confirmer ? » ne dirait pas lequel on est
+ * en train de clore.
+ */
+describe('#1409 — un constat définitif se demande avant de s’écrire', () => {
+  it('ne marque rien au premier clic : il pose la question, cliente et heure nommées', async () => {
+    const user = userEvent.setup();
+
+    renderPanel({ kind: 'edit', appointment: CONFIRME });
+
+    await user.click(await enregistrerArme('Marquer non honoré'));
+
+    expect(markDeskAppointmentStatusAction).not.toHaveBeenCalled();
+    expect(screen.getByText(MOTS.desk.markTitle)).toBeDefined();
+    // 09:00 au salon d'Antananarivo pour un rendez-vous stocké à 06:00 UTC :
+    // l'heure citée est celle du fuseau de l'établissement, jamais celle du poste.
+    expect(
+      screen.getByText(/Marquer le rendez-vous de Rina Andriamana à 09:00 non honoré/),
+    ).toBeDefined();
+
+    // Le pied ne laisse plus d'autre issue que la réponse : laisser « Marquer
+    // honoré », « Enregistrer » ou l'annulation à portée d'une question fermée est
+    // ce qui fait cliquer à côté (#754).
+    expect(screen.queryByRole('button', { name: 'Marquer honoré' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Enregistrer' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Annuler le rendez-vous' })).toBeNull();
+    expect(screen.getByRole('button', { name: MOTS.desk.markBack })).toBeDefined();
+  });
+
+  it('revient de la question sans rien écrire, et rend le pied entier', async () => {
+    const user = userEvent.setup();
+
+    renderPanel({ kind: 'edit', appointment: CONFIRME });
+
+    await user.click(await enregistrerArme('Marquer non honoré'));
+    await user.click(screen.getByRole('button', { name: MOTS.desk.markBack }));
+
+    expect(markDeskAppointmentStatusAction).not.toHaveBeenCalled();
+    expect(screen.queryByText(MOTS.desk.markTitle)).toBeNull();
+    expect(screen.getByRole('button', { name: 'Marquer honoré' })).toBeDefined();
+    expect(screen.getByRole('button', { name: 'Annuler le rendez-vous' })).toBeDefined();
+  });
+
+  /**
+   * Confirmer n'est pas un constat : `confirmed` n'est pas terminal — le cycle de
+   * vie laisse encore annuler, déplacer et constater après lui —, et questionner
+   * un geste réversible apprendrait à expédier les questions.
+   */
+  it('laisse « Confirmer le rendez-vous » partir au premier clic', async () => {
+    const user = userEvent.setup();
+    markDeskAppointmentStatusAction.mockResolvedValue({
+      ok: true,
+      data: { ...CONFIRME, status: 'confirmed' },
+    });
+
+    renderPanel({ kind: 'edit', appointment: { ...CONFIRME, status: 'pending' } });
+
+    await user.click(screen.getByRole('button', { name: 'Confirmer le rendez-vous' }));
+
+    await waitFor(() => {
+      expect(markDeskAppointmentStatusAction).toHaveBeenCalledWith(SLUG, CONFIRME.id, {
+        status: 'confirmed',
+      });
+    });
   });
 });
 
@@ -740,7 +832,7 @@ describe('#1367 — le refus de saisie de chaque geste garde sa phrase', () => {
 
     renderPanel({ kind: 'edit', appointment: CONFIRME });
 
-    await user.click(screen.getByRole('button', { name: 'Marquer non honoré' }));
+    await constater(user, 'Marquer non honoré');
 
     // Le statut vient d'une liste fermée de boutons : un `VALIDATION_ERROR` ici
     // ne peut venir que du serveur, et lui prêter une phrase de l'écran
@@ -1168,7 +1260,7 @@ describe('#1210 — le tiroir n’offre pas un constat avant l’heure du soin',
     });
     expect(screen.queryByText('Le rendez-vous n’a pas commencé')).toBeNull();
 
-    await user.click(screen.getByRole('button', { name: 'Marquer non honoré' }));
+    await constater(user, 'Marquer non honoré');
 
     await waitFor(() => {
       expect(markDeskAppointmentStatusAction).toHaveBeenCalledWith(SLUG, CONFIRME.id, {
@@ -1201,7 +1293,7 @@ describe('#1210 — le tiroir n’offre pas un constat avant l’heure du soin',
         screen.getByRole('button', { name: 'Marquer non honoré' }).hasAttribute('disabled'),
       ).toBe(false);
     });
-    await user.click(screen.getByRole('button', { name: 'Marquer non honoré' }));
+    await constater(user, 'Marquer non honoré');
 
     expect(await screen.findByText(/ils s’ouvriront à l’heure du rendez-vous/)).toBeDefined();
     // Le tiroir reste ouvert et le planning n'est pas relu : il n'y a rien de
@@ -1230,7 +1322,7 @@ describe('#1210 — le tiroir n’offre pas un constat avant l’heure du soin',
         screen.getByRole('button', { name: 'Marquer non honoré' }).hasAttribute('disabled'),
       ).toBe(false);
     });
-    await user.click(screen.getByRole('button', { name: 'Marquer non honoré' }));
+    await constater(user, 'Marquer non honoré');
 
     // Là encore la phrase du code, jamais le `message` de l'action (#1354).
     expect(
