@@ -61,9 +61,12 @@
   },
   "actions": {
     "confirm": "Confirm the appointment",
+    "confirmOf": "Confirm the appointment for {client} at {time}",
     "mark": "Mark {status}",
+    "markOf": "Mark {status} — {client}’s {time} appointment",
     "markQuestion": "Mark {client}’s {time} appointment as {status}? This choice is final.",
     "markBack": "Go back",
+    "markBackOf": "Go back — {client}’s {time} appointment",
     "saving": "Saving…",
     "serverSilent": "The server is not answering. Try again in a moment.",
     "notStarted": "This appointment hasn’t started: wait for its time before recording how it went.",

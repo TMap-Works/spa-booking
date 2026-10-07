@@ -398,24 +398,44 @@ function figerLHorloge(instant: string): void {
  *
  * La cliente et l'heure **écrite** en font partie depuis #1409 : c'est ce que la
  * question d'un constat définitif nomme, et la page les compose — le nom par
- * `clientLabel`, l'heure par le formateur du fuseau de l'établissement.
+ * `clientLabel`, l'heure par le formateur du fuseau de l'établissement. Depuis
+ * #1406 les deux nomment aussi les **boutons** eux-mêmes, et non plus seulement
+ * la question.
  */
 function gestes(props: {
   readonly status: Parameters<typeof MyAppointmentActions>[0]['status'];
   readonly renderedAt: string;
+  readonly clientName?: string;
+  readonly timeLabel?: string;
 }) {
   return (
     <MyAppointmentActions
       appointmentId="aaaaaaaa-0000-4000-8000-000000000001"
-      clientName="Rina Andriamena"
+      clientName={props.clientName ?? 'Rina Andriamena'}
       renderedAt={props.renderedAt}
       startsAt={DEBUT}
       status={props.status}
       tenantSlug="maison-lotus"
-      timeLabel="16:00"
+      timeLabel={props.timeLabel ?? '16:00'}
     />
   );
 }
+
+/**
+ * Les noms accessibles des quatre gestes — #1406.
+ *
+ * Ils ne valent **pas** le libellé visible : la ligne dépliée montre déjà
+ * l'heure et la cliente, et les redire sous chaque bouton alourdirait l'écran.
+ * C'est donc le nom qui les porte, et ces constantes sont ce que les cas
+ * ci-dessous cherchent — `getByRole('button', { name })` lit le nom accessible,
+ * pas le texte.
+ */
+const nom = {
+  honore: 'Marquer honoré — rendez-vous de Rina Andriamena à 16:00',
+  nonHonore: 'Marquer non honoré — rendez-vous de Rina Andriamena à 16:00',
+  confirmer: 'Confirmer le rendez-vous de Rina Andriamena à 16:00',
+  revenir: 'Revenir — rendez-vous de Rina Andriamena à 16:00',
+} as const;
 
 describe('les gestes de la praticienne sur son rendez-vous', () => {
   it('offre « honoré » inerte, avec son motif, tant que le rendez-vous n’a pas commencé', () => {
@@ -423,9 +443,9 @@ describe('les gestes de la praticienne sur son rendez-vous', () => {
     render(gestes({ renderedAt: AVANT, status: 'confirmed' }));
 
     // Inerte plutôt qu'absent : un bouton qui disparaît ne dit pas pourquoi.
-    const honore = screen.getByRole('button', { name: 'Marquer honoré' });
+    const honore = screen.getByRole('button', { name: nom.honore });
     expect(honore).toHaveProperty('disabled', true);
-    expect(screen.getByRole('button', { name: 'Marquer non honoré' })).toHaveProperty(
+    expect(screen.getByRole('button', { name: nom.nonHonore })).toHaveProperty(
       'disabled',
       true,
     );
@@ -441,7 +461,7 @@ describe('les gestes de la praticienne sur son rendez-vous', () => {
     markStatus.mockResolvedValue({ ok: true, data: {} });
     render(gestes({ renderedAt: AVANT, status: 'pending' }));
 
-    const confirmer = screen.getByRole('button', { name: 'Confirmer le rendez-vous' });
+    const confirmer = screen.getByRole('button', { name: nom.confirmer });
     expect(confirmer).toHaveProperty('disabled', false);
 
     // Et il part au **premier** appui : `confirmed` n'est pas terminal, le cycle
@@ -470,7 +490,7 @@ describe('les gestes de la praticienne sur son rendez-vous', () => {
     figerLHorloge('2026-09-19T14:05:00.000Z');
     render(gestes({ renderedAt: AVANT, status: 'confirmed' }));
 
-    expect(screen.getByRole('button', { name: 'Marquer honoré' })).toHaveProperty(
+    expect(screen.getByRole('button', { name: nom.honore })).toHaveProperty(
       'disabled',
       true,
     );
@@ -489,7 +509,7 @@ describe('les gestes de la praticienne sur son rendez-vous', () => {
     figerLHorloge(APRES);
     render(gestes({ renderedAt: APRES, status: 'confirmed' }));
 
-    await userEvent.click(screen.getByRole('button', { name: 'Marquer non honoré' }));
+    await userEvent.click(screen.getByRole('button', { name: nom.nonHonore }));
 
     expect(markStatus).not.toHaveBeenCalled();
     expect(
@@ -500,20 +520,20 @@ describe('les gestes de la praticienne sur son rendez-vous', () => {
     // Les deux gestes ont cédé la place aux deux réponses : laisser « Marquer
     // honoré » à portée pendant qu'on répond sur l'autre est ce qui fait cliquer
     // à côté.
-    expect(screen.queryByRole('button', { name: 'Marquer honoré' })).toBeNull();
-    expect(screen.getByRole('button', { name: 'Revenir' })).toBeDefined();
+    expect(screen.queryByRole('button', { name: nom.honore })).toBeNull();
+    expect(screen.getByRole('button', { name: nom.revenir })).toBeDefined();
   });
 
   it('revient de la question sans rien écrire, et rend les deux gestes', async () => {
     figerLHorloge(APRES);
     render(gestes({ renderedAt: APRES, status: 'confirmed' }));
 
-    await userEvent.click(screen.getByRole('button', { name: 'Marquer non honoré' }));
-    await userEvent.click(screen.getByRole('button', { name: 'Revenir' }));
+    await userEvent.click(screen.getByRole('button', { name: nom.nonHonore }));
+    await userEvent.click(screen.getByRole('button', { name: nom.revenir }));
 
     expect(markStatus).not.toHaveBeenCalled();
-    expect(screen.getByRole('button', { name: 'Marquer honoré' })).toBeDefined();
-    expect(screen.queryByRole('button', { name: 'Revenir' })).toBeNull();
+    expect(screen.getByRole('button', { name: nom.honore })).toBeDefined();
+    expect(screen.queryByRole('button', { name: nom.revenir })).toBeNull();
   });
 
   it('marque le rendez-vous honoré une fois la question confirmée, puis relit l’écran', async () => {
@@ -523,8 +543,8 @@ describe('les gestes de la praticienne sur son rendez-vous', () => {
 
     // Deux appuis, et le second porte le même libellé que le premier : la réponse
     // dit ce qu'elle fait (#1409).
-    await userEvent.click(screen.getByRole('button', { name: 'Marquer honoré' }));
-    await userEvent.click(screen.getByRole('button', { name: 'Marquer honoré' }));
+    await userEvent.click(screen.getByRole('button', { name: nom.honore }));
+    await userEvent.click(screen.getByRole('button', { name: nom.honore }));
 
     await waitFor(() => {
       expect(refresh).toHaveBeenCalledTimes(1);
@@ -544,8 +564,8 @@ describe('les gestes de la praticienne sur son rendez-vous', () => {
     });
     render(gestes({ renderedAt: APRES, status: 'confirmed' }));
 
-    await userEvent.click(screen.getByRole('button', { name: 'Marquer honoré' }));
-    await userEvent.click(screen.getByRole('button', { name: 'Marquer honoré' }));
+    await userEvent.click(screen.getByRole('button', { name: nom.honore }));
+    await userEvent.click(screen.getByRole('button', { name: nom.honore }));
 
     // La phrase vient du **code** et non du `message` de l'action (#1354) : ce
     // dernier vaut déjà `errorMessage(code, locale)` depuis #1234, et le garder
@@ -573,13 +593,88 @@ describe('les gestes de la praticienne sur son rendez-vous', () => {
     });
     render(gestes({ renderedAt: APRES, status: 'confirmed' }));
 
-    await userEvent.click(screen.getByRole('button', { name: 'Marquer honoré' }));
-    await userEvent.click(screen.getByRole('button', { name: 'Marquer honoré' }));
+    await userEvent.click(screen.getByRole('button', { name: nom.honore }));
+    await userEvent.click(screen.getByRole('button', { name: nom.honore }));
 
     expect(await screen.findByRole('alert')).toHaveProperty(
       'textContent',
       'Ce rendez-vous n’a pas commencé : attendez l’heure du rendez-vous pour dire s’il a été honoré.',
     );
     expect(refresh).not.toHaveBeenCalled();
+  });
+
+  /**
+   * Deux rendez-vous dépliés en même temps — #1406.
+   *
+   * Rien ne referme une ligne quand on ouvre la suivante : la liste des boutons
+   * d'un lecteur d'écran portait deux « Marquer honoré » et deux « Confirmer le
+   * rendez-vous » que rien ne distinguait. Chaque nom nomme désormais sa cliente
+   * et son heure, et le libellé **visible** reste court — la ligne au-dessus le
+   * dit déjà.
+   */
+  it('donne à chaque geste un nom accessible distinct quand deux lignes sont dépliées', () => {
+    figerLHorloge(APRES);
+    render(
+      <>
+        {gestes({ renderedAt: APRES, status: 'confirmed' })}
+        {gestes({
+          clientName: 'Soa Rakoto',
+          renderedAt: APRES,
+          status: 'confirmed',
+          timeLabel: '17:30',
+        })}
+      </>,
+    );
+
+    const honores = screen.getAllByRole('button', { name: /^Marquer honoré/ });
+    expect(honores.map((bouton) => bouton.getAttribute('aria-label'))).toEqual([
+      nom.honore,
+      'Marquer honoré — rendez-vous de Soa Rakoto à 17:30',
+    ]);
+    // WCAG 2.5.3 : le nom **contient** le libellé visible tel quel, sans
+    // l'intercaler — c'est ce qui laisse une commande vocale « Marquer honoré »
+    // atteindre le bouton. Et le libellé visible, lui, n'a pas changé : il reste
+    // le même sur les deux lignes.
+    expect(honores.map((bouton) => bouton.textContent)).toEqual([
+      'Marquer honoré',
+      'Marquer honoré',
+    ]);
+    expect(honores[0]?.getAttribute('aria-label')).toContain(honores[0]?.textContent);
+  });
+
+  /**
+   * La phrase d'attente survit au nom accessible — #1406.
+   *
+   * Le design system annonce « Enregistrement… » par un `spa-visually-hidden`
+   * placé **dans** le bouton (`Button`, #845), et un `aria-label` évince le
+   * contenu du bouton du calcul du nom accessible : nommer le rendez-vous a
+   * failli rendre `loadingLabel` muet sur ces boutons-là. Le nom reprend donc la
+   * phrase tant que le geste est en vol, et ce cas-ci est ce qui l'empêche de
+   * redisparaître.
+   */
+  it('annonce encore l’enregistrement pendant que le constat part', async () => {
+    figerLHorloge(APRES);
+    let repondre = (): void => {};
+    markStatus.mockReturnValue(
+      new Promise((resolve) => {
+        repondre = () => resolve({ ok: true, data: {} });
+      }),
+    );
+    render(gestes({ renderedAt: APRES, status: 'confirmed' }));
+
+    await userEvent.click(screen.getByRole('button', { name: nom.honore }));
+    await userEvent.click(screen.getByRole('button', { name: nom.honore }));
+
+    const enVol = await screen.findByRole('button', {
+      name: `${nom.honore} Enregistrement…`,
+    });
+    // Le libellé visible, lui, n'a pas bougé : WCAG 2.5.3 tient pendant l'attente
+    // comme avant elle.
+    expect(enVol.getAttribute('aria-label')).toContain('Marquer honoré');
+
+    repondre();
+    await waitFor(() => {
+      expect(refresh).toHaveBeenCalledTimes(1);
+    });
   });
 });
