@@ -100,6 +100,15 @@ import { adminClientsPath } from './paths';
  *    sans jamais dire qu'elle existe ailleurs (tenant-isolation §4) — un message
  *    différent selon le cas ferait de `?fiche=…` une sonde du fichier voisin.
  *
+ * ## Les trois lectures n'ont pas le même seuil — #1416
+ *
+ * L'annuaire et la fiche s'ouvrent dès `customers:read:own`, l'historique
+ * **agrégé** exige `customers:read:all`. Une praticienne obtient donc les deux
+ * premières et se voit refuser la troisième, et ce refus-là est **partiel** : il
+ * ne ferme pas l'écran, il vide un bloc. C'est `restrictedHistory` qui le
+ * distingue, au plus près de l'appel ; tous les autres refus continuent de
+ * passer par `adminLoadFailure`.
+ *
  * ## La langue de l'écran, et celle de la cliente — #852
  *
  * Deux langues se croisent ici, et les confondre serait une faute de fond :
@@ -218,16 +227,27 @@ export default async function ClientsPage({ params, searchParams }: ClientsPageP
    */
   const display: DisplayLocale = { locale, countryCode: tenant.address?.country ?? null };
 
-  let record: { readonly customer: Customer; readonly history: CustomerVisitHistory } | null = null;
+  let record: {
+    readonly customer: Customer;
+    /** `null` quand le rang n'ouvre pas l'agrégat — voir `restrictedHistory` (#1416). */
+    readonly history: CustomerVisitHistory | null;
+  } | null = null;
   let missing = false;
 
   if (customerId !== null) {
     try {
       // Deux lectures indépendantes : les enchaîner ajouterait un aller-retour à
       // chaque ouverture de fiche, sur l'écran qu'on ouvre le plus souvent.
+      //
+      // Elles ne sont pas non plus indépendantes **en refus**, et c'est tout
+      // l'objet de #1416 : seule la seconde est au seuil `customers:read:all`,
+      // quand la première s'ouvre dès `customers:read:own`. Le 403 de
+      // l'historique est donc rattrapé ici, au plus près de l'appel qui le
+      // produit, plutôt qu'au `catch` commun — qui ne peut pas savoir laquelle
+      // des deux lectures a été refusée.
       const [customer, history] = await Promise.all([
         fetchCustomer(accessToken, customerId),
-        fetchCustomerHistory(accessToken, customerId),
+        fetchCustomerHistory(accessToken, customerId).catch(restrictedHistory),
       ]);
       record = { customer, history };
     } catch (error) {
@@ -332,6 +352,48 @@ export default async function ClientsPage({ params, searchParams }: ClientsPageP
 /** « Prénom Nom », écrit une fois. */
 function fullName(customer: CustomerSummary): string {
   return `${customer.firstName} ${customer.lastName}`;
+}
+
+/**
+ * Le rattrapage du **seul** refus partiel de cet écran — `GET
+ * /customers/:id/history` en 403 (#1416).
+ *
+ * ## Ce qui était cassé
+ *
+ * Les trois lectures de la fiche n'ont pas le même seuil : l'annuaire et la
+ * fiche s'ouvrent dès `customers:read:own`, l'historique **agrégé** exige
+ * `customers:read:all` (`identity/permissions.ts`). Une praticienne — rang
+ * `STAFF` — recevait donc 200, 200 puis 403, et ce 403 passait par la cascade
+ * commune : `adminLoadFailure` remplaçait l'écran entier par « Accès refusé »,
+ * alors que les deux tiers de la fiche venaient d'arriver. L'annuaire, lui,
+ * s'affichait normalement — ce qui rendait le refus d'autant plus incompréhensible.
+ *
+ * ## Pourquoi un `null` et non une permission élargie
+ *
+ * Parce que le défaut est une **erreur de gestion d'erreur du front**, et qu'un
+ * refus partiel se traite là où il est partiel. Ouvrir `customers:read:own` sur
+ * la route d'historique aurait donné à chaque praticienne les compteurs et les
+ * dépenses de toutes les clientes du salon pour corriger un écran : c'est une
+ * décision de permissions, et elle n'a pas sa place dans un correctif d'affichage.
+ * Un historique borné aux rendez-vous de la praticienne, lui, est une
+ * fonctionnalité à spécifier — pas la correction de ce bug.
+ *
+ * ## Ce que ce rattrapage ne masque pas
+ *
+ * Il ne couvre **que** la lecture de l'historique : un 403 sur
+ * `GET /customers/:id` reste un vrai refus d'accès à la fiche et continue de
+ * rendre l'écran de refus, parce que c'est bien toute la fiche qui est alors
+ * fermée. Et les autres statuts de cette lecture-ci sont relancés tels quels —
+ * un 404 y désigne la fiche introuvable, un 500 une panne : les confondre avec
+ * un refus de rôle ferait lire « réservé aux gestionnaires » sur une panne de
+ * l'API.
+ */
+function restrictedHistory(error: unknown): null {
+  if (error instanceof ApiClientError && error.status === 403) {
+    return null;
+  }
+
+  throw error;
 }
 
 /**
@@ -522,7 +584,16 @@ function DirectoryPager({
   );
 }
 
-/** La fiche : coordonnées, compteurs, note interne, historique — critères 2 à 4. */
+/**
+ * La fiche : coordonnées, compteurs, note interne, historique — critères 2 à 4.
+ *
+ * `history` est **nullable** depuis #1416 : il vaut `null` quand le rang ouvre la
+ * fiche sans ouvrir l'agrégat. Tout ce qui en dérive — l'avis d'absences, les
+ * compteurs, la légende du récapitulatif, la liste des visites — cède alors la
+ * place à un état explicite, et rien d'autre ne change. Les coordonnées, les
+ * badges, l'avis de suppression et la note interne ne viennent pas de cette
+ * lecture-là : ils restent affichés, parce qu'ils ont été obtenus.
+ */
 function ClientRecord({
   customer,
   display,
@@ -534,13 +605,12 @@ function ClientRecord({
 }: {
   readonly customer: Customer;
   readonly display: DisplayLocale;
-  readonly history: CustomerVisitHistory;
+  readonly history: CustomerVisitHistory | null;
   readonly languages: LanguagesTranslator;
   readonly t: ClientsTranslator;
   readonly tenantSlug: string;
   readonly timeZone: TimeZone;
 }) {
-  const { summary } = history;
   const suppression = emailSuppressionNotice(customer);
 
   return (
@@ -614,6 +684,68 @@ function ClientRecord({
         </Notification>
       )}
 
+      {history === null ? null : (
+        <VisitCounters display={display} summary={history.summary} t={t} timeZone={timeZone} />
+      )}
+
+      <ClientNoteForm
+        key={customer.id}
+        customerId={customer.id}
+        internalNote={customer.internalNote}
+        tenantSlug={tenantSlug}
+      />
+
+      <div>
+        <h3 className="spa-admin__section-title">{t('record.history.title')}</h3>
+        {history === null ? (
+          /*
+            Le refus partiel de #1416, dit à l'endroit où l'historique aurait
+            été — et non en haut de page, où il se serait lu comme un refus de la
+            fiche entière.
+
+            Un état vide et non un `Notification` : rien n'est arrivé d'anormal, et
+            l'encart d'avis rend `role="alert"`, ce qui aurait interrompu la
+            lecture d'un lecteur d'écran à **chaque** fiche ouverte par une
+            praticienne. Les classes sont celles de l'historique vide, déjà
+            maquettées : il n'y a pas deux façons de ne rien avoir à montrer dans
+            ce bloc.
+          */
+          <div className="spa-empty-state">
+            <p className="spa-empty-state__title">{t('record.history.restrictedTitle')}</p>
+            <p className="spa-empty-state__description">
+              {t('record.history.restrictedDescription')}
+            </p>
+          </div>
+        ) : (
+          <VisitHistory display={display} history={history} t={t} timeZone={timeZone} />
+        )}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Les compteurs de l'agrégat, l'avis d'absences et la légende qui les explique —
+ * les trois blocs que `GET /customers/:id/history` alimente **seul**.
+ *
+ * Extraits de la fiche en #1416 pour qu'ils disparaissent d'un même geste quand
+ * le rang n'ouvre pas l'agrégat : trois gardes séparées dans `ClientRecord`
+ * auraient fini par diverger, et il suffisait d'en oublier une pour relire
+ * `summary` de `null`.
+ */
+function VisitCounters({
+  display,
+  summary,
+  t,
+  timeZone,
+}: {
+  readonly display: DisplayLocale;
+  readonly summary: CustomerVisitHistory['summary'];
+  readonly t: ClientsTranslator;
+  readonly timeZone: TimeZone;
+}) {
+  return (
+    <>
       {summary.noShowVisits > 0 ? (
         <Notification
           tone="warning"
@@ -692,19 +824,7 @@ function ClientRecord({
             })}{' '}
         {t('record.summary.caption')}
       </p>
-
-      <ClientNoteForm
-        key={customer.id}
-        customerId={customer.id}
-        internalNote={customer.internalNote}
-        tenantSlug={tenantSlug}
-      />
-
-      <div>
-        <h3 className="spa-admin__section-title">{t('record.history.title')}</h3>
-        <VisitHistory display={display} history={history} t={t} timeZone={timeZone} />
-      </div>
-    </div>
+    </>
   );
 }
 

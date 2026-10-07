@@ -87,6 +87,8 @@
       "title": "Historique des visites",
       "emptyTitle": "Aucune visite pour l’instant",
       "emptyDescription": "L’historique se remplit dès le premier rendez-vous posé — honoré, annulé ou non honoré.",
+      "restrictedTitle": "Historique indisponible pour votre rôle",
+      "restrictedDescription": "L’historique agrégé et ses compteurs portent sur tous les praticiens : ils sont réservés aux comptes de gestion du salon. Tout ce qui précède — coordonnées, langue, note interne — est complet ; demandez le récapitulatif des visites à un gestionnaire.",
       "staffRemoved": "praticien retiré du salon",
       "withStaff": "avec {name}",
       "clientNote": "Remarque du client, écrite à la réservation",
