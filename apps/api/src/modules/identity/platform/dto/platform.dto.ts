@@ -240,9 +240,42 @@ export class PlatformSessionDto implements PlatformSession {
  * qu'`address_line1`, `city` et `country_code` soient les trois nuls ou les
  * trois renseignés — une adresse sans ville n'oriente personne, et le
  * `PostalAddress` du JSON-LD qu'elle produirait serait incomplet (#343).
- * Demander le pays seul aurait fait échouer l'insertion en base. Les deux
- * compléments — `addressLine2`, `postalCode` — restent facultatifs, le second
- * n'existant pas dans tous les pays.
+ * Demander le pays seul aurait fait échouer l'insertion en base. Les trois
+ * compléments — `addressLine2`, `postalCode`, `region` — restent facultatifs :
+ * le deuxième n'existe pas dans tous les pays, et le troisième ne s'écrit dans
+ * l'adresse que de deux des onze pays ouverts par le produit.
+ *
+ * ## Facultatif veut dire **absent**, jamais vide
+ *
+ * Ces trois compléments portent `@MinLength(1)` **en plus** d'`@IsOptional()`,
+ * et c'est la borne qui fait la règle : `@IsOptional()` de `class-validator` ne
+ * refuse que `null` et `undefined` — `''` traverse —, et `@Trim()` ne fait que
+ * normaliser une chaîne qui reste vide.
+ *
+ * Ce que coûtait l'inverse : une chaîne vide enregistrée en colonne ressortait
+ * telle quelle de `toPostalAddress` (`../../public-tenant.service.ts`), et
+ * `postalAddressSchema` exige au moins un caractère. La vitrine du salon
+ * devenait alors inaccessible, en `INTERNAL_ERROR`, pour une adresse que
+ * l'opératrice croyait avoir saisie correctement — un salon ouvert avec un code
+ * postal vide est un salon dont la page ne s'ouvre pas. #1335 a posé la borne
+ * sur `region`, le champ qu'il ajoutait ; #1340 l'a posée sur les deux voisins,
+ * où le défaut était préexistant.
+ *
+ * Cette borne ferme la porte, elle ne répare pas les lignes déjà écrites.
+ * Aucune ne l'était — la vérification de #1340 n'a trouvé, sur l'ensemble des
+ * `tenants` de la base de développement, aucune colonne `address_line2`,
+ * `postal_code` ou `region` à `''` ni faite d'espaces, ce qui a rendu la
+ * migration de données inutile. Mais une reprise de données ou un import
+ * pourraient en poser une, et aucune contrainte de base ne l'interdit :
+ * `toPostalAddress` les écarte donc à la lecture aussi, pour que la page
+ * publique d'un salon ne dépende pas de l'ancienneté de sa ligne.
+ *
+ * La règle vaut pour tout champ facultatif de ce fichier, et non pour les seuls
+ * compléments d'adresse. Les autres la tiennent déjà par une contrainte plus
+ * étroite qu'une longueur minimale — `@IsIn` sur une liste fermée
+ * (`defaultLocale`, `billingStatus`, `state`), des bornes d'entier
+ * (`page`, `pageSize`) — qui refusent `''` d'elles-mêmes. Le terme de recherche
+ * `q` est la seule exception, délibérée et bornée : voir `ListTenantsQueryDto`.
  *
  * ## Ce que la charge utile ne porte pas
  *
@@ -342,17 +375,23 @@ export class CreateTenantDto {
   @MaxLength(ADDRESS_LINE_MAX_LENGTH)
   public addressLine1!: string;
 
-  @ApiPropertyOptional({ maxLength: ADDRESS_LINE_MAX_LENGTH })
+  @ApiPropertyOptional({ minLength: 1, maxLength: ADDRESS_LINE_MAX_LENGTH })
   @IsOptional()
   @Trim()
   @IsString()
+  // Facultatif veut dire **absent**, jamais vide — voir l'en-tête de la classe
+  // (#1340). Un complément d'adresse vide ne complète rien.
+  @MinLength(1, { message: 'addressLine2 : au moins un caractère' })
   @MaxLength(ADDRESS_LINE_MAX_LENGTH)
   public addressLine2?: string;
 
-  @ApiPropertyOptional({ example: '75011', maxLength: POSTAL_CODE_MAX_LENGTH })
+  @ApiPropertyOptional({ example: '75011', minLength: 1, maxLength: POSTAL_CODE_MAX_LENGTH })
   @IsOptional()
   @Trim()
   @IsString()
+  // Même borne, et c'est ici qu'elle coûtait le plus cher : le code postal est
+  // le morceau que `postalAddressSchema` relit sur la vitrine (#1340).
+  @MinLength(1, { message: 'postalCode : au moins un caractère' })
   @MaxLength(POSTAL_CODE_MAX_LENGTH)
   public postalCode?: string;
 
@@ -365,6 +404,7 @@ export class CreateTenantDto {
 
   @ApiPropertyOptional({
     example: 'NY',
+    minLength: 1,
     maxLength: REGION_MAX_LENGTH,
     description:
       'État ou province (#1335). Facultatif comme le code postal : deux des ' +
@@ -374,11 +414,13 @@ export class CreateTenantDto {
   @IsOptional()
   @Trim()
   @IsString()
-  // `MinLength(1)`, comme `UpdateTenantAddressDto.region` : facultatif veut dire
-  // **absent**, jamais vide. Une chaîne vide enregistrée en colonne ressortirait
-  // telle quelle de `toPostalAddress`, et `postalAddressSchema` — qui exige au
-  // moins un caractère — ferait alors échouer la lecture de la vitrine côté
-  // front, c'est-à-dire rendrait la page du salon inaccessible.
+  // La même borne que ses deux voisins, et pour la même raison — voir l'en-tête
+  // de la classe. `UpdateTenantAddressDto` la porte aussi, sur ses trois
+  // compléments (#1335) : les deux frontières en `class-validator` refusent la
+  // même chose. La troisième porte — l'inscription en libre-service, qui valide
+  // contre `salonSignupRequestSchema` — ne refuse pas `''`, elle le **ramène à
+  // l'absence** (`optionalText`). Une forme différente, le même résultat en
+  // colonne : aucune des trois ne peut y écrire une chaîne vide.
   @MinLength(1, { message: 'region : au moins un caractère' })
   @MaxLength(REGION_MAX_LENGTH)
   public region?: string;
@@ -580,11 +622,18 @@ export class ListTenantsQueryDto {
     maxLength: PLATFORM_TENANT_SEARCH_MAX_LENGTH,
     description:
       'Cherche dans le nom, l’adresse, l’e-mail de contact et l’e-mail des gérants ' +
-      'et administrateurs. Insensible à la casse.',
+      'et administrateurs. Insensible à la casse. Un terme vide ne filtre pas.',
   })
   @IsOptional()
   @Trim()
   @IsString()
+  // **Pas** de `MinLength(1)` ici, et c'est la seule exception du fichier à la
+  // règle « facultatif = absent » (#1340). Deux raisons, qui tiennent ensemble :
+  // ce terme ne s'écrit dans aucune colonne — il ne peut donc pas laisser de
+  // chaîne vide derrière lui —, et `toTenantPageQuery` ci-dessous le ramène déjà
+  // à l'absence de filtre. Le refuser en 400 ferait échouer la liste chaque fois
+  // qu'on vide le champ de recherche de la console, ce qui est la façon normale
+  // de revenir à la liste entière.
   @MaxLength(PLATFORM_TENANT_SEARCH_MAX_LENGTH)
   public q?: string;
 
