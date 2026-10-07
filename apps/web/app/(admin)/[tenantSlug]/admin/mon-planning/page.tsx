@@ -39,6 +39,7 @@ import {
   upcomingOnly,
   workingDay,
   type MyPlanningView,
+  type WorkingLine,
 } from '@/lib/admin/my-planning';
 import { appointmentStatusLabels } from '@/lib/appointment-status';
 import {
@@ -358,6 +359,41 @@ export default async function MyPlanningPage({ params, searchParams }: MyPlannin
   );
 }
 
+/** Un paragraphe du rail : des plages de travail qui se suivent, ou une absence. */
+type RailBlock =
+  | { readonly timeOff: false; readonly hours: readonly string[] }
+  | { readonly timeOff: true; readonly text: string };
+
+/**
+ * Les lignes d'une journée regroupées en paragraphes.
+ *
+ * Deux plages qui se suivent tiennent dans **un même** paragraphe : c'est ce qui
+ * les empile à 0,125 rem l'une de l'autre dès 48 rem (`.spa-my-day__hours` passe
+ * en colonne), là où deux paragraphes seraient écartés de l'interligne du rail.
+ * Une absence, elle, fait toujours son propre paragraphe — sa couleur
+ * d'avertissement et son libellé ne se mélangent pas à des heures travaillées.
+ *
+ * `withHours` est faux dans la vue « À venir », qui ne garde que les absences.
+ */
+function railBlocks(lines: readonly WorkingLine[], withHours: boolean): readonly RailBlock[] {
+  const blocks: ({ timeOff: false; hours: string[] } | { timeOff: true; text: string })[] = [];
+
+  for (const line of lines) {
+    const last = blocks.at(-1);
+    if (line.timeOff) {
+      blocks.push({ timeOff: true, text: line.text });
+    } else if (!withHours) {
+      continue;
+    } else if (last !== undefined && !last.timeOff) {
+      last.hours.push(line.text);
+    } else {
+      blocks.push({ timeOff: false, hours: [line.text] });
+    }
+  }
+
+  return blocks;
+}
+
 /** Une journée : ses horaires, ses absences, puis ses rendez-vous. */
 function MyDay({
   appointments,
@@ -412,30 +448,45 @@ function MyDay({
           </span>
         </h2>
         {day === today ? <span className="spa-my-day__today">{t('day.today')}</span> : null}
-        {showSchedule ? (
-          <p className="spa-my-day__hours">
-            {/* Une plage par élément, et non une chaîne jointe par un point
-                médian : dans une colonne de neuf rem, « 09:00 – 13:00 · 14:00 –
-                19:00 » se coupait entre le tiret et l'heure de fin. Ce sont les
-                plages qui se rangent l'une sous l'autre, pas les heures. */}
-            {work.closed
-              ? t('day.closed')
-              : work.hours.length === 0
-                ? t('day.noShift')
-                : work.hours.map((range, rank) => (
-                    <span key={`${day}-${String(rank)}`}>{range}</span>
-                  ))}
-          </p>
-        ) : null}
-        {/* La clé est le rang et non le texte : deux absences du même praticien
+        {/* La journée se lit dans l'ordre que `workingDay` lui donne : ses plages
+            encore travaillées, et l'absence qui coupe l'une d'elles juste après
+            elle. Un jour fermé ne rend que son mot, et une absence qui a emporté
+            toutes les plages prend leur place (#1408).
+
+            Une plage par élément, et non une chaîne jointe par un point médian :
+            dans une colonne de neuf rem, « 09:00 – 13:00 · 14:00 – 19:00 » se
+            coupait entre le tiret et l'heure de fin. Ce sont les plages qui se
+            rangent l'une sous l'autre, pas les heures.
+
+            La clé est le rang et non le texte : deux absences du même praticien
             peuvent tomber sur le même créneau avec le même motif — l'API les
             accepte — et React signalait alors deux enfants de même clé, en
-            promettant d'en omettre un (relevé en recette de #1104). */}
-        {work.absences.map((absence, rank) => (
-          <p className="spa-my-day__absence" key={`${day}-${String(rank)}`}>
-            {t('day.absence', { span: absence })}
-          </p>
-        ))}
+            promettant d'en omettre un (relevé en recette de #1104).
+
+            La vue « À venir » couvre trente et un jours : y répéter les horaires
+            d'un mois n'apprendrait rien, mais une absence reste ce qui change
+            une journée, et elle s'y affiche seule. */}
+        {showSchedule && work.closed ? (
+          <p className="spa-my-day__hours">{t('day.closed')}</p>
+        ) : showSchedule && work.lines.length === 0 ? (
+          <p className="spa-my-day__hours">{t('day.noShift')}</p>
+        ) : (
+          railBlocks(work.lines, showSchedule).map((block, rank) =>
+            block.timeOff ? (
+              <p className="spa-my-day__absence" key={`${day}-${String(rank)}`}>
+                {work.away
+                  ? t('day.away', { span: block.text })
+                  : t('day.absence', { span: block.text })}
+              </p>
+            ) : (
+              <p className="spa-my-day__hours" key={`${day}-${String(rank)}`}>
+                {block.hours.map((range, index) => (
+                  <span key={`${day}-${String(rank)}-${String(index)}`}>{range}</span>
+                ))}
+              </p>
+            ),
+          )
+        )}
       </div>
 
       {appointments.length === 0 ? (

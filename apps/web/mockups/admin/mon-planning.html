@@ -73,7 +73,7 @@
 
             <!--
               UNE SEULE SURFACE. Trois journées s'y suivent, séparées par un
-              filet : celle du jour, une journée sans rendez-vous, une journée
+              filet : celle du jour, une journée d'absence complète, une journée
               de fermeture. Aucune ne porte de cadre à elle.
             -->
             <div class="spa-my-agenda">
@@ -172,11 +172,21 @@
                     <span class="spa-my-day__number" aria-hidden="true">19</span>
                     <span class="spa-my-day__month" aria-hidden="true">sept.</span>
                   </h2>
-                  <p class="spa-my-day__hours"><span>09:00 – 12:00</span></p>
+                  <!--
+                    JOURNÉE D'ABSENCE. L'absence couvre les deux plages : elle
+                    prend leur place au lieu de s'ajouter sous des horaires que
+                    la praticienne n'honorera pas (#1408). Même paragraphe
+                    d'avertissement qu'une absence partielle, autre phrase.
+                  -->
+                  <p class="spa-my-day__absence">Absente — Formation</p>
                 </div>
                 <p class="spa-my-day__empty">Aucun rendez-vous.</p>
               </section>
 
+              <!--
+                JOUR DE FERMETURE. « Salon fermé » dit tout : l'absence posée
+                dessus ne s'affiche pas, elle n'apprendrait rien de plus (#1408).
+              -->
               <section class="spa-my-day" aria-labelledby="jour-2026-09-20">
                 <div class="spa-my-day__rail">
                   <h2 class="spa-my-day__date" id="jour-2026-09-20">

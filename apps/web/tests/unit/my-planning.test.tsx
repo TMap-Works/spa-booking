@@ -1,4 +1,10 @@
-import { errorMessage, type MyStaffAppointment, type MyStaffSchedule } from '@spa/shared';
+import {
+  errorMessage,
+  type CalendarDate,
+  type MyStaffAppointment,
+  type MyStaffSchedule,
+  type StaffTimeOff,
+} from '@spa/shared';
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -81,20 +87,39 @@ const SCHEDULE: MyStaffSchedule = {
     {
       id: 'dddddddd-0000-4000-8000-000000000004',
       staffId: 'cccccccc-0000-4000-8000-000000000003',
+      // 14:00 UTC = 16:00 à Paris : au milieu de la plage de l'après-midi.
       startsAt: '2026-09-18T14:00:00.000Z',
       endsAt: '2026-09-18T15:00:00.000Z',
       reason: 'Formation',
     },
-    {
-      id: 'eeeeeeee-0000-4000-8000-000000000005',
-      staffId: 'cccccccc-0000-4000-8000-000000000003',
-      startsAt: '2026-09-15T10:00:00.000Z',
-      endsAt: '2026-09-25T10:00:00.000Z',
-      reason: null,
-    },
   ],
   closedWeekdays: [7],
 };
+
+/** Une absence posée sur la praticienne — bornes en instants, comme l'API. */
+function timeOff(startsAt: string, endsAt: string, reason: string | null = null): StaffTimeOff {
+  return {
+    id: 'eeeeeeee-0000-4000-8000-000000000005',
+    staffId: SCHEDULE.staffId,
+    startsAt,
+    endsAt,
+    reason,
+  };
+}
+
+/** Le même planning, avec les absences que le cas veut éprouver. */
+function scheduleWith(...absences: readonly StaffTimeOff[]): MyStaffSchedule {
+  return { ...SCHEDULE, timeOff: [...absences] };
+}
+
+/** La journée du salon, telle que l'écran la compose. */
+function dayOf(schedule: MyStaffSchedule, day: CalendarDate) {
+  const bounds = dayBoundsInTimeZone(day, TZ);
+
+  // La langue est dite à l'appel — « Toute la journée » est un libellé, pas une
+  // donnée, et le repli vaut l'anglais depuis #1297.
+  return workingDay(schedule, day, bounds.start, bounds.end, { locale: 'fr' });
+}
 
 describe('les vues et leurs fenêtres', () => {
   it('ouvre sur la journée, et ignore une vue inconnue', () => {
@@ -245,22 +270,102 @@ describe('le retour au jour courant', () => {
 });
 
 describe('la journée de travail', () => {
-  it('dit ses plages dans l’ordre, et ses absences bornées à la journée', () => {
-    const bounds = dayBoundsInTimeZone('2026-09-18', TZ);
-    // La langue est dite à l'appel — « Toute la journée » est un libellé, pas une
-    // donnée, et le repli vaut l'anglais depuis #1297.
-    const day = workingDay(SCHEDULE, '2026-09-18', bounds.start, bounds.end, { locale: 'fr' });
+  it('dit ses plages dans l’ordre, et l’absence après la seule plage qu’elle coupe', () => {
+    // Une absence partielle ne retire pas la plage : la praticienne travaille
+    // l'après-midi, moins une heure. Elle se lit **après** la plage qu'elle
+    // ampute, et non sous la journée entière (#1408).
+    const day = dayOf(SCHEDULE, '2026-09-18');
 
     expect(day.closed).toBe(false);
-    expect(day.hours).toEqual(['09:00 – 12:00', '14:00 – 19:00']);
-    expect(day.absences).toEqual(['16:00 – 17:00 · Formation', 'Toute la journée']);
+    expect(day.away).toBe(false);
+    expect(day.lines).toEqual([
+      { text: '09:00 – 12:00', timeOff: false },
+      { text: '14:00 – 19:00', timeOff: false },
+      { text: '16:00 – 17:00 · Formation', timeOff: true },
+    ]);
   });
 
-  it('dit le salon fermé un dimanche', () => {
-    const bounds = dayBoundsInTimeZone('2026-09-20', TZ);
+  it('remplace les horaires par l’absence quand celle-ci couvre la journée', () => {
+    // Le défaut de #1408 : le vendredi annonçait « 09:00 – 12:00 / 14:00 – 19:00 »
+    // puis « Absence : Toute la journée · Formation » en dessous — on lisait
+    // d'abord qu'elle travaillait. L'absence déborde de part et d'autre de la
+    // journée du salon : bornée à celle-ci, elle la couvre entière, et ne dit
+    // plus que son motif.
+    const day = dayOf(
+      scheduleWith(timeOff('2026-09-17T10:00:00.000Z', '2026-09-19T10:00:00.000Z', 'Formation')),
+      '2026-09-18',
+    );
 
-    expect(workingDay(SCHEDULE, '2026-09-20', bounds.start, bounds.end).closed).toBe(true);
+    expect(day.closed).toBe(false);
+    expect(day.away).toBe(true);
+    expect(day.lines).toEqual([{ text: 'Formation', timeOff: true }]);
   });
+
+  it('ne laisse que la fermeture un dimanche, sans l’absence posée dessus', () => {
+    // « Salon fermé » et « Absence : Toute la journée » se disaient ensemble : la
+    // seconde n'apprenait rien, le salon n'ouvrant pour personne (#1408).
+    const day = dayOf(
+      scheduleWith(timeOff('2026-09-19T22:00:00.000Z', '2026-09-20T22:00:00.000Z', 'Formation')),
+      '2026-09-20',
+    );
+
+    expect(day.closed).toBe(true);
+    expect(day.away).toBe(false);
+    expect(day.lines).toEqual([]);
+  });
+
+  it('emporte une plage que deux absences bout à bout couvrent à elles deux', () => {
+    // Ni l'une ni l'autre ne couvre la matinée seule — fondues, elles l'emportent.
+    const day = dayOf(
+      scheduleWith(
+        timeOff('2026-09-18T07:00:00.000Z', '2026-09-18T08:00:00.000Z', 'Formation'),
+        timeOff('2026-09-18T08:00:00.000Z', '2026-09-18T10:00:00.000Z', 'Réunion'),
+      ),
+      '2026-09-18',
+    );
+
+    expect(day.away).toBe(false);
+    expect(day.lines).toEqual([
+      { text: '09:00 – 10:00 · Formation', timeOff: true },
+      { text: '10:00 – 12:00 · Réunion', timeOff: true },
+      { text: '14:00 – 19:00', timeOff: false },
+    ]);
+  });
+
+  /**
+   * Les deux journées de changement d'heure de 2026 à Paris — le dernier dimanche
+   * de mars et celui d'octobre. Elles durent 23 et 25 heures : compter l'absence
+   * en minutes **écoulées** depuis minuit la décalait d'une heure entière, la
+   * plage qu'elle couvre exactement n'était plus vue comme couverte, et l'écran
+   * réaffichait côte à côte les horaires et l'absence (#1408).
+   */
+  it.each(['2026-03-29', '2026-10-25'] as const)(
+    'emporte la plage que l’absence couvre, même un %s de changement d’heure',
+    (sunday) => {
+      // Dimanche ouvert, deux plages, et une absence de 14 h à 19 h à l'horloge
+      // du salon — l'heure murale de part et d'autre du basculement de la nuit.
+      const open: MyStaffSchedule = {
+        ...SCHEDULE,
+        entries: [
+          { weekday: 7, startsAt: '09:00', endsAt: '12:00' },
+          { weekday: 7, startsAt: '14:00', endsAt: '19:00' },
+        ],
+        closedWeekdays: [],
+        timeOff: [
+          timeOff(
+            `${sunday}T${sunday === '2026-03-29' ? '12' : '13'}:00:00.000Z`,
+            `${sunday}T${sunday === '2026-03-29' ? '17' : '18'}:00:00.000Z`,
+            'Formation',
+          ),
+        ],
+      };
+
+      expect(dayOf(open, sunday).lines).toEqual([
+        { text: '09:00 – 12:00', timeOff: false },
+        { text: '14:00 – 19:00 · Formation', timeOff: true },
+      ]);
+    },
+  );
 
   it('borne la journée de minuit à minuit dans le fuseau du salon', () => {
     const bounds = dayBoundsInTimeZone('2026-09-18', TZ);

@@ -40,6 +40,7 @@
     "closed": "Salon closed",
     "noShift": "No working hours",
     "absence": "Time off: {span}",
+    "away": "Away — {span}",
     "empty": "No appointments."
   },
   "appointment": {

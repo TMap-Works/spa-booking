@@ -55,6 +55,7 @@ import {
   myPlanningViewLabels,
   workingDay,
   UPCOMING_DAYS,
+  type WorkingDay,
 } from '@/lib/admin/my-planning';
 
 /** Le traducteur du namespace de l'écran, dans la langue demandée. */
@@ -83,6 +84,8 @@ const SCHEDULE: MyStaffSchedule = {
   timeOff: [
     {
       id: 'dddddddd-0000-4000-8000-000000000004',
+      // 14:00 UTC = 16:00 à Paris : une heure prise dans la plage de l'après-midi,
+      // qui reste donc travaillée (#1408).
       staffId: 'cccccccc-0000-4000-8000-000000000003',
       startsAt: '2026-09-18T14:00:00.000Z',
       endsAt: '2026-09-18T15:00:00.000Z',
@@ -91,7 +94,9 @@ const SCHEDULE: MyStaffSchedule = {
     {
       id: 'eeeeeeee-0000-4000-8000-000000000005',
       staffId: 'cccccccc-0000-4000-8000-000000000003',
-      startsAt: '2026-09-15T10:00:00.000Z',
+      // Du samedi 19 minuit (22:00 UTC la veille, Paris étant à UTC+2 en
+      // septembre) jusqu'au 25 : le samedi est couvert entier.
+      startsAt: '2026-09-18T22:00:00.000Z',
       endsAt: '2026-09-25T10:00:00.000Z',
       reason: null,
     },
@@ -104,6 +109,23 @@ function friday(display: { readonly locale: Locale; readonly countryCode?: strin
   const bounds = dayBoundsInTimeZone('2026-09-18', TZ);
 
   return workingDay(SCHEDULE, '2026-09-18', bounds.start, bounds.end, display);
+}
+
+/** Le samedi 19, que l'absence couvre de minuit à minuit. */
+function saturday(display: { readonly locale: Locale; readonly countryCode?: string }) {
+  const bounds = dayBoundsInTimeZone('2026-09-19', TZ);
+
+  return workingDay(SCHEDULE, '2026-09-19', bounds.start, bounds.end, display);
+}
+
+/** Les plages encore travaillées d'une journée, dans l'ordre. */
+function hoursOf(day: WorkingDay): readonly string[] {
+  return day.lines.filter((line) => !line.timeOff).map((line) => line.text);
+}
+
+/** Ses absences, dans l'ordre. */
+function absencesOf(day: WorkingDay): readonly string[] {
+  return day.lines.filter((line) => line.timeOff).map((line) => line.text);
 }
 
 afterEach(() => {
@@ -202,11 +224,11 @@ describe('les en-têtes de période et la navigation', () => {
 
 describe('la journée de travail, écrite hors de React', () => {
   it('dit « minuit » dans la langue, pour une plage qui va jusqu’à la fin du jour', () => {
-    expect(friday({ locale: 'fr', countryCode: 'FR' }).hours).toEqual([
+    expect(hoursOf(friday({ locale: 'fr', countryCode: 'FR' }))).toEqual([
       '09:00 – 12:00',
       '14:00 – minuit',
     ]);
-    expect(friday({ locale: 'en', countryCode: 'US' }).hours).toEqual([
+    expect(hoursOf(friday({ locale: 'en', countryCode: 'US' }))).toEqual([
       '9:00\u00a0AM – 12:00\u00a0PM',
       '2:00\u00a0PM – midnight',
     ]);
@@ -222,10 +244,10 @@ describe('la journée de travail, écrite hors de React', () => {
    * et seule la dernière bascule.
    */
   it('n’écrit ses plages en 12 heures que pour un salon américain lu en anglais', () => {
-    expect(friday({ locale: 'fr', countryCode: 'FR' }).hours[0]).toBe('09:00 – 12:00');
-    expect(friday({ locale: 'en', countryCode: 'FR' }).hours[0]).toBe('09:00 – 12:00');
-    expect(friday({ locale: 'fr', countryCode: 'US' }).hours[0]).toBe('09:00 – 12:00');
-    expect(friday({ locale: 'en', countryCode: 'US' }).hours[0]).toBe('9:00\u00a0AM – 12:00\u00a0PM');
+    expect(hoursOf(friday({ locale: 'fr', countryCode: 'FR' }))[0]).toBe('09:00 – 12:00');
+    expect(hoursOf(friday({ locale: 'en', countryCode: 'FR' }))[0]).toBe('09:00 – 12:00');
+    expect(hoursOf(friday({ locale: 'fr', countryCode: 'US' }))[0]).toBe('09:00 – 12:00');
+    expect(hoursOf(friday({ locale: 'en', countryCode: 'US' }))[0]).toBe('9:00\u00a0AM – 12:00\u00a0PM');
   });
 
   it('écrit ses plages et ses absences dans la même convention', () => {
@@ -234,21 +256,25 @@ describe('la journée de travail, écrite hors de React', () => {
     // même point d'écriture que les instants (`timeStyle: 'short'`).
     const jour = friday({ locale: 'en', countryCode: 'US' });
 
-    expect(jour.hours[1]).toContain('2:00\u00a0PM');
-    expect(jour.absences[0]).toContain('4:00 PM');
+    expect(hoursOf(jour)[1]).toContain('2:00\u00a0PM');
+    expect(absencesOf(jour)[0]).toContain('4:00 PM');
   });
 
   it('dit une absence qui couvre le jour entier dans la langue', () => {
-    expect(friday({ locale: 'fr', countryCode: 'FR' }).absences).toContain('Toute la journée');
-    expect(friday({ locale: 'en', countryCode: 'US' }).absences).toContain('All day');
+    // Le samedi, que l'absence couvre de minuit à minuit. Elle n'a pas de motif,
+    // et « Toute la journée » reste alors le seul mot qui apprenne quelque chose
+    // — avec un motif, c'est lui qui se lit, et l'écran dit « Absente — … » (#1408).
+    expect(absencesOf(saturday({ locale: 'fr', countryCode: 'FR' }))).toEqual(['Toute la journée']);
+    expect(absencesOf(saturday({ locale: 'en', countryCode: 'US' }))).toEqual(['All day']);
+    expect(saturday({ locale: 'fr', countryCode: 'FR' }).away).toBe(true);
   });
 
   it('borne une absence aux heures du salon, que la langue ne déplace pas', () => {
     // 14:00 UTC = 16:00 à Paris. La notation change avec la langue, l'instant non.
-    expect(friday({ locale: 'fr', countryCode: 'FR' }).absences[0]).toBe(
+    expect(absencesOf(friday({ locale: 'fr', countryCode: 'FR' }))[0]).toBe(
       '16:00 – 17:00 · Formation',
     );
-    expect(friday({ locale: 'en', countryCode: 'US' }).absences[0]).toBe(
+    expect(absencesOf(friday({ locale: 'en', countryCode: 'US' }))[0]).toBe(
       '4:00 PM – 5:00 PM · Formation',
     );
   });
@@ -258,8 +284,8 @@ describe('la journée de travail, écrite hors de React', () => {
     // encore leur langue —, mais il ne promet plus du français à qui l'oublie.
     const bounds = dayBoundsInTimeZone('2026-09-18', TZ);
 
-    expect(workingDay(SCHEDULE, '2026-09-18', bounds.start, bounds.end).absences).toEqual(
-      friday({ locale: DEFAULT_LOCALE }).absences,
+    expect(workingDay(SCHEDULE, '2026-09-18', bounds.start, bounds.end).lines).toEqual(
+      friday({ locale: DEFAULT_LOCALE }).lines,
     );
   });
 });
@@ -278,6 +304,16 @@ describe('le détail d’un rendez-vous et ses états vides', () => {
     expect(planning('fr')('day.closed')).toBe('Salon fermé');
     expect(planning('en')('day.closed')).toBe('Salon closed');
     expect(planning('en')('day.noShift')).toBe('No working hours');
+  });
+
+  it('distingue l’absence qui coupe une plage de celle qui emporte la journée', () => {
+    // Deux phrases et non une : l'une s'ajoute aux horaires, l'autre les remplace
+    // — c'est tout l'objet de #1408.
+    expect(planning('fr')('day.absence', { span: '16:00 – 17:00 · Formation' })).toBe(
+      'Absence : 16:00 – 17:00 · Formation',
+    );
+    expect(planning('fr')('day.away', { span: 'Formation' })).toBe('Absente — Formation');
+    expect(planning('en')('day.away', { span: 'Training' })).toBe('Away — Training');
   });
 
   it('traduit l’état vide de « À venir » et le compte anonyme de son horizon', () => {
