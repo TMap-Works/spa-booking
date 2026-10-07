@@ -216,6 +216,21 @@ describe('les en-têtes de période et la navigation', () => {
     expect(planning('en')('toolbar.load', { count: 3 })).toBe('3 appointments');
   });
 
+  it('dit l’interrupteur des annulés dans les deux sens et les deux langues', () => {
+    // #1410. Le libellé **dit l'état où il mène**, et c'est ce qui lui sert de
+    // nom accessible : un lien ne porte pas d'`aria-pressed`, et « Afficher »
+    // contre « Masquer » suffit à dire de quel côté on est. Le nombre est entre
+    // parenthèses et non au pluriel : ce qui se lit, c'est le verbe.
+    expect(planning('fr')('toolbar.showCancelled', { count: 4 })).toBe(
+      'Afficher les annulés (4)',
+    );
+    expect(planning('fr')('toolbar.hideCancelled', { count: 1 })).toBe(
+      'Masquer les annulés (1)',
+    );
+    expect(planning('en')('toolbar.showCancelled', { count: 4 })).toBe('Show canceled (4)');
+    expect(planning('en')('toolbar.hideCancelled', { count: 1 })).toBe('Hide canceled (1)');
+  });
+
   it('nomme le prochain rendez-vous dans les deux langues', () => {
     expect(planning('fr')('appointment.next')).toBe('Prochain');
     expect(planning('en')('appointment.next')).toBe('Next');
