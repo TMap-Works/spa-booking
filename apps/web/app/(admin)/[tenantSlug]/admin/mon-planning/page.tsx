@@ -13,7 +13,6 @@ import { getLocale, getTranslations } from 'next-intl/server';
 
 import { telUri } from '@/components/salon/salon-contact';
 import { DateBlock } from '@/components/ui/date-block';
-import { NavTabs } from '@/components/ui/nav-tabs';
 import {
   ApiClientError,
   fetchMyAgenda,
@@ -27,8 +26,6 @@ import {
   MY_PLANNING_VIEWS,
   UPCOMING_DAYS,
   appointmentsByDay,
-  bookedCount,
-  cancelledCount,
   clientLabel,
   dayBoundsInTimeZone,
   daysOf,
@@ -36,12 +33,12 @@ import {
   nextAppointment,
   parseMyPlanningView,
   parseShowCancelled,
+  periodLoad,
   planningRange,
   shiftPlanningAnchor,
   showsToday,
   upcomingOnly,
   withCancelledShown,
-  withoutCancelled,
   workingDay,
   type MyPlanningView,
   type WorkingLine,
@@ -59,7 +56,7 @@ import { isRenewalReturn, RENEWAL_PARAM } from '@/lib/session-refresh';
 
 import { adminClientsPath } from '../clients/paths';
 import { MyAppointmentActions, MyPlanningAutoRefresh } from '../components/my-planning-client';
-import { PeriodNav } from '../components/period-nav';
+import { PeriodNav, PeriodViewSwitch } from '../components/period-nav';
 import { adminLoadFailure, requireAdminAccessToken } from '../guard';
 import { loadAdminShell } from '../layout';
 import { adminCalendarPath, adminMyPlanningPath } from '../paths';
@@ -101,6 +98,27 @@ import { adminNewStaffMemberPath } from '../personnel/paths';
  * Jour (par défaut), Semaine, et « À venir » : les trente et un prochains
  * jours, rendez-vous encore attendus seulement. Vue et date sont dans
  * l'adresse, pour qu'un rafraîchissement ne ramène pas à aujourd'hui.
+ *
+ * Elles se choisissent **dans la barre d'outils, à droite de la date**, par le
+ * groupe segmenté du planning du salon (`PeriodViewSwitch`, #1412) — ce que
+ * `BM-AGENDA-01` relève chez Fresha, Boulevard, Square et Vagaro. C'était une
+ * rangée d'onglets posée au-dessus de la barre, d'une autre brique
+ * (`NavTabs`) et d'une autre allure : deux plannings du même back-office
+ * changeaient de vue de deux façons, et l'opérateur cherchait le même geste à
+ * deux endroits. « À venir » y est le troisième segment.
+ *
+ * ## Une seule règle de comptage, celle du planning du salon (#1412)
+ *
+ * La barre annonçait les soins attendus — annulés exclus en toute
+ * circonstance — quand le planning du salon annonce ce que porte sa colonne,
+ * annulés compris : « 1 rendez-vous » ici pour « Claire F. 2 RDV » là-bas, le
+ * même jour pour la même praticienne.
+ *
+ * La règle est désormais écrite une fois, dans `periodLoad` : **on compte ce
+ * qu'on montre**. Elle vaut des deux côtés sans cas particulier, et elle ferme
+ * au passage une contradiction que #1410 avait laissée — sur `?annules=1`, la
+ * liste alignait trois lignes sous une barre qui en annonçait deux. Ce qui
+ * reste à faire côté planning du salon est noté dans `periodLoad`.
  *
  * ## La reprise de conception
  *
@@ -152,8 +170,8 @@ import { adminNewStaffMemberPath } from '../personnel/paths';
  * praticienne doit savoir qu'un créneau s'est libéré. Une campagne de QA a
  * relevé ce que cela donne au bout de quelques jours : quatre lignes « Annulé »
  * empilées sur un lundi, sous une barre de période qui annonçait « Aucun
- * rendez-vous » — le compte, lui, les excluait déjà (`bookedCount`). On lisait
- * donc une journée chargée là où il n'y avait rien.
+ * rendez-vous » — le compte, lui, les excluait déjà. On lisait donc une journée
+ * chargée là où il n'y avait rien.
  *
  * Ils sont désormais **masqués par défaut**, et un interrupteur « Afficher les
  * annulés (n) » les rappelle depuis la barre de période. Trois choix qui se
@@ -464,9 +482,9 @@ export default async function MyPlanningPage({ params, searchParams }: MyPlannin
   // ce qui l'efface de la barre sans qu'un cas particulier ait à le dire.
   const inPeriod =
     view === 'a-venir' ? upcomingOnly(agenda.appointments, now) : agenda.appointments;
-  // Les annulés quittent la grille, pas l'écran (#1410, BM-AGENDA-11).
-  const cancelled = cancelledCount(inPeriod);
-  const shown = showCancelled ? inPeriod : withoutCancelled(inPeriod);
+  // Les annulés quittent la grille, pas l'écran (#1410, BM-AGENDA-11) — et le
+  // compte est celui de la liste rendue, jamais un second calcul (#1412).
+  const { shown, count, cancelled } = periodLoad(inPeriod, showCancelled);
   const byDay = appointmentsByDay(shown, zone);
   const days = view === 'a-venir' ? [...byDay.keys()] : daysOf(agenda.from, agenda.to);
   // Le prochain rendez-vous est désigné sur **toute** la période affichée et non
@@ -484,26 +502,6 @@ export default async function MyPlanningPage({ params, searchParams }: MyPlannin
           {t('title')}
         </h1>
       </header>
-
-      <NavTabs
-        items={MY_PLANNING_VIEWS.map((candidate) => ({
-          // L'interrupteur des annulés suit la vue comme la date la suit, et pour
-          // la même raison : on change d'onglet sans vouloir rouvrir ce qu'on
-          // venait de refermer. Il tombe sur « À venir », qui n'affiche que les
-          // rendez-vous encore attendus — un `?annules=1` y resterait écrit dans
-          // l'adresse sans rien y changer (#1410).
-          href: withCancelledShown(
-            adminMyPlanningPath(tenantSlug, {
-              view: candidate,
-              ...(requested === null || candidate === 'a-venir' ? {} : { date: requested }),
-            }),
-            candidate !== 'a-venir' && showCancelled,
-          ),
-          label: viewLabels[candidate],
-          current: candidate === view,
-        }))}
-        label={t('tabsLabel')}
-      />
 
       {/*
        * La barre de période est celle du planning du salon et de l'encaissement
@@ -552,9 +550,43 @@ export default async function MyPlanningPage({ params, searchParams }: MyPlannin
           />
         )}
 
+        {/*
+         * Le choix de vue, **dans la barre et à droite de la date** — le même
+         * composant et la même place que le planning du salon (#1412,
+         * BM-AGENDA-01). Il était une rangée d'onglets posée au-dessus de la
+         * barre, dans une autre brique et une autre allure.
+         *
+         * Des chemins et non des gestes, comme les chevrons juste avant : la vue
+         * vit dans l'adresse, et l'écran est rendu par le serveur
+         * (web-frontend §1).
+         *
+         * L'interrupteur des annulés suit la vue comme la date la suit, et pour
+         * la même raison : on change de segment sans vouloir rouvrir ce qu'on
+         * venait de refermer. Il tombe sur « À venir », qui n'affiche que les
+         * rendez-vous encore attendus — un `?annules=1` y resterait écrit dans
+         * l'adresse sans rien y changer (#1410).
+         */}
+        <PeriodViewSwitch
+          label={t('viewLegend')}
+          segments={MY_PLANNING_VIEWS.map((candidate) => ({
+            key: candidate,
+            label: viewLabels[candidate],
+            control: {
+              href: withCancelledShown(
+                adminMyPlanningPath(tenantSlug, {
+                  view: candidate,
+                  ...(requested === null || candidate === 'a-venir' ? {} : { date: requested }),
+                }),
+                candidate !== 'a-venir' && showCancelled,
+              ),
+            },
+            current: candidate === view,
+          }))}
+        />
+
         <div className="spa-admin-toolbar__group spa-admin-toolbar__spacer">
           <span className="spa-admin-toolbar__hint">
-            {t('toolbar.load', { count: bookedCount(shown) })}
+            {t('toolbar.load', { count })}
           </span>
           {/*
            * L'interrupteur des annulés — #1410, BM-AGENDA-11.
