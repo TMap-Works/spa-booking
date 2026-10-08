@@ -1037,6 +1037,14 @@ model PlatformOperator {
   /// il n'est pas au périmètre de #806.
   totpSecret String @map("totp_secret") @db.VarChar(64)
 
+  /// Instant du premier code valide — l'enrôlement du second facteur (#1442).
+  ///
+  /// Nul tant que l'opérateur n'a pas scanné son QR code : la connexion le lui
+  /// montre alors après le mot de passe. Posé, le secret ne sort plus de l'API.
+  /// `npm run platform:operator -- --reset-totp` tire un nouveau secret et le
+  /// remet à nul.
+  totpConfirmedAt DateTime? @map("totp_confirmed_at") @db.Timestamptz(6)
+
   firstName String @map("first_name") @db.VarChar(80)
   lastName  String @map("last_name") @db.VarChar(80)
 

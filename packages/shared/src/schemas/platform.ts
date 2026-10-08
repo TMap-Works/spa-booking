@@ -37,7 +37,16 @@ import { tenantBillingStatusSchema } from './billing';
 export const PLATFORM_PASSWORD_MIN_LENGTH = 12;
 export const PLATFORM_PASSWORD_MAX_LENGTH = 72;
 
-/** Connexion d'un opérateur : mot de passe **et** code TOTP, jamais l'un sans l'autre. */
+/**
+ * Connexion d'un opérateur, **premier temps** : l'adresse et le mot de passe
+ * seuls (#1442).
+ *
+ * Le code TOTP ne se demande plus dans le même formulaire. Un mot de passe juste
+ * rend un **défi** (`platformLoginChallengeSchema`), et c'est ce défi, échangé
+ * avec le code, qui ouvre la session — `platformTotpVerifyRequestSchema`. Le
+ * second facteur reste exigé à chaque connexion : aucune session ne sort du
+ * premier temps.
+ */
 export const platformLoginRequestSchema = z
   .object({
     email: emailSchema,
@@ -45,14 +54,72 @@ export const platformLoginRequestSchema = z
       .string()
       .min(PLATFORM_PASSWORD_MIN_LENGTH)
       .max(PLATFORM_PASSWORD_MAX_LENGTH),
-    totpCode: z
-      .string()
-      .trim()
-      .refine((value) => /^\d{6}$/.test(value), messageKey('platform.totpCode')),
   })
   .strict();
 
 export type PlatformLoginRequest = z.infer<typeof platformLoginRequestSchema>;
+
+/** Le code à six chiffres d'une application d'authentification. */
+const totpCodeSchema = z
+  .string()
+  .trim()
+  .refine((value) => /^\d{6}$/.test(value), messageKey('platform.totpCode'));
+
+/**
+ * Le code seul — ce que saisit l'écran du second temps.
+ *
+ * Le défi n'y figure pas : la console le garde dans un cookie `httpOnly` que
+ * seule son action serveur relit, et le JavaScript du navigateur ne le voit
+ * jamais.
+ */
+export const platformTotpCodeSchema = z.object({ totpCode: totpCodeSchema }).strict();
+
+export type PlatformTotpCode = z.infer<typeof platformTotpCodeSchema>;
+
+/**
+ * Borne d'un défi de connexion — un JWT HS256 de quelques centaines d'octets.
+ * Elle n'est là que pour qu'un corps démesuré soit refusé avant d'être vérifié.
+ */
+export const PLATFORM_CHALLENGE_TOKEN_MAX_LENGTH = 2048;
+
+/** Connexion d'un opérateur, **second temps** : le défi du premier, et le code. */
+export const platformTotpVerifyRequestSchema = z
+  .object({
+    challengeToken: opaqueTokenSchema.max(PLATFORM_CHALLENGE_TOKEN_MAX_LENGTH),
+    totpCode: totpCodeSchema,
+  })
+  .strict();
+
+export type PlatformTotpVerifyRequest = z.infer<typeof platformTotpVerifyRequestSchema>;
+
+/**
+ * Ce qu'il faut pour enrôler une application d'authentification : l'URI
+ * `otpauth://` que le QR code encode, et la clé en clair pour qui ne peut pas
+ * scanner.
+ *
+ * Rendu **tant que l'enrôlement n'est pas confirmé**, et plus jamais ensuite.
+ */
+export const platformTotpEnrollmentSchema = z.object({
+  otpauthUri: z.string().startsWith('otpauth://'),
+  secret: z.string().min(1),
+});
+
+export type PlatformTotpEnrollment = z.infer<typeof platformTotpEnrollmentSchema>;
+
+/**
+ * Ce que rend le premier temps : un défi court, et l'enrôlement s'il reste à
+ * faire.
+ *
+ * Le défi n'ouvre rien par lui-même. Il est signé par une clé que la console
+ * n'accepte pas pour ses routes.
+ */
+export const platformLoginChallengeSchema = z.object({
+  challengeToken: opaqueTokenSchema,
+  expiresIn: z.number().int().positive(),
+  enrollment: platformTotpEnrollmentSchema.nullable(),
+});
+
+export type PlatformLoginChallenge = z.infer<typeof platformLoginChallengeSchema>;
 
 export const platformOperatorSchema = z.object({
   id: uuidSchema,

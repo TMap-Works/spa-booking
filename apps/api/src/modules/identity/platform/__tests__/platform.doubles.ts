@@ -56,12 +56,16 @@ export class FakePlatformRepository {
     passwordHash: string;
     totpSecret: string;
     isActive?: boolean;
+    /** Enrôlé par défaut — l'opérateur d'avant #1442. `null` : QR code à scanner. */
+    totpConfirmedAt?: Date | null;
   }): PlatformOperatorRecord {
     const operator: PlatformOperatorRecord = {
       id: randomUUID(),
       email: input.email,
       passwordHash: input.passwordHash,
       totpSecret: input.totpSecret,
+      totpConfirmedAt:
+        input.totpConfirmedAt === undefined ? new Date('2026-09-01T10:00:00.000Z') : input.totpConfirmedAt,
       firstName: 'Opé',
       lastName: 'Rateur',
       isActive: input.isActive ?? true,
@@ -109,6 +113,33 @@ export class FakePlatformRepository {
     return operator === undefined || !operator.isActive
       ? null
       : { id: operator.id, email: operator.email };
+  }
+
+  public async findActiveOperatorWithSecretsById(
+    id: string,
+  ): Promise<PlatformOperatorRecord | null> {
+    const operator = this.operators.get(id);
+    return operator === undefined || !operator.isActive ? null : operator;
+  }
+
+  public async confirmOperatorTotp(id: string): Promise<void> {
+    const operator = this.operators.get(id);
+    if (operator !== undefined && operator.totpConfirmedAt === null) {
+      this.operators.set(id, { ...operator, totpConfirmedAt: new Date() });
+    }
+  }
+
+  /** L'opérateur tel qu'il est stocké — pour lire l'enrôlement après coup. */
+  public operator(id: string): PlatformOperatorRecord | undefined {
+    return this.operators.get(id);
+  }
+
+  /** Désactive un opérateur — entre les deux temps d'une connexion. */
+  public deactivateOperator(id: string): void {
+    const operator = this.operators.get(id);
+    if (operator !== undefined) {
+      this.operators.set(id, { ...operator, isActive: false });
+    }
   }
 
   public async touchOperatorLastLogin(id: string): Promise<void> {
