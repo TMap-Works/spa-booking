@@ -13,7 +13,6 @@ import { MyAppointmentActions } from '@/app/(admin)/[tenantSlug]/admin/component
 import {
   agendaDate,
   appointmentsByDay,
-  bookedCount,
   cancelledCount,
   clientLabel,
   dayBoundsInTimeZone,
@@ -22,6 +21,7 @@ import {
   nextAppointment,
   parseMyPlanningView,
   parseShowCancelled,
+  periodLoad,
   planningRange,
   shiftPlanningAnchor,
   showsToday,
@@ -218,15 +218,66 @@ describe('les rendez-vous', () => {
     expect(nextAppointment([appointment()], new Date('2026-09-30T00:00:00.000Z'))).toBeNull();
   });
 
-  it('ne compte pas les annulés dans la charge d’une période', () => {
-    expect(bookedCount([])).toBe(0);
-    expect(
-      bookedCount([
-        appointment(),
-        appointment({ id: 'x2', status: 'no_show' }),
-        appointment({ id: 'x3', status: 'cancelled' }),
-      ]),
-    ).toBe(2);
+});
+
+/*
+ * #1412 — « Mon planning » annonçait « 1 rendez-vous » là où le planning du
+ * salon annonçait « Claire F. 2 RDV », le même jour pour la même praticienne :
+ * l'un comptait les soins attendus, l'autre tout ce que porte sa colonne.
+ *
+ * La règle est désormais celle du planning du salon, écrite une fois : **on
+ * compte ce qu'on montre**. Ce que cette suite tient, c'est que le compte ne
+ * peut plus diverger de la liste dans aucun état de l'interrupteur de #1410.
+ */
+describe('le compte d’une période', () => {
+  const liste = [
+    appointment(),
+    appointment({ id: 'x2', status: 'no_show' }),
+    appointment({ id: 'x3', status: 'cancelled' }),
+  ];
+
+  it('annonce le nombre de lignes que la liste aligne, annulés masqués', () => {
+    const load = periodLoad(liste, false);
+
+    expect(load.shown.map((item) => item.id)).toEqual([
+      'aaaaaaaa-0000-4000-8000-000000000001',
+      'x2',
+    ]);
+    expect(load.count).toBe(load.shown.length);
+    expect(load.count).toBe(2);
+  });
+
+  it('annonce le nombre de lignes que la liste aligne, annulés montrés', () => {
+    // C'est la contradiction que #1410 avait laissée derrière lui : sur
+    // `?annules=1`, trois lignes s'affichaient sous une barre qui en annonçait
+    // deux. Le compte et la liste sortent du même appel, ils ne peuvent plus
+    // se contredire.
+    const load = periodLoad(liste, true);
+
+    expect(load.shown).toEqual(liste);
+    expect(load.count).toBe(3);
+  });
+
+  it('dénombre les annulés indépendamment de ce qui est montré', () => {
+    // L'interrupteur annonce donc exactement de combien le compte va bouger —
+    // « 2 rendez-vous · Afficher les annulés (1) » devient « 3 rendez-vous ».
+    expect(periodLoad(liste, false).cancelled).toBe(1);
+    expect(periodLoad(liste, true).cancelled).toBe(1);
+    expect(periodLoad(liste, true).count - periodLoad(liste, false).count).toBe(1);
+  });
+
+  it('ne dit « Aucun rendez-vous » que sur une liste vide', () => {
+    // Le défaut de #1410 ne revient pas : une journée de deux annulés masqués
+    // annonce zéro **et** n'affiche rien, au lieu de zéro au-dessus de deux
+    // lignes barrées.
+    const annules = [
+      appointment({ id: 'c1', status: 'cancelled' }),
+      appointment({ id: 'c2', status: 'cancelled' }),
+    ];
+
+    expect(periodLoad(annules, false)).toEqual({ shown: [], count: 0, cancelled: 2 });
+    expect(periodLoad(annules, true).count).toBe(2);
+    expect(periodLoad([], false)).toEqual({ shown: [], count: 0, cancelled: 0 });
   });
 });
 

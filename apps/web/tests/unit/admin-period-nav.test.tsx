@@ -2,7 +2,10 @@ import { cleanup, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { PeriodNav } from '@/app/(admin)/[tenantSlug]/admin/components/period-nav';
+import {
+  PeriodNav,
+  PeriodViewSwitch,
+} from '@/app/(admin)/[tenantSlug]/admin/components/period-nav';
 
 /*
  * La barre de navigation par période, partagée par le planning et
@@ -154,5 +157,116 @@ describe('PeriodNav', () => {
     // Et les deux chevrons restent des liens : seul le retour est neutralisé.
     expect(screen.getByRole('link', { name: 'Jour précédent' })).toBeDefined();
     expect(screen.getByRole('link', { name: 'Jour suivant' })).toBeDefined();
+  });
+});
+
+/*
+ * Le sélecteur de vue de la barre d'outils — #1412.
+ *
+ * Même objet que la suite ci-dessus : les deux plannings du back-office
+ * changeaient de vue de deux façons, l'un par un groupe segmenté dans la barre
+ * (le standard que décrit `BM-AGENDA-01`), l'autre par une rangée d'onglets
+ * posée au-dessus. Ce que cette suite protège, c'est que les deux obtiennent le
+ * **même** groupe, quel que soit le mode — et qu'un troisième segment y entre
+ * sans cas particulier, « Mon planning » en ayant trois.
+ */
+describe('PeriodViewSwitch', () => {
+  const liens = [
+    { key: 'jour', label: 'Jour', control: { href: '/x/admin/mon-planning?vue=jour' }, current: false },
+    {
+      key: 'semaine',
+      label: 'Semaine',
+      control: { href: '/x/admin/mon-planning?vue=semaine' },
+      current: true,
+    },
+    {
+      key: 'a-venir',
+      label: 'À venir',
+      control: { href: '/x/admin/mon-planning?vue=a-venir' },
+      current: false,
+    },
+  ];
+
+  it('rend les segments dans l’ordre, sous le groupe segmenté du back-office', () => {
+    render(<PeriodViewSwitch label="Vue du planning" segments={liens} />);
+
+    // La classe est celle que `admin/shell.css` peint déjà pour le planning du
+    // salon : c'est elle qui fait que les deux écrans se ressemblent, et non
+    // deux feuilles qui convergeraient par hasard.
+    const group = screen.getByRole('group', { name: 'Vue du planning' });
+
+    expect(group.className).toBe('spa-admin-segmented');
+    expect([...group.children].map((option) => option.textContent)).toEqual([
+      'Jour',
+      'Semaine',
+      'À venir',
+    ]);
+  });
+
+  it('rend de vrais liens et marque l’ouvert d’un `aria-current`', () => {
+    render(<PeriodViewSwitch label="Vue du planning" segments={liens} />);
+
+    // Un écran rendu côté serveur ne doit embarquer aucun JavaScript pour
+    // changer de vue : les trois segments sont des liens, ouvrables dans un
+    // autre onglet. L'ouvert dit « vous êtes ici » — et non `aria-selected`,
+    // qui promettrait un panneau dans la page.
+    expect(screen.getByRole('link', { name: 'À venir' }).getAttribute('href')).toBe(
+      '/x/admin/mon-planning?vue=a-venir',
+    );
+    expect(screen.getByRole('link', { name: 'Semaine' }).getAttribute('aria-current')).toBe('page');
+    expect(screen.getByRole('link', { name: 'Jour' }).hasAttribute('aria-current')).toBe(false);
+    expect(screen.queryAllByRole('radio')).toHaveLength(0);
+  });
+
+  it('rend des boutons radio quand on lui donne des gestes, et les déclenche', async () => {
+    const jour = vi.fn();
+    const semaine = vi.fn();
+    const user = userEvent.setup();
+
+    render(
+      <PeriodViewSwitch
+        label="Vue du planning"
+        segments={[
+          { key: 'jour', label: 'Jour', control: { onSelect: jour }, current: true },
+          { key: 'semaine', label: 'Semaine', control: { onSelect: semaine }, current: false },
+        ]}
+      />,
+    );
+
+    // Des radios natifs, d'où viennent la navigation par flèches et l'annonce
+    // « 1 sur 2 » : c'est ce que rend le planning du salon, qui a déjà mis la
+    // période voisine en cache et ne doit pas repasser par le serveur.
+    expect(screen.getByRole('radio', { name: 'Jour' })).toHaveProperty('checked', true);
+    expect(screen.queryAllByRole('link')).toHaveLength(0);
+
+    await user.click(screen.getByRole('radio', { name: 'Semaine' }));
+
+    expect(semaine).toHaveBeenCalledTimes(1);
+    expect(jour).not.toHaveBeenCalled();
+  });
+
+  it('nomme le groupe sans l’écrire à l’œil, dans les deux modes', () => {
+    // Le nom existe pour qui écoute l'écran — « Vue du planning » — mais la
+    // barre ne le répète pas : les trois segments se lisent d'eux-mêmes.
+    const { container } = render(<PeriodViewSwitch label="Vue du planning" segments={liens} />);
+
+    expect(container.textContent).not.toContain('Vue du planning');
+
+    cleanup();
+
+    render(
+      <PeriodViewSwitch
+        label="Vue du planning"
+        segments={[{ key: 'jour', label: 'Jour', control: { onSelect: vi.fn() }, current: true }]}
+      />,
+    );
+
+    // En mode geste c'est un `<fieldset>` : sa légende porte le nom, et elle
+    // est masquée. Un `<fieldset>` autour de liens aurait été un groupe de
+    // champs sans champ, d'où les deux conteneurs.
+    const legend = screen.getByText('Vue du planning');
+
+    expect(legend.tagName).toBe('LEGEND');
+    expect(legend.className).toBe('spa-visually-hidden');
   });
 });

@@ -60,7 +60,7 @@ import { adminStaffPath } from '../personnel/paths';
 
 import { AppointmentPanel, type DeskTarget } from './appointment-panel';
 import { CalendarMoveConfirm } from './calendar-move-confirm';
-import { PeriodNav } from './period-nav';
+import { PeriodNav, PeriodViewSwitch } from './period-nav';
 import { useAdminSessionRenewal } from './use-admin-session-renewal';
 
 /**
@@ -1261,35 +1261,41 @@ export function CalendarBoard({
           }}
         />
 
-        <fieldset className="spa-admin-segmented">
-          <legend className="spa-visually-hidden">{t('toolbar.viewLegend')}</legend>
-          <input
-            className="spa-admin-segmented__input spa-visually-hidden"
-            type="radio"
-            name="vue"
-            id="vue-jour"
-            checked={view === 'jour'}
-            onChange={() => {
-              openPeriod('jour', date);
-            }}
-          />
-          <label className="spa-admin-segmented__option" htmlFor="vue-jour">
-            {t('toolbar.day')}
-          </label>
-          <input
-            className="spa-admin-segmented__input spa-visually-hidden"
-            type="radio"
-            name="vue"
-            id="vue-semaine"
-            checked={view === 'semaine'}
-            onChange={() => {
-              openPeriod('semaine', date);
-            }}
-          />
-          <label className="spa-admin-segmented__option" htmlFor="vue-semaine">
-            {t('toolbar.week')}
-          </label>
-        </fieldset>
+        {/*
+         * Le groupe segmenté est celui de « Mon planning » (`PeriodViewSwitch`,
+         * #1412) : un seul balisage pour les deux plannings, faute de quoi les
+         * deux rangées se ressembleraient sans pouvoir rester identiques.
+         *
+         * Des gestes et non des chemins : cet écran est un Client Component qui
+         * garde la période voisine en cache et ne doit pas repasser par le
+         * serveur pour changer de vue (web-frontend §1) — il obtient donc des
+         * boutons radio natifs.
+         */}
+        <PeriodViewSwitch
+          label={t('toolbar.viewLegend')}
+          segments={[
+            {
+              key: 'jour',
+              label: t('toolbar.day'),
+              control: {
+                onSelect: () => {
+                  openPeriod('jour', date);
+                },
+              },
+              current: view === 'jour',
+            },
+            {
+              key: 'semaine',
+              label: t('toolbar.week'),
+              control: {
+                onSelect: () => {
+                  openPeriod('semaine', date);
+                },
+              },
+              current: view === 'semaine',
+            },
+          ]}
+        />
 
         <div className="spa-admin-toolbar__group spa-admin-toolbar__spacer">
           <span className="spa-admin-toolbar__hint">{t('toolbar.timeZone', { timeZone })}</span>

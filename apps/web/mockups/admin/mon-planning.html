@@ -71,18 +71,44 @@
                 </button>
               </div>
               <!--
+                LE CHOIX DE VUE, DANS LA BARRE ET À DROITE DE LA DATE (#1412,
+                BM-AGENDA-01). Le même groupe segmenté que le planning du salon
+                (`mockups/admin/calendrier.html`) et le même composant
+                (`PeriodViewSwitch`) — c'était une rangée d'onglets posée
+                au-dessus de la barre. « À venir » y est le troisième segment.
+
+                Ici la variante **lien** : cet écran est rendu par le serveur et
+                sa vue vit dans l'adresse, là où le planning du salon passe des
+                gestes et obtient des boutons radio. Le segment ouvert porte
+                donc `aria-current="page"` au lieu d'un `checked`, et c'est
+                `styles/admin/my-planning.css` qui le peint. Un groupe nommé et
+                non un `<fieldset>` : il n'y a pas de champ à grouper.
+              -->
+              <div class="spa-admin-segmented" role="group" aria-label="Vue du planning">
+                <a class="spa-admin-segmented__option" href="mon-planning.html">Jour</a>
+                <a
+                  class="spa-admin-segmented__option"
+                  href="mon-planning.html"
+                  aria-current="page"
+                  >Semaine</a
+                >
+                <a class="spa-admin-segmented__option" href="mon-planning.html">À venir</a>
+              </div>
+
+              <!--
                 LE COMPTE, PUIS L'INTERRUPTEUR DES ANNULÉS (#1410,
-                BM-AGENDA-11). Le compte n'a jamais porté les annulés : deux
-                soins attendus ce vendredi, et un rendez-vous annulé que
-                l'interrupteur remet à l'écran — c'est l'état montré ici, d'où
-                « Masquer ». Masqués, il dit « Afficher les annulés (1) » ; sans
-                aucun annulé dans la période, il n'est pas rendu du tout.
+                BM-AGENDA-11). Le compte annonce ce que la liste montre (#1412) :
+                deux soins attendus ce vendredi et un annulé que l'interrupteur
+                remet à l'écran, donc trois lignes et « 3 rendez-vous » — c'est
+                l'état montré ici, d'où « Masquer ». Masqués, la barre dit
+                « 2 rendez-vous · Afficher les annulés (1) » ; sans aucun annulé
+                dans la période, l'interrupteur n'est pas rendu du tout.
 
                 Un lien et non une case à cocher : le filtre vit dans l'adresse
                 (`?annules=1`), comme la vue et la date.
               -->
               <div class="spa-admin-toolbar__group spa-admin-toolbar__spacer">
-                <span class="spa-admin-toolbar__hint">2 rendez-vous</span>
+                <span class="spa-admin-toolbar__hint">3 rendez-vous</span>
                 <a class="spa-button spa-button--quiet" href="mon-planning.html">
                   <span class="spa-button__label">Masquer les annulés (1)</span>
                 </a>

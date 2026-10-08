@@ -84,6 +84,54 @@
   border-color: transparent;
 }
 
+/* --- Le sélecteur de vue, variante lien (#1412) --------------------------- */
+
+/*
+ * Le segment ouvert, quand les segments sont des liens.
+ *
+ * `PeriodViewSwitch` rend le groupe segmenté de deux façons : des boutons radio
+ * quand l'écran lui passe des gestes — c'est le planning du salon, un Client
+ * Component qui garde ses périodes voisines en cache —, de vrais liens quand il
+ * lui passe des chemins, et c'est cet écran-ci : il est rendu par le serveur et
+ * sa vue vit dans l'adresse (web-frontend §1).
+ *
+ * La règle `:checked + __option` d'`admin/shell.css` ne peut pas peindre un
+ * lien : elle suit une entrée masquée qui n'existe pas dans cette variante.
+ * L'état ouvert se lit donc sur `aria-current="page"` — qui dit « vous êtes
+ * ici » là où `checked` décrirait un champ —, exactement comme
+ * `.spa-tabs--underline` peint la variante lien de ses onglets
+ * (`components/tabs.css`). Les déclarations sont celles de la variante radio, au
+ * jeton près : les deux segments ouverts doivent être indiscernables d'un écran
+ * à l'autre, c'est tout l'objet du composant partagé.
+ *
+ * Portée à cet écran parce qu'il est le seul à passer des chemins au sélecteur,
+ * comme la règle du retour désactivé juste au-dessus ; le jour où un second
+ * écran rendra la variante lien, elle montera d'un cran dans `admin/shell.css`,
+ * avec le groupe qu'elle habille.
+ */
+/*
+ * Un segment ne se souligne pas.
+ *
+ * La feuille de base donne à tout `<a>` la couleur d'accent et un soulignement
+ * — ce qu'on veut d'un lien dans de la prose, et jamais d'un contrôle. La
+ * couleur est déjà reprise par `.spa-admin-segmented__option`, qui l'emporte
+ * sur le sélecteur d'élément ; le soulignement, lui, vient du navigateur et doit
+ * être retiré ici, faute de quoi les trois segments s'affichent soulignés quand
+ * les deux du planning du salon, qui sont des `<label>`, ne le sont pas — soit
+ * exactement l'écart que ce ticket referme. `.spa-tabs__tab` fait de même pour
+ * la paire `Tabs` / `NavTabs` (`components/tabs.css`).
+ */
+.spa-my-planning .spa-admin-segmented__option {
+  text-decoration: none;
+}
+
+.spa-my-planning .spa-admin-segmented__option[aria-current='page'] {
+  background-color: var(--spa-color-surface);
+  border-color: var(--spa-color-border-interactive);
+  color: var(--spa-color-text);
+  box-shadow: var(--spa-shadow-sm);
+}
+
 @media (width < 48rem) {
   /*
    * Les quatre contrôles sur une seule rangée à 360 px.

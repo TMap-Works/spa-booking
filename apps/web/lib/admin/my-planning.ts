@@ -307,15 +307,71 @@ export function cancelledCount(appointments: readonly MyStaffAppointment[]): num
 }
 
 /**
- * Ce que pèse une période : ses rendez-vous, les annulés exceptés.
+ * Ce que la période donne à lire : la liste que l'écran aligne, le nombre que la
+ * barre annonce, et les annulés que l'interrupteur dénombre (#1412).
  *
- * Un rendez-vous annulé ne charge pas la journée de la praticienne, et le
- * compter le ferait mentir. Le compte reste donc celui des soins attendus même
- * quand l'interrupteur de #1410 remet les annulés à l'écran — c'est la même
- * exclusion, lue une seule fois par `withoutCancelled`.
+ * Les trois sortent d'un même appel parce qu'ils ne peuvent pas diverger : le
+ * compte est **la longueur de la liste rendue ici**, et non un second calcul sur
+ * la même matière.
+ *
+ * ## Une seule règle de comptage, partagée avec le planning du salon
+ *
+ * Les deux écrans comptaient autrement la même journée du même praticien : une
+ * campagne de QA a relevé « 1 rendez-vous » ici pour « Claire F. 2 RDV » dans le
+ * planning du salon, le 23 septembre. Le planning du salon compte les
+ * rendez-vous **de sa colonne**, annulés compris — il les y peint en repère
+ * creux (`calendar-grid.ts`, `columnMeta`). Cet écran comptait, lui, les soins
+ * attendus, annulés exclus en toute circonstance.
+ *
+ * La règle retenue est celle du planning du salon, énoncée une fois : **on
+ * compte ce qu'on montre.** Elle vaut des deux côtés sans cas particulier — le
+ * planning du salon montre tout et compte tout ; cet écran masque les annulés
+ * par défaut et ne les compte pas, les rappelle par l'interrupteur de #1410 et
+ * les compte alors.
+ *
+ * Deux choses s'en suivent, et toutes deux étaient fausses avant :
+ *
+ *   - sur `?annules=1`, la liste alignait trois lignes sous une barre qui en
+ *     annonçait deux. Le compte et la liste ne peuvent plus diverger, parce
+ *     qu'ils lisent la même liste ;
+ *   - l'interrupteur annonce exactement de combien le compte va bouger —
+ *     « 1 rendez-vous · Afficher les annulés (1) » devient « 2 rendez-vous ·
+ *     Masquer les annulés (1) ». C'est `cancelledCount` qui le dénombre, sur la
+ *     même exclusion.
+ *
+ * Le défaut que #1410 avait corrigé ne revient pas pour autant : une journée de
+ * quatre annulés n'annonce plus « Aucun rendez-vous » au-dessus de quatre lignes
+ * barrées, puisque les lignes ont quitté la grille — la barre y dit « Aucun
+ * rendez-vous · Afficher les annulés (4) », et la liste est bien vide.
+ *
+ * ## Ce qui reste à faire, et pourquoi pas ici
+ *
+ * Le planning du salon doit encore cesser de compter des annulés dans un en-tête
+ * de colonne qui annonce une charge — c'est une expression de
+ * `lib/admin/calendar-grid.ts`, hors de l'empreinte de ce ticket. Jusque-là, les
+ * deux écrans n'affichent le même nombre que lorsqu'ils montrent la même liste,
+ * annulés compris. Voir la PR de #1412.
  */
-export function bookedCount(appointments: readonly MyStaffAppointment[]): number {
-  return withoutCancelled(appointments).length;
+export interface PeriodLoad {
+  /** Les rendez-vous que la liste aligne, dans l'ordre reçu. */
+  readonly shown: readonly MyStaffAppointment[];
+  /** Ce que la barre annonce — le nombre de rendez-vous montrés. */
+  readonly count: number;
+  /**
+   * Combien d'annulés la période porte, montrés ou non. Zéro efface
+   * l'interrupteur de la barre : un contrôle qui ne change rien se lit comme une
+   * panne.
+   */
+  readonly cancelled: number;
+}
+
+export function periodLoad(
+  appointments: readonly MyStaffAppointment[],
+  showCancelled: boolean,
+): PeriodLoad {
+  const shown = showCancelled ? appointments : withoutCancelled(appointments);
+
+  return { shown, count: shown.length, cancelled: cancelledCount(appointments) };
 }
 
 /**
