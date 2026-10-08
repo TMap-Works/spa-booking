@@ -44,13 +44,36 @@
     "totpHint": "The six digits shown by your authenticator app.",
     "submit": "Sign in",
     "submitting": "Signing in…",
+    "next": "Continue",
+    "nextSubmitting": "Checking…",
+    "code": {
+      "title": "Two-step verification",
+      "lead": "Enter the six-digit code shown by your authenticator app for {email}.",
+      "restart": "Use a different account"
+    },
+    "enroll": {
+      "title": "Set up your authenticator app",
+      "lead": "Each sign-in to the console asks for a code from an authenticator app. Set yours up once, now.",
+      "scan": "Scan this QR code with your authenticator app.",
+      "qrLabel": "QR code to scan with your authenticator app",
+      "manual": "Can’t scan it? Enter this key in the app instead:",
+      "confirm": "Then enter the six-digit code the app shows to confirm."
+    },
     "fieldErrors": {
       "password": "The password is at least {min} characters long."
     },
     "errors": {
       "credentials": {
         "title": "Sign-in refused",
-        "body": "Incorrect address, password or code. If the code has just expired, enter the next one."
+        "body": "Incorrect email address or password."
+      },
+      "code": {
+        "title": "Incorrect code",
+        "body": "The code was refused. If it has just expired, enter the next one."
+      },
+      "challengeExpired": {
+        "title": "Verification timed out",
+        "body": "For your security, enter your password again."
       },
       "throttled": {
         "title": "Too many attempts",
@@ -62,7 +85,7 @@
       },
       "validation": {
         "title": "Incomplete form",
-        "body": "Enter your email address, your password and the six-digit code."
+        "body": "Enter your email address and your password."
       },
       "unexpected": {
         "title": "Cannot sign in",

@@ -8,7 +8,7 @@ import {
   PLATFORM_PASSWORD_MAX_LENGTH,
   PLATFORM_PASSWORD_MIN_LENGTH,
 } from './platform.types';
-import { generateTotpSecret, totpUri } from './totp';
+import { generateTotpSecret } from './totp';
 
 /**
  * Créer un opérateur plateforme — critère 7 de #806.
@@ -35,10 +35,24 @@ import { generateTotpSecret, totpUri } from './totp';
  *
  * ## Ce qu'elle affiche, et une seule fois
  *
- * Le mot de passe initial et l'URI `otpauth://`. Ni l'un ni l'autre n'est
- * relisible ensuite : le premier n'existe en base que sous bcrypt, et le second
- * n'est réaffiché par aucune surface. C'est délibéré — un secret qu'on peut
- * redemander est un secret qu'on finit par relire dans un journal.
+ * Le mot de passe initial, qui n'existe ensuite en base que sous bcrypt. C'est
+ * délibéré — un secret qu'on peut redemander est un secret qu'on finit par
+ * relire dans un journal.
+ *
+ * Elle n'affiche **plus** l'URI `otpauth://` du second facteur (#1442).
+ * L'opérateur naît non enrôlé, et c'est la console qui lui montre le QR code à
+ * sa première connexion, juste après le mot de passe. Le premier code valide
+ * confirme l'enrôlement, et le secret ne ressort plus.
+ *
+ * ## Réarmer l'enrôlement
+ *
+ * ```
+ * npm run platform:operator -- --reset-totp --email operateur@tmap-works.test
+ * ```
+ *
+ * Pour un téléphone perdu ou changé : un nouveau secret est tiré, l'ancien cesse
+ * aussitôt de valoir, et la prochaine connexion remontre un QR code. Le mot de
+ * passe n'est pas touché.
  *
  * Le mot de passe peut être fourni (`--password`) pour un environnement de
  * recette scripté ; sinon il est tiré au sort, ce qui est le cas nominal.
@@ -54,6 +68,11 @@ interface CommandArguments {
   readonly password: string | null;
 }
 
+/** `--reset-totp --email …` — réarmer l'enrôlement d'un opérateur existant. */
+interface ResetTotpArguments {
+  readonly email: string;
+}
+
 /**
  * Lit `--clé valeur` et `--clé=valeur`, sans dépendance d'analyse d'arguments.
  *
@@ -62,24 +81,7 @@ interface CommandArguments {
  * dans une image Docker au périmètre PCI-adjacent.
  */
 export function parseArguments(argv: readonly string[]): CommandArguments {
-  const values = new Map<string, string>();
-
-  for (let index = 0; index < argv.length; index += 1) {
-    const token = argv[index] ?? '';
-    if (!token.startsWith('--')) {
-      continue;
-    }
-    const separator = token.indexOf('=');
-    if (separator !== -1) {
-      values.set(token.slice(2, separator), token.slice(separator + 1));
-      continue;
-    }
-    const next = argv[index + 1];
-    if (next !== undefined && !next.startsWith('--')) {
-      values.set(token.slice(2), next);
-      index += 1;
-    }
-  }
+  const values = readOptions(argv);
 
   const email = (values.get('email') ?? '').trim();
   const firstName = (values.get('first-name') ?? '').trim();
@@ -126,13 +128,105 @@ export function parseArguments(argv: readonly string[]): CommandArguments {
   };
 }
 
+/** Les options `--clé valeur` et `--clé=valeur` ; un drapeau seul vaut `''`. */
+function readOptions(argv: readonly string[]): Map<string, string> {
+  const values = new Map<string, string>();
+
+  for (let index = 0; index < argv.length; index += 1) {
+    const token = argv[index] ?? '';
+    if (!token.startsWith('--')) {
+      continue;
+    }
+    const separator = token.indexOf('=');
+    if (separator !== -1) {
+      values.set(token.slice(2, separator), token.slice(separator + 1));
+      continue;
+    }
+    const next = argv[index + 1];
+    if (next !== undefined && !next.startsWith('--')) {
+      values.set(token.slice(2), next);
+      index += 1;
+    } else {
+      values.set(token.slice(2), '');
+    }
+  }
+
+  return values;
+}
+
+/**
+ * `--reset-totp --email …`, ou `null` si la commande n'est pas un réarmement.
+ *
+ * Seule l'adresse est lue : le réarmement ne touche ni au nom ni au mot de passe.
+ */
+export function parseResetTotpArguments(argv: readonly string[]): ResetTotpArguments | null {
+  const values = readOptions(argv);
+  const flag = values.get('reset-totp');
+  // Drapeau nu ou `=true` : `--reset-totp=false` ne doit pas tirer un secret.
+  if (flag === undefined || (flag !== '' && flag !== 'true')) {
+    return null;
+  }
+
+  const email = (values.get('email') ?? '').trim();
+  if (email === '') {
+    throw new Error(
+      'Option manquante : --email.\n' +
+        'Usage : npm run platform:operator -- --reset-totp --email …',
+    );
+  }
+
+  return { email: normalizeEmail(email) };
+}
+
 /** Un mot de passe initial que personne n'a choisi — donc que personne ne réutilise. */
 export function generatePassword(): string {
   return randomBytes(GENERATED_PASSWORD_BYTES).toString('base64url');
 }
 
+/**
+ * Tire un nouveau secret et remet l'enrôlement à faire (#1442).
+ *
+ * Un opérateur introuvable est une erreur dite en clair : c'est une commande
+ * d'exploitation, jouée par quelqu'un qui a déjà la base — il n'y a pas
+ * d'annuaire à protéger contre lui.
+ */
+async function resetTotp(prisma: PrismaClient, email: string): Promise<void> {
+  const { count } = await prisma.platformOperator.updateMany({
+    where: { email },
+    data: { totpSecret: generateTotpSecret(), totpConfirmedAt: null },
+  });
+
+  if (count === 0) {
+    throw new Error(`Aucun opérateur plateforme sous l’adresse ${email}.`);
+  }
+
+  process.stdout.write(
+    [
+      'Second facteur réarmé.',
+      `  adresse : ${email}`,
+      '',
+      'L’ancien code ne vaut plus. À sa prochaine connexion, après le mot de passe,',
+      'la console montrera à l’opérateur un QR code à scanner avec son application',
+      'd’authentification.',
+      '',
+    ].join('\n'),
+  );
+}
+
 async function main(): Promise<void> {
-  const args = parseArguments(process.argv.slice(2));
+  const argv = process.argv.slice(2);
+  const reset = parseResetTotpArguments(argv);
+  if (reset !== null) {
+    const prisma = new PrismaClient();
+    try {
+      await resetTotp(prisma, reset.email);
+    } finally {
+      await prisma.$disconnect();
+    }
+    return;
+  }
+
+  const args = parseArguments(argv);
   const password = args.password ?? generatePassword();
   const totpSecret = generateTotpSecret();
 
@@ -164,11 +258,12 @@ async function main(): Promise<void> {
         `  identifiant   : ${operator.id}`,
         `  adresse       : ${operator.email}`,
         `  mot de passe  : ${password}`,
-        `  second facteur: ${totpUri(operator.email, totpSecret)}`,
+        '  second facteur: à enrôler à la première connexion (QR code)',
         '',
-        'Ces deux secrets ne sont affichés qu’une fois : les transmettre par un',
-        'canal sûr, puis effacer cette sortie. Le mot de passe n’existe en base',
-        'que sous bcrypt, et l’URI n’est réaffichée par aucune surface.',
+        'Le mot de passe n’est affiché qu’une fois : le transmettre par un canal',
+        'sûr, puis effacer cette sortie. Il n’existe en base que sous bcrypt.',
+        'À sa première connexion, après le mot de passe, la console montrera à',
+        'l’opérateur le QR code à scanner avec son application d’authentification.',
         '',
       ].join('\n'),
     );

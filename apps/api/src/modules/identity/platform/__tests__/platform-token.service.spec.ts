@@ -2,7 +2,11 @@ import { JwtService } from '@nestjs/jwt';
 
 import { TokenService } from '../../token.service';
 import { fakeConfig } from '../../__tests__/identity.doubles';
-import { PLATFORM_TOKEN_TTL_SECONDS, PlatformTokenService } from '../platform-token.service';
+import {
+  PLATFORM_CHALLENGE_TTL_SECONDS,
+  PLATFORM_TOKEN_TTL_SECONDS,
+  PlatformTokenService,
+} from '../platform-token.service';
 
 /**
  * L'étanchéité des deux espaces — critère 5 de #806, vu depuis la
@@ -111,5 +115,51 @@ describe('Étanchéité des deux espaces — critère 5', () => {
     expect(await platform.verifyAccessToken(`${header}.${payload}.signature-inventee`)).toBeNull();
     expect(await platform.verifyAccessToken('')).toBeNull();
     expect(await platform.verifyAccessToken('pas.un.jeton')).toBeNull();
+  });
+});
+
+describe('Défi de connexion de la console — #1442', () => {
+  it('se vérifie lui-même et rend l’opérateur qu’il désigne', async () => {
+    const { platform } = fixture();
+    const challenge = await platform.signChallengeToken(OPERATOR);
+
+    expect(await platform.verifyChallengeToken(challenge)).toEqual({ sub: OPERATOR });
+  });
+
+  it('dure cinq minutes', () => {
+    const { platform } = fixture();
+
+    expect(platform.challengeTtlSeconds).toBe(PLATFORM_CHALLENGE_TTL_SECONDS);
+    expect(PLATFORM_CHALLENGE_TTL_SECONDS).toBe(300);
+  });
+
+  it('n’ouvre pas la console : un défi n’est pas un jeton d’accès', async () => {
+    const { platform } = fixture();
+    const challenge = await platform.signChallengeToken(OPERATOR);
+
+    expect(await platform.verifyAccessToken(challenge)).toBeNull();
+  });
+
+  it('et un jeton d’accès n’est pas un défi', async () => {
+    const { platform } = fixture();
+    const session = await platform.signAccessToken(OPERATOR);
+
+    expect(await platform.verifyChallengeToken(session)).toBeNull();
+  });
+
+  it('n’est rien pour le vérificateur d’établissement', async () => {
+    const { platform, tenant } = fixture();
+    const challenge = await platform.signChallengeToken(OPERATOR);
+
+    expect(await tenant.verifyAccessToken(challenge)).toBeNull();
+  });
+
+  it('refuse un défi contrefait, et un défi vide', async () => {
+    const { platform } = fixture();
+    const challenge = await platform.signChallengeToken(OPERATOR);
+    const [header, payload] = challenge.split('.');
+
+    expect(await platform.verifyChallengeToken(`${header}.${payload}.signature-inventee`)).toBeNull();
+    expect(await platform.verifyChallengeToken('')).toBeNull();
   });
 });

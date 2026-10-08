@@ -127,13 +127,90 @@ function tenantPayload(slug: string): {
   };
 }
 
-describe('Connexion d’un opérateur — MFA exigée', () => {
-  it('ouvre une session avec le mot de passe **et** le code du moment', async () => {
+describe('Connexion d’un opérateur — premier temps, le mot de passe (#1442)', () => {
+  it('rend un défi, et aucune session, sur le bon mot de passe', async () => {
+    const { service, repository } = await fixture();
+
+    const challenge = await service.login({ email: 'operateur@tmap-works.test', password: PASSWORD });
+
+    expect(challenge.challengeToken).not.toBe('');
+    expect(challenge.expiresIn).toBe(300);
+    expect(challenge).not.toHaveProperty('accessToken');
+    // Rien n'est encore ouvert : la dernière connexion n'est pas touchée.
+    expect(repository.lastLoginTouched).toBeNull();
+  });
+
+  it('ne rend pas le secret d’un opérateur déjà enrôlé', async () => {
+    const { service } = await fixture();
+
+    const challenge = await service.login({ email: 'operateur@tmap-works.test', password: PASSWORD });
+
+    expect(challenge.enrollment).toBeNull();
+  });
+
+  it('rend le QR code à enrôler tant que le second facteur n’est pas confirmé', async () => {
+    const { service, repository } = await fixture();
+    const secret = generateTotpSecret();
+    repository.addOperator({
+      email: 'nouveau@tmap-works.test',
+      passwordHash: await new PasswordHasher(fakeConfig()).hash(PASSWORD),
+      totpSecret: secret,
+      totpConfirmedAt: null,
+    });
+
+    const challenge = await service.login({ email: 'nouveau@tmap-works.test', password: PASSWORD });
+
+    expect(challenge.enrollment?.secret).toBe(secret);
+    expect(challenge.enrollment?.otpauthUri).toMatch(/^otpauth:\/\/totp\//);
+    expect(challenge.enrollment?.otpauthUri).toContain(`secret=${secret}`);
+  });
+
+  it('refuse un mauvais mot de passe', async () => {
+    const { service } = await fixture();
+
+    const error = await rejectionOf(
+      service.login({ email: 'operateur@tmap-works.test', password: 'pas-le-bon-mot-de-passe' }),
+    );
+
+    expect(error).toBeInstanceOf(InvalidPlatformCredentialsError);
+  });
+
+  it('rend le **même** refus sur une adresse inconnue — aucun oracle d’annuaire', async () => {
+    const { service } = await fixture();
+
+    const error = await rejectionOf(
+      service.login({ email: 'inconnu@tmap-works.test', password: PASSWORD }),
+    );
+
+    expect(error).toBeInstanceOf(InvalidPlatformCredentialsError);
+  });
+
+  it('refuse un opérateur désactivé, sans le dire', async () => {
+    const { service, repository } = await fixture();
+    repository.addOperator({
+      email: 'ferme@tmap-works.test',
+      passwordHash: await new PasswordHasher(fakeConfig()).hash(PASSWORD),
+      totpSecret: generateTotpSecret(),
+      isActive: false,
+    });
+
+    const error = await rejectionOf(service.login({ email: 'ferme@tmap-works.test', password: PASSWORD }));
+
+    expect(error).toBeInstanceOf(InvalidPlatformCredentialsError);
+  });
+});
+
+describe('Connexion d’un opérateur — second temps, le code (#1442)', () => {
+  /** Le défi d'un premier temps réussi. */
+  async function challengeOf(service: PlatformService, email = 'operateur@tmap-works.test'): Promise<string> {
+    return (await service.login({ email, password: PASSWORD })).challengeToken;
+  }
+
+  it('ouvre une session avec le défi **et** le code du moment', async () => {
     const { service, repository, totpSecret, operator } = await fixture();
 
-    const session = await service.login({
-      email: 'operateur@tmap-works.test',
-      password: PASSWORD,
+    const session = await service.verifyLoginCode({
+      challengeToken: await challengeOf(service),
       totpCode: totpCodeAt(totpSecret, Date.now()) ?? '',
     });
 
@@ -142,23 +219,23 @@ describe('Connexion d’un opérateur — MFA exigée', () => {
     expect(repository.lastLoginTouched).toBe(operator.operatorId);
   });
 
-  it('refuse le bon mot de passe sans code — le second facteur n’est pas optionnel', async () => {
-    const { service } = await fixture();
+  it('refuse un code faux — le second facteur n’est pas optionnel', async () => {
+    const { service, totpSecret } = await fixture();
+    const wrong = totpCodeAt(totpSecret, Date.now()) === '000000' ? '111111' : '000000';
 
     const error = await rejectionOf(
-      service.login({ email: 'operateur@tmap-works.test', password: PASSWORD, totpCode: '000000' }),
+      service.verifyLoginCode({ challengeToken: await challengeOf(service), totpCode: wrong }),
     );
 
     expect(error).toBeInstanceOf(InvalidPlatformCredentialsError);
   });
 
-  it('refuse le bon code avec un mauvais mot de passe', async () => {
+  it('refuse un défi contrefait, même accompagné du bon code', async () => {
     const { service, totpSecret } = await fixture();
 
     const error = await rejectionOf(
-      service.login({
-        email: 'operateur@tmap-works.test',
-        password: 'pas-le-bon-mot-de-passe',
+      service.verifyLoginCode({
+        challengeToken: 'pas.un.defi',
         totpCode: totpCodeAt(totpSecret, Date.now()) ?? '',
       }),
     );
@@ -166,48 +243,81 @@ describe('Connexion d’un opérateur — MFA exigée', () => {
     expect(error).toBeInstanceOf(InvalidPlatformCredentialsError);
   });
 
-  it('rend le **même** refus sur une adresse inconnue — aucun oracle d’annuaire', async () => {
+  it('refuse un jeton de console présenté comme défi', async () => {
     const { service, totpSecret } = await fixture();
-
-    const error = await rejectionOf(
-      service.login({
-        email: 'inconnu@tmap-works.test',
-        password: PASSWORD,
-        totpCode: totpCodeAt(totpSecret, Date.now()) ?? '',
-      }),
-    );
-
-    expect(error).toBeInstanceOf(InvalidPlatformCredentialsError);
-  });
-
-  it('refuse un opérateur désactivé, sans le dire', async () => {
-    const { service, repository } = await fixture();
-    const hasher = new PasswordHasher(fakeConfig());
-    const secret = generateTotpSecret();
-    repository.addOperator({
-      email: 'ferme@tmap-works.test',
-      passwordHash: await hasher.hash(PASSWORD),
-      totpSecret: secret,
-      isActive: false,
+    const session = await service.verifyLoginCode({
+      challengeToken: await challengeOf(service),
+      totpCode: totpCodeAt(totpSecret, Date.now()) ?? '',
     });
 
     const error = await rejectionOf(
-      service.login({
-        email: 'ferme@tmap-works.test',
-        password: PASSWORD,
-        totpCode: totpCodeAt(secret, Date.now()) ?? '',
+      service.verifyLoginCode({
+        challengeToken: session.accessToken,
+        totpCode: totpCodeAt(totpSecret, Date.now()) ?? '',
       }),
     );
 
     expect(error).toBeInstanceOf(InvalidPlatformCredentialsError);
   });
 
-  it('normalise l’adresse, comme la connexion d’un salon', async () => {
+  it('refuse un opérateur désactivé entre les deux temps', async () => {
+    const { service, repository, totpSecret, operator } = await fixture();
+    const challengeToken = await challengeOf(service);
+    repository.deactivateOperator(operator.operatorId);
+
+    const error = await rejectionOf(
+      service.verifyLoginCode({ challengeToken, totpCode: totpCodeAt(totpSecret, Date.now()) ?? '' }),
+    );
+
+    expect(error).toBeInstanceOf(InvalidPlatformCredentialsError);
+  });
+
+  it('confirme l’enrôlement au premier code, puis ne rend plus le secret', async () => {
+    const { service, repository } = await fixture();
+    const secret = generateTotpSecret();
+    const stored = repository.addOperator({
+      email: 'nouveau@tmap-works.test',
+      passwordHash: await new PasswordHasher(fakeConfig()).hash(PASSWORD),
+      totpSecret: secret,
+      totpConfirmedAt: null,
+    });
+
+    await service.verifyLoginCode({
+      challengeToken: await challengeOf(service, 'nouveau@tmap-works.test'),
+      totpCode: totpCodeAt(secret, Date.now()) ?? '',
+    });
+
+    expect(repository.operator(stored.id)?.totpConfirmedAt).toBeInstanceOf(Date);
+    const next = await service.login({ email: 'nouveau@tmap-works.test', password: PASSWORD });
+    expect(next.enrollment).toBeNull();
+  });
+
+  it('laisse l’enrôlement à faire sur un premier code faux', async () => {
+    const { service, repository } = await fixture();
+    const secret = generateTotpSecret();
+    const stored = repository.addOperator({
+      email: 'nouveau@tmap-works.test',
+      passwordHash: await new PasswordHasher(fakeConfig()).hash(PASSWORD),
+      totpSecret: secret,
+      totpConfirmedAt: null,
+    });
+    const wrong = totpCodeAt(secret, Date.now()) === '000000' ? '111111' : '000000';
+
+    await rejectionOf(
+      service.verifyLoginCode({
+        challengeToken: await challengeOf(service, 'nouveau@tmap-works.test'),
+        totpCode: wrong,
+      }),
+    );
+
+    expect(repository.operator(stored.id)?.totpConfirmedAt).toBeNull();
+  });
+
+  it('normalise l’adresse du premier temps, comme la connexion d’un salon', async () => {
     const { service, totpSecret } = await fixture();
 
-    const session = await service.login({
-      email: '  Operateur@TMap-Works.test ',
-      password: PASSWORD,
+    const session = await service.verifyLoginCode({
+      challengeToken: await challengeOf(service, '  Operateur@TMap-Works.test '),
       totpCode: totpCodeAt(totpSecret, Date.now()) ?? '',
     });
 

@@ -3,6 +3,7 @@ import {
   DNS_LABEL_PATTERN,
   ISO_3166_1_ALPHA_2_CODES,
   LOCALES,
+  PLATFORM_CHALLENGE_TOKEN_MAX_LENGTH,
   PLATFORM_NOTE_MAX_LENGTH,
   PLATFORM_STATUS_REASON_MAX_LENGTH,
   PLATFORM_STATUS_REASON_MIN_LENGTH,
@@ -42,6 +43,7 @@ import {
 import {
   PLATFORM_PASSWORD_MAX_LENGTH,
   PLATFORM_PASSWORD_MIN_LENGTH,
+  type PlatformLoginChallenge,
   type PlatformOverviewView,
   type PlatformSession,
   type ProvisionedTenant,
@@ -153,11 +155,12 @@ function IsIanaTimeZone(options?: ValidationOptions): PropertyDecorator {
 }
 
 /**
- * Connexion d'un opérateur — `POST /api/v1/platform/auth/login`.
+ * Connexion d'un opérateur, premier temps — `POST /api/v1/platform/auth/login`.
  *
- * Trois champs, et le troisième n'est pas facultatif : l'ADR 0012 exige la MFA
- * **à chaque connexion**. Un `totpCode` optionnel aurait rendu le second facteur
- * dépendant du soin de l'appelant, c'est-à-dire pas un facteur.
+ * L'adresse et le mot de passe, rien d'autre (#1442). Le code TOTP n'est pas
+ * pour autant facultatif : ce premier temps ne rend qu'un défi, et seul
+ * `PlatformTotpVerifyDto` l'échange contre une session. L'ADR 0012 exige
+ * toujours la MFA **à chaque connexion**.
  */
 export class PlatformLoginDto {
   @ApiProperty({ example: 'operateur@tmap-works.test', maxLength: EMAIL_MAX_LENGTH })
@@ -173,6 +176,20 @@ export class PlatformLoginDto {
   })
   @MaxLength(PLATFORM_PASSWORD_MAX_LENGTH)
   public password!: string;
+}
+
+/**
+ * Connexion d'un opérateur, second temps — `POST /api/v1/platform/auth/login/verify`.
+ *
+ * Le défi rendu par le premier temps, et le code de l'application
+ * d'authentification (#1442).
+ */
+export class PlatformTotpVerifyDto {
+  @ApiProperty({ description: 'Le défi rendu par `POST /platform/auth/login` — cinq minutes.' })
+  @IsString()
+  @MinLength(1, { message: 'challengeToken : défi attendu' })
+  @MaxLength(PLATFORM_CHALLENGE_TOKEN_MAX_LENGTH)
+  public challengeToken!: string;
 
   @ApiProperty({
     example: '123456',
@@ -182,6 +199,36 @@ export class PlatformLoginDto {
   @IsString()
   @Matches(/^\d{6}$/, { message: 'totpCode : six chiffres attendus' })
   public totpCode!: string;
+}
+
+/** De quoi enrôler une application d'authentification — le QR code et sa clé. */
+export class PlatformTotpEnrollmentDto {
+  @ApiProperty({
+    example:
+      'otpauth://totp/Spa%20Booking:operateur%40tmap-works.test?secret=…&issuer=Spa+Booking',
+    description: 'URI que le QR code encode.',
+  })
+  public otpauthUri!: string;
+
+  @ApiProperty({ description: 'La clé en base32, pour une saisie à la main.' })
+  public secret!: string;
+}
+
+/**
+ * Ce que rend le premier temps de la connexion — un défi, jamais une session.
+ *
+ * `enrollment` n'est renseigné que tant que l'opérateur n'a pas confirmé son
+ * second facteur par un premier code : ensuite, le secret ne sort plus.
+ */
+export class PlatformLoginChallengeDto implements PlatformLoginChallenge {
+  @ApiProperty({ description: 'Défi à présenter avec le code — n’ouvre aucune route.' })
+  public challengeToken!: string;
+
+  @ApiProperty({ example: 300, description: 'Validité du défi, en secondes.' })
+  public expiresIn!: number;
+
+  @ApiProperty({ type: PlatformTotpEnrollmentDto, nullable: true })
+  public enrollment!: PlatformTotpEnrollmentDto | null;
 }
 
 /** L'opérateur connecté, tel que la console l'affiche. */

@@ -49,9 +49,26 @@ export interface PlatformOperatorRecord {
   readonly email: string;
   readonly passwordHash: string;
   readonly totpSecret: string;
+  /** `null` tant que l'enrôlement n'est pas confirmé par un premier code (#1442). */
+  readonly totpConfirmedAt: Date | null;
   readonly firstName: string;
   readonly lastName: string;
   readonly isActive: boolean;
+}
+
+/**
+ * Ce que rend le premier temps de la connexion (#1442) : un défi, et
+ * l'enrôlement s'il reste à faire. Aucune session.
+ */
+export interface PlatformLoginChallenge {
+  readonly challengeToken: string;
+  /** Secondes — le temps laissé pour saisir le code. */
+  readonly expiresIn: number;
+  /** `null` dès que l'enrôlement est confirmé : le secret ne ressort plus. */
+  readonly enrollment: {
+    readonly otpauthUri: string;
+    readonly secret: string;
+  } | null;
 }
 
 /** Ce qu'une connexion d'opérateur rend — sans jeton de rafraîchissement. */

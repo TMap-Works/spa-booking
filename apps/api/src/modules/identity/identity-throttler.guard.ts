@@ -13,6 +13,7 @@ import type { Request } from 'express';
 
 import { normalizeEmail } from './email';
 import { bearerToken } from './jwt-auth.guard';
+import { PlatformTokenService } from './platform/platform-token.service';
 import { readRefreshCookie } from './refresh-cookie';
 import { TokenService } from './token.service';
 
@@ -119,6 +120,10 @@ import { TokenService } from './token.service';
  * | `/auth/register` | établissement seul | la création de comptes en masse **dans un salon** |
  * | `/auth/password-reset` | établissement **+** adresse e-mail | le bombardement de la boîte mail **d'un compte** |
  * | `/platform/auth/login` | adresse e-mail seule | le forçage du mot de passe d'un opérateur |
+ *
+ * Le second temps de la connexion de la console, `/platform/auth/login/verify`,
+ * se compte par jeton (`@ThrottleByToken({ kind: 'platform-mfa' })`, #1442) : son
+ * corps ne nomme personne, il porte un défi signé.
  *
  * L'inscription ne se compte délibérément **pas** par adresse e-mail : un
  * attaquant qui crée des comptes en varie une à chaque essai, et un compteur par
@@ -244,8 +249,11 @@ export const THROTTLE_BY_PRINCIPAL = 'identity/throttle-by-principal';
 export const ThrottleByPrincipal = (): CustomDecorator<string> =>
   SetMetadata(THROTTLE_BY_PRINCIPAL, true);
 
-/** Les deux usages de jeton signé qu'une route peut compter. */
-export type ThrottleTokenKind = 'invitation' | 'password-reset';
+/**
+ * Les usages de jeton signé qu'une route peut compter — le défi de connexion de
+ * la console depuis #1442.
+ */
+export type ThrottleTokenKind = 'invitation' | 'password-reset' | 'platform-mfa';
 
 /** Le jeton que le corps d'une route porte, et ce qu'il est. */
 export interface ThrottleTokenFields {
@@ -342,6 +350,7 @@ export class IdentityThrottlerGuard extends ThrottlerGuard {
     @InjectThrottlerStorage() storage: ThrottlerStorage,
     reflector: Reflector,
     private readonly tokens: TokenService,
+    private readonly platformTokens: PlatformTokenService,
   ) {
     super(options, storage, reflector);
   }
@@ -486,6 +495,13 @@ export class IdentityThrottlerGuard extends ThrottlerGuard {
 
     if (typeof presented !== 'string' || presented === '') {
       return null;
+    }
+
+    if (fields.kind === 'platform-mfa') {
+      // Le défi de la console rend `null` plutôt que de lever — c'est le contrat
+      // de `PlatformTokenService`. Le compteur est l'opérateur qu'il désigne.
+      const challenge = await this.platformTokens.verifyChallengeToken(presented);
+      return challenge === null ? null : `${fields.kind}:${challenge.sub}`;
     }
 
     try {

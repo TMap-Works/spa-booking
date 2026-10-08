@@ -489,3 +489,61 @@
     );
   }
 }
+
+/*
+ * Enrôlement du second facteur de la console — #1442
+ * -----------------------------------------------------------------------------
+ *
+ * Le second temps de la connexion montre, à la première connexion d'un
+ * opérateur, le QR code à scanner et la clé à recopier
+ * (`app/plateforme/components/platform-code-form.tsx`).
+ *
+ * Le QR est **noir sur blanc dans les deux thèmes** : `--spa-color-paper` et
+ * `--spa-color-ink` ne s'inversent pas, pour que tous les lecteurs le lisent.
+ * 12 rem (192 px) : assez pour qu'une caméra de téléphone le prenne à bout de
+ * bras, assez peu pour que le champ du code reste visible sous lui sur un
+ * écran de 360 px.
+ */
+
+.spa-auth-totp {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--spa-space-3);
+  text-align: center;
+}
+
+.spa-auth-totp__lead,
+.spa-auth-totp__step {
+  margin: 0;
+  color: var(--spa-color-text-muted);
+}
+
+.spa-auth-totp__step {
+  color: var(--spa-color-text);
+}
+
+.spa-auth-totp__qr {
+  display: block;
+  inline-size: 12rem;
+  block-size: 12rem;
+  border-radius: var(--spa-radius-sm);
+}
+
+.spa-auth-totp__qr-paper {
+  fill: var(--spa-color-paper);
+}
+
+.spa-auth-totp__qr-ink {
+  fill: var(--spa-color-ink);
+}
+
+.spa-auth-totp__secret {
+  padding: var(--spa-space-2) var(--spa-space-3);
+  font-family: var(--spa-font-mono);
+  letter-spacing: 0.08em;
+  overflow-wrap: anywhere;
+  background-color: var(--spa-color-surface-sunken);
+  border-radius: var(--spa-radius-sm);
+  user-select: all;
+}

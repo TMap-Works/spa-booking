@@ -79,13 +79,22 @@ describe('Console plateforme — étanchéité des deux espaces (#806)', () => {
 
   const server = (): ReturnType<INestApplication['getHttpServer']> => harness.server();
 
-  /** Un jeton de console, obtenu par la **vraie** route de connexion. */
-  const platformToken = async (): Promise<string> => {
+  /** Le défi du premier temps de la connexion — le mot de passe seul (#1442). */
+  const platformChallenge = async (): Promise<string> => {
     const response = await request(server())
       .post('/api/v1/platform/auth/login')
+      .send({ email: 'operateur@tmap-works.test', password: PASSWORD })
+      .expect(200);
+
+    return (response.body as { challengeToken: string }).challengeToken;
+  };
+
+  /** Un jeton de console, obtenu par les **vraies** routes de connexion, en deux temps. */
+  const platformToken = async (): Promise<string> => {
+    const response = await request(server())
+      .post('/api/v1/platform/auth/login/verify')
       .send({
-        email: 'operateur@tmap-works.test',
-        password: PASSWORD,
+        challengeToken: await platformChallenge(),
         totpCode: totpCodeAt(totpSecret, Date.now()) ?? '',
       })
       .expect(200);
@@ -187,20 +196,62 @@ describe('Console plateforme — étanchéité des deux espaces (#806)', () => {
   });
 
   describe('la console, avec son propre jeton', () => {
-    it('refuse la connexion sans le second facteur', async () => {
-      await request(server())
+    it('le mot de passe seul rend un défi, jamais une session (#1442)', async () => {
+      const response = await request(server())
         .post('/api/v1/platform/auth/login')
-        .send({ email: 'operateur@tmap-works.test', password: PASSWORD, totpCode: '000000' })
+        .send({ email: 'operateur@tmap-works.test', password: PASSWORD })
+        .expect(200);
+
+      const body = response.body as Record<string, unknown>;
+      expect(typeof body['challengeToken']).toBe('string');
+      expect(body['enrollment']).toBeNull();
+      expect(body).not.toHaveProperty('accessToken');
+    });
+
+    it('le défi n’ouvre aucune route de console', async () => {
+      await request(server())
+        .get(PLATFORM_TENANTS)
+        .set('Authorization', `Bearer ${await platformChallenge()}`)
         .expect(401);
     });
 
-    it('refuse une connexion dont le code n’a pas la bonne forme — 400', async () => {
-      const response = await request(server())
+    it('refuse un mot de passe faux au premier temps — 401', async () => {
+      await request(server())
         .post('/api/v1/platform/auth/login')
-        .send({ email: 'operateur@tmap-works.test', password: PASSWORD, totpCode: 'abc' })
+        .send({ email: 'operateur@tmap-works.test', password: 'pas-le-bon-mot-de-passe' })
+        .expect(401);
+    });
+
+    it('refuse le second temps sans le bon code', async () => {
+      const wrong = totpCodeAt(totpSecret, Date.now()) === '000000' ? '111111' : '000000';
+
+      await request(server())
+        .post('/api/v1/platform/auth/login/verify')
+        .send({ challengeToken: await platformChallenge(), totpCode: wrong })
+        .expect(401);
+    });
+
+    it('refuse un code présenté avec un défi contrefait', async () => {
+      await request(server())
+        .post('/api/v1/platform/auth/login/verify')
+        .send({ challengeToken: 'pas.un.defi', totpCode: totpCodeAt(totpSecret, Date.now()) ?? '' })
+        .expect(401);
+    });
+
+    it('refuse un second temps dont le code n’a pas la bonne forme — 400', async () => {
+      const response = await request(server())
+        .post('/api/v1/platform/auth/login/verify')
+        .send({ challengeToken: await platformChallenge(), totpCode: 'abc' })
         .expect(400);
 
       expect((response.body as { code: string }).code).toBe('VALIDATION_ERROR');
+    });
+
+    it('refuse un code envoyé au premier temps — le champ n’y existe plus', async () => {
+      await request(server())
+        .post('/api/v1/platform/auth/login')
+        .send({ email: 'operateur@tmap-works.test', password: PASSWORD, totpCode: '000000' })
+        .expect(400);
     });
 
     it('ouvre un établissement et rend les trois liens', async () => {

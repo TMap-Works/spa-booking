@@ -12,6 +12,7 @@ import {
 } from '../identity-throttler.guard';
 import { IdentityThrottlerStorage } from '../identity-throttler.storage';
 import { REFRESH_COOKIE_NAME } from '../refresh-cookie';
+import { PlatformTokenService } from '../platform/platform-token.service';
 import { TokenService } from '../token.service';
 import { fakeConfig } from './identity.doubles';
 
@@ -96,6 +97,12 @@ class ProbeController {
     /* sonde */
   }
 
+  /** `POST /platform/auth/login/verify` — l'opérateur que le défi désigne (#1442). */
+  @ThrottleByToken({ kind: 'platform-mfa', field: 'challengeToken' })
+  public platformVerify(): void {
+    /* sonde */
+  }
+
   /** Un marquage qui ne désigne rien — le seul cas où la cible n'en est pas une. */
   @ThrottleByTarget({})
   public targetless(): void {
@@ -108,6 +115,7 @@ class ProbeController {
 }
 
 const tokens = new TokenService(new JwtService(), fakeConfig());
+const platformTokens = new PlatformTokenService(new JwtService(), fakeConfig());
 
 /**
  * Une garde neuve — donc un stockage neuf, et des compteurs qui ne fuient pas
@@ -119,6 +127,7 @@ async function freshGuard(): Promise<IdentityThrottlerGuard> {
     new IdentityThrottlerStorage(),
     new Reflector(),
     tokens,
+    platformTokens,
   );
   await guard.onModuleInit();
   return guard;
@@ -314,6 +323,43 @@ describe('IdentityThrottlerGuard', () => {
       await call(guard, { handler });
       await expect(
         call(guard, { handler, authorization: `Bearer ${refresh}` }),
+      ).rejects.toBeInstanceOf(ThrottlerException);
+    });
+  });
+
+  describe('défi de la console — `@ThrottleByToken({ kind: \'platform-mfa\' })` (#1442)', () => {
+    const verify = ProbeController.prototype.platformVerify;
+    const OPERATEUR = '33333333-3333-4333-8333-333333333333';
+    const AUTRE_OPERATEUR = '44444444-4444-4444-8444-444444444444';
+
+    it('compte par opérateur : deux défis du même opérateur partagent leur quota', async () => {
+      const guard = await freshGuard();
+      const premier = await platformTokens.signChallengeToken(OPERATEUR);
+      const second = await platformTokens.signChallengeToken(OPERATEUR);
+
+      await call(guard, { handler: verify, body: { challengeToken: premier, totpCode: '000000' } });
+      await call(guard, { handler: verify, body: { challengeToken: second, totpCode: '000000' } });
+      // Redemander un défi ne rend pas de quota neuf pour forcer les six chiffres.
+      await expect(
+        call(guard, { handler: verify, body: { challengeToken: second, totpCode: '000000' } }),
+      ).rejects.toBeInstanceOf(ThrottlerException);
+
+      await expect(
+        call(guard, {
+          handler: verify,
+          body: { challengeToken: await platformTokens.signChallengeToken(AUTRE_OPERATEUR), totpCode: '000000' },
+        }),
+      ).resolves.toBe(true);
+    });
+
+    it('ne compte pas un défi contrefait — ni un jeton de console — autrement que par l’adresse', async () => {
+      const guard = await freshGuard();
+      const session = await platformTokens.signAccessToken(OPERATEUR);
+
+      await call(guard, { handler: verify, body: { challengeToken: 'contrefait-1', totpCode: '000000' } });
+      await call(guard, { handler: verify, body: { challengeToken: session, totpCode: '000000' } });
+      await expect(
+        call(guard, { handler: verify, body: { challengeToken: 'contrefait-2', totpCode: '000000' } }),
       ).rejects.toBeInstanceOf(ThrottlerException);
     });
   });

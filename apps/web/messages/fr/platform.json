@@ -44,13 +44,36 @@
     "totpHint": "Les six chiffres affichés par votre application d’authentification.",
     "submit": "Se connecter",
     "submitting": "Connexion en cours…",
+    "next": "Continuer",
+    "nextSubmitting": "Vérification…",
+    "code": {
+      "title": "Vérification en deux étapes",
+      "lead": "Saisissez le code à six chiffres affiché par votre application d’authentification pour {email}.",
+      "restart": "Changer de compte"
+    },
+    "enroll": {
+      "title": "Configurez votre application d’authentification",
+      "lead": "Chaque connexion à la console demande un code d’application d’authentification. Configurez la vôtre une fois, maintenant.",
+      "scan": "Scannez ce QR code avec votre application d’authentification.",
+      "qrLabel": "QR code à scanner avec votre application d’authentification",
+      "manual": "Impossible de scanner ? Saisissez plutôt cette clé dans l’application :",
+      "confirm": "Saisissez ensuite le code à six chiffres qu’elle affiche pour confirmer."
+    },
     "fieldErrors": {
       "password": "Le mot de passe fait au moins {min} caractères."
     },
     "errors": {
       "credentials": {
         "title": "Connexion refusée",
-        "body": "Adresse, mot de passe ou code incorrect. Si le code venait d’expirer, saisissez le suivant."
+        "body": "Adresse e-mail ou mot de passe incorrect."
+      },
+      "code": {
+        "title": "Code incorrect",
+        "body": "Le code a été refusé. S’il venait d’expirer, saisissez le suivant."
+      },
+      "challengeExpired": {
+        "title": "Délai de vérification dépassé",
+        "body": "Par sécurité, saisissez de nouveau votre mot de passe."
       },
       "throttled": {
         "title": "Trop de tentatives",
@@ -62,7 +85,7 @@
       },
       "validation": {
         "title": "Formulaire incomplet",
-        "body": "Renseignez votre adresse e-mail, votre mot de passe et le code à six chiffres."
+        "body": "Renseignez votre adresse e-mail et votre mot de passe."
       },
       "unexpected": {
         "title": "Connexion impossible",

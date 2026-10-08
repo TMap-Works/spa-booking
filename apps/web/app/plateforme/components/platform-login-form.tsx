@@ -8,6 +8,7 @@ import {
   zodErrorMap,
   type Locale,
   type PlatformLoginRequest,
+  type PlatformTotpEnrollment,
 } from '@spa/shared';
 import { useLocale, useTranslations } from 'next-intl';
 import { useMemo, useState } from 'react';
@@ -17,17 +18,20 @@ import { Button } from '@/components/ui/button';
 import { Field } from '@/components/ui/field';
 import { Notification } from '@/components/ui/notification';
 import { useLocalizedFieldErrors } from '@/lib/field-refusal';
-import { useNavigateAfterAuth } from '@/lib/use-navigate-after-auth';
 
 import { platformLoginAction } from '../actions';
-import { PLATFORM_CONSOLE_PATH } from '../paths';
+import { PlatformCodeForm } from './platform-code-form';
 
 /**
- * Le formulaire de connexion de la console.
+ * La connexion de la console, en deux temps (#1442).
  *
- * Le refus ne dit jamais lequel des trois facteurs est faux — l'API ne le dit
- * pas non plus (`INVALID_PLATFORM_CREDENTIALS`). Le seul conseil utile est donc
- * celui du code, le facteur qui expire toutes les trente secondes.
+ * D'abord l'adresse et le mot de passe, puis — sur un écran à part — le code de
+ * l'application d'authentification, précédé du QR code à scanner à la première
+ * connexion. Ce composant tient l'étape en cours ; le second temps est
+ * `PlatformCodeForm`.
+ *
+ * Le refus du premier temps ne dit jamais lequel des deux est faux — l'API ne le
+ * dit pas non plus (`INVALID_PLATFORM_CREDENTIALS`).
  *
  * ## Les refus sont lus sur le code, jamais sur le message (#1106)
  *
@@ -52,14 +56,10 @@ import { PLATFORM_CONSOLE_PATH } from '../paths';
  * carte et la même phrase que les formulaires de connexion de l'espace client
  * et du back-office (#1232).
  *
- * Le code de vérification non plus, depuis #1387. Sa phrase de catalogue redisait
- * `validationMessage('platform.totpCode', 'fr')` mot pour mot, et en divergeait
- * déjà en anglais — « as your authenticator app shows them » ici, « as shown by
- * your authenticator app » au contrat : la divergence que #1376 annonçait était
- * donc installée, sans que rien ne la signale, parce que la garde d'alors ne
- * comparait qu'aux phrases de `validationPhrases` et non à la table
- * `VALIDATION_MESSAGES`. Le `refine` du schéma pose `messageKey('platform.totpCode')`
- * et la carte sait le dire dans les deux langues : c'est elle qui répond.
+ * Le code de vérification non plus, depuis #1387 — il vit désormais au second
+ * temps, et la règle l'y a suivi : le `refine` du contrat pose
+ * `messageKey('platform.totpCode')`, et la carte sait le dire dans les deux
+ * langues.
  */
 
 /** Les clés d'un couple titre + corps d'échec, telles que `t()` les accepte. */
@@ -87,13 +87,71 @@ const FAILURE_KEYS: Readonly<Record<string, FailureKey>> = {
 const FIELD_ERROR_KEYS = {
   email: null,
   password: 'login.fieldErrors.password',
-  totpCode: null,
 } as const;
 
+/** Où en est la connexion. */
+type Step =
+  | { readonly kind: 'credentials'; readonly email: string }
+  | {
+      readonly kind: 'code';
+      readonly email: string;
+      readonly enrollment: PlatformTotpEnrollment | null;
+    };
+
 export function PlatformLoginForm({ expired }: { readonly expired: boolean }) {
+  const [step, setStep] = useState<Step>({ kind: 'credentials', email: '' });
+  // Le défi a expiré au second temps : le premier le dit en revenant.
+  const [challengeExpired, setChallengeExpired] = useState(false);
+
+  if (step.kind === 'code') {
+    return (
+      <PlatformCodeForm
+        email={step.email}
+        enrollment={step.enrollment}
+        onExpired={() => {
+          // Même compte : seule l'adresse revient, le mot de passe est à redire.
+          setChallengeExpired(true);
+          setStep({ kind: 'credentials', email: step.email });
+        }}
+        onRestart={() => {
+          setChallengeExpired(false);
+          setStep({ kind: 'credentials', email: '' });
+        }}
+      />
+    );
+  }
+
+  return (
+    <PlatformCredentialsForm
+      defaultEmail={step.email}
+      expired={expired}
+      challengeExpired={challengeExpired}
+      onPassed={(email, enrollment) => {
+        setChallengeExpired(false);
+        setStep({ kind: 'code', email, enrollment });
+      }}
+    />
+  );
+}
+
+interface PlatformCredentialsFormProps {
+  readonly defaultEmail: string;
+  /** La session de console a expiré — l'arrivée par `?motif=session-expiree`. */
+  readonly expired: boolean;
+  /** Le défi du second temps a expiré — le retour ici depuis le code. */
+  readonly challengeExpired: boolean;
+  readonly onPassed: (email: string, enrollment: PlatformTotpEnrollment | null) => void;
+}
+
+/** Le premier temps — l'adresse et le mot de passe. */
+function PlatformCredentialsForm({
+  defaultEmail,
+  expired,
+  challengeExpired,
+  onPassed,
+}: PlatformCredentialsFormProps) {
   const t = useTranslations('platform');
   const locale = useLocale() as Locale;
-  const { navigating, navigate } = useNavigateAfterAuth();
   const [failure, setFailure] = useState<FailureKey | null>(null);
 
   // Mémoïsé sur la langue, comme les formulaires de l'espace client : `path` et
@@ -118,7 +176,7 @@ export function PlatformLoginForm({ expired }: { readonly expired: boolean }) {
     formState: { errors, isSubmitting },
   } = useForm<PlatformLoginRequest>({
     resolver,
-    defaultValues: { email: '', password: '', totpCode: '' },
+    defaultValues: { email: defaultEmail, password: '' },
     mode: 'onTouched',
   });
 
@@ -128,7 +186,7 @@ export function PlatformLoginForm({ expired }: { readonly expired: boolean }) {
    * formulaire, et « Adresse e-mail invalide. » resterait sous une étiquette
    * « Email address ». Le crochet rejoue la validation des champs **déjà**
    * fautifs, et d'eux seuls (#1354). Aucun refus n'est posé à la main sur un
-   * champ ici — l'API ne dit jamais lequel des trois facteurs est faux.
+   * champ ici — l'API ne dit jamais lequel des deux est faux.
    */
   useLocalizedFieldErrors({ locale, errors, trigger, setError });
 
@@ -156,12 +214,11 @@ export function PlatformLoginForm({ expired }: { readonly expired: boolean }) {
 
     if (!result.ok) {
       setFailure(FAILURE_KEYS[result.code] ?? 'unexpected');
-      // Un code refusé ne resservira pas : le vider épargne une seconde erreur.
-      resetField('totpCode');
+      resetField('password');
       return;
     }
 
-    navigate(PLATFORM_CONSOLE_PATH);
+    onPassed(values.email, result.data.enrollment);
   });
 
   return (
@@ -175,9 +232,15 @@ export function PlatformLoginForm({ expired }: { readonly expired: boolean }) {
         {t('login.title')}
       </h1>
 
-      {expired ? (
+      {expired && !challengeExpired ? (
         <Notification tone="warning" title={t('login.expired.title')}>
           <p>{t('login.expired.body')}</p>
+        </Notification>
+      ) : null}
+
+      {challengeExpired && failure === null ? (
+        <Notification tone="warning" title={t('login.errors.challengeExpired.title')}>
+          <p>{t('login.errors.challengeExpired.body')}</p>
         </Notification>
       ) : null}
 
@@ -205,25 +268,14 @@ export function PlatformLoginForm({ expired }: { readonly expired: boolean }) {
         error={fieldError('password')}
         {...register('password')}
       />
-      <Field
-        id="plateforme-totp"
-        label={t('login.totp')}
-        hint={t('login.totpHint')}
-        inputMode="numeric"
-        autoComplete="one-time-code"
-        maxLength={6}
-        required
-        error={fieldError('totpCode')}
-        {...register('totpCode')}
-      />
       <Button
         type="submit"
         variant="accent"
         block
-        loading={isSubmitting || navigating}
-        loadingLabel={t('login.submitting')}
+        loading={isSubmitting}
+        loadingLabel={t('login.nextSubmitting')}
       >
-        {t('login.submit')}
+        {t('login.next')}
       </Button>
     </form>
   );

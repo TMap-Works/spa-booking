@@ -150,6 +150,7 @@ const OPERATOR_SELECT = {
   email: true,
   passwordHash: true,
   totpSecret: true,
+  totpConfirmedAt: true,
   firstName: true,
   lastName: true,
   isActive: true,
@@ -205,6 +206,35 @@ export class PlatformRepository {
     return this.prismaUnscoped.platformOperator.findFirst({
       where: { email, isActive: true },
       select: OPERATOR_SELECT,
+    });
+  }
+
+  /**
+   * L'opérateur actif que désigne un défi de connexion, secret compris — la
+   * lecture du second temps (#1442).
+   *
+   * Relu plutôt que porté par le défi : un opérateur désactivé entre les deux
+   * temps ne doit pas pouvoir finir de se connecter.
+   */
+  public async findActiveOperatorWithSecretsById(
+    id: string,
+  ): Promise<PlatformOperatorRecord | null> {
+    return this.prismaUnscoped.platformOperator.findFirst({
+      where: { id, isActive: true },
+      select: OPERATOR_SELECT,
+    });
+  }
+
+  /**
+   * Confirme l'enrôlement du second facteur — une fois (#1442).
+   *
+   * Conditionnée à `totp_confirmed_at IS NULL` : deux premiers codes valides
+   * presque simultanés ne réécrivent pas l'instant du premier.
+   */
+  public async confirmOperatorTotp(id: string): Promise<void> {
+    await this.prismaUnscoped.platformOperator.updateMany({
+      where: { id, totpConfirmedAt: null },
+      data: { totpConfirmedAt: new Date() },
     });
   }
 

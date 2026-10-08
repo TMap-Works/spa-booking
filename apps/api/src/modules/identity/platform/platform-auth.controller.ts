@@ -2,8 +2,17 @@ import { Body, Controller, HttpCode, HttpStatus, Post, UseGuards } from '@nestjs
 import { ApiOkResponse, ApiOperation, ApiTags, ApiUnauthorizedResponse } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
 
-import { IdentityThrottlerGuard, ThrottleByTarget } from '../identity-throttler.guard';
-import { PlatformLoginDto, PlatformSessionDto } from './dto/platform.dto';
+import {
+  IdentityThrottlerGuard,
+  ThrottleByTarget,
+  ThrottleByToken,
+} from '../identity-throttler.guard';
+import {
+  PlatformLoginChallengeDto,
+  PlatformLoginDto,
+  PlatformSessionDto,
+  PlatformTotpVerifyDto,
+} from './dto/platform.dto';
 import { PlatformService } from './platform.service';
 
 /**
@@ -37,6 +46,14 @@ import { PlatformService } from './platform.service';
  *
  * Le **second facteur** rend de toute façon la fenêtre peu intéressante :
  * forcer le mot de passe ne suffit pas à entrer.
+ *
+ * ## Deux temps (#1442)
+ *
+ * `login` vérifie le mot de passe et rend un défi ; `login/verify` échange ce
+ * défi et le code TOTP contre la session. Le second temps se compte par
+ * **opérateur** — le `sub` du défi, vérifié —, à cinq essais par minute : c'est
+ * ce qui borne le forçage des six chiffres, et un défi contrefait ne désigne
+ * personne, donc ne fait naître aucun compteur.
  */
 @ApiTags('platform')
 @Controller({ path: 'platform/auth', version: '1' })
@@ -45,28 +62,46 @@ export class PlatformAuthController {
   public constructor(private readonly platform: PlatformService) {}
 
   /**
-   * Ouvre une session de console — mot de passe **et** code TOTP.
+   * Premier temps de la connexion — le mot de passe, contre un défi.
    *
-   * **200** et non 201 : rien n'est créé, aucune ligne de session n'est écrite.
-   * Le jeton rendu est le seul état de cette connexion, et il expire de
-   * lui-même.
+   * **200** et non 201 : rien n'est créé. Le défi n'ouvre aucune route ; il
+   * n'est qu'un droit à présenter un code pendant cinq minutes.
    *
    * **401** sur tout refus, sans jamais dire lequel : adresse inconnue, mot de
-   * passe faux, code faux, compte désactivé.
+   * passe faux, compte désactivé.
    */
   @Post('login')
   @ThrottleByTarget({ account: 'email' })
   @Throttle({ default: { limit: 5, ttl: 60_000 } })
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Ouvrir une session de console plateforme (MFA exigée)' })
+  @ApiOperation({ summary: 'Connexion à la console plateforme — premier temps (mot de passe)' })
+  @ApiOkResponse({ type: PlatformLoginChallengeDto })
+  @ApiUnauthorizedResponse({
+    description: 'Identifiants invalides — la cause n’est jamais dite.',
+  })
+  public async login(@Body() body: PlatformLoginDto): Promise<PlatformLoginChallengeDto> {
+    return this.platform.login({ email: body.email, password: body.password });
+  }
+
+  /**
+   * Second temps de la connexion — le défi et le code TOTP, contre la session.
+   *
+   * **200** : le jeton rendu est le seul état de cette connexion, et il expire
+   * de lui-même. **401** sur tout refus — défi faux ou expiré, code faux,
+   * compte désactivé entre les deux temps.
+   */
+  @Post('login/verify')
+  @ThrottleByToken({ kind: 'platform-mfa', field: 'challengeToken' })
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Connexion à la console plateforme — second temps (code TOTP)' })
   @ApiOkResponse({ type: PlatformSessionDto })
   @ApiUnauthorizedResponse({
-    description: 'Identifiants ou code de vérification invalides — la cause n’est jamais dite.',
+    description: 'Défi ou code de vérification invalide — la cause n’est jamais dite.',
   })
-  public async login(@Body() body: PlatformLoginDto): Promise<PlatformSessionDto> {
-    return this.platform.login({
-      email: body.email,
-      password: body.password,
+  public async verify(@Body() body: PlatformTotpVerifyDto): Promise<PlatformSessionDto> {
+    return this.platform.verifyLoginCode({
+      challengeToken: body.challengeToken,
       totpCode: body.totpCode,
     });
   }

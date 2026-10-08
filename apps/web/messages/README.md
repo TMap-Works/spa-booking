@@ -302,9 +302,9 @@ Et le risque était déjà réalisé. `platform.login.fieldErrors.totpCode` redi
 « Six digits, as your authenticator app shows them. » au catalogue contre « Six
 digits, as shown by your authenticator app. » au contrat. Aucune garde ne le
 voyait : celle de #1376 ne comparait qu'aux phrases de `validationPhrases`. La
-clé n'existe plus, `FIELD_ERROR_KEYS.totpCode` est à `null`, et c'est
-`zodErrorMap(locale)` qui répond — le `refine` de `platformLoginRequestSchema`
-pose déjà la clé de message.
+clé n'existe plus, et c'est `zodErrorMap(locale)` qui répond — le `refine` du
+contrat pose déjà la clé de message. Depuis #1442, le code se saisit au second
+temps de la connexion, et ce `refine` vit dans `platformTotpCodeSchema`.
 
 **Ce qui tient la décision.** Un second cas dans
 [`messages-glossary.test.ts`](../tests/unit/messages-glossary.test.ts), jumeau du

@@ -16,6 +16,7 @@ import { PlatformRepository } from './platform.repository';
 import { PlatformTokenService } from './platform-token.service';
 import type {
   AuthenticatedOperator,
+  PlatformLoginChallenge,
   PlatformSession,
   ProvisionedTenant,
   ProvisionedTenantRecord,
@@ -24,7 +25,7 @@ import type {
   TenantListQuery,
   TenantPage,
 } from './platform.types';
-import { verifyTotp } from './totp';
+import { totpUri, verifyTotp } from './totp';
 
 /**
  * La console de l'éditeur — ouvrir un salon, le retrouver, réinviter son
@@ -57,26 +58,35 @@ export class PlatformService {
   ) {}
 
   /**
-   * Connexion d'un opérateur — mot de passe **et** second facteur.
+   * Connexion d'un opérateur, **premier temps** — le mot de passe (#1442).
+   *
+   * Rend un défi de cinq minutes, jamais une session : c'est
+   * `verifyLoginCode`, avec le code TOTP, qui l'ouvre. Le second facteur reste
+   * donc exigé à chaque connexion, simplement dans un second écran.
    *
    * ## Un seul refus, et il coûte toujours le même temps
    *
-   * Les quatre causes — adresse inconnue, mot de passe faux, code faux, compte
-   * désactivé — rendent la même erreur. Le mot de passe est vérifié **avant** le
-   * code, et un compte introuvable consomme quand même le temps d'un bcrypt
-   * (`burnComparableTime`) : sans cela, la durée de la réponse dirait si
-   * l'adresse existe, et l'annuaire des opérateurs d'une plateforme est court
-   * assez pour que cela compte.
+   * Les trois causes — adresse inconnue, mot de passe faux, compte désactivé —
+   * rendent la même erreur, et un compte introuvable consomme quand même le
+   * temps d'un bcrypt (`burnComparableTime`) : sans cela, la durée de la réponse
+   * dirait si l'adresse existe, et l'annuaire des opérateurs d'une plateforme est
+   * court assez pour que cela compte.
    *
-   * Le code MFA n'est vérifié que si le mot de passe est juste. L'ordre inverse
-   * aurait fait du formulaire un oracle sur le secret TOTP, testable sans
-   * connaître le premier facteur.
+   * ## Ce que le découpage concède, et ce qu'il garde
+   *
+   * Un mot de passe juste se voit désormais avant le code — c'est la conduite de
+   * toutes les connexions à deux temps, et la limite de cinq essais par minute et
+   * par adresse continue de borner le forçage. Ce qui ne change pas : le code
+   * n'est jamais vérifiable sans le mot de passe, puisqu'il faut un défi pour le
+   * présenter. Le formulaire ne devient pas un oracle sur le secret TOTP.
+   *
+   * ## L'enrôlement
+   *
+   * Tant que `totpConfirmedAt` est nul, le défi s'accompagne de l'URI
+   * `otpauth://` et de la clé : la console en fait un QR code. Une fois le
+   * premier code accepté, plus rien de cela ne sort.
    */
-  public async login(input: {
-    email: string;
-    password: string;
-    totpCode: string;
-  }): Promise<PlatformSession> {
+  public async login(input: { email: string; password: string }): Promise<PlatformLoginChallenge> {
     const email = normalizeEmail(input.email);
     const operator = await this.repository.findActiveOperatorByEmail(email);
 
@@ -90,8 +100,51 @@ export class PlatformService {
       throw new InvalidPlatformCredentialsError();
     }
 
+    return {
+      challengeToken: await this.platformTokens.signChallengeToken(operator.id),
+      expiresIn: this.platformTokens.challengeTtlSeconds,
+      enrollment:
+        operator.totpConfirmedAt === null
+          ? { otpauthUri: totpUri(operator.email, operator.totpSecret), secret: operator.totpSecret }
+          : null,
+    };
+  }
+
+  /**
+   * Connexion d'un opérateur, **second temps** — le code TOTP échangé, avec le
+   * défi, contre une session (#1442).
+   *
+   * Défi faux ou expiré, opérateur désactivé entre les deux temps, code faux :
+   * le même refus que le premier temps, sans dire lequel.
+   *
+   * Le premier code accepté d'un opérateur non enrôlé confirme l'enrôlement.
+   * C'est la preuve que son application produit les bons codes : sans elle, un QR
+   * mal scanné aurait fermé la console à son titulaire dès la connexion suivante.
+   */
+  public async verifyLoginCode(input: {
+    challengeToken: string;
+    totpCode: string;
+  }): Promise<PlatformSession> {
+    const challenge = await this.platformTokens.verifyChallengeToken(input.challengeToken);
+    if (challenge === null) {
+      throw new InvalidPlatformCredentialsError();
+    }
+
+    const operator = await this.repository.findActiveOperatorWithSecretsById(challenge.sub);
+    if (operator === null) {
+      throw new InvalidPlatformCredentialsError();
+    }
+
     if (!verifyTotp(operator.totpSecret, input.totpCode, Date.now())) {
       throw new InvalidPlatformCredentialsError();
+    }
+
+    if (operator.totpConfirmedAt === null) {
+      await this.repository.confirmOperatorTotp(operator.id);
+      this.logger.log('Enrôlement du second facteur d’un opérateur plateforme.', {
+        operatorId: operator.id,
+        context: 'PlatformService',
+      });
     }
 
     const accessToken = await this.platformTokens.signAccessToken(operator.id);

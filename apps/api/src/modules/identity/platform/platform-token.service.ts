@@ -46,8 +46,30 @@ import { AppConfigService } from '../../../config/app-config.service';
  */
 const PLATFORM_KEY_LABEL = 'spa-booking/platform-access-v1';
 
+/**
+ * Étiquette de dérivation du **défi** de connexion (#1442) — une quatrième clé.
+ *
+ * Distincte de celle de la session, et c'est tout le propos : un défi présenté
+ * comme jeton de console échoue à la signature, avant même la lecture de `typ`.
+ * Le défi prouve le mot de passe, rien de plus. S'il ouvrait une route, le second
+ * facteur redeviendrait facultatif.
+ */
+const PLATFORM_CHALLENGE_KEY_LABEL = 'spa-booking/platform-mfa-v1';
+
 /** Revendication de type — un jeton d'un usage ne sert jamais dans un autre. */
 export const PLATFORM_TOKEN_TYPE = 'platform';
+
+/** Revendication de type du défi de connexion. */
+export const PLATFORM_CHALLENGE_TOKEN_TYPE = 'platform-mfa';
+
+/**
+ * Durée de vie d'un défi — cinq minutes (#1442).
+ *
+ * Le temps d'ouvrir l'application d'authentification, et à la première
+ * connexion celui de scanner le QR code. Au-delà, l'opérateur ressaisit son mot
+ * de passe : un défi long serait un premier facteur réutilisable sans lui.
+ */
+export const PLATFORM_CHALLENGE_TTL_SECONDS = 5 * 60;
 
 /**
  * Durée de vie d'un jeton de console — trente minutes.
@@ -95,9 +117,75 @@ export class PlatformTokenService {
    * clé dans le champ d'une instance pour rien.
    */
   private get platformSecret(): string {
-    return createHmac('sha256', this.config.jwtRefreshSecret)
-      .update(PLATFORM_KEY_LABEL)
-      .digest('hex');
+    return this.derivedSecret(PLATFORM_KEY_LABEL);
+  }
+
+  private derivedSecret(label: string): string {
+    return createHmac('sha256', this.config.jwtRefreshSecret).update(label).digest('hex');
+  }
+
+  public get challengeTtlSeconds(): number {
+    return PLATFORM_CHALLENGE_TTL_SECONDS;
+  }
+
+  /**
+   * Le défi du premier temps de la connexion : « le mot de passe de cet
+   * opérateur est juste », pour cinq minutes (#1442).
+   */
+  public async signChallengeToken(operatorId: string): Promise<string> {
+    return this.jwt.signAsync(
+      { sub: operatorId, typ: PLATFORM_CHALLENGE_TOKEN_TYPE },
+      { secret: this.derivedSecret(PLATFORM_CHALLENGE_KEY_LABEL), expiresIn: PLATFORM_CHALLENGE_TTL_SECONDS },
+    );
+  }
+
+  /**
+   * L'opérateur que désigne un défi, ou `null` sur tout échec — signature,
+   * expiration, type. Même contrat que `verifyAccessToken` : la garde du
+   * limiteur l'appelle sur des corps bruts, et un refus n'y est pas une exception.
+   */
+  public async verifyChallengeToken(token: string): Promise<{ sub: string } | null> {
+    const verified = await this.verifyTyped(
+      token,
+      this.derivedSecret(PLATFORM_CHALLENGE_KEY_LABEL),
+      PLATFORM_CHALLENGE_TOKEN_TYPE,
+    );
+
+    return verified === null ? null : { sub: verified.sub };
+  }
+
+  /**
+   * Les revendications d'un jeton signé par cette clé et de ce type, avec son
+   * `sub` — ou `null` sur tout échec. La lecture commune du défi et de la session.
+   */
+  private async verifyTyped(
+    token: string,
+    secret: string,
+    typ: string,
+  ): Promise<{ record: Record<string, unknown>; sub: string } | null> {
+    let payload: unknown;
+    try {
+      payload = await this.jwt.verifyAsync<Record<string, unknown>>(token, { secret });
+    } catch {
+      return null;
+    }
+
+    if (payload === null || typeof payload !== 'object') {
+      return null;
+    }
+
+    const record = payload as Record<string, unknown>;
+    // `typ` est revérifié bien que la clé soit propre : la séparation des clés
+    // est ce qui *garantit*, cette vérification est ce qui le *dit*.
+    if (record['typ'] !== typ) {
+      return null;
+    }
+    const sub = record['sub'];
+    if (typeof sub !== 'string' || sub.trim() === '') {
+      return null;
+    }
+
+    return { record, sub };
   }
 
   public async signAccessToken(operatorId: string): Promise<string> {
@@ -118,29 +206,11 @@ export class PlatformTokenService {
    * par une autre clé, il n'atteint jamais la lecture des revendications.
    */
   public async verifyAccessToken(token: string): Promise<PlatformTokenClaims | null> {
-    let payload: unknown;
-    try {
-      payload = await this.jwt.verifyAsync<Record<string, unknown>>(token, {
-        secret: this.platformSecret,
-      });
-    } catch {
+    const verified = await this.verifyTyped(token, this.platformSecret, PLATFORM_TOKEN_TYPE);
+    if (verified === null) {
       return null;
     }
-
-    if (payload === null || typeof payload !== 'object') {
-      return null;
-    }
-
-    const record = payload as Record<string, unknown>;
-    // `typ` est revérifié bien que la clé soit propre : la séparation des clés
-    // est ce qui *garantit*, cette vérification est ce qui le *dit*.
-    if (record['typ'] !== PLATFORM_TOKEN_TYPE) {
-      return null;
-    }
-    const sub = record['sub'];
-    if (typeof sub !== 'string' || sub.trim() === '') {
-      return null;
-    }
+    const { record, sub } = verified;
     // Un jeton de console ne porte **jamais** de `tenantId`. En rencontrer un
     // signifie qu'une charge utile d'établissement a été signée avec cette clé —
     // impossible sans un défaut de câblage, et pas une situation qu'on tolère en
