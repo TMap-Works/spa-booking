@@ -91,6 +91,7 @@ vi.mock('next-intl', () => nextIntlMobile());
 
 const signupSalonAction = vi.fn();
 const platformLoginAction = vi.fn();
+const platformVerifyCodeAction = vi.fn();
 const provisionTenantAction = vi.fn();
 const createServiceAction = vi.fn();
 const createServiceCategoryAction = vi.fn();
@@ -120,6 +121,7 @@ vi.mock('@/app/(admin)/[tenantSlug]/admin/personnel/actions', () => ({
 
 vi.mock('@/app/plateforme/actions', () => ({
   platformLoginAction: (...args: unknown[]) => platformLoginAction(...args),
+  platformVerifyCodeAction: (...args: unknown[]) => platformVerifyCodeAction(...args),
   platformLogoutAction: vi.fn(),
   provisionTenantAction: (...args: unknown[]) => provisionTenantAction(...args),
   reissueTenantInvitationAction: vi.fn(),
@@ -141,6 +143,18 @@ import { StaffScheduleEditor } from '@/app/(admin)/[tenantSlug]/admin/personnel/
 import { ContactStep } from '@/app/(booking)/[tenantSlug]/reservation/steps/contact-step';
 import { SignupForm } from '@/app/inscription/components/signup-form';
 import { PlatformLoginForm } from '@/app/plateforme/components/platform-login-form';
+import { PlatformCodeForm } from '@/app/plateforme/components/platform-code-form';
+
+/**
+ * Le second temps de la connexion de la console, monté seul (#1442) : le code
+ * de vérification n'est plus saisi sous le mot de passe, et les cas qui
+ * éprouvent sa phrase n'ont pas à franchir le premier temps pour l'atteindre.
+ */
+function EcranDuCode() {
+  return (
+    <PlatformCodeForm email="ops@spa.test" enrollment={null} onExpired={() => {}} onRestart={() => {}} />
+  );
+}
 import { TenantCreateForm } from '@/app/plateforme/components/tenant-create-form';
 import { emptyBookingDraft } from '@/lib/booking/draft';
 import { phoneInvalidMessage } from '@/lib/phone';
@@ -187,7 +201,8 @@ const LIBELLES = {
     consoleEmail: 'Adresse e-mail*',
     consolePassword: 'Mot de passe*',
     consoleCode: 'Code de vérification*',
-    consoleSubmit: 'Se connecter',
+    consoleSubmit: 'Continuer',
+    consoleCodeSubmit: 'Se connecter',
     salonName: 'Nom du salon*',
     salonAddress: 'Adresse*',
     salonCity: 'Ville*',
@@ -209,7 +224,8 @@ const LIBELLES = {
     consoleEmail: 'Email address*',
     consolePassword: 'Password*',
     consoleCode: 'Verification code*',
-    consoleSubmit: 'Sign in',
+    consoleSubmit: 'Continue',
+    consoleCodeSubmit: 'Sign in',
     salonName: 'Salon name*',
     salonAddress: 'Address*',
     salonCity: 'City*',
@@ -451,7 +467,6 @@ describe('la connexion de la console dit le refus du contrat (#1376)', () => {
 
       await user.type(screen.getByLabelText(LIBELLES[locale].consoleEmail), 'ops');
       await user.type(screen.getByLabelText(LIBELLES[locale].consolePassword), 'mot-de-passe-long');
-      await user.type(screen.getByLabelText(LIBELLES[locale].consoleCode), '123456');
       await user.click(screen.getByRole('button', { name: LIBELLES[locale].consoleSubmit }));
 
       await waitFor(() => {
@@ -480,12 +495,10 @@ describe('la connexion de la console dit le refus du contrat (#1376)', () => {
     it(`annonce le code de vérification incomplet avec la phrase du contrat en « ${locale} »`, async () => {
       fixerLangue(locale);
       const user = frappe();
-      render(<PlatformLoginForm expired={false} />);
+      render(<EcranDuCode />);
 
-      await user.type(screen.getByLabelText(LIBELLES[locale].consoleEmail), 'ops@spa.test');
-      await user.type(screen.getByLabelText(LIBELLES[locale].consolePassword), 'mot-de-passe-long');
       await user.type(screen.getByLabelText(LIBELLES[locale].consoleCode), '12');
-      await user.click(screen.getByRole('button', { name: LIBELLES[locale].consoleSubmit }));
+      await user.click(screen.getByRole('button', { name: LIBELLES[locale].consoleCodeSubmit }));
 
       await waitFor(() => {
         expect(messageDuChamp('plateforme-totp')).toBe(
@@ -493,7 +506,7 @@ describe('la connexion de la console dit le refus du contrat (#1376)', () => {
         );
       });
       aucunePhraseRetiree();
-      expect(platformLoginAction).not.toHaveBeenCalled();
+      expect(platformVerifyCodeAction).not.toHaveBeenCalled();
     });
   }
 
@@ -538,18 +551,18 @@ describe('la connexion de la console dit le refus du contrat (#1376)', () => {
    */
   it('rejoue le refus du code de vérification dans la nouvelle langue', async () => {
     const user = frappe();
-    const { enAnglais } = monter(() => <PlatformLoginForm expired={false} />);
+    const { enAnglais } = monter(() => <EcranDuCode />);
 
     await user.type(screen.getByLabelText(LIBELLES.fr.consoleCode), '12');
-    // `mode: 'onTouched'` : la validation a lieu quand on quitte le champ.
-    await user.tab();
+    // `mode: 'onSubmit'` sur ce seul champ (#1442) : la validation a lieu à la
+    // soumission, non en quittant le champ.
+    await user.click(screen.getByRole('button', { name: LIBELLES.fr.consoleCodeSubmit }));
 
     await waitFor(() => {
       expect(messageDuChamp('plateforme-totp')).toBe(
         normaliser(validationMessage('platform.totpCode', 'fr')),
       );
     });
-    expect(messageDuChamp('plateforme-email')).toBeNull();
 
     enAnglais();
 
@@ -558,7 +571,6 @@ describe('la connexion de la console dit le refus du contrat (#1376)', () => {
         normaliser(validationMessage('platform.totpCode', 'en')),
       );
     });
-    expect(messageDuChamp('plateforme-email')).toBeNull();
     aucunePhraseRetiree();
   });
 });

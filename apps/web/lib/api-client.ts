@@ -36,6 +36,7 @@ import {
   errorMessage,
   billingRedirectSchema,
   tenantBillingSchema,
+  platformLoginChallengeSchema,
   platformOverviewSchema,
   platformSessionSchema,
   platformTenantDetailSchema,
@@ -101,8 +102,10 @@ import {
   type MyStaffSchedule,
   type MyAppointmentsQuery,
   type Notification as NotificationTrace,
+  type PlatformLoginChallenge,
   type PlatformLoginRequest,
   type PlatformSession,
+  type PlatformTotpVerifyRequest,
   type PlatformOverview,
   type PlatformTenant,
   type PlatformTenantDetail,
@@ -2334,14 +2337,31 @@ export async function fetchNoShowReport(
  * établissement, et aucune de ces routes n'accepte un jeton de salon.
  */
 
-/** Connexion d'un opérateur — mot de passe et code TOTP. */
+/**
+ * Connexion d'un opérateur, premier temps — le mot de passe, contre un défi
+ * (#1442). Aucune session n'en sort.
+ */
 export async function loginPlatformOperator(
   credentials: PlatformLoginRequest,
-): Promise<PlatformSession> {
+): Promise<PlatformLoginChallenge> {
   const { payload } = await authorizedRequest({
     method: 'POST',
     path: '/platform/auth/login',
     body: credentials,
+    schema: platformLoginChallengeSchema,
+  });
+
+  return payload;
+}
+
+/** Connexion d'un opérateur, second temps — le défi et le code, contre la session. */
+export async function verifyPlatformLoginCode(
+  body: PlatformTotpVerifyRequest,
+): Promise<PlatformSession> {
+  const { payload } = await authorizedRequest({
+    method: 'POST',
+    path: '/platform/auth/login/verify',
+    body,
     schema: platformSessionSchema,
   });
 

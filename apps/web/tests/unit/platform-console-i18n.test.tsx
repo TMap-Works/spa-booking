@@ -31,6 +31,7 @@ import { nextIntlFixe } from '../support/langue-figee';
 vi.mock('next-intl', () => nextIntlFixe('en'));
 
 const platformLoginAction = vi.fn();
+const platformVerifyCodeAction = vi.fn();
 const platformLogoutAction = vi.fn();
 const provisionTenantAction = vi.fn();
 const reissueTenantInvitationAction = vi.fn();
@@ -39,6 +40,7 @@ const replace = vi.fn();
 
 vi.mock('@/app/plateforme/actions', () => ({
   platformLoginAction: (...args: unknown[]) => platformLoginAction(...args),
+  platformVerifyCodeAction: (...args: unknown[]) => platformVerifyCodeAction(...args),
   platformLogoutAction: (...args: unknown[]) => platformLogoutAction(...args),
   provisionTenantAction: (...args: unknown[]) => provisionTenantAction(...args),
   reissueTenantInvitationAction: (...args: unknown[]) => reissueTenantInvitationAction(...args),
@@ -71,6 +73,7 @@ beforeAll(() => {
 afterEach(() => {
   cleanup();
   platformLoginAction.mockReset();
+  platformVerifyCodeAction.mockReset();
   platformLogoutAction.mockReset();
   provisionTenantAction.mockReset();
   reissueTenantInvitationAction.mockReset();
@@ -114,16 +117,28 @@ describe('la coquille de la console, en anglais', () => {
 });
 
 describe('la connexion de la console, en anglais', () => {
-  it('nomme ses trois facteurs dans la langue', () => {
+  /** Le premier temps, passé : l'écran du code est affiché. */
+  async function passerLeMotDePasse(
+    user: ReturnType<typeof userEvent.setup>,
+    enrollment: { otpauthUri: string; secret: string } | null = null,
+  ): Promise<void> {
+    platformLoginAction.mockResolvedValue({ ok: true, data: { enrollment } });
+    await user.type(screen.getByLabelText('Email address*'), 'ops@spa.test');
+    await user.type(screen.getByLabelText('Password*'), 'mot-de-passe-long');
+    await user.click(screen.getByRole('button', { name: 'Continue' }));
+    await waitFor(() => {
+      expect(screen.getByLabelText('Verification code*')).toBeDefined();
+    });
+  }
+
+  it('ne demande que l’adresse et le mot de passe au premier temps (#1442)', () => {
     render(<PlatformLoginForm expired={false} />);
 
     expect(screen.getByRole('heading', { name: 'Platform console — sign in' })).toBeDefined();
     expect(screen.getByLabelText('Email address*')).toBeDefined();
     expect(screen.getByLabelText('Password*')).toBeDefined();
-    expect(screen.getByLabelText('Verification code*')).toBeDefined();
-    expect(
-      screen.getByText('The six digits shown by your authenticator app.'),
-    ).toBeDefined();
+    expect(screen.queryByLabelText('Verification code*')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Continue' })).toBeDefined();
   });
 
   it('dit une session expirée dans la langue', () => {
@@ -132,64 +147,154 @@ describe('la connexion de la console, en anglais', () => {
     expect(screen.getByText('Your session has expired')).toBeDefined();
   });
 
-  it('refuse les trois facteurs dans la langue, sans recopier le message du serveur', async () => {
+  it('refuse le mot de passe dans la langue, sans recopier le message du serveur', async () => {
     const user = userEvent.setup();
     platformLoginAction.mockResolvedValue({
       ok: false,
       code: ERROR_CODES.INVALID_PLATFORM_CREDENTIALS,
       // Ce que l'API renvoie : du français, écrit côté serveur.
-      message: 'Adresse, mot de passe ou code incorrect.',
+      message: 'Identifiants refusés.',
     });
 
     render(<PlatformLoginForm expired={false} />);
 
     await user.type(screen.getByLabelText('Email address*'), 'ops@spa.test');
     await user.type(screen.getByLabelText('Password*'), 'mot-de-passe-long');
-    await user.type(screen.getByLabelText('Verification code*'), '123456');
-    await user.click(screen.getByRole('button', { name: 'Sign in' }));
+    await user.click(screen.getByRole('button', { name: 'Continue' }));
 
     await waitFor(() => {
       expect(screen.getByText('Sign-in refused')).toBeDefined();
     });
+    expect(screen.getByText('Incorrect email address or password.')).toBeDefined();
+    expect(screen.queryByText(/Identifiants refusés/)).toBeNull();
+    // On reste au premier temps : aucun code n'est demandé sur un refus.
+    expect(screen.queryByLabelText('Verification code*')).toBeNull();
+  });
+
+  it('passe au code sur un écran dédié, en rappelant le compte', async () => {
+    const user = userEvent.setup();
+    render(<PlatformLoginForm expired={false} />);
+
+    await passerLeMotDePasse(user);
+
+    expect(screen.getByRole('heading', { name: 'Two-step verification' })).toBeDefined();
     expect(
-      screen.getByText(
-        'Incorrect address, password or code. If the code has just expired, enter the next one.',
-      ),
+      screen.getByText('Enter the six-digit code shown by your authenticator app for ops@spa.test.'),
     ).toBeDefined();
-    expect(screen.queryByText(/Adresse, mot de passe ou code incorrect/)).toBeNull();
-    // Le code refusé est vidé : il ne resservira pas.
+    expect(screen.queryByLabelText('Password*')).toBeNull();
+    expect(document.activeElement).toBe(screen.getByLabelText('Verification code*'));
+    expect(screen.queryByRole('img', { name: /QR code/ })).toBeNull();
+    expect(platformLoginAction).toHaveBeenCalledWith({ email: 'ops@spa.test', password: 'mot-de-passe-long' });
+  });
+
+  it('montre le QR code et la clé à la première connexion', async () => {
+    const user = userEvent.setup();
+    render(<PlatformLoginForm expired={false} />);
+
+    await passerLeMotDePasse(user, {
+      otpauthUri: 'otpauth://totp/Spa%20Booking:ops%40spa.test?secret=ABCDEFGHABCDEFGH&issuer=Spa+Booking',
+      secret: 'ABCDEFGHABCDEFGH',
+    });
+
+    expect(screen.getByRole('heading', { name: 'Set up your authenticator app' })).toBeDefined();
+    const qr = screen.getByRole('img', { name: 'QR code to scan with your authenticator app' });
+    expect(qr.querySelector('path')?.getAttribute('d')).toMatch(/^M\d+ \d+h1v1h-1z/);
+    // La clé, groupée par quatre pour qui ne peut pas scanner.
+    expect(screen.getByText('ABCD EFGH ABCD EFGH')).toBeDefined();
+  });
+
+  it('ouvre la console sur le bon code', async () => {
+    const user = userEvent.setup();
+    platformVerifyCodeAction.mockResolvedValue({ ok: true, data: { id: 'x' } });
+    render(<PlatformLoginForm expired={false} />);
+
+    await passerLeMotDePasse(user);
+    await user.type(screen.getByLabelText('Verification code*'), '123456');
+    await user.click(screen.getByRole('button', { name: 'Sign in' }));
+
+    await waitFor(() => {
+      expect(replace).toHaveBeenCalled();
+    });
+    expect(platformVerifyCodeAction).toHaveBeenCalledWith({ totpCode: '123456' });
+  });
+
+  it('refuse un code faux sans renvoyer au mot de passe, et vide le champ', async () => {
+    const user = userEvent.setup();
+    platformVerifyCodeAction.mockResolvedValue({
+      ok: false,
+      code: ERROR_CODES.INVALID_PLATFORM_CREDENTIALS,
+      message: 'Identifiants refusés.',
+    });
+    render(<PlatformLoginForm expired={false} />);
+
+    await passerLeMotDePasse(user);
+    await user.type(screen.getByLabelText('Verification code*'), '123456');
+    await user.click(screen.getByRole('button', { name: 'Sign in' }));
+
+    await waitFor(() => {
+      expect(screen.getByText('Incorrect code')).toBeDefined();
+    });
+    expect(
+      screen.getByText('The code was refused. If it has just expired, enter the next one.'),
+    ).toBeDefined();
     expect((screen.getByLabelText('Verification code*') as HTMLInputElement).value).toBe('');
+  });
+
+  it('renvoie au mot de passe, adresse gardée, quand le défi a expiré', async () => {
+    const user = userEvent.setup();
+    platformVerifyCodeAction.mockResolvedValue({
+      ok: false,
+      code: ERROR_CODES.UNAUTHORIZED,
+      message: 'Session expirée.',
+    });
+    render(<PlatformLoginForm expired={false} />);
+
+    await passerLeMotDePasse(user);
+    await user.type(screen.getByLabelText('Verification code*'), '123456');
+    await user.click(screen.getByRole('button', { name: 'Sign in' }));
+
+    await waitFor(() => {
+      expect(screen.getByText('Verification timed out')).toBeDefined();
+    });
+    expect((screen.getByLabelText('Email address*') as HTMLInputElement).value).toBe('ops@spa.test');
+    expect((screen.getByLabelText('Password*') as HTMLInputElement).value).toBe('');
+  });
+
+  it('revient au premier temps, vide, sur « Use a different account »', async () => {
+    const user = userEvent.setup();
+    render(<PlatformLoginForm expired={false} />);
+
+    await passerLeMotDePasse(user);
+    // Le champ du code a le focus : le quitter vide ne doit rien refuser, sans
+    // quoi le refus décale le bouton sous le pointeur (recette de #1442).
+    await user.click(screen.getByRole('button', { name: 'Use a different account' }));
+    expect(screen.queryByText(validationMessage('platform.totpCode', 'en'))).toBeNull();
+
+    expect((screen.getByLabelText('Email address*') as HTMLInputElement).value).toBe('');
+    expect(screen.queryByText('Verification timed out')).toBeNull();
   });
 
   /**
    * La phrase est **lue au contrat**, et non recopiée ici — #1387.
    *
    * Elle l'était : le catalogue de cet écran portait sa propre copie, que le
-   * littéral de ce cas citait. Les deux ont divergé sans que rien ne le signale,
-   * l'anglais du catalogue disant « as your authenticator app shows them » là où
-   * le contrat dit « as shown by your authenticator app ». Le littéral était le
-   * complice de la copie : citer la phrase à la main rend vraie une assertion
-   * qui ne prouve plus laquelle des deux sources répond.
-   *
-   * Le contrat est la seule source depuis ce ticket — `platformLoginRequestSchema`
-   * pose `messageKey('platform.totpCode')` sur son `refine`, et `zodErrorMap(locale)`
-   * la traduit. Le même refus est éprouvé **dans les deux langues** par
-   * `refus-de-saisie-vient-du-contrat.test.tsx` ; ce cas-ci tient l'anglais de
-   * cette console-là, avec le reste de sa langue.
+   * littéral de ce cas citait. Les deux ont divergé sans que rien ne le signale.
+   * Le contrat est la seule source depuis ce ticket — `platformTotpCodeSchema`
+   * pose `messageKey('platform.totpCode')` sur son `refine` (#1442 l'a déplacé
+   * au second temps), et `zodErrorMap(locale)` la traduit.
    */
   it('refuse un code TOTP mal formé sous le champ, dans la langue', async () => {
     const user = userEvent.setup();
     render(<PlatformLoginForm expired={false} />);
 
-    await user.type(screen.getByLabelText('Email address*'), 'ops@spa.test');
-    await user.type(screen.getByLabelText('Password*'), 'mot-de-passe-long');
+    await passerLeMotDePasse(user);
     await user.type(screen.getByLabelText('Verification code*'), '12');
     await user.click(screen.getByRole('button', { name: 'Sign in' }));
 
     await waitFor(() => {
       expect(screen.getByText(validationMessage('platform.totpCode', 'en'))).toBeDefined();
     });
-    expect(platformLoginAction).not.toHaveBeenCalled();
+    expect(platformVerifyCodeAction).not.toHaveBeenCalled();
   });
 });
 

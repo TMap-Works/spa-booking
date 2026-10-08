@@ -12,7 +12,9 @@ import { PLATFORM_CONSOLE_PATH } from '../paths';
 import { readPlatformAccessToken } from '../session';
 
 /**
- * La connexion à la console — mot de passe **et** code TOTP (ADR 0012 §3).
+ * La connexion à la console — le mot de passe, puis le code TOTP sur un second
+ * écran, précédé du QR code à scanner à la première connexion (ADR 0012 §3,
+ * #1442).
  *
  * Servie sans session, et redirigée vers la console quand il y en a une : même
  * conduite que l'écran de connexion du back-office (#760).

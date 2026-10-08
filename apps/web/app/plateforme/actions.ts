@@ -48,12 +48,14 @@ import {
   createPlatformNoteRequestSchema,
   createTenantRequestSchema,
   platformLoginRequestSchema,
+  platformTotpCodeSchema,
   updateTenantStatusRequestSchema,
   uuidSchema,
   zodErrorMap,
   type PlatformOperator,
   type PlatformTenant,
   type PlatformTenantEvent,
+  type PlatformTotpEnrollment,
   type ProvisionedTenant,
   type ReissuedTenantInvitation,
 } from '@spa/shared';
@@ -66,6 +68,7 @@ import {
   provisionTenant,
   reissueTenantInvitation,
   updatePlatformTenantStatus,
+  verifyPlatformLoginCode,
 } from '@/lib/api-client';
 
 import {
@@ -77,13 +80,33 @@ import {
   type AdminActionResult,
 } from '@/app/(admin)/[tenantSlug]/admin/action-result';
 import { platformTenantPath } from './paths';
-import { clearPlatformSession, readPlatformAccessToken, writePlatformSession } from './session';
+import {
+  clearPlatformChallenge,
+  clearPlatformSession,
+  readPlatformAccessToken,
+  readPlatformChallenge,
+  writePlatformChallenge,
+  writePlatformSession,
+} from './session';
 
 export type PlatformActionResult<TData> = AdminActionResult<TData>;
 
+/** Ce que le premier temps rend à l'écran : l'enrôlement à faire, s'il y en a un. */
+export interface PlatformLoginStep {
+  readonly enrollment: PlatformTotpEnrollment | null;
+}
+
+/**
+ * Premier temps de la connexion — le mot de passe (#1442).
+ *
+ * Le défi rendu par l'API est gardé en cookie `httpOnly` et ne revient pas à
+ * l'écran. Ce qui y revient, c'est l'enrôlement : l'URI du QR code et la clé,
+ * que l'opérateur doit voir pour les scanner — tant qu'il n'est pas enrôlé, et
+ * jamais plus ensuite.
+ */
 export async function platformLoginAction(
   credentials: unknown,
-): Promise<PlatformActionResult<PlatformOperator>> {
+): Promise<PlatformActionResult<PlatformLoginStep>> {
   const parsed = platformLoginRequestSchema.safeParse(credentials);
 
   if (!parsed.success) {
@@ -91,7 +114,40 @@ export async function platformLoginAction(
   }
 
   try {
-    const session = await loginPlatformOperator(parsed.data);
+    const challenge = await loginPlatformOperator(parsed.data);
+    await writePlatformChallenge(challenge.challengeToken, challenge.expiresIn);
+    return { ok: true, data: { enrollment: challenge.enrollment } };
+  } catch (error) {
+    return failure(error);
+  }
+}
+
+/**
+ * Second temps de la connexion — le code, contre la session (#1442).
+ *
+ * Sans défi en cookie — il a expiré, ou l'écran a été rouvert —, l'action rend
+ * `UNAUTHORIZED` sans appeler l'API : l'écran renvoie alors au mot de passe. Le
+ * refus de l'API, lui, est `INVALID_PLATFORM_CREDENTIALS`, et l'écran le dit
+ * comme un code faux.
+ */
+export async function platformVerifyCodeAction(
+  values: unknown,
+): Promise<PlatformActionResult<PlatformOperator>> {
+  const parsed = platformTotpCodeSchema.safeParse(values);
+
+  if (!parsed.success) {
+    return invalid(validationRefusal(await getLocale()));
+  }
+
+  const challengeToken = await readPlatformChallenge();
+
+  if (challengeToken === null) {
+    return expired();
+  }
+
+  try {
+    const session = await verifyPlatformLoginCode({ challengeToken, totpCode: parsed.data.totpCode });
+    await clearPlatformChallenge();
     await writePlatformSession(session);
     return { ok: true, data: session.operator };
   } catch (error) {
