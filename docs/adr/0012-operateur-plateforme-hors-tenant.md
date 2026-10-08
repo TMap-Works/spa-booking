@@ -2,6 +2,8 @@
 
 - **Statut** : Accepté
 - **Date** : 2026-09-17
+- **Amendé** : 2026-10-08 — connexion en deux temps et enrôlement du second
+  facteur par QR code (#1442), voir « Amendement » en fin de document
 - **Décideurs** : PO (arbitrage du 16/09/2026, tracé dans #804), équipe TMap-Works (#806)
 - **Contexte CDC** : §1.2 proposition de valeur, §1.4 périmètre figé, §2.1
   isolation multi-tenant, §2.3 module Identité & accès, §2.4 le Tenant comme
@@ -229,3 +231,47 @@ l'identité de l'éditeur vivra dans `users`, elle portera un `tenantId` qui ne
 désigne rien, et toute route de console devra contourner la portée depuis un
 jeton d'établissement. Cet ADR referme cette voie : l'opérateur n'a pas de
 `tenantId`, donc il n'a rien à contourner.
+
+## Amendement du 2026-10-08 — deux temps, et l'enrôlement par QR code (#1442)
+
+Les points 3 et 4 tiennent toujours sur le fond — MFA exigée à chaque
+connexion, aucune session longue, aucune route qui crée un opérateur. Deux
+modalités changent, à la demande du PO.
+
+**La connexion se fait en deux temps.** `POST /v1/platform/auth/login` ne reçoit
+plus que l'adresse et le mot de passe, et rend un **défi** : un jeton de cinq
+minutes, de type `platform-mfa`, signé par une quatrième clé dérivée
+(`'spa-booking/platform-mfa-v1'`). `POST /v1/platform/auth/login/verify` échange
+ce défi et le code TOTP contre la session. Le défi n'ouvre aucune route : sa
+clé n'est pas celle de la session, et l'étanchéité reste cryptographique.
+
+- *Ce que cela concède* : un mot de passe juste se reconnaît avant le code,
+  comme sur toute connexion à deux temps. La limite de cinq essais par minute et
+  par adresse borne toujours le forçage.
+- *Ce que cela garde* : le code n'est jamais vérifiable sans le mot de passe,
+  puisqu'il faut un défi pour le présenter. Le second temps se compte par
+  **opérateur** (le `sub` du défi vérifié), à cinq essais par minute :
+  redemander un défi ne rend pas de quota neuf pour forcer les six chiffres.
+- *Côté console* : le défi est gardé dans un cookie `httpOnly` par l'action
+  serveur, et le JavaScript du navigateur ne le voit jamais.
+
+**Le second facteur s'enrôle à la première connexion.** La commande
+d'exploitation n'affiche plus l'URI `otpauth://` : l'opérateur naît avec un
+secret mais **non enrôlé** (`platform_operators.totp_confirmed_at` nul). Tant
+qu'il l'est, le premier temps rend l'URI et la clé, et la console les montre en
+QR code à scanner, avec la clé en repli. Le premier code valide pose
+`totp_confirmed_at`, et le secret ne sort plus jamais de l'API.
+`npm run platform:operator -- --reset-totp --email …` tire un nouveau secret et
+réarme l'enrôlement, pour un téléphone perdu ou changé.
+
+- *Le risque accepté* : entre la création de l'opérateur et sa première
+  connexion, qui connaît le mot de passe peut enrôler son propre téléphone.
+  C'est le cas de tout enrôlement à la première connexion, et la fenêtre est
+  celle qui existait déjà : le mot de passe initial et l'URI voyageaient
+  ensemble, par le même canal. Le mot de passe est tiré au sort et transmis une
+  fois ; un enrôlement usurpé se voit à la première connexion de son titulaire,
+  qui ne reçoit pas de QR code, et se répare par `--reset-totp`.
+- *Les opérateurs existants* sont tenus pour enrôlés par la migration
+  (`totp_confirmed_at = created_at`) : ils ont reçu leur URI, et leur secret ne
+  doit pas se réafficher à quiconque connaît leur mot de passe.
+
