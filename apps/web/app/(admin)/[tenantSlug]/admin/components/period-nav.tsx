@@ -1,6 +1,6 @@
 import { useTranslations } from 'next-intl';
 import Link from 'next/link';
-import type { ReactNode } from 'react';
+import { Fragment, type ReactNode } from 'react';
 
 import { Button, type ButtonVariant } from '@/components/ui/button';
 
@@ -134,6 +134,135 @@ export function PeriodNav({
         </PeriodNavButton>
       )}
     </div>
+  );
+}
+
+/** Ce qu'un segment porte, quel que soit ce qu'il déclenche. */
+interface PeriodViewSegmentBase {
+  /**
+   * La clé de la vue — celle que porte l'adresse (`?vue=semaine`).
+   *
+   * Elle sert de clé React et d'`id` au bouton radio de la variante geste. Les
+   * clés restent françaises dans ce back-office, et ce composant ne les traduit
+   * pas : seul `label` suit la langue.
+   */
+  readonly key: string;
+  readonly label: string;
+  /** Le segment de la vue ouverte. */
+  readonly current: boolean;
+}
+
+/** Un segment qui mène à une adresse — la variante lien. */
+export interface PeriodViewLinkSegment extends PeriodViewSegmentBase {
+  readonly control: { readonly href: string };
+}
+
+/** Un segment qui déclenche un geste local — la variante radio. */
+export interface PeriodViewActionSegment extends PeriodViewSegmentBase {
+  readonly control: { readonly onSelect: () => void };
+}
+
+/** Un segment du sélecteur de vue : sa clé, son libellé, son état, son geste. */
+export type PeriodViewSegment = PeriodViewLinkSegment | PeriodViewActionSegment;
+
+/**
+ * Le sélecteur de vue de la barre d'outils — « Jour / Semaine », et « À venir »
+ * là où l'écran l'offre (#1412, BM-AGENDA-01).
+ *
+ * ## Pourquoi un composant, et pas deux rangées qui se ressemblent
+ *
+ * Même raison que `PeriodNav`, et même constat de campagne : les deux plannings
+ * du back-office changeaient de vue de deux façons. Le planning du salon posait
+ * un groupe segmenté **dans** la barre, à droite de la date — ce que
+ * `BM-AGENDA-01` décrit chez Fresha, Boulevard, Square et Vagaro : « un
+ * sélecteur Jour / Semaine dans la barre d'outils, à côté de la navigation de
+ * date ». « Mon planning », lui, posait une rangée d'onglets **au-dessus** de la
+ * barre, dans une autre brique (`NavTabs`) et une autre allure. L'opérateur qui
+ * passe d'un écran à l'autre cherchait le même geste à deux endroits.
+ *
+ * Le rendu du planning du salon fait foi : c'est lui qui suit le standard du
+ * marché, et c'est le groupe segmenté que `styles/admin/shell.css` peint déjà.
+ * Le nombre de segments, lui, n'est pas figé — « Mon planning » en a trois.
+ *
+ * ## Deux variantes, un seul balisage
+ *
+ * Comme `PeriodNavButton`, et pour la raison écrite en tête de ce fichier : le
+ * planning du salon est un Client Component qui garde les périodes voisines en
+ * cache et passe donc des **gestes** ; « Mon planning » est rendu par le serveur
+ * et sa vue vit dans l'adresse, il passe des **chemins** (web-frontend §1).
+ *
+ *   - des gestes → des boutons radio natifs dans un `<fieldset>`, d'où viennent
+ *     la navigation par flèches et l'annonce « 1 sur 2 » ;
+ *   - des chemins → de vrais liens dans un groupe nommé, l'ouvert portant
+ *     `aria-current="page"` — qui dit « vous êtes ici » là où `checked`
+ *     promettrait un contrôle de formulaire. C'est exactement la paire
+ *     `Tabs` / `NavTabs` du design system, et son état ouvert se peint de la
+ *     même façon (`styles/components/tabs.css`).
+ *
+ * Un `<fieldset>` autour de liens aurait été un groupe de champs sans champ : la
+ * variante lien emploie `role="group"` et porte son nom en `aria-label`, le
+ * `<legend>` n'existant que dans un `<fieldset>`.
+ */
+export function PeriodViewSwitch({
+  label,
+  segments,
+}: {
+  /** Ce qui nomme le groupe — « Vue du planning ». Masqué à l'œil. */
+  readonly label: string;
+  /**
+   * Une seule nature par rangée : un écran passe des gestes **ou** des chemins,
+   * jamais les deux. C'est le type qui le tient, et non une convention — c'est
+   * la nature des segments qui décide du conteneur, et un mélange rendrait des
+   * liens dans un `<fieldset>` dont le `<legend>` nommerait un groupe de champs
+   * sans champ, pendant que le segment ouvert resterait sans son fond (la règle
+   * `:checked + __option` ne suit pas un `<a>`).
+   */
+  readonly segments: readonly PeriodViewLinkSegment[] | readonly PeriodViewActionSegment[];
+}) {
+  // La lecture se fait sur l'union, le mélange étant déjà refusé à l'appel :
+  // appeler `.map` sur une union de tableaux n'est pas résoluble autrement.
+  const list: readonly PeriodViewSegment[] = segments;
+  const navigates = list.every((segment) => 'href' in segment.control);
+
+  const options = list.map((segment) =>
+    'href' in segment.control ? (
+      <Link
+        aria-current={segment.current ? 'page' : undefined}
+        className="spa-admin-segmented__option"
+        href={segment.control.href}
+        key={segment.key}
+      >
+        {segment.label}
+      </Link>
+    ) : (
+      /* L'entrée masquée **précède** son libellé peint : c'est elle que la règle
+         `:checked + __option` de `admin/shell.css` suit, et l'ordre du document
+         est ce qui la lui donne. */
+      <Fragment key={segment.key}>
+        <input
+          checked={segment.current}
+          className="spa-admin-segmented__input spa-visually-hidden"
+          id={`vue-${segment.key}`}
+          name="vue"
+          onChange={segment.control.onSelect}
+          type="radio"
+        />
+        <label className="spa-admin-segmented__option" htmlFor={`vue-${segment.key}`}>
+          {segment.label}
+        </label>
+      </Fragment>
+    ),
+  );
+
+  return navigates ? (
+    <div aria-label={label} className="spa-admin-segmented" role="group">
+      {options}
+    </div>
+  ) : (
+    <fieldset className="spa-admin-segmented">
+      <legend className="spa-visually-hidden">{label}</legend>
+      {options}
+    </fieldset>
   );
 }
 

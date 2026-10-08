@@ -15,7 +15,7 @@
     "createRecord": "Create my practitioner record",
     "openCalendar": "Open the salon schedule"
   },
-  "tabsLabel": "Schedule view",
+  "viewLegend": "Schedule view",
   "views": {
     "jour": "Day",
     "semaine": "Week",

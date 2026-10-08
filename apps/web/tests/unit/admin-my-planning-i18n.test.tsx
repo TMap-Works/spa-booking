@@ -164,9 +164,13 @@ describe('les onglets de vue', () => {
     expect(Object.keys(myPlanningViewLabels('en'))).toEqual(['jour', 'semaine', 'a-venir']);
   });
 
-  it('donne un nom accessible aux onglets dans les deux langues', () => {
-    expect(planning('fr')('tabsLabel')).toBe('Vue du planning');
-    expect(planning('en')('tabsLabel')).toBe('Schedule view');
+  it('donne un nom accessible au sélecteur de vue dans les deux langues', () => {
+    // La clé s'appelle `viewLegend` depuis #1412, comme celle du planning du
+    // salon (`admin-planning.toolbar.viewLegend`) : ce ne sont plus des onglets
+    // mais le groupe segmenté de la barre d'outils, et le mot qui le nomme doit
+    // se chercher au même endroit dans les deux catalogues.
+    expect(planning('fr')('viewLegend')).toBe('Vue du planning');
+    expect(planning('en')('viewLegend')).toBe('Schedule view');
   });
 });
 

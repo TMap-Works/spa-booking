@@ -15,7 +15,7 @@
     "createRecord": "Créer ma fiche praticien",
     "openCalendar": "Ouvrir le planning du salon"
   },
-  "tabsLabel": "Vue du planning",
+  "viewLegend": "Vue du planning",
   "views": {
     "jour": "Jour",
     "semaine": "Semaine",
