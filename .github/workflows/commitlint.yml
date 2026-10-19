@@ -2,7 +2,7 @@ name: Commitlint
 
 on:
   pull_request:
-    branches: [develop, staging, main]
+    branches: [develop, develop-IA, staging, main]
     # `edited` est indispensable : la dernière étape valide le **titre** de la
     # PR, et c'est ce titre qui devient le message du commit de merge en squash.
     # Sans ce type, un titre corrigé n'est jamais revalidé — il partait donc sur
