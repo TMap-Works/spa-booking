@@ -52,6 +52,12 @@ Banc d'essai : aucun salon réel. Les prestations sont celles du contexte de pag
 let client: Anthropic | undefined;
 const store = new MemoryTranscriptStore();
 
+/** Le client Anthropic du serveur, partagé par l'orchestrateur et les spécialistes. */
+export function anthropicClient(): Anthropic {
+  client ??= new Anthropic();
+  return client;
+}
+
 const SURFACES: Record<ResolvedCopilotSession['session']['surface'], string> = {
   visiteur: 'une visiteuse, sans compte connecté',
   client: 'une cliente connectée à son espace',
@@ -106,7 +112,6 @@ export interface OrchestrateurExtras {
  * changement de compte ou de salon repart d'une conversation vide.
  */
 export function createOrchestrateur(resolved?: ResolvedCopilotSession, extras: OrchestrateurExtras = {}): ClaudeAgent {
-  client ??= new Anthropic();
   const scope =
     resolved === undefined ? 'spike' : `${resolved.session.tenant.slug}:${resolved.subject ?? 'visiteur'}`;
 
@@ -118,7 +123,7 @@ export function createOrchestrateur(resolved?: ResolvedCopilotSession, extras: O
   }
 
   return new ClaudeAgent({
-    client,
+    client: anthropicClient(),
     model: copilotModel('orchestrateur'),
     effort: 'low',
     system: resolved === undefined ? SPIKE_PROMPT : SYSTEM_PROMPT,
@@ -131,9 +136,15 @@ export function createOrchestrateur(resolved?: ResolvedCopilotSession, extras: O
     ...(resolved === undefined ? {} : { sessionContext: sessionContext(resolved) }),
     ...(extras.systemData === undefined ? {} : { systemData: extras.systemData }),
     serverTools,
-    // Les tokens partent en console du serveur ; P1-08 les verse dans
-    // OpenTelemetry et retire cette sortie.
-    // eslint-disable-next-line no-console
-    log: (event, detail) => console.info(event, JSON.stringify(detail)),
+    log: copilotLog,
   });
+}
+
+/**
+ * Le journal du copilot, côté serveur : tokens par appel, refus, pannes
+ * d'outil. P1-08 le verse dans OpenTelemetry et retire cette sortie.
+ */
+export function copilotLog(event: string, detail: Record<string, unknown>): void {
+  // eslint-disable-next-line no-console
+  console.info(event, JSON.stringify(detail));
 }
