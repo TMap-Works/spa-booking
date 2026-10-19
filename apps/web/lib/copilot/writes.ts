@@ -39,6 +39,11 @@ export interface PendingWrite {
   /** Paramètres **déjà validés** par le schéma du registre. */
   readonly parametres: Record<string, unknown>;
   readonly recapitulatif: WriteSummary;
+  /**
+   * Ce que la carte dira une fois l'écriture faite — rédigé à la préparation,
+   * dans la langue et le fuseau du salon, quand le spécialiste a tout en main.
+   */
+  readonly succes: string;
 }
 
 /** Qui a préparé l'écriture : seule la même personne, dans le même salon, peut la valider. */
@@ -105,7 +110,7 @@ export class RedisPendingWriteStore implements PendingWriteStore {
 export type WriteExecutor = (
   parametres: Record<string, unknown>,
   context: { readonly accessToken: string; readonly tenantSlug: string },
-) => Promise<string>;
+) => Promise<void>;
 
 export type WriteOutcome =
   | { readonly statut: 'faite'; readonly message: string }
@@ -171,8 +176,8 @@ export async function decideWrite(input: DecideInput): Promise<WriteOutcome> {
   if (execute === undefined) return { statut: 'echec', message: text.unknown };
 
   try {
-    const message = await execute(write.parametres, { accessToken: input.accessToken, tenantSlug: input.scope.tenantSlug });
-    return { statut: 'faite', message };
+    await execute(write.parametres, { accessToken: input.accessToken, tenantSlug: input.scope.tenantSlug });
+    return { statut: 'faite', message: write.succes };
   } catch (error) {
     return { statut: 'echec', message: apiRefusal(error, input.locale) };
   }

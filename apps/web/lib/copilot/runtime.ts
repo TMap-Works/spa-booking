@@ -1,5 +1,5 @@
 import { CopilotRuntime, createCopilotRuntimeHandler } from '@copilotkit/runtime/v2';
-import type { CopilotActionId } from '@spa/shared';
+import { rescheduleAppointmentRequestSchema, type CopilotActionId } from '@spa/shared';
 
 import { ApiClientError } from '@/lib/api-client';
 import type { ActionAccess } from '@/lib/session-refresh';
@@ -7,6 +7,9 @@ import type { ActionAccess } from '@/lib/session-refresh';
 import { FixedReplyAgent } from './claude-agent';
 import { copilotEnabled } from './config';
 import { copilotBasePath } from './paths';
+import { cancelAppointment, rescheduleAppointment } from '@/lib/api-client';
+
+import { rendezVousSpecialist } from './agents/rendez-vous';
 import { reservationSpecialist } from './agents/reservation';
 import { anthropicClient, copilotLog, createOrchestrateur, sessionContext } from './orchestrateur';
 import { salonData } from './salon-data';
@@ -40,7 +43,24 @@ function pendingWriteStore(): PendingWriteStore {
  * avec le spécialiste qui la propose — Rendez-vous côté cliente (P3-02),
  * praticien (P3-03), gérance (P3-04).
  */
-const WRITE_EXECUTORS: Partial<Record<CopilotActionId, WriteExecutor>> = {};
+export const WRITE_EXECUTORS: Partial<Record<CopilotActionId, WriteExecutor>> = {
+  // La cliente, sur ses propres rendez-vous (P3-02). Les paramètres sont ceux
+  // que le schéma du registre a validés à la préparation.
+  'rendez_vous.reporter': async (parametres, { accessToken, tenantSlug }) => {
+    const { rendezVous, debut, praticien } = parametres as { rendezVous: string; debut: string; praticien?: string };
+    // Le schéma partagé de la requête valide l'instant et le convertit, comme
+    // le fait l'écran de report.
+    const body = rescheduleAppointmentRequestSchema.parse({
+      startsAt: debut,
+      ...(praticien === undefined ? {} : { staffId: praticien }),
+    });
+    await rescheduleAppointment(tenantSlug, rendezVous, accessToken, body);
+  },
+  'rendez_vous.annuler': async (parametres, { accessToken, tenantSlug }) => {
+    const { rendezVous, motif } = parametres as { rendezVous: string; motif?: string };
+    await cancelAppointment(tenantSlug, rendezVous, accessToken, motif === undefined ? {} : { reason: motif });
+  },
+};
 
 function counterStore(): CounterStore {
   if (counters === undefined) {
@@ -62,7 +82,7 @@ const QUOTA_TEXT = {
  */
 function specialistsFor(resolved: ResolvedCopilotSession): Specialist[] {
   const shared = { client: anthropicClient(), session: resolved.session, context: sessionContext(resolved), log: copilotLog };
-  return [reservationSpecialist(shared)];
+  return [reservationSpecialist(shared), rendezVousSpecialist({ ...shared, accessToken: resolved.accessToken })];
 }
 
 /**
