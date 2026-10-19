@@ -2,14 +2,26 @@ import type Anthropic from '@anthropic-ai/sdk';
 import {
   COPILOT_ACTIONS,
   meetsRequirement,
+  type AvailabilityQuery,
+  type AvailabilityResponse,
   type BookedAppointment,
   type CopilotSession,
+  type CustomerPage,
+  type CustomerSearchQuery,
   type MyAppointmentsQuery,
+  type MyStaffAgenda,
+  type MyStaffRangeQuery,
   type PublicService,
 } from '@spa/shared';
 
-import { fetchAvailability, fetchMyAppointments } from '@/lib/api-client';
-import { formatDateTimeInTimeZone } from '@/lib/format';
+import {
+  fetchAdminAvailability,
+  fetchAvailability,
+  fetchMyAgenda,
+  fetchMyAppointments,
+  searchCustomers,
+} from '@/lib/api-client';
+import { formatDateTimeInTimeZone, formatTimeInTimeZone } from '@/lib/format';
 
 import type { BrowserCall, ServerTool } from '../claude-agent';
 import { copilotModel } from '../config';
@@ -42,6 +54,8 @@ Ta méthode
 - Pour parler d'un rendez-vous, lis d'abord la liste avec rendez_vous_mes_prochains (ou rendez_vous_mon_historique pour le passé). Ne devine jamais lequel : s'il y a un doute, cite les deux ou trois candidats et demande lequel.
 - Pour reporter : lis les créneaux libres du jour voulu avec disponibilite_creneaux, pour la même prestation ; puis appelle rendez_vous_reporter avec le début exact et le praticien d'un créneau rendu par l'outil. Si aucun créneau ne convient, propose rendez_vous_ouvrir_report pour qu'elle choisisse elle-même.
 - Pour annuler : appelle rendez_vous_annuler avec le rendez-vous identifié.
+- Praticien : lis sa journée avec planning_ma_journee ; pour marquer un rendez-vous honoré ou absent, il doit figurer dans la journée que tu viens de lire, et son heure doit être passée.
+- Gérance : pour poser un rendez-vous, cherche la cliente avec clients_chercher, lis les créneaux libres avec planning_creneaux_libres, puis appelle rendez_vous_poser avec le début exact et le praticien d'un créneau rendu. Pour montrer le planning, utilise planning_ouvrir.
 - Une écriture n'est jamais faite par toi : elle s'affiche en carte, que la personne valide. Dis-le : « Je vous propose … : validez sur la carte ci-dessous. » Ne dis jamais que c'est fait.
 
 Règles
@@ -61,6 +75,9 @@ export interface RendezVousDeps {
   readonly services?: (tenantSlug: string) => Promise<PublicService[]>;
   readonly availability?: LoadAvailability;
   readonly myAppointments?: (accessToken: string, query: MyAppointmentsQuery) => Promise<BookedAppointment[]>;
+  readonly myAgenda?: (accessToken: string, range: MyStaffRangeQuery) => Promise<MyStaffAgenda>;
+  readonly adminAvailability?: (accessToken: string, query: AvailabilityQuery) => Promise<AvailabilityResponse>;
+  readonly customers?: (accessToken: string, query: Partial<CustomerSearchQuery>) => Promise<CustomerPage>;
   readonly log?: (event: string, detail: Record<string, unknown>) => void;
 }
 
@@ -70,13 +87,17 @@ export function rendezVousSpecialist(deps: RendezVousDeps): Specialist {
   const loadServices = deps.services ?? ((tenantSlug: string) => cachedServices(tenantSlug));
   const loadAvailability = deps.availability ?? fetchAvailability;
   const loadMine = deps.myAppointments ?? fetchMyAppointments;
+  const loadAgenda = deps.myAgenda ?? fetchMyAgenda;
+  const loadAdminAvailability = deps.adminAvailability ?? fetchAdminAvailability;
+  const loadCustomers = deps.customers ?? searchCustomers;
+  const time = (instant: string) => formatTimeInTimeZone(instant, session.tenant.timezone, display);
   const display = { locale: session.locale };
   const when = (instant: string) => formatDateTimeInTimeZone(instant, session.tenant.timezone, display);
 
   return {
     domaine: 'rendez_vous',
     description:
-      "Spécialiste des rendez-vous : lit les rendez-vous de la personne connectée, ouvre l'écran de report, et propose un report ou une annulation qu'elle valide sur une carte. À appeler pour « mes rendez-vous », « reporter », « annuler ».",
+      "Spécialiste des rendez-vous et du planning : rendez-vous de la cliente (lire, reporter, annuler), journée du praticien (lire, marquer honoré ou absent), planning du salon (créneaux libres, poser un rendez-vous). Toute modification est proposée sur une carte que la personne valide. À appeler pour « mes rendez-vous », « reporter », « annuler », « ma journée », « poser un rendez-vous »…",
     async run(brief, signal) {
       const navigations: BrowserCall[] = [];
       const confirmation: { current: PendingWrite | null } = { current: null };
@@ -92,6 +113,17 @@ export function rendezVousSpecialist(deps: RendezVousDeps): Specialist {
       };
       const findUpcoming = async (id: string) => (await readUpcoming()).find((appointment) => appointment.id === id);
       const unknown = { kind: 'resultat', contenu: 'Rendez-vous introuvable parmi ceux à venir : relis la liste.', erreur: true } as const;
+
+      // Ce que cet appel a lu de la journée du praticien et du fichier client :
+      // une écriture ne vise qu'un rendez-vous ou une cliente lus ici, jamais un
+      // identifiant que le modèle aurait inventé.
+      const agendaSeen = new Map<string, MyStaffAgenda['appointments'][number]>();
+      const customersSeen = new Map<string, string>();
+      const notRead = {
+        kind: 'resultat',
+        contenu: "Identifiant inconnu : lis d'abord la journée ou cherche la cliente.",
+        erreur: true,
+      } as const;
 
       const listing = (appointments: readonly BookedAppointment[], empty: string) =>
         appointments.length === 0
@@ -149,6 +181,95 @@ export function rendezVousSpecialist(deps: RendezVousDeps): Specialist {
           return { kind: 'resultat', contenu: 'Proposition prête : la personne doit la valider sur la carte.' };
         }),
       ];
+
+      if (accessToken !== null) {
+        const token = accessToken;
+        all.push(
+          // --- Praticien (P3-03) -------------------------------------------
+          registryTool('planning.ma_journee', async ({ jour }) => {
+            const agenda = await loadAgenda(token, { from: jour, to: jour });
+            if (agenda.appointments.length === 0) return { kind: 'resultat', contenu: `Aucun rendez-vous le ${jour}.` };
+            return {
+              kind: 'resultat',
+              contenu: agenda.appointments
+                .map((appointment) => {
+                  agendaSeen.set(appointment.id, appointment);
+                  // Minimisation (spécification §8) : le prénom et l'initiale, ni
+                  // coordonnées ni note.
+                  const client = `${appointment.client.firstName} ${appointment.client.lastName.charAt(0)}.`;
+                  return `- [${appointment.id}] ${time(appointment.startsAt)}–${time(appointment.endsAt)} ${appointment.service.name} — ${client} — statut ${appointment.status}`;
+                })
+                .join('\n'),
+            };
+          }),
+          ...(['rendez_vous.marquer_honore', 'rendez_vous.marquer_absent'] as const).map((action) =>
+            registryTool(action, async ({ rendezVous }) => {
+              const appointment = agendaSeen.get(rendezVous);
+              if (appointment === undefined) return notRead;
+              const honore = action === 'rendez_vous.marquer_honore';
+              const client = `${appointment.client.firstName} ${appointment.client.lastName.charAt(0)}.`;
+              confirmation.current = {
+                action,
+                parametres: { rendezVous },
+                recapitulatif: {
+                  titre: honore ? 'Marquer le rendez-vous honoré' : 'Marquer la cliente absente',
+                  lignes: [`${when(appointment.startsAt)} — ${appointment.service.name}`, client],
+                },
+                succes: honore
+                  ? `C'est noté : le rendez-vous de ${client} est honoré.`
+                  : `C'est noté : ${client} est marquée absente.`,
+              };
+              return { kind: 'resultat', contenu: 'Proposition prête : la personne doit la valider sur la carte.' };
+            }),
+          ),
+
+          // --- Gérance (P3-04) ---------------------------------------------
+          registryTool('planning.ouvrir', async ({ vue, date }) => {
+            const params = new URLSearchParams();
+            if (vue !== undefined) params.set('vue', vue);
+            if (date !== undefined) params.set('date', date);
+            const query = params.toString();
+            const chemin = `/${slug}/admin/calendrier${query === '' ? '' : `?${query}`}`;
+            navigations.splice(0, navigations.length, { outil: 'naviguer', arguments: { chemin } });
+            return { kind: 'resultat', contenu: "Le planning s'ouvrira avec ta réponse." };
+          }),
+          slotsTool('planning.creneaux_libres', session, services, (_slug, query) => loadAdminAvailability(token, query)),
+          registryTool('clients.chercher', async ({ recherche }) => {
+            const page = await loadCustomers(token, { q: recherche, pageSize: 5 });
+            if (page.items.length === 0) return { kind: 'resultat', contenu: 'Aucune cliente ne correspond.' };
+            return {
+              kind: 'resultat',
+              contenu: page.items
+                .map((customer) => {
+                  const name = `${customer.firstName} ${customer.lastName}`;
+                  customersSeen.set(customer.id, name);
+                  return `- [${customer.id}] ${name}`;
+                })
+                .join('\n'),
+            };
+          }),
+          registryTool('rendez_vous.poser', async ({ prestation, praticien, debut, cliente, note }) => {
+            if (cliente !== undefined && !customersSeen.has(cliente)) return notRead;
+            const { service, staff } = namesOf(services, prestation, praticien ?? '');
+            if (!services.has(prestation)) return notRead;
+            const who = cliente === undefined ? 'sans cliente rattachée' : customersSeen.get(cliente)!;
+            const at = `${when(debut)}${staff === null ? '' : ` avec ${staff}`}`;
+            confirmation.current = {
+              action: 'rendez_vous.poser',
+              parametres: {
+                prestation,
+                debut,
+                ...(praticien === undefined ? {} : { praticien }),
+                ...(cliente === undefined ? {} : { cliente }),
+                ...(note === undefined ? {} : { note }),
+              },
+              recapitulatif: { titre: `Poser un ${service}`, lignes: [at, who, ...(note === undefined ? [] : [note])] },
+              succes: `C'est fait : ${service} posé ${at}.`,
+            };
+            return { kind: 'resultat', contenu: 'Proposition prête : la personne doit la valider sur la carte.' };
+          }),
+        );
+      }
 
       // Chaque outil n'est donné qu'à qui a droit à son action : la cliente ici,
       // le praticien et la gérance avec leurs propres outils (P3-03, P3-04).

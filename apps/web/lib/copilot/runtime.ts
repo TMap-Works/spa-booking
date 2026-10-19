@@ -1,5 +1,9 @@
 import { CopilotRuntime, createCopilotRuntimeHandler } from '@copilotkit/runtime/v2';
-import { rescheduleAppointmentRequestSchema, type CopilotActionId } from '@spa/shared';
+import {
+  createAppointmentRequestSchema,
+  rescheduleAppointmentRequestSchema,
+  type CopilotActionId,
+} from '@spa/shared';
 
 import { ApiClientError } from '@/lib/api-client';
 import type { ActionAccess } from '@/lib/session-refresh';
@@ -7,7 +11,12 @@ import type { ActionAccess } from '@/lib/session-refresh';
 import { FixedReplyAgent } from './claude-agent';
 import { copilotEnabled } from './config';
 import { copilotBasePath } from './paths';
-import { cancelAppointment, rescheduleAppointment } from '@/lib/api-client';
+import {
+  cancelAppointment,
+  changeAppointmentStatus,
+  createAppointment,
+  rescheduleAppointment,
+} from '@/lib/api-client';
 
 import { rendezVousSpecialist } from './agents/rendez-vous';
 import { reservationSpecialist } from './agents/reservation';
@@ -59,6 +68,33 @@ export const WRITE_EXECUTORS: Partial<Record<CopilotActionId, WriteExecutor>> = 
   'rendez_vous.annuler': async (parametres, { accessToken, tenantSlug }) => {
     const { rendezVous, motif } = parametres as { rendezVous: string; motif?: string };
     await cancelAppointment(tenantSlug, rendezVous, accessToken, motif === undefined ? {} : { reason: motif });
+  },
+  // Le praticien, sur ses rendez-vous passés (P3-03) — l'API refuse 403 hors
+  // de son agenda, 422 avant l'heure.
+  'rendez_vous.marquer_honore': async (parametres, { accessToken }) => {
+    await changeAppointmentStatus(accessToken, (parametres as { rendezVous: string }).rendezVous, { status: 'completed' });
+  },
+  'rendez_vous.marquer_absent': async (parametres, { accessToken }) => {
+    await changeAppointmentStatus(accessToken, (parametres as { rendezVous: string }).rendezVous, { status: 'no_show' });
+  },
+  // La gérance (P3-04). La requête passe par le schéma partagé, comme celle de
+  // l'écran de planning ; la double réservation reste bornée par l'API (409).
+  'rendez_vous.poser': async (parametres, { accessToken }) => {
+    const { prestation, praticien, debut, cliente, note } = parametres as {
+      prestation: string;
+      praticien?: string;
+      debut: string;
+      cliente?: string;
+      note?: string;
+    };
+    const body = createAppointmentRequestSchema.parse({
+      serviceId: prestation,
+      startsAt: debut,
+      ...(praticien === undefined ? {} : { staffId: praticien }),
+      ...(cliente === undefined ? {} : { clientId: cliente }),
+      ...(note === undefined ? {} : { clientNote: note }),
+    });
+    await createAppointment(accessToken, body);
   },
 };
 
