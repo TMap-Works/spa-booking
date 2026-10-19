@@ -12,7 +12,7 @@ import { createOrchestrateur } from '@/lib/copilot/orchestrateur';
  * `/agent/{id}/run`, etc.
  *
  * Fermé — 404, comme une route qui n'existe pas — sans clé Anthropic et en
- * production : la session (P1-05) et les quotas (P1-08) ne sont pas encore là.
+ * production. Retiré avec le banc d'essai par P1-06.
  */
 
 export const dynamic = 'force-dynamic';
@@ -35,7 +35,9 @@ function copilotHandler(): (request: Request) => Promise<Response> {
 }
 
 async function serve(request: Request): Promise<Response> {
-  if (!copilotEnabled()) return new Response(null, { status: 404 });
+  // Banc d'essai sans session : jamais servi par une image déployée, même
+  // copilot ouvert. Les vraies routes sont celles de chaque espace (P1-04).
+  if (!copilotEnabled() || process.env.NODE_ENV === 'production') return new Response(null, { status: 404 });
   return copilotHandler()(request);
 }
 

@@ -12,6 +12,6 @@ import { copilotEnabled } from '@/lib/copilot/config';
 export const dynamic = 'force-dynamic';
 
 export default function CopilotSpikePage() {
-  if (!copilotEnabled()) notFound();
+  if (!copilotEnabled() || process.env.NODE_ENV === 'production') notFound();
   return <SpikeChat />;
 }
