@@ -1,4 +1,10 @@
-import type { Appointment, CalendarDate, PublicTenant, TimeZone } from '@spa/shared';
+import {
+  type Appointment,
+  type AppointmentVolumeReport,
+  type CalendarDate,
+  type PublicTenant,
+  type TimeZone,
+} from '@spa/shared';
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { getLocale, getTranslations } from 'next-intl/server';
@@ -14,7 +20,6 @@ import {
 } from '@/lib/api-client';
 import { statusModifier } from '@/lib/admin/calendar-grid';
 import { rangeOf, todayInTimeZone } from '@/lib/admin/calendar-range';
-import type { AppointmentVolumeReport } from '@/lib/admin/reporting-contract';
 import { formatCount, formatRate, revenueByCurrency } from '@/lib/admin/reporting-view';
 import { rangeOfPeriod, shortDayLabel, windowOfRange } from '@/lib/admin/reporting-window';
 import { appointmentOutcomeLabel } from '@/lib/appointment-status';

@@ -50,7 +50,7 @@ import userEvent from '@testing-library/user-event';
 import { ReportChart } from '@/app/(admin)/[tenantSlug]/admin/components/report-chart';
 import { ReportExportButton } from '@/app/(admin)/[tenantSlug]/admin/components/report-export-button';
 import { ReportFilters } from '@/app/(admin)/[tenantSlug]/admin/components/report-filters';
-import type { AppointmentVolumeReport, NoShowReport } from '@/lib/admin/reporting-contract';
+import type { AppointmentVolumeReport, NoShowReport } from '@spa/shared';
 import {
   filterOptions,
   formatCount,

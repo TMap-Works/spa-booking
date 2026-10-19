@@ -21,7 +21,7 @@ import fr from '@/messages/fr/appointment-status.json';
  * le reporting « No-shows » ; l'espace client distinguait « Déplacé » d'« Annulé
  * par vous », le back-office ne connaissait qu'« annulé ». Trois tables de
  * libellés dans trois fichiers — `compte/components/appointment-status.ts`,
- * `lib/admin/calendar-grid.ts`, `lib/admin/reporting-contract.ts` — ne pouvaient
+ * `lib/admin/calendar-grid.ts`, `packages/shared/src/schemas/report-responses.ts` — ne pouvaient
  * que diverger, et elles avaient divergé : c'est le constat `ds:coherence` de
  * l'audit `d20260916-1`.
  *

@@ -1,59 +1,34 @@
 /**
- * Les trois rapports que le back-office lit, rejoués contre un schéma — le
- * revenu quotidien, le volume de rendez-vous et le suivi des no-shows (#74),
- * que l'écran de #75 restitue.
+ * Les trois rapports du back-office — revenu quotidien, volume de rendez-vous,
+ * suivi des no-shows (#74) — tels que `GET /api/v1/reports/*` les rend (#1479).
  *
- * ## Pourquoi ils ne viennent pas de `@spa/shared`
+ * Ils vivaient dans `apps/web/lib/admin/reporting-contract.ts`, faute de place
+ * dans le contrat partagé. Le copilot IA (P4-01) les lit à son tour, et la règle
+ * du dépôt veut qu'un type d'API ne soit déclaré qu'ici : le front ne redéclare
+ * jamais une réponse que l'API expose.
  *
- * Parce que le contrat partagé ne les publie pas : `packages/shared/src/schemas/`
- * n'a pas de fichier `reporting.ts`, et le module API les décrit dans ses
- * propres DTO (`apps/api/src/modules/reporting/dto/`). C'est exactement l'écart
- * que `payment-contract.ts` documente pour les paiements, et il se referme de la
- * même façon : le jour où le contrat partagé porte ces trois réponses, ce
- * fichier disparaît et `api-client.ts` importe les schémas de `@spa/shared`.
- *
- * Écart assumé, tranché en #554 : ce paquet de vocabulaire appartient au contrat d'API, et
- * `reporting.types.ts` le dit déjà de son côté — « ces vocabulaires
- * appartiennent au contrat d'API, et #510 n'a pas pu les y prendre ». Le
- * déplacer suppose de trancher la question de casse que ce même fichier
- * instruit : l'API agrège `NO_SHOW` parce que c'est ce que la colonne écrit,
- * `@spa/shared` nomme `no_show` parce que c'est ce que le front lit.
- *
- * D'ici là, les schémas vivent ici et sont **composés des primitives du
- * contrat** (`utcInstantSchema`, `timeZoneSchema`, `calendarDateSchema`,
- * `currencyCodeSchema`, `amountMinorSchema`, `appointmentStatusSchema`,
- * `paymentMethodSchema`) : rien du vocabulaire n'est redéclaré, seule
- * l'enveloppe l'est.
+ * Ils sont **composés des primitives du contrat** (`utcInstantSchema`,
+ * `timeZoneSchema`, `calendarDateSchema`, `currencyCodeSchema`,
+ * `amountMinorSchema`, `appointmentStatusSchema`, `paymentMethodSchema`).
  *
  * ## La normalisation de casse se fait ici, une fois
  *
- * L'API émet `CARD` et `NO_SHOW` ; le contrat partagé nomme `card` et `no_show`.
- * La conversion est faite à la frontière — comme
- * `receivedAppointmentStatusSchema` du contrat et `receivedPaymentMethodSchema`
- * du contrat de paiement — de sorte qu'aucun composant de l'écran n'ait à se
- * demander dans quelle casse il compare un statut.
+ * L'API émet `CARD` et `NO_SHOW` ; le contrat nomme `card` et `no_show`. La
+ * conversion est faite à la frontière, comme `receivedAppointmentStatusSchema`,
+ * de sorte qu'aucun composant n'ait à se demander dans quelle casse il compare.
  *
  * ## Aucune donnée personnelle ne peut entrer par ces schémas
  *
  * Un objet Zod **retire** les clés qu'il ne déclare pas. Les seuls libellés
- * déclarés ci-dessous sont `label` — le nom public d'un praticien ou d'une
- * prestation, celui que l'agenda affiche déjà. Ni nom de cliente, ni adresse, ni
- * note interne, ni référence de prestataire : le module API n'en émet aucun
- * (son README, « ce qu'aucune réponse ne porte »), et si cela changeait, rien
- * n'atteindrait un composant ni un journal du front.
+ * déclarés sont `label` — le nom public d'un praticien ou d'une prestation. Ni
+ * nom de cliente, ni adresse, ni note interne.
  */
-
-import {
-  APPOINTMENT_STATUSES,
-  amountMinorSchema,
-  calendarDateSchema,
-  currencyCodeSchema,
-  paymentMethodSchema,
-  timeZoneSchema,
-  utcInstantSchema,
-  type AppointmentStatus,
-} from '@spa/shared';
 import { z } from 'zod';
+
+import { amountMinorSchema, currencyCodeSchema } from '../common/money';
+import { calendarDateSchema, timeZoneSchema, utcInstantSchema } from '../common/time';
+import { APPOINTMENT_STATUSES, type AppointmentStatus } from '../constants/appointment';
+import { paymentMethodSchema } from './payment';
 
 /**
  * Moyen d'encaissement **tel qu'il arrive du fil** — l'API émet `CARD`, le
@@ -218,17 +193,3 @@ export const noShowReportSchema = z
   .strict();
 
 export type NoShowReport = z.infer<typeof noShowReportSchema>;
-
-// Le statut d'un rendez-vous ne s'écrit plus ici (#917). Cette table disait
-// « En attente » et « No-shows » là où l'espace client disait « À confirmer par
-// le salon » et « Non honoré », et le planning « à confirmer » et « non
-// présenté » : trois mots pour un même fait, sur trois écrans du même produit.
-// Le reporting lit désormais `APPOINTMENT_STATUS_PLURAL_LABELS` de
-// `lib/appointment-status.ts` — les mêmes mots, accordés au pluriel, parce qu'un
-// rapport compte des rendez-vous.
-
-// Le moyen d'encaissement ne s'écrit plus ici non plus (#1300). `card` → « Carte »
-// et `cash` → « Espèces » : deux mots français figés dans un contrat de schémas,
-// que plus aucun écran ne lisait depuis que le reporting est passé au catalogue
-// de messages. Un libellé traduit se demande à `useTranslations`, pas à une table
-// de validation de réponses d'API.

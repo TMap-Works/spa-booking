@@ -433,3 +433,26 @@ export type {
   TenantBookingSettings,
   UpdateTenantRequest,
 } from './tenant';
+
+export {
+  reportWindowSchema,
+  dailyRevenueRowSchema,
+  revenueTotalSchema,
+  dailyRevenueReportSchema,
+  APPOINTMENT_GROUPINGS,
+  appointmentStatusCountsSchema,
+  appointmentVolumeRowSchema,
+  appointmentVolumeReportSchema,
+  noShowReportSchema,
+} from './report-responses';
+export type {
+  ReportWindowResponse,
+  DailyRevenueRow,
+  RevenueTotal,
+  DailyRevenueReport,
+  AppointmentGrouping,
+  AppointmentStatusCounts,
+  AppointmentVolumeRow,
+  AppointmentVolumeReport,
+  NoShowReport,
+} from './report-responses';

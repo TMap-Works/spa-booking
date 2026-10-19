@@ -42,7 +42,17 @@
  * un sous-ensemble.
  */
 
-import { DEFAULT_LOCALE, type CalendarDate, type Locale } from '@spa/shared';
+import {
+  type AppointmentStatusCounts,
+  type AppointmentVolumeReport,
+  type AppointmentVolumeRow,
+  type CalendarDate,
+  type DailyRevenueReport,
+  DEFAULT_LOCALE,
+  type Locale,
+  type NoShowReport,
+  type RevenueTotal,
+} from '@spa/shared';
 
 import en from '@/messages/en/admin-reporting.json';
 import fr from '@/messages/fr/admin-reporting.json';
@@ -53,14 +63,6 @@ import {
 } from '../appointment-status';
 import { addCalendarDays } from '../booking/calendar';
 import { formattingLocale, type DisplayLocale } from '../format';
-import type {
-  AppointmentStatusCounts,
-  AppointmentVolumeReport,
-  AppointmentVolumeRow,
-  DailyRevenueReport,
-  NoShowReport,
-  RevenueTotal,
-} from './reporting-contract';
 import type { ReportRange } from './reporting-window';
 
 /**
