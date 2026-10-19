@@ -1,0 +1,85 @@
+/*
+ * Le chat du copilot (ADR 0018, P1-06, spécification EF-5).
+ *
+ * La feuille de CopilotKit lit des variables à la manière de shadcn
+ * (`--background`, `--primary`…). On les redéfinit ici à partir des jetons
+ * sémantiques du design system : le chat suit les couleurs, les rayons et la
+ * typographie du site, et le thème sombre sans une ligne de plus, puisque les
+ * jetons `--spa-color-*` basculent d'eux-mêmes.
+ *
+ * Le sélecteur est renforcé à dessein (`:root` + attribut doublé) : CopilotKit
+ * pose les mêmes variables sur `[data-copilotkit]` et `.dark [data-copilotkit]`,
+ * dans une feuille chargée après la nôtre, qui l'emporterait à spécificité
+ * égale. Pas d'ancêtre `.spa-copilot` non plus : la bulle peut être rendue
+ * hors de son conteneur (portail).
+ */
+:root [data-copilotkit][data-copilotkit] {
+  --background: var(--spa-color-surface);
+  --foreground: var(--spa-color-text);
+  --card: var(--spa-color-surface-raised);
+  --card-foreground: var(--spa-color-text);
+  --popover: var(--spa-color-surface-raised);
+  --popover-foreground: var(--spa-color-text);
+  --primary: var(--spa-color-accent);
+  --primary-foreground: var(--spa-color-text-on-accent);
+  --secondary: var(--spa-color-surface-sunken);
+  --secondary-foreground: var(--spa-color-text);
+  --muted: var(--spa-color-surface-sunken);
+  --muted-foreground: var(--spa-color-text-muted);
+  --accent: var(--spa-color-accent-soft);
+  --accent-foreground: var(--spa-color-accent-text);
+  --border: var(--spa-color-border);
+  --input: var(--spa-color-border-interactive);
+  --ring: var(--spa-color-focus);
+  --radius: var(--spa-radius-lg);
+
+  font-family: var(--spa-font-sans);
+}
+
+/* La bulle et le panneau passent au-dessus des barres collantes du site, sous
+   ses fenêtres modales : une confirmation du site garde la main. */
+:root [data-copilotkit][data-copilotkit] {
+  z-index: calc(var(--spa-z-modal) - 1);
+}
+
+.spa-copilot__welcome {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spa-space-3);
+  padding: var(--spa-space-4);
+}
+
+.spa-copilot__greeting {
+  margin: 0;
+  color: var(--spa-color-text);
+}
+
+/* Les raccourcis de navigation (étage 0) : des liens, pas des questions au
+   modèle. Ils passent à la ligne plutôt que de défiler. */
+.spa-copilot__shortcuts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spa-space-2);
+}
+
+/* Sur un téléphone, le chat prend tout l'écran : une bulle de 360 px de large
+   ne laisserait ni lire la réponse ni voir la page derrière (EF-5). */
+@media (max-width: 30rem) {
+  :root [data-copilotkit][role='dialog'],
+  :root [data-copilotkit] [role='dialog'] {
+    inset: 0;
+    width: 100%;
+    max-width: none;
+    height: 100%;
+    max-height: none;
+    border-radius: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root [data-copilotkit],
+  :root [data-copilotkit] * {
+    transition-duration: 0s !important;
+    animation-duration: 0s !important;
+  }
+}

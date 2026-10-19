@@ -108,7 +108,7 @@ vient d'être pris, voici les deux plus proches ».
 
 ## 5. Détection de la session
 
-**À chaque message**, côté serveur, dans `app/api/copilotkit` :
+**À chaque message**, côté serveur, dans la route du copilot de l'espace — `/{salon}/copilot`, `/{salon}/compte/copilot` ou `/{salon}/admin/copilot`, sous le chemin des cookies de session (inventaire §6.1) :
 
 1. **Lire les cookies `httpOnly`** et renouveler le jeton s'il a expiré, avec
    les helpers existants (`lib/session-refresh.ts`, sur le modèle de
@@ -150,12 +150,12 @@ Celles des visiteurs ne sont pas conservées.
 
 ```
 Navigateur
-  <CopilotKit runtimeUrl="/api/copilotkit">  — panneau ou bulle, jetons du DS
+  <CopilotKit runtimeUrl="/{salon}/…/copilot"> — panneau ou bulle, jetons du DS
   useCopilotReadable(page, filtres)           — contexte indicatif
   useCopilotAction(navigation…)               — actions front : router.push, filtres
         │ même origine → cookies httpOnly
         ▼
-Next.js  app/api/copilotkit/route.ts
+Next.js  app/…/[tenantSlug]/…/copilot/[[...chemin]]/route.ts  (lib/copilot/runtime.ts)
   1. session (§5)  2. registre filtré  3. étage 0 · 1 · 2 (§6.2.1)
         │                                   │
         │ Bearer <jeton>                    │ @anthropic-ai/sdk
@@ -344,7 +344,7 @@ ou sur les paramètres d'une écriture. Coût indicatif par million de tokens
 | Où | Quoi |
 |---|---|
 | `packages/shared/src/copilot/` | registre d'actions, types de session, schémas |
-| `apps/web/app/api/copilotkit/route.ts` | runtime, session, filtrage, agents |
+| `apps/web/app/(booking\|account\|admin)/[tenantSlug]/…/copilot/` | une route par espace ; runtime, session, filtrage, agents dans `lib/copilot/runtime.ts` |
 | `apps/web/lib/copilot/` | session (§5), suggestions (EF-2), exécution des actions serveur |
 | `apps/web/components/copilot/` | panneau, bulle, cartes de confirmation, curseur fantôme |
 | `apps/web/messages/{fr,en}/copilot.json` | libellés, par convention (ADR 0017) |

@@ -4,6 +4,7 @@ import { getTranslations } from 'next-intl/server';
 import { Inter } from 'next/font/google';
 import { cache, type ReactNode } from 'react';
 
+import { CopilotMount } from '@/components/copilot/copilot-mount';
 import { PhoneCountryProvider } from '@/components/ui/phone-country';
 import {
   ApiClientError,
@@ -418,6 +419,9 @@ export default async function AdminLayout({ children, params }: AdminLayoutProps
           </div>
         </AppointmentFeedProvider>
       </AdminAnnouncementProvider>
+      {/* Le copilot (ADR 0018), en panneau, seulement avec une session : la
+          route du back-office lit les cookies posés sur ce chemin. */}
+      <CopilotMount space="admin" tenantSlug={tenantSlug} />
     </div>
   );
 }

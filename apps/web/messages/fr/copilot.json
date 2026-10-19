@@ -1,0 +1,24 @@
+{
+  "title": "Assistant du salon",
+  "placeholder": "Posez votre question…",
+  "disclaimer": "L’assistant peut se tromper : vérifiez avant de confirmer.",
+  "open": "Ouvrir l’assistant",
+  "close": "Fermer l’assistant",
+  "welcome": "Bonjour ! Je peux vous aider à réserver, retrouver un rendez-vous ou trouver votre chemin sur le site.",
+  "shortcuts": "Raccourcis",
+  "copy": "Copier",
+  "copied": "Copié",
+  "suggestions": {
+    "reserver": "Réserver un soin",
+    "creneaux_demain": "Quels sont vos créneaux demain ?",
+    "tarifs": "Quels sont vos tarifs ?",
+    "reprendre_dernier_soin": "Reprendre mon dernier soin",
+    "reporter_prochain": "Reporter mon prochain rendez-vous",
+    "ma_journee": "Ma journée",
+    "prochain_client": "Mon prochain client",
+    "creneaux_libres_aujourdhui": "Créneaux libres aujourd’hui",
+    "poser_rendez_vous": "Poser un rendez-vous",
+    "a_encaisser": "Qui reste à encaisser ?",
+    "resume_journee": "Résumé de la journée"
+  }
+}

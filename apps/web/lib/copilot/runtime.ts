@@ -4,11 +4,13 @@ import { ApiClientError } from '@/lib/api-client';
 import type { ActionAccess } from '@/lib/session-refresh';
 
 import { copilotEnabled } from './config';
+import { copilotBasePath } from './paths';
 import { reservationSpecialist } from './agents/reservation';
 import { anthropicClient, copilotLog, createOrchestrateur, sessionContext } from './orchestrateur';
 import { salonData } from './salon-data';
 import { resolveCopilotSession, type CopilotSpace, type ResolvedCopilotSession } from './session';
 import type { Specialist } from './specialists';
+import { suggestionsFor } from './suggestions';
 
 /**
  * Les spécialistes d'une requête. Chacun arrive avec son ticket — Réservation
@@ -43,15 +45,8 @@ function specialistsFor(resolved: ResolvedCopilotSession): Specialist[] {
 
 type RouteContext = { params: Promise<{ tenantSlug: string }> };
 
-const SPACE_PATH: Record<CopilotSpace, string> = {
-  public: 'copilot',
-  compte: 'compte/copilot',
-  admin: 'admin/copilot',
-};
 
-export function copilotBasePath(space: CopilotSpace, tenantSlug: string): string {
-  return `/${tenantSlug}/${SPACE_PATH[space]}`;
-}
+export { copilotBasePath };
 
 export function copilotRoute(
   space: CopilotSpace,
@@ -74,6 +69,13 @@ export function copilotRoute(
         return new Response(null, { status: 404 });
       }
       return new Response(null, { status: 503 });
+    }
+
+    // Les suggestions d'ouverture (EF-2) : calculées sans modèle, avant toute
+    // lecture du catalogue — elles n'en ont pas besoin.
+    const url = new URL(request.url);
+    if (request.method === 'GET' && url.pathname === `${copilotBasePath(space, tenantSlug)}/suggestions`) {
+      return Response.json({ suggestions: suggestionsFor(resolved.session, url.searchParams.get('page') ?? '') });
     }
 
     const systemData = await salonData(tenantSlug, resolved.tenant, resolved.session.locale);
