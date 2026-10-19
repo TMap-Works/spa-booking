@@ -54,6 +54,12 @@
   color: var(--spa-color-text);
 }
 
+.spa-copilot__notice {
+  margin: 0;
+  font-size: var(--spa-font-size-sm);
+  color: var(--spa-color-text-muted);
+}
+
 /* Les raccourcis de navigation (étage 0) : des liens, pas des questions au
    modèle. Ils passent à la ligne plutôt que de défiler. */
 .spa-copilot__shortcuts {

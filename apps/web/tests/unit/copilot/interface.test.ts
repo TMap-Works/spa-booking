@@ -3,7 +3,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { CopilotMount } from '@/components/copilot/copilot-mount';
-import { copilotBasePath, isSalonPath } from '@/lib/copilot/paths';
+import { copilotBasePath, describePage, isSalonPath } from '@/lib/copilot/paths';
 import { copilotRoute } from '@/lib/copilot/runtime';
 import type { ResolvedCopilotSession } from '@/lib/copilot/session';
 
@@ -141,5 +141,15 @@ describe('décision sur une écriture, par la route', () => {
       params,
     );
     expect(await response.json()).toMatchObject({ statut: 'echec' });
+  });
+});
+
+describe('describePage — la page et ses filtres', () => {
+  it('donne au chat les filtres en cours, et eux seuls', () => {
+    const search = new URLSearchParams('vue=semaine&date=2026-10-23&recherche=Dupont&token=secret&utm_source=x');
+    expect(describePage('/salon-lea/admin/calendrier', search)).toBe(
+      '/salon-lea/admin/calendrier · vue=semaine, date=2026-10-23',
+    );
+    expect(describePage('/salon-lea', new URLSearchParams())).toBe('/salon-lea');
   });
 });

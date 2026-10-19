@@ -11,12 +11,12 @@ import {
   useFrontendTool,
 } from '@copilotkit/react-core/v2';
 import Link from 'next/link';
-import { usePathname, useRouter } from 'next/navigation';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useTranslations } from 'next-intl';
 import { useEffect, useMemo, useState, type ComponentProps } from 'react';
 import { z } from 'zod';
 
-import { isSalonPath } from '@/lib/copilot/paths';
+import { describePage, isSalonPath } from '@/lib/copilot/paths';
 import type { CopilotSuggestion } from '@/lib/copilot/suggestions';
 
 import { ConfirmationCard } from './confirmation-card';
@@ -56,6 +56,7 @@ function Chat({ runtimeUrl, tenantSlug, variant }: CopilotChatProps) {
   const t = useTranslations('copilot');
   const router = useRouter();
   const pathname = usePathname();
+  const searchParams = useSearchParams();
   const [suggestions, setSuggestions] = useState<readonly CopilotSuggestion[]>([]);
 
   // Les suggestions de l'écran : le serveur les calcule à partir de la session
@@ -75,8 +76,9 @@ function Chat({ runtimeUrl, tenantSlug, variant }: CopilotChatProps) {
     };
   }, [pathname, runtimeUrl]);
 
-  // Contexte indicatif : il sert la pertinence, jamais l'autorisation.
-  useAgentContext({ description: 'Page affichée', value: pathname });
+  // Contexte indicatif : la page et ses filtres en cours (planning en semaine du
+  // 23, tunnel sur l'après-midi…). Il sert la pertinence, jamais l'autorisation.
+  useAgentContext({ description: 'Page affichée et filtres en cours', value: describePage(pathname, searchParams) });
 
   useFrontendTool(
     {
@@ -148,6 +150,12 @@ function Chat({ runtimeUrl, tenantSlug, variant }: CopilotChatProps) {
   const welcomeScreen: WelcomeScreen = ({ input, suggestionView }) => (
     <div className="spa-copilot__welcome">
       <p className="spa-copilot__greeting">{t('welcome')}</p>
+      {/* Transparence (spécification §8) : le chat se dit assistant IA dès
+          l'ouverture, et renvoie à la politique de données du salon. */}
+      <p className="spa-copilot__notice">
+        {t('aiNotice')}{' '}
+        <Link href={`/${tenantSlug}/politique-donnees`}>{t('privacyLink')}</Link>
+      </p>
       {links.length === 0 ? null : (
         <nav className="spa-copilot__shortcuts" aria-label={t('shortcuts')}>
           {links.map((link) =>
