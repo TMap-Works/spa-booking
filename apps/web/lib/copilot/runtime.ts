@@ -18,6 +18,7 @@ import {
   rescheduleAppointment,
 } from '@/lib/api-client';
 
+import { clientsSpecialist } from './agents/clients';
 import { encaissementSpecialist } from './agents/encaissement';
 import { guideSpecialist } from './agents/guide';
 import { rendezVousSpecialist } from './agents/rendez-vous';
@@ -125,6 +126,7 @@ function specialistsFor(resolved: ResolvedCopilotSession): Specialist[] {
     guideSpecialist({ ...shared, tenant: resolved.tenant }),
     rendezVousSpecialist({ ...shared, accessToken: resolved.accessToken }),
     encaissementSpecialist({ ...shared, accessToken: resolved.accessToken }),
+    clientsSpecialist({ ...shared, accessToken: resolved.accessToken }),
   ];
 }
 
