@@ -10,7 +10,7 @@ import {
 import { z } from 'zod';
 import { zodToJsonSchema } from 'zod-to-json-schema';
 
-import type { ServerTool, ServerToolOutcome } from './claude-agent';
+import type { BrowserCall, ServerTool, ServerToolOutcome } from './claude-agent';
 
 /**
  * Les actions du registre (P1-02) mises en forme d'outils serveur — P1-07.
@@ -65,7 +65,7 @@ export function registryTool<Id extends CopilotActionId>(
  * par le schéma. L'outil arrête le tour sur une navigation (passe-plat) : la
  * phrase d'annonce, Claude l'a écrite avant l'appel.
  */
-export function guideTool(session: CopilotSession): ServerTool | null {
+export function guideTool(session: CopilotSession, navigations?: BrowserCall[]): ServerTool | null {
   const routes = permittedGuideRoutes(session);
   if (routes.length === 0) return null;
   const schema = z.object({ route: z.enum(routes as [string, ...string[]]) }).strict();
@@ -74,11 +74,14 @@ export function guideTool(session: CopilotSession): ServerTool | null {
     'guide.mener',
     async ({ route }) => {
       const chemin = `/${session.tenant.slug}${COPILOT_GUIDE_ROUTES[route].chemin}`;
-      return {
-        kind: 'fin',
-        contenu: `Navigation lancée vers ${chemin}.`,
-        navigateur: [{ outil: 'naviguer', arguments: { chemin } }],
-      };
+      const navigation: BrowserCall = { outil: 'naviguer', arguments: { chemin } };
+      // Dans un spécialiste, la navigation part avec sa réponse ; chez
+      // l'orchestrateur, elle arrête le tour (passe-plat).
+      if (navigations !== undefined) {
+        navigations.splice(0, navigations.length, navigation);
+        return { kind: 'resultat', contenu: `La page ${chemin} s'ouvrira avec ta réponse.` };
+      }
+      return { kind: 'fin', contenu: `Navigation lancée vers ${chemin}.`, navigateur: [navigation] };
     },
     schema,
   );
