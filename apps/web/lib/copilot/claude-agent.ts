@@ -26,10 +26,53 @@ import type { Transcript, TranscriptStore } from './transcript-store';
  *
  * ## Ce que fait un tour
  *
- * Un « run » AG-UI correspond à **un** appel à Claude. Quand Claude appelle un
- * outil du navigateur, l'appel est émis vers CopilotKit, qui l'exécute dans la
- * page et relance l'agent avec le résultat : c'est le tour suivant.
+ * Quand Claude appelle un outil du **navigateur**, l'appel est émis vers
+ * CopilotKit, qui l'exécute dans la page et relance l'agent avec le résultat :
+ * c'est le tour suivant.
+ *
+ * Quand il appelle un outil **serveur** (`serverTools` : lecture de l'API,
+ * spécialiste), l'agent l'exécute lui-même. Un `resultat` repart vers Claude
+ * dans le même tour, borné à `MAX_ROUNDS` appels. Une `fin` arrête le tour sur
+ * l'appel (passe-plat, spécification §6.2.3) : son texte est affiché tel quel,
+ * ses navigations partent vers le navigateur, et son résultat attend le
+ * prochain message de l'utilisateur (`Transcript.pending`).
  */
+
+/** Appels à Claude au plus dans un même tour : un outil qui boucle coûte vite. */
+export const MAX_ROUNDS = 4;
+
+/** Préfixe des appels de navigation émis par le serveur, jamais montrés à Claude. */
+const NAVIGATION_CALL_PREFIX = 'nav-';
+
+/**
+ * Exécutants du navigateur : outils que la page enregistre pour que le
+ * **serveur** les déclenche (navigation), et que Claude ne voit jamais.
+ */
+export const BROWSER_EXECUTORS: readonly string[] = ['naviguer'];
+
+/** Un appel à exécuter dans la page : l'outil du navigateur et ses arguments. */
+export interface BrowserCall {
+  readonly outil: string;
+  readonly arguments: Record<string, unknown>;
+}
+
+export type ServerToolOutcome =
+  /** Le résultat repart vers Claude, qui poursuit. */
+  | { readonly kind: 'resultat'; readonly contenu: string; readonly erreur?: boolean }
+  /** Le tour s'arrête : texte affiché tel quel, navigations, résultat gardé pour plus tard. */
+  | {
+      readonly kind: 'fin';
+      readonly contenu: string;
+      readonly texte?: string;
+      readonly navigateur?: readonly BrowserCall[];
+    };
+
+export interface ServerTool {
+  readonly name: string;
+  readonly description: string;
+  readonly inputSchema: Anthropic.Tool.InputSchema;
+  run(input: unknown, signal: AbortSignal): Promise<ServerToolOutcome>;
+}
 export interface ClaudeAgentOptions {
   client: Anthropic;
   model: string;
@@ -52,6 +95,14 @@ export interface ClaudeAgentOptions {
    * l'autre, et son cache tient.
    */
   sessionContext?: string;
+  /**
+   * Données du salon (infos, catalogue), en second bloc du prompt système :
+   * mises en cache par salon, elles évitent un appel d'outil pour les questions
+   * simples (spécification §6.2.2).
+   */
+  systemData?: string;
+  /** Outils exécutés par le serveur ; le navigateur ne les voit pas. */
+  serverTools?: readonly ServerTool[];
   /** Journal côté serveur : jamais renvoyé au navigateur. */
   log?: (event: string, detail: Record<string, unknown>) => void;
 }
@@ -91,9 +142,16 @@ export class ClaudeAgent extends AbstractAgent {
   }
 
   private async turn(input: RunAgentInput, out: Subscriber<BaseEvent>, signal: AbortSignal): Promise<void> {
-    const { client, model, effort, system, maxTokens, store, transcriptKey, refusalText, sessionContext, log } =
+    const { client, model, effort, system, systemData, maxTokens, store, transcriptKey, refusalText, sessionContext, log } =
       this.options;
+    const serverTools = new Map((this.options.serverTools ?? []).map((tool) => [tool.name, tool]));
     const emit = (event: Record<string, unknown>) => out.next(event as unknown as BaseEvent);
+    const finish = () => emit({ type: EventType.RUN_FINISHED, threadId: input.threadId, runId: input.runId });
+    const say = (messageId: string, text: string) => {
+      emit({ type: EventType.TEXT_MESSAGE_START, messageId, role: 'assistant' });
+      emit({ type: EventType.TEXT_MESSAGE_CONTENT, messageId, delta: text });
+      emit({ type: EventType.TEXT_MESSAGE_END, messageId });
+    };
 
     emit({ type: EventType.RUN_STARTED, threadId: input.threadId, runId: input.runId });
 
@@ -107,83 +165,156 @@ export class ClaudeAgent extends AbstractAgent {
     // Rien de neuf à dire : un historique qui finit par l'assistant serait lu
     // comme un préremplissage, que Haiku et Sonnet 5.5 refusent.
     if (transcript.messages.at(-1)?.role !== 'user') {
-      emit({ type: EventType.RUN_FINISHED, threadId: input.threadId, runId: input.runId });
+      await store.set(key, transcript);
+      finish();
       return;
     }
 
-    const stream = client.messages.stream(
-      {
-        model,
-        max_tokens: maxTokens,
-        // Préfixe stable, mis en cache : seul le dernier message change d'un
-        // tour à l'autre (spécification §9).
-        system: [{ type: 'text', text: system, cache_control: { type: 'ephemeral' } }],
-        messages: transcript.messages,
-        tools: input.tools.map(toClaudeTool),
-        output_config: { effort },
-      },
-      { signal },
-    );
+    // Préfixe stable, mis en cache : outils, consignes, puis données du salon.
+    // Seul le dernier message change d'un tour à l'autre (spécification §9).
+    const systemBlocks: Anthropic.TextBlockParam[] = [
+      { type: 'text', text: system, cache_control: { type: 'ephemeral' } },
+      ...(systemData ? [{ type: 'text' as const, text: systemData, cache_control: { type: 'ephemeral' as const } }] : []),
+    ];
+    const tools: Anthropic.Tool[] = [
+      ...[...serverTools.values()].map((tool) => ({
+        name: tool.name,
+        description: tool.description,
+        input_schema: tool.inputSchema,
+      })),
+      ...input.tools.filter((tool) => !BROWSER_EXECUTORS.includes(tool.name)).map(toClaudeTool),
+    ];
 
-    let messageId = `msg-${input.runId}`;
-    let textOpen = false;
-    for await (const event of stream) {
-      if (event.type === 'message_start') {
-        messageId = event.message.id;
-      } else if (event.type === 'content_block_delta' && event.delta.type === 'text_delta' && event.delta.text) {
-        if (!textOpen) {
-          emit({ type: EventType.TEXT_MESSAGE_START, messageId, role: 'assistant' });
-          textOpen = true;
+    const messages = [...transcript.messages];
+    const seen = [...transcript.seen];
+    let pending: Anthropic.ToolResultBlockParam[] = [];
+
+    for (let round = 1; ; round += 1) {
+      const stream = client.messages.stream(
+        { model, max_tokens: maxTokens, system: systemBlocks, messages, tools, output_config: { effort } },
+        { signal },
+      );
+
+      let messageId = `msg-${input.runId}-${round}`;
+      let textOpen = false;
+      for await (const event of stream) {
+        if (event.type === 'message_start') {
+          messageId = event.message.id;
+        } else if (event.type === 'content_block_delta' && event.delta.type === 'text_delta' && event.delta.text) {
+          if (!textOpen) {
+            emit({ type: EventType.TEXT_MESSAGE_START, messageId, role: 'assistant' });
+            textOpen = true;
+          }
+          emit({ type: EventType.TEXT_MESSAGE_CONTENT, messageId, delta: event.delta.text });
         }
-        emit({ type: EventType.TEXT_MESSAGE_CONTENT, messageId, delta: event.delta.text });
       }
-    }
-    const message = await stream.finalMessage();
+      const message = await stream.finalMessage();
 
-    if (message.stop_reason === 'refusal') {
-      // Un refus peut couper un appel d'outil en plein milieu : rien de ce tour
-      // n'est exécuté ni gardé. Retirer le dernier message de l'utilisateur
-      // laisse intact tout ce qui précède, réflexion comprise.
-      log?.('copilot.run.refusal', { threadId: input.threadId, model });
-      if (!textOpen) emit({ type: EventType.TEXT_MESSAGE_START, messageId, role: 'assistant' });
-      emit({ type: EventType.TEXT_MESSAGE_CONTENT, messageId: messageId, delta: (textOpen ? '\n\n' : '') + refusalText });
-      emit({ type: EventType.TEXT_MESSAGE_END, messageId });
-      await store.set(key, dropTrailingUserTurn(transcript));
-      emit({ type: EventType.RUN_FINISHED, threadId: input.threadId, runId: input.runId });
-      return;
-    }
+      log?.('copilot.run.usage', {
+        threadId: input.threadId,
+        model,
+        round,
+        stopReason: message.stop_reason,
+        inputTokens: message.usage.input_tokens,
+        cacheReadTokens: message.usage.cache_read_input_tokens ?? 0,
+        outputTokens: message.usage.output_tokens,
+      });
 
-    if (textOpen) emit({ type: EventType.TEXT_MESSAGE_END, messageId });
-
-    // Les appels d'outil ne partent qu'une fois le message complet : un appel
-    // coupé par `max_tokens` peut se lire comme un objet valide et incomplet.
-    if (message.stop_reason === 'tool_use') {
-      for (const block of message.content) {
-        if (block.type !== 'tool_use') continue;
-        emit({ type: EventType.TOOL_CALL_START, toolCallId: block.id, toolCallName: block.name, parentMessageId: messageId });
-        emit({ type: EventType.TOOL_CALL_ARGS, toolCallId: block.id, delta: JSON.stringify(block.input) });
-        emit({ type: EventType.TOOL_CALL_END, toolCallId: block.id });
+      if (message.stop_reason === 'refusal') {
+        // Un refus peut couper un appel d'outil en plein milieu : rien de ce tour
+        // n'est exécuté ni gardé. On revient à l'historique d'avant le message
+        // de l'utilisateur, réflexion comprise.
+        log?.('copilot.run.refusal', { threadId: input.threadId, model });
+        if (!textOpen) emit({ type: EventType.TEXT_MESSAGE_START, messageId, role: 'assistant' });
+        emit({ type: EventType.TEXT_MESSAGE_CONTENT, messageId, delta: (textOpen ? '\n\n' : '') + refusalText });
+        emit({ type: EventType.TEXT_MESSAGE_END, messageId });
+        await store.set(key, dropTrailingUserTurn(transcript));
+        finish();
+        return;
       }
+
+      if (textOpen) emit({ type: EventType.TEXT_MESSAGE_END, messageId });
+
+      // Ajout seul : le contenu tel que Claude l'a rendu, blocs de réflexion et
+      // signatures compris. Le message AG-UI que CopilotKit renverra au tour
+      // suivant porte le même identifiant, et sera donc reconnu comme déjà versé.
+      messages.push({ role: 'assistant', content: message.content });
+      seen.push(messageId);
+
+      // Les appels d'outil ne partent qu'une fois le message complet : un appel
+      // coupé par `max_tokens` peut se lire comme un objet valide et incomplet.
+      if (message.stop_reason !== 'tool_use') break;
+
+      const calls = message.content.filter((block): block is Anthropic.ToolUseBlock => block.type === 'tool_use');
+      const browserCalls = calls.filter((call) => !serverTools.has(call.name));
+      const results: Anthropic.ToolResultBlockParam[] = [];
+      const navigations: BrowserCall[] = [];
+      const passThrough: string[] = [];
+      let stop = browserCalls.length > 0;
+
+      for (const call of calls) {
+        const tool = serverTools.get(call.name);
+        if (tool === undefined) continue;
+        const outcome = await runServerTool(tool, call.input, signal, log);
+        results.push({
+          type: 'tool_result',
+          tool_use_id: call.id,
+          content: outcome.contenu,
+          ...(outcome.kind === 'resultat' && outcome.erreur ? { is_error: true } : {}),
+        });
+        if (outcome.kind === 'fin') {
+          stop = true;
+          if (outcome.texte) passThrough.push(outcome.texte);
+          navigations.push(...(outcome.navigateur ?? []));
+        }
+      }
+
+      for (const call of browserCalls) {
+        emit({ type: EventType.TOOL_CALL_START, toolCallId: call.id, toolCallName: call.name, parentMessageId: messageId });
+        emit({ type: EventType.TOOL_CALL_ARGS, toolCallId: call.id, delta: JSON.stringify(call.input) });
+        emit({ type: EventType.TOOL_CALL_END, toolCallId: call.id });
+      }
+
+      if (!stop && round >= MAX_ROUNDS) {
+        log?.('copilot.run.max_rounds', { threadId: input.threadId, model });
+        passThrough.push("Je n'ai pas pu aller au bout de cette demande. Pouvez-vous la préciser ?");
+        stop = true;
+      }
+
+      if (stop) {
+        // Le tour s'arrête sur l'appel : les résultats serveur attendent le
+        // prochain message de l'utilisateur, avec ceux du navigateur.
+        pending = results;
+        if (passThrough.length > 0) say(`${messageId}-reponse`, passThrough.join('\n\n'));
+        navigations.forEach((navigation, index) => {
+          const toolCallId = `${NAVIGATION_CALL_PREFIX}${messageId}-${index}`;
+          emit({ type: EventType.TOOL_CALL_START, toolCallId, toolCallName: navigation.outil, parentMessageId: messageId });
+          emit({ type: EventType.TOOL_CALL_ARGS, toolCallId, delta: JSON.stringify(navigation.arguments) });
+          emit({ type: EventType.TOOL_CALL_END, toolCallId });
+        });
+        break;
+      }
+
+      messages.push({ role: 'user', content: results });
     }
 
-    // Ajout seul : le contenu tel que Claude l'a rendu, blocs de réflexion et
-    // signatures compris. Le message AG-UI que CopilotKit renverra au tour
-    // suivant porte le même identifiant, et sera donc reconnu comme déjà versé.
-    await store.set(key, {
-      messages: [...transcript.messages, { role: 'assistant', content: message.content }],
-      seen: [...transcript.seen, messageId],
-    });
+    await store.set(key, { messages, seen, ...(pending.length > 0 ? { pending } : {}) });
+    finish();
+  }
+}
 
-    log?.('copilot.run.usage', {
-      threadId: input.threadId,
-      model,
-      stopReason: message.stop_reason,
-      inputTokens: message.usage.input_tokens,
-      cacheReadTokens: message.usage.cache_read_input_tokens ?? 0,
-      outputTokens: message.usage.output_tokens,
-    });
-
-    emit({ type: EventType.RUN_FINISHED, threadId: input.threadId, runId: input.runId });
+/** Valide et exécute un outil serveur ; une erreur devient un résultat d'erreur, jamais une panne du tour. */
+async function runServerTool(
+  tool: ServerTool,
+  input: unknown,
+  signal: AbortSignal,
+  log: ClaudeAgentOptions['log'],
+): Promise<ServerToolOutcome> {
+  try {
+    return await tool.run(input, signal);
+  } catch (error) {
+    log?.('copilot.tool.error', { tool: tool.name, error: describe(error) });
+    return { kind: 'resultat', contenu: "L'outil n'a pas pu répondre. Dis-le simplement, sans inventer.", erreur: true };
   }
 }
 
@@ -201,12 +332,21 @@ export function appendNewMessages(transcript: Transcript, incoming: Message[], p
   const messages = [...transcript.messages];
   const rebuilding = messages.length === 0;
   let pending: Anthropic.ContentBlockParam[] = [];
-  let toolResults: Anthropic.ToolResultBlockParam[] = [];
+  let toolResults: Anthropic.ToolResultBlockParam[] = [...(transcript.pending ?? [])];
 
+  let flushed = false;
   const flushUser = () => {
     // Les résultats d'outil ouvrent le message qui suit l'appel ; le texte vient après.
+    // Des résultats en attente seuls ne font pas un message : ils attendent que
+    // l'utilisateur ou le navigateur apporte quelque chose.
+    const fresh = pending.length > 0 || toolResults.length > (transcript.pending?.length ?? 0) || flushed;
     const content = [...toolResults, ...pending];
-    if (content.length > 0) messages.push({ role: 'user', content });
+    if (content.length > 0 && fresh) {
+      messages.push({ role: 'user', content });
+      flushed = true;
+    } else if (content.length > 0) {
+      return;
+    }
     pending = [];
     toolResults = [];
   };
@@ -218,6 +358,10 @@ export function appendNewMessages(transcript: Transcript, incoming: Message[], p
     if (message.role === 'user') {
       const text = typeof message.content === 'string' ? message.content : userText(message.content);
       if (text) pending.push({ type: 'text', text });
+    } else if (message.role === 'tool' && message.toolCallId.startsWith(NAVIGATION_CALL_PREFIX)) {
+      // Résultat d'une navigation déclenchée par le serveur : Claude n'a jamais
+      // vu cet appel, il ne doit pas en voir le résultat.
+      continue;
     } else if (message.role === 'tool') {
       toolResults.push({
         type: 'tool_result',
@@ -242,7 +386,8 @@ export function appendNewMessages(transcript: Transcript, incoming: Message[], p
   // non le prompt système : le préfixe mis en cache reste ainsi identique.
   if (preface && pending.length > 0) pending.unshift({ type: 'text', text: preface });
   flushUser();
-  return { messages, seen: [...seen] };
+  const stillPending = flushed ? [] : (transcript.pending ?? []);
+  return { messages, seen: [...seen], ...(stillPending.length > 0 ? { pending: stillPending } : {}) };
 }
 
 function dropTrailingUserTurn(transcript: Transcript): Transcript {

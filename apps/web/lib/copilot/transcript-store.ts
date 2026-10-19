@@ -20,6 +20,12 @@ export interface Transcript {
   messages: Anthropic.MessageParam[];
   /** Identifiants des messages AG-UI déjà versés dans `messages`. */
   seen: string[];
+  /**
+   * Résultats d'outils serveur dont le tour s'est arrêté sur l'appel (passe-plat,
+   * spécification §6.2.3) : ils ouvrent le prochain message de l'utilisateur,
+   * pour que l'historique reste en ajout seul.
+   */
+  pending?: Anthropic.ToolResultBlockParam[];
 }
 
 export interface TranscriptStore {

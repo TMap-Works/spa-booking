@@ -45,6 +45,8 @@ export interface ResolvedCopilotSession {
    * identifiant ni son e-mail. `null` pour une visiteuse.
    */
   readonly subject: string | null;
+  /** Le salon tel que le public le voit, déjà lu : l'orchestrateur en tire ses données. */
+  readonly tenant: PublicTenant;
 }
 
 export interface CopilotSessionDeps {
@@ -114,6 +116,7 @@ export async function resolveCopilotSession(
     accessToken: null,
     notice,
     subject: null,
+    tenant,
   });
 
   if (space === 'public' || deps.access === undefined) {
@@ -148,6 +151,7 @@ export async function resolveCopilotSession(
     accessToken: access.accessToken,
     notice: null,
     subject: createHash('sha256').update(`copilot:${profile.id}`).digest('hex').slice(0, 32),
+    tenant,
   };
 }
 
