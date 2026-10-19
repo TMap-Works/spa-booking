@@ -40,6 +40,11 @@ export interface ResolvedCopilotSession {
   readonly accessToken: string | null;
   /** Ce que le chat doit dire de la session : expirée, ou renouvellement impossible. */
   readonly notice: SessionNotice | null;
+  /**
+   * Qui parle, pour ranger la conversation : empreinte du compte, jamais son
+   * identifiant ni son e-mail. `null` pour une visiteuse.
+   */
+  readonly subject: string | null;
 }
 
 export interface CopilotSessionDeps {
@@ -108,6 +113,7 @@ export async function resolveCopilotSession(
     session: buildSession(tenantSlug, tenant, null),
     accessToken: null,
     notice,
+    subject: null,
   });
 
   if (space === 'public' || deps.access === undefined) {
@@ -137,7 +143,12 @@ export async function resolveCopilotSession(
     throw error;
   }
 
-  return { session: buildSession(tenantSlug, tenant, profile), accessToken: access.accessToken, notice: null };
+  return {
+    session: buildSession(tenantSlug, tenant, profile),
+    accessToken: access.accessToken,
+    notice: null,
+    subject: createHash('sha256').update(`copilot:${profile.id}`).digest('hex').slice(0, 32),
+  };
 }
 
 function buildSession(tenantSlug: string, tenant: PublicTenant, profile: OwnProfile | null): CopilotSession {

@@ -45,6 +45,13 @@ export interface ClaudeAgentOptions {
   transcriptKey: (threadId: string) => string;
   /** Ce que l'écran dit quand Claude refuse de répondre. */
   refusalText: string;
+  /**
+   * Ce que le **serveur** sait de la session — surface, salon, avis
+   * d'expiration —, posé en tête du dernier message de l'utilisateur, avant le
+   * contexte de page. Le prompt système reste ainsi identique d'un message à
+   * l'autre, et son cache tient.
+   */
+  sessionContext?: string;
   /** Journal côté serveur : jamais renvoyé au navigateur. */
   log?: (event: string, detail: Record<string, unknown>) => void;
 }
@@ -84,7 +91,8 @@ export class ClaudeAgent extends AbstractAgent {
   }
 
   private async turn(input: RunAgentInput, out: Subscriber<BaseEvent>, signal: AbortSignal): Promise<void> {
-    const { client, model, effort, system, maxTokens, store, transcriptKey, refusalText, log } = this.options;
+    const { client, model, effort, system, maxTokens, store, transcriptKey, refusalText, sessionContext, log } =
+      this.options;
     const emit = (event: Record<string, unknown>) => out.next(event as unknown as BaseEvent);
 
     emit({ type: EventType.RUN_STARTED, threadId: input.threadId, runId: input.runId });
@@ -93,7 +101,7 @@ export class ClaudeAgent extends AbstractAgent {
     const transcript = appendNewMessages(
       (await store.get(key)) ?? { messages: [], seen: [] },
       input.messages,
-      contextPreface(input.context),
+      [sessionContext, contextPreface(input.context)].filter(Boolean).join('\n\n') || null,
     );
 
     // Rien de neuf à dire : un historique qui finit par l'assistant serait lu

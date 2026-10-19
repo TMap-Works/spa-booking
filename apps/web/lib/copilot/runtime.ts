@@ -1,0 +1,72 @@
+import { CopilotRuntime, createCopilotRuntimeHandler } from '@copilotkit/runtime/v2';
+
+import { ApiClientError } from '@/lib/api-client';
+import type { ActionAccess } from '@/lib/session-refresh';
+
+import { copilotEnabled } from './config';
+import { createOrchestrateur } from './orchestrateur';
+import { resolveCopilotSession, type CopilotSpace } from './session';
+
+/**
+ * Les routes du copilot — P1-04 (#1451), ADR 0018.
+ *
+ * ## Une route par espace
+ *
+ * `/{salon}/copilot`, `/{salon}/compte/copilot` et `/{salon}/admin/copilot` :
+ * les cookies de session ne sont envoyés qu'à leur propre chemin (inventaire
+ * §6.1), et la route de chaque espace lit donc les siens — exactement comme le
+ * flux temps réel (`admin/flux/route.ts`). Le front n'a qu'à pointer le
+ * `runtimeUrl` du fournisseur CopilotKit sur l'espace où il est rendu.
+ *
+ * ## À chaque requête
+ *
+ * La session est résolue (P1-05), puis le runtime est construit pour elle :
+ * l'agent ne connaît que cette session, et rien n'en survit à la requête hors
+ * l'historique de la conversation, rangé sous le salon et la personne.
+ *
+ * Fermée — 404, comme une route qui n'existe pas — quand le copilot ne l'est
+ * pas (`copilotEnabled`), ou que le salon n'existe pas.
+ */
+
+type RouteContext = { params: Promise<{ tenantSlug: string }> };
+
+const SPACE_PATH: Record<CopilotSpace, string> = {
+  public: 'copilot',
+  compte: 'compte/copilot',
+  admin: 'admin/copilot',
+};
+
+export function copilotBasePath(space: CopilotSpace, tenantSlug: string): string {
+  return `/${tenantSlug}/${SPACE_PATH[space]}`;
+}
+
+export function copilotRoute(
+  space: CopilotSpace,
+  accessFor?: (tenantSlug: string) => Promise<ActionAccess>,
+): (request: Request, context: RouteContext) => Promise<Response> {
+  return async (request, context) => {
+    if (!copilotEnabled()) return new Response(null, { status: 404 });
+
+    const { tenantSlug } = await context.params;
+
+    let resolved;
+    try {
+      resolved = await resolveCopilotSession(
+        space,
+        tenantSlug,
+        accessFor === undefined ? {} : { access: () => accessFor(tenantSlug) },
+      );
+    } catch (error) {
+      if (error instanceof ApiClientError && error.status === 404) {
+        return new Response(null, { status: 404 });
+      }
+      return new Response(null, { status: 503 });
+    }
+
+    const handler = createCopilotRuntimeHandler({
+      runtime: new CopilotRuntime({ agents: () => ({ default: createOrchestrateur(resolved) }) }),
+      basePath: copilotBasePath(space, tenantSlug),
+    });
+    return handler(request);
+  };
+}

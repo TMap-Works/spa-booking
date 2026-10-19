@@ -30,11 +30,15 @@ export function copilotModel(agent: CopilotAgentName, env: NodeJS.ProcessEnv = p
 }
 
 /**
- * Le copilot n'est ouvert que si la clé est posée, et — tant que la session
- * (P1-05) et les quotas (P1-08) ne sont pas livrés — jamais en production :
- * une route qui dépense des tokens sans savoir pour qui ne doit pas être
- * joignable.
+ * Le copilot n'est ouvert que si la clé est posée **et** qu'on l'a voulu :
+ * `COPILOT_ENABLED=true`, que Terraform pose avec la clé (`copilot_enabled`,
+ * P1-03). En développement local, la clé seule suffit — c'est le banc d'essai.
+ *
+ * Une image déployée tourne en `NODE_ENV=production` : sans le drapeau, le
+ * copilot y reste fermé, et c'est ce qui le garde hors de la production tant
+ * que les quotas (P1-08) ne sont pas livrés.
  */
 export function copilotEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
-  return Boolean(env.ANTHROPIC_API_KEY) && env.NODE_ENV !== 'production';
+  if (!env.ANTHROPIC_API_KEY) return false;
+  return env.COPILOT_ENABLED === 'true' || env.NODE_ENV !== 'production';
 }
