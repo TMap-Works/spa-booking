@@ -22,6 +22,7 @@ const write: PendingWrite = {
   action: 'rendez_vous.annuler',
   parametres: { rendezVous: '0b6f8b8e-3f4a-4c2e-9a8e-2f1d3c4b5a69' },
   recapitulatif: { titre: 'Annuler le massage de jeudi', lignes: ['Jeudi 22 octobre, 14 h 00', 'Avec Léa'] },
+  succes: 'Votre rendez-vous de jeudi est annulé.',
 };
 const scope = { tenantSlug: 'salon-lea', subject: 'a'.repeat(32) };
 
@@ -71,7 +72,7 @@ describe('decideWrite', () => {
   async function decide(overrides: Partial<Parameters<typeof decideWrite>[0]> = {}) {
     const store = new MemoryPendingWriteStore();
     const id = await store.put(scope, write);
-    const execute = vi.fn(async () => 'Votre rendez-vous de jeudi est annulé.');
+    const execute = vi.fn(async () => undefined);
     const outcome = await decideWrite({
       store,
       executors: { 'rendez_vous.annuler': execute },
