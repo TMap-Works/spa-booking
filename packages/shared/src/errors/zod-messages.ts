@@ -289,6 +289,10 @@ const VALIDATION_MESSAGE_KEY_LIST = [
 
   /* --- console de la plateforme -------------------------------------------- */
   'platform.totpCode',
+
+  /* --- copilot IA ------------------------------------------------------------ */
+  'copilot.surfaceRole',
+  'copilot.visitorPermissions',
 ] as const;
 
 /** Une clé du vocabulaire ci-dessus. */
@@ -394,6 +398,8 @@ const FR_VALIDATION: Readonly<Record<ValidationMessageKey, ValidationPhrase>> = 
   'identity.accountDataConsent': 'Le traitement des données doit être accepté pour créer un compte.',
 
   'platform.totpCode': 'Six chiffres, tels que les affiche votre application.',
+  'copilot.surfaceRole': 'La surface du copilot doit se déduire du rôle.',
+  'copilot.visitorPermissions': "Une session sans compte ne porte aucune permission.",
 };
 
 /**
@@ -457,6 +463,8 @@ const EN_VALIDATION: Readonly<Record<ValidationMessageKey, ValidationPhrase>> = 
   'identity.accountDataConsent': 'Data processing must be accepted in order to create an account.',
 
   'platform.totpCode': 'Six digits, as shown by your authenticator app.',
+  'copilot.surfaceRole': "The copilot surface must follow from the role.",
+  'copilot.visitorPermissions': 'A session without an account carries no permission.',
 };
 
 /** Les refus nommés par les schémas, par langue puis par clé. */
