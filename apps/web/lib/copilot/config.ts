@@ -34,11 +34,13 @@ export function copilotModel(agent: CopilotAgentName, env: NodeJS.ProcessEnv = p
  * `COPILOT_ENABLED=true`, que Terraform pose avec la clé (`copilot_enabled`,
  * P1-03). En développement local, la clé seule suffit — c'est le banc d'essai.
  *
- * Une image déployée tourne en `NODE_ENV=production` : sans le drapeau, le
- * copilot y reste fermé, et c'est ce qui le garde hors de la production tant
- * que les quotas (P1-08) ne sont pas livrés.
+ * Une image déployée tourne en `NODE_ENV=production` : il lui faut le drapeau
+ * **et** `REDIS_URL` (P1-08), posés ensemble par Terraform.
  */
 export function copilotEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
   if (!env.ANTHROPIC_API_KEY) return false;
-  return env.COPILOT_ENABLED === 'true' || env.NODE_ENV !== 'production';
+  if (env.NODE_ENV !== 'production') return true;
+  // Déployé, il faut aussi Redis : sans lui, l'historique et les quotas
+  // vivraient dans chaque tâche, et les quotas ne borneraient plus rien.
+  return env.COPILOT_ENABLED === 'true' && Boolean(env.REDIS_URL);
 }

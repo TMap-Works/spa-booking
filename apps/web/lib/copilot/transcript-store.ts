@@ -33,16 +33,19 @@ export interface TranscriptStore {
   set(key: string, transcript: Transcript): Promise<void>;
 }
 
+/** Durée de vie d'une conversation sans nouveau message (spécification §5). */
+export const TRANSCRIPT_TTL_SECONDS = 30 * 60;
+
 /**
- * Magasin en mémoire, **pour le spike seulement** : il ne survit pas à un
- * redémarrage et n'est pas partagé entre deux tâches ECS. La V1 le remplace par
- * Redis, sous une clé liée au salon et au compte (P1-04, P1-08).
+ * Magasin en mémoire, **pour le développement local seulement** : il ne
+ * survit pas à un redémarrage et n'est pas partagé entre deux tâches ECS. En
+ * déployé, c'est `RedisTranscriptStore` (P1-08).
  */
 export class MemoryTranscriptStore implements TranscriptStore {
   readonly #entries = new Map<string, { transcript: Transcript; expiresAt: number }>();
 
   constructor(
-    private readonly ttlMs = 30 * 60 * 1000,
+    private readonly ttlMs = TRANSCRIPT_TTL_SECONDS * 1000,
     private readonly maxEntries = 500,
   ) {}
 
@@ -64,5 +67,41 @@ export class MemoryTranscriptStore implements TranscriptStore {
       if (oldest === undefined) break;
       this.#entries.delete(oldest);
     }
+  }
+}
+
+/** Ce que le magasin Redis attend de la connexion : de quoi l'éprouver sans serveur. */
+export interface RedisLike {
+  get(key: string): Promise<string | null>;
+  set(key: string, value: string, mode: 'EX', seconds: number): Promise<unknown>;
+}
+
+/**
+ * Magasin Redis — P1-08. Une conversation par clé
+ * (`copilot:{salon}:{empreinte du compte|visiteur}:{fil}`), en JSON, réarmée
+ * pour trente minutes à chaque tour. Les blocs de réflexion et leurs signatures
+ * y sont gardés tels quels : c'est ce qui permet de les rendre à Claude au tour
+ * suivant, quelle que soit la tâche qui le sert.
+ */
+export class RedisTranscriptStore implements TranscriptStore {
+  constructor(
+    private readonly redis: RedisLike,
+    private readonly ttlSeconds = TRANSCRIPT_TTL_SECONDS,
+  ) {}
+
+  async get(key: string): Promise<Transcript | undefined> {
+    const raw = await this.redis.get(`transcript:${key}`);
+    if (raw === null) return undefined;
+    try {
+      return JSON.parse(raw) as Transcript;
+    } catch {
+      // Une entrée illisible (version précédente, écriture coupée) repart
+      // d'une conversation vide plutôt que de bloquer le fil.
+      return undefined;
+    }
+  }
+
+  async set(key: string, transcript: Transcript): Promise<void> {
+    await this.redis.set(`transcript:${key}`, JSON.stringify(transcript), 'EX', this.ttlSeconds);
   }
 }

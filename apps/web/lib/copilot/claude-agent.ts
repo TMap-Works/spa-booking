@@ -67,6 +67,12 @@ export type ServerToolOutcome =
       readonly navigateur?: readonly BrowserCall[];
     };
 
+/** Ce que dit le chat quand une borne est atteinte. */
+export interface BoundTexts {
+  readonly messageTooLong: string;
+  readonly conversationTooLong: string;
+}
+
 export interface ServerTool {
   readonly name: string;
   readonly description: string;
@@ -103,6 +109,11 @@ export interface ClaudeAgentOptions {
   systemData?: string;
   /** Outils exécutés par le serveur ; le navigateur ne les voit pas. */
   serverTools?: readonly ServerTool[];
+  /**
+   * Bornes d'un tour (spécification §9) : un message trop long, ou une
+   * conversation trop longue, reçoit une réponse fixe sans appel au modèle.
+   */
+  limits?: { readonly maxMessageChars: number; readonly maxTranscriptMessages: number; readonly texts: BoundTexts };
   /** Journal côté serveur : jamais renvoyé au navigateur. */
   log?: (event: string, detail: Record<string, unknown>) => void;
 }
@@ -156,8 +167,31 @@ export class ClaudeAgent extends AbstractAgent {
     emit({ type: EventType.RUN_STARTED, threadId: input.threadId, runId: input.runId });
 
     const key = transcriptKey(input.threadId);
+    const stored = (await store.get(key)) ?? { messages: [], seen: [] };
+
+    // Les bornes jouent avant tout appel : le message refusé est marqué comme
+    // vu, pour ne pas être réexaminé au tour suivant, mais n'entre pas dans
+    // l'historique — Claude ne le lira jamais.
+    const limits = this.options.limits;
+    if (limits !== undefined) {
+      const fresh = input.messages.filter((message) => message.role === 'user' && !stored.seen.includes(message.id));
+      const tooLong = fresh.some(
+        (message) =>
+          (typeof message.content === 'string' ? message.content : userText(message.content)).length >
+          limits.maxMessageChars,
+      );
+      const full = fresh.length > 0 && stored.messages.length >= limits.maxTranscriptMessages;
+      if (tooLong || full) {
+        log?.('copilot.run.bound', { threadId: input.threadId, bound: tooLong ? 'message' : 'conversation' });
+        say(`borne-${input.runId}`, tooLong ? limits.texts.messageTooLong : limits.texts.conversationTooLong);
+        await store.set(key, { ...stored, seen: [...stored.seen, ...fresh.map((message) => message.id)] });
+        finish();
+        return;
+      }
+    }
+
     const transcript = appendNewMessages(
-      (await store.get(key)) ?? { messages: [], seen: [] },
+      stored,
       input.messages,
       [sessionContext, contextPreface(input.context)].filter(Boolean).join('\n\n') || null,
     );
@@ -188,6 +222,8 @@ export class ClaudeAgent extends AbstractAgent {
     const messages = [...transcript.messages];
     const seen = [...transcript.seen];
     let pending: Anthropic.ToolResultBlockParam[] = [];
+    // Le bilan du tour (spécification §9.2) : étage 1 sans spécialiste, 2 avec.
+    const summary = { rounds: 0, inputTokens: 0, cacheReadTokens: 0, outputTokens: 0, specialist: false };
 
     for (let round = 1; ; round += 1) {
       const stream = client.messages.stream(
@@ -209,6 +245,14 @@ export class ClaudeAgent extends AbstractAgent {
         }
       }
       const message = await stream.finalMessage();
+
+      summary.rounds = round;
+      summary.inputTokens += message.usage.input_tokens;
+      summary.cacheReadTokens += message.usage.cache_read_input_tokens ?? 0;
+      summary.outputTokens += message.usage.output_tokens;
+      if (message.content.some((block) => block.type === 'tool_use' && block.name.startsWith('agent_'))) {
+        summary.specialist = true;
+      }
 
       log?.('copilot.run.usage', {
         threadId: input.threadId,
@@ -299,6 +343,15 @@ export class ClaudeAgent extends AbstractAgent {
     }
 
     await store.set(key, { messages, seen, ...(pending.length > 0 ? { pending } : {}) });
+    log?.('copilot.run.summary', {
+      threadId: input.threadId,
+      model,
+      etage: summary.specialist ? 2 : 1,
+      rounds: summary.rounds,
+      inputTokens: summary.inputTokens,
+      cacheReadTokens: summary.cacheReadTokens,
+      outputTokens: summary.outputTokens,
+    });
     finish();
   }
 }
@@ -435,4 +488,38 @@ function parseArguments(raw: string): Record<string, unknown> {
 function describe(error: unknown): Record<string, unknown> {
   if (error instanceof Anthropic.APIError) return { status: error.status, type: error.type ?? null };
   return { name: error instanceof Error ? error.name : 'unknown' };
+}
+
+/**
+ * Un agent qui répond un texte fixe, **sans appeler le modèle** : quota
+ * dépassé, copilot indisponible. Il coûte zéro token, et c'est tout son objet.
+ */
+export class FixedReplyAgent extends AbstractAgent {
+  readonly text: string;
+
+  constructor(text: string) {
+    super({ description: 'Réponse fixe du copilot' });
+    this.text = text;
+  }
+
+  override clone(): FixedReplyAgent {
+    const copy = super.clone() as FixedReplyAgent;
+    (copy as { text: string }).text = this.text;
+    return copy;
+  }
+
+  run(input: RunAgentInput): Observable<BaseEvent> {
+    const messageId = `fixe-${input.runId}`;
+    const events = [
+      { type: EventType.RUN_STARTED, threadId: input.threadId, runId: input.runId },
+      { type: EventType.TEXT_MESSAGE_START, messageId, role: 'assistant' },
+      { type: EventType.TEXT_MESSAGE_CONTENT, messageId, delta: this.text },
+      { type: EventType.TEXT_MESSAGE_END, messageId },
+      { type: EventType.RUN_FINISHED, threadId: input.threadId, runId: input.runId },
+    ] as unknown as BaseEvent[];
+    return new Observable<BaseEvent>((subscriber) => {
+      events.forEach((event) => subscriber.next(event));
+      subscriber.complete();
+    });
+  }
 }

@@ -45,8 +45,17 @@ describe('copilotEnabled', () => {
     expect(copilotEnabled({ NODE_ENV: 'development' } as NodeJS.ProcessEnv)).toBe(false);
     expect(copilotEnabled({ NODE_ENV: 'development', ANTHROPIC_API_KEY: 'k' } as NodeJS.ProcessEnv)).toBe(true);
     expect(copilotEnabled({ NODE_ENV: 'production', ANTHROPIC_API_KEY: 'k' } as NodeJS.ProcessEnv)).toBe(false);
+    // Déployé : le drapeau **et** Redis (P1-08), sans quoi les quotas ne bornent rien.
     expect(
       copilotEnabled({ NODE_ENV: 'production', ANTHROPIC_API_KEY: 'k', COPILOT_ENABLED: 'true' } as NodeJS.ProcessEnv),
+    ).toBe(false);
+    expect(
+      copilotEnabled({
+        NODE_ENV: 'production',
+        ANTHROPIC_API_KEY: 'k',
+        COPILOT_ENABLED: 'true',
+        REDIS_URL: 'rediss://cache:6379',
+      } as NodeJS.ProcessEnv),
     ).toBe(true);
     expect(copilotEnabled({ NODE_ENV: 'production', COPILOT_ENABLED: 'true' } as NodeJS.ProcessEnv)).toBe(false);
   });

@@ -332,3 +332,37 @@ describe('ClaudeAgent — outils serveur', () => {
     ]);
   });
 });
+
+describe('ClaudeAgent — bornes', () => {
+  const limits = {
+    maxMessageChars: 20,
+    maxTranscriptMessages: 2,
+    texts: { messageTooLong: 'Trop long.', conversationTooLong: 'Conversation trop longue.' },
+  };
+  const reply = (id: string): FakeReply => ({ id, stop_reason: 'end_turn', content: [{ type: 'text', text: 'ok', citations: null }] });
+
+  it("un message trop long reçoit une réponse fixe, n'entre pas dans l'historique, et ne bloque pas le suivant", async () => {
+    const { agent, calls, store } = agentWith([reply('msg_a')], { limits });
+
+    const events = await run(agent, input([{ id: 'u1', role: 'user', content: 'x'.repeat(21) }]));
+    const texts = events.filter((e) => e.type === EventType.TEXT_MESSAGE_CONTENT) as unknown as { delta: string }[];
+    expect(texts.map((e) => e.delta)).toEqual(['Trop long.']);
+    expect(calls).toHaveLength(0);
+    expect((await store.get('test:fil-1'))?.messages).toEqual([]);
+
+    await run(agent, input([{ id: 'u1', role: 'user', content: 'x'.repeat(21) }, { id: 'u2', role: 'user', content: 'Court' }]));
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.messages).toEqual([{ role: 'user', content: [{ type: 'text', text: 'Court' }] }]);
+  });
+
+  it('une conversation pleine propose d’en ouvrir une nouvelle, sans appel', async () => {
+    const { agent, calls } = agentWith([reply('msg_a')], { limits });
+
+    await run(agent, input([{ id: 'u1', role: 'user', content: 'Un' }]));
+    const events = await run(agent, input([{ id: 'u1', role: 'user', content: 'Un' }, { id: 'u2', role: 'user', content: 'Deux' }]));
+
+    expect(calls).toHaveLength(1);
+    const texts = events.filter((e) => e.type === EventType.TEXT_MESSAGE_CONTENT) as unknown as { delta: string }[];
+    expect(texts.map((e) => e.delta)).toEqual(['Conversation trop longue.']);
+  });
+});
