@@ -20,5 +20,11 @@
     "poser_rendez_vous": "Poser un rendez-vous",
     "a_encaisser": "Qui reste à encaisser ?",
     "resume_journee": "Résumé de la journée"
+  },
+  "confirmation": {
+    "label": "Action à valider",
+    "valider": "Valider",
+    "refuser": "Refuser",
+    "envoi": "Envoi en cours…"
   }
 }

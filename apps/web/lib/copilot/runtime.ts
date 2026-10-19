@@ -1,4 +1,5 @@
 import { CopilotRuntime, createCopilotRuntimeHandler } from '@copilotkit/runtime/v2';
+import type { CopilotActionId } from '@spa/shared';
 
 import { ApiClientError } from '@/lib/api-client';
 import type { ActionAccess } from '@/lib/session-refresh';
@@ -14,8 +15,32 @@ import type { Specialist } from './specialists';
 import { suggestionsFor } from './suggestions';
 import { checkQuotas, isAgentRun, MemoryCounterStore, RedisCounterStore, type CounterStore } from './quotas';
 import { copilotRedis } from './redis';
+import {
+  decideWrite,
+  isSameOrigin,
+  MemoryPendingWriteStore,
+  RedisPendingWriteStore,
+  type PendingWriteStore,
+  type WriteExecutor,
+} from './writes';
 
 let counters: CounterStore | undefined;
+let pendingWrites: PendingWriteStore | undefined;
+
+function pendingWriteStore(): PendingWriteStore {
+  if (pendingWrites === undefined) {
+    const redis = copilotRedis();
+    pendingWrites = redis === null ? new MemoryPendingWriteStore() : new RedisPendingWriteStore(redis);
+  }
+  return pendingWrites;
+}
+
+/**
+ * Les écritures que le chat sait exécuter, action par action. Chacune arrive
+ * avec le spécialiste qui la propose — Rendez-vous côté cliente (P3-02),
+ * praticien (P3-03), gérance (P3-04).
+ */
+const WRITE_EXECUTORS: Partial<Record<CopilotActionId, WriteExecutor>> = {};
 
 function counterStore(): CounterStore {
   if (counters === undefined) {
@@ -97,6 +122,27 @@ export function copilotRoute(
     }
 
     const basePath = copilotBasePath(space, tenantSlug);
+    const scope = resolved.subject === null ? null : { tenantSlug, subject: resolved.subject };
+
+    // La décision sur une écriture proposée (P3-01) : étage 0, sans modèle.
+    const decision = new RegExp(`^${basePath}/ecritures/([0-9a-f-]{36})$`).exec(url.pathname);
+    if (decision !== null) {
+      if (request.method !== 'POST' || !isSameOrigin(request)) return new Response(null, { status: 403 });
+      const body = (await request.json().catch(() => null)) as { decision?: unknown } | null;
+      if (body?.decision !== 'valider' && body?.decision !== 'refuser') return new Response(null, { status: 400 });
+      const outcome = await decideWrite({
+        store: pendingWriteStore(),
+        executors: WRITE_EXECUTORS,
+        scope,
+        accessToken: resolved.accessToken,
+        id: decision[1]!,
+        decision: body.decision,
+        locale: resolved.session.locale,
+      });
+      copilotLog('copilot.write.decided', { tenantSlug, statut: outcome.statut, decision: body.decision });
+      return Response.json(outcome);
+    }
+
     if (isAgentRun(request, basePath)) {
       const verdict = await checkQuotas(counterStore(), { tenantSlug, subject: resolved.subject, request });
       if (!verdict.ok) {
@@ -111,7 +157,11 @@ export function copilotRoute(
     }
 
     const systemData = await salonData(tenantSlug, resolved.tenant, resolved.session.locale);
-    const agent = createOrchestrateur(resolved, { systemData, specialists: specialistsFor(resolved) });
+    const agent = createOrchestrateur(resolved, {
+      systemData,
+      specialists: specialistsFor(resolved),
+      prepareWrite: scope === null ? null : (write) => pendingWriteStore().put(scope, write),
+    });
     const handler = createCopilotRuntimeHandler({
       runtime: new CopilotRuntime({ agents: () => ({ default: agent }) }),
       basePath: copilotBasePath(space, tenantSlug),

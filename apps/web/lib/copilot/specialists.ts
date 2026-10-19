@@ -4,6 +4,7 @@ import { z } from 'zod';
 
 import type { BrowserCall, ServerTool } from './claude-agent';
 import { inputSchemaOf } from './tools';
+import type { PendingWrite } from './writes';
 
 /**
  * Les spécialistes, exposés à l'orchestrateur comme des outils — spécification
@@ -35,8 +36,8 @@ export interface SpecialistResult {
   readonly reponse: string;
   /** Navigations à exécuter dans la page. */
   readonly actionsFront: readonly BrowserCall[];
-  /** Écriture préparée, en attente du clic « Valider » — P3-01. */
-  readonly confirmation: null;
+  /** Écriture préparée, en attente du clic « Valider » (P3-01) ; jamais exécutée par le spécialiste. */
+  readonly confirmation: PendingWrite | null;
   /** Prochains pas cliquables, exécutés sans modèle. */
   readonly suggestions: readonly string[];
 }
@@ -53,9 +54,16 @@ export function specialistToolName(domaine: CopilotDomain): string {
   return `agent_${domaine}`;
 }
 
+/**
+ * Garde une écriture préparée et rend son identifiant ; `null` quand la
+ * session ne peut pas écrire (visiteuse) — l'écriture est alors abandonnée.
+ */
+export type PrepareWrite = ((write: PendingWrite) => Promise<string>) | null;
+
 export function specialistTools(
   session: CopilotSession,
   specialists: readonly Specialist[],
+  prepareWrite: PrepareWrite = null,
 ): ServerTool[] {
   const exposed = new Set(exposedDomains(session));
   return specialists
@@ -70,14 +78,19 @@ export function specialistTools(
           return { kind: 'resultat', contenu: 'Brief refusé : `demande` est obligatoire.', erreur: true };
         }
         const result = await specialist.run(parsed.data, signal);
-        return {
-          kind: 'fin',
-          // Ce que l'orchestrateur relira au tour suivant : la réponse donnée,
-          // pas les données intermédiaires du spécialiste.
-          contenu: `Réponse donnée à l'utilisateur : ${result.reponse}`,
-          texte: result.reponse,
-          navigateur: result.actionsFront,
-        };
+        const navigateur: BrowserCall[] = [...result.actionsFront];
+        let contenu = `Réponse donnée à l'utilisateur : ${result.reponse}`;
+        if (result.confirmation !== null && prepareWrite !== null) {
+          // L'écriture est gardée côté serveur ; la page ne reçoit que son
+          // identifiant et ce qu'il faut afficher.
+          const id = await prepareWrite(result.confirmation);
+          navigateur.push({
+            outil: 'confirmer',
+            arguments: { id, titre: result.confirmation.recapitulatif.titre, lignes: [...result.confirmation.recapitulatif.lignes] },
+          });
+          contenu += ` Action proposée, en attente de sa validation : ${result.confirmation.recapitulatif.titre}.`;
+        }
+        return { kind: 'fin', contenu, texte: result.reponse, navigateur };
       },
     }));
 }

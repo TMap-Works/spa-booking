@@ -2,6 +2,7 @@ import type Anthropic from '@anthropic-ai/sdk';
 
 import { MAX_ROUNDS, type BrowserCall, type ServerTool } from './claude-agent';
 import type { SpecialistBrief, SpecialistResult } from './specialists';
+import type { PendingWrite } from './writes';
 
 /**
  * La boucle d'un spécialiste — spécification §6.2.3, P2-01.
@@ -27,6 +28,8 @@ export interface SpecialistLoopOptions {
   /** Où les outils déposent les navigations à faire dans la page. */
   readonly navigations: BrowserCall[];
   readonly fallback: string;
+  /** Où les outils déposent l'écriture préparée, s'il y en a une (P3-01). */
+  readonly confirmation?: { current: PendingWrite | null };
   readonly log?: (event: string, detail: Record<string, unknown>) => void;
 }
 
@@ -36,6 +39,7 @@ export async function runSpecialistLoop(
   signal: AbortSignal,
 ): Promise<SpecialistResult> {
   const { client, model, effort, system, maxTokens, context, tools, navigations, fallback, log } = options;
+  const pending = () => options.confirmation?.current ?? null;
   const byName = new Map(tools.map((tool) => [tool.name, tool]));
   const faits = Object.entries(brief.faits).map(([key, value]) => `- ${key} : ${value}`);
   const messages: Anthropic.MessageParam[] = [
@@ -74,7 +78,7 @@ export async function runSpecialistLoop(
     });
 
     if (message.stop_reason === 'refusal') {
-      return result(fallback, []);
+      return result(fallback, [], null);
     }
 
     const text = message.content
@@ -84,7 +88,7 @@ export async function runSpecialistLoop(
       .trim();
 
     if (message.stop_reason !== 'tool_use') {
-      return result(text || fallback, navigations);
+      return result(text || fallback, navigations, pending());
     }
 
     messages.push({ role: 'assistant', content: message.content });
@@ -109,9 +113,13 @@ export async function runSpecialistLoop(
   }
 
   log?.('copilot.specialist.max_rounds', { model });
-  return result(fallback, navigations);
+  return result(fallback, navigations, null);
 }
 
-function result(reponse: string, actionsFront: readonly BrowserCall[]): SpecialistResult {
-  return { reponse, actionsFront, confirmation: null, suggestions: [] };
+function result(
+  reponse: string,
+  actionsFront: readonly BrowserCall[],
+  confirmation: PendingWrite | null,
+): SpecialistResult {
+  return { reponse, actionsFront, confirmation, suggestions: [] };
 }
