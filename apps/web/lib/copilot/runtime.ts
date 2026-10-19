@@ -18,6 +18,7 @@ import {
   rescheduleAppointment,
 } from '@/lib/api-client';
 
+import { guideSpecialist } from './agents/guide';
 import { rendezVousSpecialist } from './agents/rendez-vous';
 import { reservationSpecialist } from './agents/reservation';
 import { anthropicClient, copilotLog, createOrchestrateur, sessionContext } from './orchestrateur';
@@ -118,7 +119,11 @@ const QUOTA_TEXT = {
  */
 function specialistsFor(resolved: ResolvedCopilotSession): Specialist[] {
   const shared = { client: anthropicClient(), session: resolved.session, context: sessionContext(resolved), log: copilotLog };
-  return [reservationSpecialist(shared), rendezVousSpecialist({ ...shared, accessToken: resolved.accessToken })];
+  return [
+    reservationSpecialist(shared),
+    guideSpecialist({ ...shared, tenant: resolved.tenant }),
+    rendezVousSpecialist({ ...shared, accessToken: resolved.accessToken }),
+  ];
 }
 
 /**
