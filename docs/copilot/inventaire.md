@@ -36,7 +36,7 @@ session, et la frontière réelle est l'API (§6).
 | Écran | Route | Accès | Ce qu'on y fait | Adresse (paramètres) | Copilot | Actions |
 |---|---|---|---|---|---|---|
 | Vitrine | `/{salon}` | public | Présentation, catalogue des prestations, bouton « Choisir » par prestation | — | **Agir** | `salon.infos`, `catalogue.chercher`, `reservation.ouvrir_tunnel` |
-| Tunnel de réservation | `/{salon}/reservation` | public | Prestation, créneau, coordonnées, récapitulatif, confirmation (Stripe si acompte) | `?etape=prestation\|creneau\|coordonnees\|recapitulatif\|confirmation` · `?prestation=<id>` · `?praticien=<id>` · `?creneau=<début UTC>` | **Agir** | `reservation.ouvrir_tunnel`, `disponibilite.creneaux` |
+| Tunnel de réservation | `/{salon}/reservation` | public | Prestation, créneau, coordonnées, récapitulatif, confirmation (Stripe si acompte) | `?etape=prestation\|creneau\|coordonnees\|recapitulatif\|confirmation` · `?prestation=<id>` · `?praticien=<id>` · `?creneau=<début UTC>` · `?jour=AAAA-MM-JJ` · `?plage=matin\|apres-midi\|soir` | **Agir** | `reservation.ouvrir_tunnel`, `disponibilite.creneaux` |
 | Politique de données | `/{salon}/politique-donnees` | public | Finalités RGPD de l'établissement | — | **Lire** | `salon.politique_donnees` |
 
 **Le tunnel, en détail** (`lib/booking/draft.ts`, `components/booking/`)
@@ -47,10 +47,12 @@ session, et la frontière réelle est l'API (§6).
   **lien profond** comme `?etape=creneau&prestation=<id>&praticien=<id>` ouvre
   directement la liste des créneaux, filtrée. La vitrine s'en sert déjà
   (`components/salon/booking-link.ts`).
-- **Ce qui manque au copilot** : aucun paramètre ne porte un **jour** ni une
-  **plage** (matin, après-midi, soir). « Demain après-midi » ne peut donc pas
-  encore préfiltrer l'étape créneau. → ticket **P2-02** : ajouter `?jour=` et
-  `?plage=` au tunnel, utilisables à la main comme par le chat.
+- `?jour=` ouvre l'étape créneau sur ce jour, `?plage=` n'en garde que les
+  créneaux du matin (avant 12 h), de l'après-midi (12 h à 18 h) ou du soir,
+  **dans le fuseau du salon** (P2-02, `lib/booking/slot-view.ts`). Ce sont des
+  filtres d'affichage, hors du brouillon. La rangée « Toute la journée · Matin ·
+  Après-midi · Soir » les pose à la main : « demain après-midi » demandé au chat
+  et le même filtre posé au clic donnent la même adresse et le même écran.
 - Toute valeur illisible est ignorée (`lib/booking/draft.ts`). Le tunnel ne lit
   pas `?retour=` : il l'**émet** vers la connexion et l'inscription de l'espace
   client.

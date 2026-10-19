@@ -360,7 +360,14 @@
       "emptyDescription": "Try another month, another service, or contact the salon directly.",
       "emptyDescriptionStaff": "Another month or another practitioner may have room; otherwise contact the salon directly.",
       "nextMonth": "See next month",
-      "allStaff": "See all practitioners"
+      "allStaff": "See all practitioners",
+      "dayPart": {
+        "label": "Time of day",
+        "all": "All day",
+        "morning": "Morning",
+        "afternoon": "Afternoon",
+        "evening": "Evening"
+      }
     },
     "calendar": {
       "previousMonth": "Previous month",

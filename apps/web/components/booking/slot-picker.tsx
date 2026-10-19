@@ -183,6 +183,12 @@ interface SlotPickerProps {
    */
   readonly selectedSlot?: UtcInstant | null;
   /**
+   * La journée sur laquelle s'ouvrir, quand l'appelant en désigne une —
+   * `?jour=` du tunnel (#1457). Lue au montage seulement : ensuite, c'est la
+   * cliente qui choisit sa journée.
+   */
+  readonly initialDate?: CalendarDate | null;
+  /**
    * Le mot qui dit pourquoi un créneau est rendu sans pouvoir être choisi —
    * « actuel » pour l'heure du rendez-vous qu'on déplace. `null` : il se choisit.
    *
@@ -253,6 +259,7 @@ export function SlotPicker({
   selectedSlot,
   lockedSlotNote,
   busy = false,
+  initialDate = null,
   headingId = 'creneaux-titre',
   calendarRef,
   onChoose,
@@ -266,7 +273,7 @@ export function SlotPicker({
     [countryCode, locale],
   );
   /** La journée que la bande et le calendrier montrent comme retenue. */
-  const [selectedDate, setSelectedDate] = useState<CalendarDate | null>(null);
+  const [selectedDate, setSelectedDate] = useState<CalendarDate | null>(initialDate);
   /**
    * La journée posée en tête de bande, quand on l'a fait défiler.
    *

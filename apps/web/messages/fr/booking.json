@@ -360,7 +360,14 @@
       "emptyDescription": "Essayez un autre mois, une autre prestation, ou contactez le salon directement.",
       "emptyDescriptionStaff": "Un autre mois ou un autre praticien a peut-être de la place, sinon contactez le salon directement.",
       "nextMonth": "Voir le mois suivant",
-      "allStaff": "Voir tous les praticiens"
+      "allStaff": "Voir tous les praticiens",
+      "dayPart": {
+        "label": "Moment de la journée",
+        "all": "Toute la journée",
+        "morning": "Matin",
+        "afternoon": "Après-midi",
+        "evening": "Soir"
+      }
     },
     "calendar": {
       "previousMonth": "Mois précédent",
