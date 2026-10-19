@@ -1,4 +1,10 @@
-import type { PaymentMethod, PublicTenant } from '@spa/shared';
+import {
+  type AppointmentVolumeReport,
+  type DailyRevenueReport,
+  type NoShowReport,
+  type PaymentMethod,
+  type PublicTenant,
+} from '@spa/shared';
 import type { Metadata } from 'next';
 import { getLocale, getTranslations } from 'next-intl/server';
 import type { ReactNode } from 'react';
@@ -10,11 +16,6 @@ import {
   fetchRevenueReport,
 } from '@/lib/api-client';
 import { formatMoney, formatMoneyCompact, type DisplayLocale } from '@/lib/format';
-import type {
-  AppointmentVolumeReport,
-  DailyRevenueReport,
-  NoShowReport,
-} from '@/lib/admin/reporting-contract';
 // Les libellés de statut viennent du module de vocabulaire du front, et non plus
 // de ce contrat-ci (#917) : un rapport compte des rendez-vous, d'où la table
 // accordée au pluriel — les mêmes mots que la pastille du planning et que
@@ -504,7 +505,7 @@ export default async function ReportingPage({ params, searchParams }: ReportingP
 /**
  * Le moyen d'encaissement, dans la langue de l'écran.
  *
- * Lu ici et non dans `lib/admin/reporting-contract.ts`, qui porte encore la
+ * Lu ici et non dans `packages/shared/src/schemas/report-responses.ts`, qui porte encore la
  * table française : ce module de schémas est partagé avec le comptoir et le
  * fichier client, et le traduire sort de l'empreinte de ce ticket. Les deux
  * seules valeurs du contrat sont énumérées à la main plutôt que lues par clé

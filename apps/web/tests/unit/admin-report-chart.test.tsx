@@ -10,7 +10,7 @@ import {
   appointmentStatusCountsSchema,
   dailyRevenueReportSchema,
   noShowReportSchema,
-} from '@/lib/admin/reporting-contract';
+} from '@spa/shared';
 import { formatMoney, formatMoneyCompact } from '@/lib/format';
 
 /**

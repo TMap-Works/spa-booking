@@ -5,7 +5,7 @@ import type {
   AppointmentVolumeReport,
   DailyRevenueReport,
   NoShowReport,
-} from '@/lib/admin/reporting-contract';
+} from '@spa/shared';
 import {
   filterOptions,
   formatReportScope,

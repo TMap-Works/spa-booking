@@ -96,7 +96,7 @@ function fill(message: string, values: Readonly<Record<string, string>>): string
  *
  * Recopié plutôt qu'importé : `apps/web` ne dépend pas de `apps/api`, et le
  * contrat partagé ne publie pas encore le vocabulaire du reporting (voir
- * `reporting-contract.ts`). Le refus reste celui du serveur ; le connaître ici
+ * `report-responses.ts` (packages/shared)). Le refus reste celui du serveur ; le connaître ici
  * ne sert qu'à ne pas envoyer une requête dont on sait qu'elle sera refusée.
  *
  * 366 et non 365 : « l'année 2028 », du 1er janvier au 1er janvier suivant, fait
