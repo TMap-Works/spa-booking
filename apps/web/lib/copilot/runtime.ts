@@ -3,6 +3,7 @@ import { CopilotRuntime, createCopilotRuntimeHandler } from '@copilotkit/runtime
 import { ApiClientError } from '@/lib/api-client';
 import type { ActionAccess } from '@/lib/session-refresh';
 
+import { FixedReplyAgent } from './claude-agent';
 import { copilotEnabled } from './config';
 import { copilotBasePath } from './paths';
 import { reservationSpecialist } from './agents/reservation';
@@ -11,6 +12,23 @@ import { salonData } from './salon-data';
 import { resolveCopilotSession, type CopilotSpace, type ResolvedCopilotSession } from './session';
 import type { Specialist } from './specialists';
 import { suggestionsFor } from './suggestions';
+import { checkQuotas, isAgentRun, MemoryCounterStore, RedisCounterStore, type CounterStore } from './quotas';
+import { copilotRedis } from './redis';
+
+let counters: CounterStore | undefined;
+
+function counterStore(): CounterStore {
+  if (counters === undefined) {
+    const redis = copilotRedis();
+    counters = redis === null ? new MemoryCounterStore() : new RedisCounterStore(redis);
+  }
+  return counters;
+}
+
+const QUOTA_TEXT = {
+  fr: "Vous avez envoyé beaucoup de messages en peu de temps. Réessayez dans quelques minutes, ou continuez directement sur le site.",
+  en: "You've sent a lot of messages in a short time. Please try again in a few minutes, or carry on directly on the site.",
+} as const;
 
 /**
  * Les spécialistes d'une requête. Chacun arrive avec son ticket — Réservation
@@ -76,6 +94,20 @@ export function copilotRoute(
     const url = new URL(request.url);
     if (request.method === 'GET' && url.pathname === `${copilotBasePath(space, tenantSlug)}/suggestions`) {
       return Response.json({ suggestions: suggestionsFor(resolved.session, url.searchParams.get('page') ?? '') });
+    }
+
+    const basePath = copilotBasePath(space, tenantSlug);
+    if (isAgentRun(request, basePath)) {
+      const verdict = await checkQuotas(counterStore(), { tenantSlug, subject: resolved.subject, request });
+      if (!verdict.ok) {
+        copilotLog('copilot.quota.exceeded', { tenantSlug, portee: verdict.portee });
+        return createCopilotRuntimeHandler({
+          runtime: new CopilotRuntime({
+            agents: () => ({ default: new FixedReplyAgent(QUOTA_TEXT[resolved.session.locale]) }),
+          }),
+          basePath,
+        })(request);
+      }
     }
 
     const systemData = await salonData(tenantSlug, resolved.tenant, resolved.session.locale);

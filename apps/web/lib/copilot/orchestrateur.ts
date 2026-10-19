@@ -5,7 +5,8 @@ import { copilotModel } from './config';
 import type { ResolvedCopilotSession } from './session';
 import { specialistTools, type Specialist } from './specialists';
 import { guideTool } from './tools';
-import { MemoryTranscriptStore } from './transcript-store';
+import { copilotRedis } from './redis';
+import { MemoryTranscriptStore, RedisTranscriptStore, type TranscriptStore } from './transcript-store';
 
 /**
  * L'orchestrateur — spécification §6.2, P1-07 (#1454).
@@ -45,7 +46,32 @@ const REFUSAL_TEXT = "Je ne peux pas répondre à cette demande. Je peux en reva
 
 // Partagés entre les requêtes : le client garde ses connexions, le magasin ses fils.
 let client: Anthropic | undefined;
-const store = new MemoryTranscriptStore();
+let store: TranscriptStore | undefined;
+
+/** Redis dès qu'il est configuré (déployé) ; la mémoire du processus en local. */
+function transcriptStore(): TranscriptStore {
+  if (store === undefined) {
+    const redis = copilotRedis();
+    store = redis === null ? new MemoryTranscriptStore() : new RedisTranscriptStore(redis);
+  }
+  return store;
+}
+
+/** Bornes d'un tour (spécification §9). Au-delà, réponse fixe, sans appel au modèle. */
+export const MAX_MESSAGE_CHARS = 2_000;
+export const MAX_TRANSCRIPT_MESSAGES = 60;
+
+const BOUND_TEXTS = {
+  fr: {
+    messageTooLong: 'Votre message est un peu long pour moi : pouvez-vous le résumer en quelques phrases ?',
+    conversationTooLong:
+      'Cette conversation est devenue longue. Fermez le chat et rouvrez-le pour en démarrer une nouvelle.',
+  },
+  en: {
+    messageTooLong: 'Your message is a bit long for me: could you sum it up in a few sentences?',
+    conversationTooLong: 'This conversation has grown long. Close the chat and open it again to start a new one.',
+  },
+} as const;
 
 /** Le client Anthropic du serveur, partagé par l'orchestrateur et les spécialistes. */
 export function anthropicClient(): Anthropic {
@@ -121,7 +147,12 @@ export function createOrchestrateur(resolved: ResolvedCopilotSession, extras: Or
     // La réflexion adaptative compte dans ce plafond ; les réponses, elles,
     // tiennent en trois phrases.
     maxTokens: 2048,
-    store,
+    store: transcriptStore(),
+    limits: {
+      maxMessageChars: MAX_MESSAGE_CHARS,
+      maxTranscriptMessages: MAX_TRANSCRIPT_MESSAGES,
+      texts: BOUND_TEXTS[resolved.session.locale],
+    },
     transcriptKey: (threadId) => `copilot:${scope}:${threadId}`,
     refusalText: REFUSAL_TEXT,
     sessionContext: sessionContext(resolved),
