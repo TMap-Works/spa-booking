@@ -23,6 +23,7 @@
 
 export * from './common/index';
 export * from './constants/index';
+export * from './copilot/index';
 export * from './errors/index';
 export * from './locale/index';
 export * from './schemas/index';
