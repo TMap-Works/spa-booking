@@ -33,10 +33,11 @@ const WEEKDAYS: Record<Locale, readonly string[]> = {
 const SERVICES_TTL_MS = 60_000;
 const servicesCache = new Map<string, { services: PublicService[]; expiresAt: number }>();
 
-async function cachedServices(
+/** Le catalogue public du salon, partagé avec les spécialistes : un seul cache pour le même catalogue. */
+export async function cachedServices(
   tenantSlug: string,
-  fetchServices: (tenantSlug: string) => Promise<PublicService[]>,
-  now: number,
+  fetchServices: (tenantSlug: string) => Promise<PublicService[]> = fetchPublicServices,
+  now: number = Date.now(),
 ): Promise<PublicService[]> {
   const hit = servicesCache.get(tenantSlug);
   if (hit !== undefined && hit.expiresAt > now) return hit.services;

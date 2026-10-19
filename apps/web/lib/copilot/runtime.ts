@@ -4,13 +4,21 @@ import { ApiClientError } from '@/lib/api-client';
 import type { ActionAccess } from '@/lib/session-refresh';
 
 import { copilotEnabled } from './config';
-import { createOrchestrateur } from './orchestrateur';
+import { reservationSpecialist } from './agents/reservation';
+import { anthropicClient, copilotLog, createOrchestrateur, sessionContext } from './orchestrateur';
 import { salonData } from './salon-data';
-import { resolveCopilotSession, type CopilotSpace } from './session';
+import { resolveCopilotSession, type CopilotSpace, type ResolvedCopilotSession } from './session';
 import type { Specialist } from './specialists';
 
-/** Les spécialistes branchés ; chacun arrive avec son ticket (P2-01, P2-04, P3-02, P4). */
-const SPECIALISTS: readonly Specialist[] = [];
+/**
+ * Les spécialistes d'une requête. Chacun arrive avec son ticket — Réservation
+ * (P2-01) ; Guide (P2-04), Rendez-vous (P3-02), Clients et Encaissement (P4) à
+ * suivre. L'orchestrateur n'expose que ceux que la session permet.
+ */
+function specialistsFor(resolved: ResolvedCopilotSession): Specialist[] {
+  const shared = { client: anthropicClient(), session: resolved.session, context: sessionContext(resolved), log: copilotLog };
+  return [reservationSpecialist(shared)];
+}
 
 /**
  * Les routes du copilot — P1-04 (#1451), ADR 0018.
@@ -69,7 +77,7 @@ export function copilotRoute(
     }
 
     const systemData = await salonData(tenantSlug, resolved.tenant, resolved.session.locale);
-    const agent = createOrchestrateur(resolved, { systemData, specialists: SPECIALISTS });
+    const agent = createOrchestrateur(resolved, { systemData, specialists: specialistsFor(resolved) });
     const handler = createCopilotRuntimeHandler({
       runtime: new CopilotRuntime({ agents: () => ({ default: agent }) }),
       basePath: copilotBasePath(space, tenantSlug),
