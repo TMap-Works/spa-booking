@@ -26,5 +26,7 @@
     "valider": "Confirm",
     "refuser": "Decline",
     "envoi": "Sending…"
-  }
+  },
+  "aiNotice": "I'm an AI assistant: my answers are generated automatically and can be wrong.",
+  "privacyLink": "How your data is handled"
 }

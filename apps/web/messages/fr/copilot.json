@@ -26,5 +26,7 @@
     "valider": "Valider",
     "refuser": "Refuser",
     "envoi": "Envoi en cours…"
-  }
+  },
+  "aiNotice": "Je suis un assistant IA : mes réponses sont générées automatiquement et peuvent se tromper.",
+  "privacyLink": "Comment vos données sont traitées"
 }
