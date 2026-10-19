@@ -43,11 +43,6 @@ Données
 
 const REFUSAL_TEXT = "Je ne peux pas répondre à cette demande. Je peux en revanche vous aider à réserver ou à retrouver un rendez-vous.";
 
-/** Le prompt du banc d'essai : sans session ni données de salon. Retiré avec lui par P1-06. */
-const SPIKE_PROMPT = `${SYSTEM_PROMPT}
-
-Banc d'essai : aucun salon réel. Les prestations sont celles du contexte de page.`;
-
 // Partagés entre les requêtes : le client garde ses connexions, le magasin ses fils.
 let client: Anthropic | undefined;
 const store = new MemoryTranscriptStore();
@@ -104,36 +99,32 @@ export interface OrchestrateurExtras {
 }
 
 /**
- * L'orchestrateur d'un message. Sans session, c'est le banc d'essai du spike
- * (`/copilot-spike`, retiré par P1-06).
+ * L'orchestrateur d'un message, pour la session qui l'envoie.
  *
  * La conversation est rangée sous le salon **et** la personne : un identifiant
  * de fil deviné ou rejoué n'ouvre pas la conversation d'un autre compte, et un
  * changement de compte ou de salon repart d'une conversation vide.
  */
-export function createOrchestrateur(resolved?: ResolvedCopilotSession, extras: OrchestrateurExtras = {}): ClaudeAgent {
-  const scope =
-    resolved === undefined ? 'spike' : `${resolved.session.tenant.slug}:${resolved.subject ?? 'visiteur'}`;
+export function createOrchestrateur(resolved: ResolvedCopilotSession, extras: OrchestrateurExtras = {}): ClaudeAgent {
+  const scope = `${resolved.session.tenant.slug}:${resolved.subject ?? 'visiteur'}`;
 
   const serverTools: ServerTool[] = [];
-  if (resolved !== undefined) {
-    const guide = guideTool(resolved.session);
-    if (guide !== null) serverTools.push(guide);
-    serverTools.push(...specialistTools(resolved.session, extras.specialists ?? []));
-  }
+  const guide = guideTool(resolved.session);
+  if (guide !== null) serverTools.push(guide);
+  serverTools.push(...specialistTools(resolved.session, extras.specialists ?? []));
 
   return new ClaudeAgent({
     client: anthropicClient(),
     model: copilotModel('orchestrateur'),
     effort: 'low',
-    system: resolved === undefined ? SPIKE_PROMPT : SYSTEM_PROMPT,
+    system: SYSTEM_PROMPT,
     // La réflexion adaptative compte dans ce plafond ; les réponses, elles,
     // tiennent en trois phrases.
     maxTokens: 2048,
     store,
     transcriptKey: (threadId) => `copilot:${scope}:${threadId}`,
     refusalText: REFUSAL_TEXT,
-    ...(resolved === undefined ? {} : { sessionContext: sessionContext(resolved) }),
+    sessionContext: sessionContext(resolved),
     ...(extras.systemData === undefined ? {} : { systemData: extras.systemData }),
     serverTools,
     log: copilotLog,

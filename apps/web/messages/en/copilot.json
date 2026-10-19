@@ -1,0 +1,24 @@
+{
+  "title": "Salon assistant",
+  "placeholder": "Ask your question…",
+  "disclaimer": "The assistant can make mistakes: check before you confirm.",
+  "open": "Open the assistant",
+  "close": "Close the assistant",
+  "welcome": "Hello! I can help you book, find an appointment or find your way around the site.",
+  "shortcuts": "Shortcuts",
+  "copy": "Copy",
+  "copied": "Copied",
+  "suggestions": {
+    "reserver": "Book a treatment",
+    "creneaux_demain": "What times are free tomorrow?",
+    "tarifs": "What are your prices?",
+    "reprendre_dernier_soin": "Book my last treatment again",
+    "reporter_prochain": "Move my next appointment",
+    "ma_journee": "My day",
+    "prochain_client": "My next client",
+    "creneaux_libres_aujourdhui": "Free slots today",
+    "poser_rendez_vous": "Book an appointment for a client",
+    "a_encaisser": "Who still has to pay?",
+    "resume_journee": "Today at a glance"
+  }
+}

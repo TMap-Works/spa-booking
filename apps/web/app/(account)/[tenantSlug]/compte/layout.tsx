@@ -5,6 +5,7 @@ import { cookies } from 'next/headers';
 import { notFound } from 'next/navigation';
 import type { ReactNode } from 'react';
 
+import { CopilotMount } from '@/components/copilot/copilot-mount';
 import { AppointmentFeedProvider } from '@/components/live/appointment-feed';
 import { SalonShell } from '@/components/salon/salon-shell';
 import { PhoneCountryProvider } from '@/components/ui/phone-country';
@@ -256,6 +257,9 @@ export default async function AccountLayout({ children, params }: AccountLayoutP
           </main>
         </div>
       </SalonShell>
+      {/* Le copilot (ADR 0018), en bulle, une fois la cliente connectée : la
+          route de l'espace client lit les cookies posés sur ce chemin. */}
+      <CopilotMount space="compte" tenantSlug={tenantSlug} />
     </AccountAnnouncementProvider>
   );
 }

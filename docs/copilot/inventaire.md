@@ -173,7 +173,7 @@ réutilise ces fonctions du front plutôt que d'en écrire une copie.
 | Cookies de l'espace client | `spa_account_access` et `spa_account_refresh`, httpOnly, `path=/{slug}/compte` (`app/(account)/[tenantSlug]/compte/session.ts`). |
 | Renouvellement | Accès expiré mais refresh présent : passage par `/{slug}/admin/session/refresh?next=` ou `/{slug}/compte/session/refresh?next=`, retour marqué `?session=renouvelee`. Côté action serveur : `accessTokenForAction` (`lib/session-refresh.ts`). |
 
-**Conséquence pour la route du copilot** (`/api/copilotkit`). Les deux paires de
+**Conséquence pour la route du copilot** (d'abord `/api/copilotkit`, au spike). Les deux paires de
 cookies sont posées sur des chemins (`/{slug}/admin`, `/{slug}/compte`) que la
 route n'emprunte pas : **le navigateur ne les lui envoie pas**. P1-05 doit donc
 servir la route sous chacun de ces chemins, ou passer la session par un autre
