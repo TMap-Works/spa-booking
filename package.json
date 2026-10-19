@@ -50,6 +50,7 @@
       "undici": "6.28.1"
     },
     "tinypool": "2.1.2",
-    "@copilotkit/core": "1.73.3"
+    "@copilotkit/core": "1.73.3",
+    "katex": "0.18.10"
   }
 }
