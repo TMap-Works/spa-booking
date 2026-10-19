@@ -513,9 +513,10 @@ resource "aws_secretsmanager_secret" "api_runtime" {
 # ainsi que lui, et jamais l'URL de la base ni les secrets JWT de l'API.
 #
 # Terraform crée le conteneur, jamais la valeur (skill aws-infra §7). Le JSON
-# attendu est `{"ANTHROPIC_API_KEY": "sk-ant-…"}`, à déposer **avant** l'`apply`
-# qui passe `copilot_enabled` à `true` : une clé absente du JSON empêcherait la
-# tâche du front de démarrer.
+# attendu est `{"ANTHROPIC_API_KEY": "sk-ant-…", "REDIS_URL": "rediss://…"}`, à
+# déposer **avant** l'`apply` qui passe `copilot_enabled` à `true` : une clé
+# absente du JSON empêcherait la tâche du front de démarrer. `REDIS_URL` vaut
+# celle du secret d'exécution de l'API.
 #
 # Clé gérée par AWS, pour la même raison que le secret d'exécution de l'API.
 #tfsec:ignore:aws-ssm-secret-use-customer-key
@@ -838,6 +839,10 @@ module "ecs_service" {
         {},
         var.copilot_enabled ? {
           ANTHROPIC_API_KEY = "${aws_secretsmanager_secret.web_copilot.arn}:ANTHROPIC_API_KEY::"
+          # L'historique des conversations et les quotas du copilot (P1-08) :
+          # la même instance que l'API, joignable par le groupe de sécurité
+          # commun des tâches. L'URL porte le jeton AUTH, d'où le secret.
+          REDIS_URL = "${aws_secretsmanager_secret.web_copilot.arn}:REDIS_URL::"
         } : {},
       )
 

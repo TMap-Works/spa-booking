@@ -119,10 +119,12 @@ d'exécution de l'API : le rôle d'exécution du front ne lit ainsi que cette cl
 Le copilot est **fermé par défaut**. Pour l'ouvrir, dans cet ordre :
 
 1. déposer dans le secret `spa-<env>/web/copilot-…` le JSON
-   `{"ANTHROPIC_API_KEY": "sk-ant-…"}`, par la console ou par
-   `aws secretsmanager put-secret-value`, **jamais** dans un `.tfvars` ;
+   `{"ANTHROPIC_API_KEY": "sk-ant-…", "REDIS_URL": "rediss://…"}`, par la
+   console ou par `aws secretsmanager put-secret-value`, **jamais** dans un
+   `.tfvars`. `REDIS_URL` est la même que dans le secret d'exécution de l'API :
+   le copilot y range l'historique des conversations et ses quotas ;
 2. appliquer avec `-var copilot_enabled=true`. La tâche du front reçoit alors
-   `ANTHROPIC_API_KEY` (résolue depuis le secret), `COPILOT_ENABLED`,
+   `ANTHROPIC_API_KEY` et `REDIS_URL` (résolues depuis le secret), `COPILOT_ENABLED`,
    `COPILOT_MODEL_DEFAULT` et `COPILOTKIT_TELEMETRY_DISABLED`.
 
 Dans l'autre ordre, la tâche ne démarre pas : l'agent ECS ne trouve pas la clé
