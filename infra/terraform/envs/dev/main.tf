@@ -454,6 +454,30 @@ resource "aws_secretsmanager_secret" "api_runtime" {
   }
 }
 
+# Clé de l'API Anthropic du Copilot IA (ADR 0018, #1450). Un secret à part, et
+# non une clé de plus dans `api_runtime` : le rôle d'exécution du front ne lit
+# ainsi que lui, et jamais l'URL de la base ni les secrets JWT de l'API.
+#
+# Terraform crée le conteneur, jamais la valeur (skill aws-infra §7). Le JSON
+# attendu est `{"ANTHROPIC_API_KEY": "sk-ant-…"}`, à déposer **avant** l'`apply`
+# qui passe `copilot_enabled` à `true` : une clé absente du JSON empêcherait la
+# tâche du front de démarrer.
+#
+# Clé gérée par AWS, pour la même raison que le secret d'exécution de l'API.
+#tfsec:ignore:aws-ssm-secret-use-customer-key
+resource "aws_secretsmanager_secret" "web_copilot" {
+  name_prefix = "spa-${local.environment}/web/copilot-"
+  description = "Clé de l'API Anthropic du copilot IA (front ${local.environment}) — valeur déposée hors Terraform."
+
+  # Environnement jetable : comme le secret d'exécution de l'API, aucun délai
+  # de récupération qui bloquerait le nom pendant trente jours.
+  recovery_window_in_days = 0
+
+  tags = {
+    Name = "spa-${local.environment}-web-copilot"
+  }
+}
+
 # --- Terminaison TLS ----------------------------------------------------------
 
 # Le module `ecs-service` exige un certificat : son listener 443 est le seul par
@@ -748,13 +772,34 @@ module "ecs_service" {
       # Voir « Ce qui reste à faire » dans le README.
       public_url_env_vars = ["APP_URL", "API_URL"]
 
-      environment = {
-        LOG_LEVEL = "debug"
-        PORT      = "3000"
-      }
+      environment = merge(
+        {
+          LOG_LEVEL = "debug"
+          PORT      = "3000"
+        },
+        # Le copilot IA (ADR 0018) : fermé tant que `copilot_enabled` est faux.
+        # La télémétrie de CopilotKit est coupée — rien ne part vers un tiers
+        # absent du registre des traitements.
+        var.copilot_enabled ? {
+          COPILOT_ENABLED               = "true"
+          COPILOT_MODEL_DEFAULT         = "claude-haiku-5-5"
+          COPILOTKIT_TELEMETRY_DISABLED = "true"
+        } : {},
+      )
+
+      # La clé Anthropic, résolue par l'agent ECS au démarrage depuis le secret
+      # `web_copilot` : jamais en clair dans la définition de tâche, jamais
+      # exposée au navigateur (aucun préfixe NEXT_PUBLIC_). Branchée seulement
+      # avec le copilot, pour la raison donnée au-dessus du secret.
+      secret_arns = merge(
+        {},
+        var.copilot_enabled ? {
+          ANTHROPIC_API_KEY = "${aws_secretsmanager_secret.web_copilot.arn}:ANTHROPIC_API_KEY::"
+        } : {},
+      )
 
       # Aucune politique : le front n'appelle aucune API AWS. Il ne lit pas non
-      # plus de secret — son origine publique et l'hôte de son API n'en sont pas,
+      # plus de secret, hormis la clé du copilot ci-dessus — son origine publique et l'hôte de son API n'en sont pas,
       # et c'est précisément ce que `public_url_env_vars` évite d'aller chercher
       # dans Secrets Manager (#345).
       #
