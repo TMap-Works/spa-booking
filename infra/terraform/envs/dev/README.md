@@ -111,6 +111,26 @@ pour l'instant, faute de pouvoir y exprimer le préfixe `/api` que sa propre
 **exactement** ce que rend `terraform output app_url`, sans quoi l'API et le front
 publieraient deux domaines différents pour le même établissement.
 
+## La clé du copilot IA
+
+Le copilot IA (ADR 0018) appelle l'API Anthropic depuis le serveur du front.
+Sa clé vit dans un secret à part, `web_copilot`, et non dans le secret
+d'exécution de l'API : le rôle d'exécution du front ne lit ainsi que cette clé.
+Le copilot est **fermé par défaut**. Pour l'ouvrir, dans cet ordre :
+
+1. déposer dans le secret `spa-<env>/web/copilot-…` le JSON
+   `{"ANTHROPIC_API_KEY": "sk-ant-…", "REDIS_URL": "rediss://…"}`, par la
+   console ou par `aws secretsmanager put-secret-value`, **jamais** dans un
+   `.tfvars`. `REDIS_URL` est la même que dans le secret d'exécution de l'API :
+   le copilot y range l'historique des conversations et ses quotas ;
+2. appliquer avec `-var copilot_enabled=true`. La tâche du front reçoit alors
+   `ANTHROPIC_API_KEY` et `REDIS_URL` (résolues depuis le secret), `COPILOT_ENABLED`,
+   `COPILOT_MODEL_DEFAULT` et `COPILOTKIT_TELEMETRY_DISABLED`.
+
+Dans l'autre ordre, la tâche ne démarre pas : l'agent ECS ne trouve pas la clé
+dans le JSON du secret. Les environnements `staging` et `prod` suivent la même
+procédure.
+
 ## Origine publique du front
 
 Le front compose ses balises canoniques, son `metadataBase` et son graphe

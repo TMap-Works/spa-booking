@@ -430,3 +430,16 @@ variable "notification_sms_sender_id" {
     error_message = "notification_sms_sender_id doit comporter au moins une lettre : un expéditeur purement numérique est refusé par les opérateurs, qui y voient une usurpation de numéro court."
   }
 }
+
+variable "copilot_enabled" {
+  description = <<-EOT
+    Branche le copilot IA (ADR 0018) sur le front : la clé `ANTHROPIC_API_KEY`
+    est résolue depuis le secret `web_copilot`, et `COPILOT_ENABLED`,
+    `COPILOT_MODEL_DEFAULT` et `COPILOTKIT_TELEMETRY_DISABLED` sont posées.
+
+    Faux par défaut. **Déposer la clé dans le secret avant de le passer à
+    `true`** : une clé absente du JSON du secret empêche la tâche de démarrer.
+  EOT
+  type        = bool
+  default     = false
+}
