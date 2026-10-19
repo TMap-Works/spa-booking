@@ -19,6 +19,8 @@ import { z } from 'zod';
 import { isSalonPath } from '@/lib/copilot/paths';
 import type { CopilotSuggestion } from '@/lib/copilot/suggestions';
 
+import { ConfirmationCard } from './confirmation-card';
+
 /**
  * Le chat du copilot — P1-06 (#1453), EF-2 et EF-5 de la spécification.
  *
@@ -92,6 +94,25 @@ function Chat({ runtimeUrl, tenantSlug, variant }: CopilotChatProps) {
       },
     },
     [router, tenantSlug],
+  );
+
+  // L'écriture proposée par un spécialiste (P3-01) : une carte à valider. Le
+  // clic part vers le serveur, pas vers le modèle ; l'outil, lui, rend la main
+  // tout de suite pour que le chat ne reste pas en attente.
+  useFrontendTool(
+    {
+      name: 'confirmer',
+      description: "Exécutant du serveur : affiche une action à valider.",
+      parameters: z
+        .object({ id: z.string().uuid(), titre: z.string().max(200), lignes: z.array(z.string().max(300)).max(10) })
+        .strict(),
+      handler: async () => 'Carte affichée.',
+      render: ({ args }) =>
+        typeof args.id === 'string' && typeof args.titre === 'string' ? (
+          <ConfirmationCard runtimeUrl={runtimeUrl} id={args.id} titre={args.titre} lignes={args.lignes ?? []} />
+        ) : null,
+    },
+    [runtimeUrl],
   );
 
   const label = useMemo(() => suggestionLabels(t), [t]);

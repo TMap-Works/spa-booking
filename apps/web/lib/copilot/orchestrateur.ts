@@ -3,7 +3,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import { ClaudeAgent, type ServerTool } from './claude-agent';
 import { copilotModel } from './config';
 import type { ResolvedCopilotSession } from './session';
-import { specialistTools, type Specialist } from './specialists';
+import { specialistTools, type PrepareWrite, type Specialist } from './specialists';
 import { guideTool } from './tools';
 import { copilotRedis } from './redis';
 import { MemoryTranscriptStore, RedisTranscriptStore, type TranscriptStore } from './transcript-store';
@@ -122,6 +122,8 @@ export interface OrchestrateurExtras {
   readonly systemData?: string;
   /** Spécialistes disponibles ; filtrés par la session. */
   readonly specialists?: readonly Specialist[];
+  /** Où garder une écriture proposée par un spécialiste (P3-01). */
+  readonly prepareWrite?: PrepareWrite;
 }
 
 /**
@@ -137,7 +139,7 @@ export function createOrchestrateur(resolved: ResolvedCopilotSession, extras: Or
   const serverTools: ServerTool[] = [];
   const guide = guideTool(resolved.session);
   if (guide !== null) serverTools.push(guide);
-  serverTools.push(...specialistTools(resolved.session, extras.specialists ?? []));
+  serverTools.push(...specialistTools(resolved.session, extras.specialists ?? [], extras.prepareWrite ?? null));
 
   return new ClaudeAgent({
     client: anthropicClient(),

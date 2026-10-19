@@ -62,6 +62,39 @@
   gap: var(--spa-space-2);
 }
 
+/* La carte d'une écriture à valider (P3-01) : le récapitulatif, puis les deux
+   décisions, à la manière d'une carte du site. */
+.spa-copilot__confirmation {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spa-space-2);
+  padding: var(--spa-space-3);
+  border: 1px solid var(--spa-color-border);
+  border-radius: var(--spa-radius-lg);
+  background: var(--spa-color-surface-raised);
+}
+
+.spa-copilot__confirmation-title {
+  margin: 0;
+  font-weight: 600;
+}
+
+.spa-copilot__confirmation-lines {
+  margin: 0;
+  padding-inline-start: var(--spa-space-4);
+  color: var(--spa-color-text-muted);
+}
+
+.spa-copilot__confirmation-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spa-space-2);
+}
+
+.spa-copilot__confirmation-result:empty {
+  display: none;
+}
+
 /* Sur un téléphone, le chat prend tout l'écran : une bulle de 360 px de large
    ne laisserait ni lire la réponse ni voir la page derrière (EF-5). */
 @media (max-width: 30rem) {

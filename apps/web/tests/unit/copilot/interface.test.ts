@@ -93,3 +93,53 @@ describe('suggestions servies par la route', () => {
     });
   });
 });
+
+describe('décision sur une écriture, par la route', () => {
+  const connected = {
+    session: {
+      surface: 'client',
+      role: 'client',
+      permissions: [],
+      tenant: { slug: 'salon-lea', timezone: 'Europe/Paris', currency: 'EUR' },
+      locale: 'fr',
+    },
+    accessToken: 'jeton',
+    notice: null,
+    subject: 'a'.repeat(32),
+    tenant: {},
+  } as unknown as ResolvedCopilotSession;
+  const url = `http://salon.test${copilotBasePath('compte', 'salon-lea')}/ecritures/11111111-2222-4333-8444-555555555555`;
+  const params = { params: Promise.resolve({ tenantSlug: 'salon-lea' }) };
+
+  it("refuse une décision venue d'une autre origine", async () => {
+    vi.stubEnv('ANTHROPIC_API_KEY', 'k');
+    vi.stubEnv('NODE_ENV', 'development');
+    sessionMock.resolveCopilotSession.mockResolvedValue(connected);
+
+    const response = await copilotRoute('compte')(
+      new Request(url, {
+        method: 'POST',
+        headers: { origin: 'https://evil.test', host: 'salon.test' },
+        body: JSON.stringify({ decision: 'valider' }),
+      }),
+      params,
+    );
+    expect(response.status).toBe(403);
+  });
+
+  it('une proposition inconnue ou expirée est dite comme telle', async () => {
+    vi.stubEnv('ANTHROPIC_API_KEY', 'k');
+    vi.stubEnv('NODE_ENV', 'development');
+    sessionMock.resolveCopilotSession.mockResolvedValue(connected);
+
+    const response = await copilotRoute('compte')(
+      new Request(url, {
+        method: 'POST',
+        headers: { origin: 'http://salon.test', host: 'salon.test' },
+        body: JSON.stringify({ decision: 'valider' }),
+      }),
+      params,
+    );
+    expect(await response.json()).toMatchObject({ statut: 'echec' });
+  });
+});

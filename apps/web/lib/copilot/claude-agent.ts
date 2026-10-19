@@ -48,7 +48,7 @@ const NAVIGATION_CALL_PREFIX = 'nav-';
  * Exécutants du navigateur : outils que la page enregistre pour que le
  * **serveur** les déclenche (navigation), et que Claude ne voit jamais.
  */
-export const BROWSER_EXECUTORS: readonly string[] = ['naviguer'];
+export const BROWSER_EXECUTORS: readonly string[] = ['naviguer', 'confirmer'];
 
 /** Un appel à exécuter dans la page : l'outil du navigateur et ses arguments. */
 export interface BrowserCall {

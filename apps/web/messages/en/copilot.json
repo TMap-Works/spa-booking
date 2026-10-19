@@ -20,5 +20,11 @@
     "poser_rendez_vous": "Book an appointment for a client",
     "a_encaisser": "Who still has to pay?",
     "resume_journee": "Today at a glance"
+  },
+  "confirmation": {
+    "label": "Action to confirm",
+    "valider": "Confirm",
+    "refuser": "Decline",
+    "envoi": "Sending…"
   }
 }
