@@ -28,6 +28,7 @@ function resolved(overrides: Partial<ResolvedCopilotSession> = {}): ResolvedCopi
     accessToken: 'jeton-secret',
     notice: null,
     subject: 'a'.repeat(32),
+    tenant: { name: 'Salon Léa', timezone: 'Europe/Paris', defaultCurrency: 'EUR', defaultLocale: 'fr' } as ResolvedCopilotSession['tenant'],
     ...overrides,
   };
 }

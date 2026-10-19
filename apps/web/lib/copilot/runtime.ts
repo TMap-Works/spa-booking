@@ -5,7 +5,12 @@ import type { ActionAccess } from '@/lib/session-refresh';
 
 import { copilotEnabled } from './config';
 import { createOrchestrateur } from './orchestrateur';
+import { salonData } from './salon-data';
 import { resolveCopilotSession, type CopilotSpace } from './session';
+import type { Specialist } from './specialists';
+
+/** Les spécialistes branchés ; chacun arrive avec son ticket (P2-01, P2-04, P3-02, P4). */
+const SPECIALISTS: readonly Specialist[] = [];
 
 /**
  * Les routes du copilot — P1-04 (#1451), ADR 0018.
@@ -63,8 +68,10 @@ export function copilotRoute(
       return new Response(null, { status: 503 });
     }
 
+    const systemData = await salonData(tenantSlug, resolved.tenant, resolved.session.locale);
+    const agent = createOrchestrateur(resolved, { systemData, specialists: SPECIALISTS });
     const handler = createCopilotRuntimeHandler({
-      runtime: new CopilotRuntime({ agents: () => ({ default: createOrchestrateur(resolved) }) }),
+      runtime: new CopilotRuntime({ agents: () => ({ default: agent }) }),
       basePath: copilotBasePath(space, tenantSlug),
     });
     return handler(request);

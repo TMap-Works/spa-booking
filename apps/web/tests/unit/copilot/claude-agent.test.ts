@@ -1,9 +1,9 @@
 import { EventType, type BaseEvent, type Message, type RunAgentInput } from '@ag-ui/core';
 import type Anthropic from '@anthropic-ai/sdk';
 import { firstValueFrom, toArray } from 'rxjs';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
-import { ClaudeAgent } from '@/lib/copilot/claude-agent';
+import { ClaudeAgent, MAX_ROUNDS, type ClaudeAgentOptions, type ServerTool } from '@/lib/copilot/claude-agent';
 import { MemoryTranscriptStore } from '@/lib/copilot/transcript-store';
 
 /**
@@ -52,7 +52,7 @@ function fakeClient(replies: FakeReply[]) {
   return { client: client as unknown as Anthropic, calls };
 }
 
-function agentWith(replies: FakeReply[]) {
+function agentWith(replies: FakeReply[], extra: Partial<ClaudeAgentOptions> = {}) {
   const { client, calls } = fakeClient(replies);
   const store = new MemoryTranscriptStore();
   const agent = new ClaudeAgent({
@@ -64,6 +64,7 @@ function agentWith(replies: FakeReply[]) {
     store,
     transcriptKey: (threadId) => `test:${threadId}`,
     refusalText: 'Je ne peux pas répondre.',
+    ...extra,
   });
   return { agent, calls, store };
 }
@@ -180,5 +181,154 @@ describe('ClaudeAgent', () => {
     const content = calls[0]?.messages[0]?.content as Anthropic.TextBlockParam[];
     expect(content[0]?.text).toContain('<contexte_page>');
     expect(content[1]).toEqual({ type: 'text', text: 'Où suis-je ?' });
+  });
+});
+
+describe('ClaudeAgent — outils serveur', () => {
+  const toolUse = (id: string, name: string, toolInput: Record<string, unknown>): Anthropic.ToolUseBlock =>
+    ({ type: 'tool_use', id, name, input: toolInput, caller: { type: 'direct' } }) as unknown as Anthropic.ToolUseBlock;
+  const text = (value: string): Anthropic.TextBlock => ({ type: 'text', text: value, citations: null });
+
+  function serverTool(name: string, run: ServerTool['run']): ServerTool {
+    return { name, description: `outil ${name}`, inputSchema: { type: 'object', properties: {} }, run };
+  }
+
+  it("exécute une lecture et rend son résultat à Claude dans le même tour", async () => {
+    const lire = vi.fn(async () => ({ kind: 'resultat' as const, contenu: 'Massage 60 min : 70 €' }));
+    const { agent, calls, store } = agentWith(
+      [
+        { id: 'msg_a', stop_reason: 'tool_use', content: [toolUse('t1', 'lire_catalogue', { recherche: 'massage' })] },
+        { id: 'msg_b', stop_reason: 'end_turn', content: [text('Le massage de 60 min coûte 70 €.')] },
+      ],
+      { serverTools: [serverTool('lire_catalogue', lire)] },
+    );
+
+    const events = await run(agent, input([{ id: 'u1', role: 'user', content: 'Prix du massage ?' }]));
+
+    expect(lire).toHaveBeenCalledWith({ recherche: 'massage' }, expect.any(AbortSignal));
+    expect(calls).toHaveLength(2);
+    expect(calls[1]?.messages.at(-1)).toEqual({
+      role: 'user',
+      content: [{ type: 'tool_result', tool_use_id: 't1', content: 'Massage 60 min : 70 €' }],
+    });
+    expect(events.some((e) => e.type === EventType.TOOL_CALL_START)).toBe(false);
+    expect((await store.get('test:fil-1'))?.pending).toBeUndefined();
+  });
+
+  it('passe-plat : affiche le texte, navigue, et garde le résultat pour le message suivant', async () => {
+    const mener = vi.fn(async () => ({
+      kind: 'fin' as const,
+      contenu: 'Navigation vers /salon/compte/historique.',
+      texte: 'Voici votre historique.',
+      navigateur: [{ outil: 'naviguer', arguments: { chemin: '/salon/compte/historique' } }],
+    }));
+    const { agent, calls, store } = agentWith(
+      [
+        { id: 'msg_a', stop_reason: 'tool_use', content: [toolUse('t1', 'guide_mener', { route: 'historique' })] },
+        { id: 'msg_b', stop_reason: 'end_turn', content: [text('Avec plaisir.')] },
+      ],
+      { serverTools: [serverTool('guide_mener', mener)] },
+    );
+
+    const first = await run(agent, input([{ id: 'u1', role: 'user', content: 'Mon historique' }]));
+
+    expect(calls).toHaveLength(1);
+    const contents = first.filter((e) => e.type === EventType.TEXT_MESSAGE_CONTENT) as unknown as { delta: string }[];
+    expect(contents.map((e) => e.delta)).toEqual(['Voici votre historique.']);
+    const navigation = first.find((e) => e.type === EventType.TOOL_CALL_START) as unknown as {
+      toolCallId: string;
+      toolCallName: string;
+    };
+    expect(navigation.toolCallName).toBe('naviguer');
+    expect(navigation.toolCallId.startsWith('nav-')).toBe(true);
+    expect((await store.get('test:fil-1'))?.pending).toHaveLength(1);
+
+    // CopilotKit relance l'agent avec le résultat de la navigation : rien à dire.
+    const followUp = await run(
+      agent,
+      input([
+        { id: 'u1', role: 'user', content: 'Mon historique' },
+        { id: 'tool-nav', role: 'tool', toolCallId: navigation.toolCallId, content: 'ok' },
+      ]),
+    );
+    expect(calls).toHaveLength(1);
+    expect(followUp.map((e) => e.type)).toEqual([EventType.RUN_STARTED, EventType.RUN_FINISHED]);
+
+    // Le message suivant de l'utilisateur s'ouvre sur le résultat gardé.
+    await run(
+      agent,
+      input([
+        { id: 'u1', role: 'user', content: 'Mon historique' },
+        { id: 'u2', role: 'user', content: 'Merci' },
+      ]),
+    );
+    expect(calls[1]?.messages.at(-1)).toEqual({
+      role: 'user',
+      content: [
+        { type: 'tool_result', tool_use_id: 't1', content: 'Navigation vers /salon/compte/historique.' },
+        { type: 'text', text: 'Merci' },
+      ],
+    });
+    expect((await store.get('test:fil-1'))?.pending).toBeUndefined();
+  });
+
+  it("une panne d'outil devient un résultat d'erreur, pas une panne du chat", async () => {
+    const { agent, calls } = agentWith(
+      [
+        { id: 'msg_a', stop_reason: 'tool_use', content: [toolUse('t1', 'lire', {})] },
+        { id: 'msg_b', stop_reason: 'end_turn', content: [text("Je n'ai pas pu lire le catalogue.")] },
+      ],
+      {
+        serverTools: [
+          serverTool('lire', async () => {
+            throw new Error('API injoignable');
+          }),
+        ],
+      },
+    );
+
+    await run(agent, input([{ id: 'u1', role: 'user', content: 'Tarifs ?' }]));
+
+    const result = (calls[1]?.messages.at(-1)?.content as Anthropic.ToolResultBlockParam[])[0];
+    expect(result?.is_error).toBe(true);
+  });
+
+  it(`s'arrête après ${MAX_ROUNDS} appels si un outil boucle`, async () => {
+    const replies = Array.from({ length: MAX_ROUNDS }, (_, i) => ({
+      id: `msg_${i}`,
+      stop_reason: 'tool_use' as const,
+      content: [toolUse(`t${i}`, 'lire', {})],
+    }));
+    const { agent, calls } = agentWith(replies, {
+      serverTools: [serverTool('lire', async () => ({ kind: 'resultat', contenu: 'encore' }))],
+    });
+
+    const events = await run(agent, input([{ id: 'u1', role: 'user', content: 'Boucle' }]));
+
+    expect(calls).toHaveLength(MAX_ROUNDS);
+    expect(events.at(-1)?.type).toBe(EventType.RUN_FINISHED);
+  });
+
+  it('ne montre jamais à Claude les exécutants du navigateur, et met en cache les données du salon', async () => {
+    const { agent, calls } = agentWith(
+      [{ id: 'msg_a', stop_reason: 'end_turn', content: [text('Bonjour')] }],
+      { systemData: '<donnees_salon>…</donnees_salon>' },
+    );
+
+    await run(
+      agent,
+      input([{ id: 'u1', role: 'user', content: 'Salut' }], {
+        tools: [
+          { name: 'naviguer', description: 'exécutant', parameters: { type: 'object', properties: {} } },
+          { name: 'filtrer_prestations', description: 'filtre', parameters: { type: 'object', properties: {} } },
+        ],
+      }),
+    );
+
+    expect(calls[0]?.tools?.map((tool) => (tool as Anthropic.Tool).name)).toEqual(['filtrer_prestations']);
+    expect(calls[0]?.system).toEqual([
+      { type: 'text', text: 'prompt système', cache_control: { type: 'ephemeral' } },
+      { type: 'text', text: '<donnees_salon>…</donnees_salon>', cache_control: { type: 'ephemeral' } },
+    ]);
   });
 });
