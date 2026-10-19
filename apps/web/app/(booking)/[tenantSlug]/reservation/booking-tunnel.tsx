@@ -24,6 +24,12 @@ import {
   type BookingStep,
   type ContactDraft,
 } from '@/lib/booking/draft';
+import {
+  EMPTY_SLOT_VIEW,
+  searchWithSlotView,
+  slotViewFromSearch,
+  type SlotView,
+} from '@/lib/booking/slot-view';
 import { formatDateTimeInTimeZone, timeZoneMention, type DisplayLocale } from '@/lib/format';
 
 import { AccountGateStep } from './steps/account-gate-step';
@@ -321,6 +327,23 @@ export function BookingTunnel({
   // brouillon arrive de `sessionStorage` dans l'effet ci-dessous.
   const [draft, setDraft] = useState<BookingDraft>(() => initialDraft);
   const [hydrated, setHydrated] = useState(false);
+  /**
+   * Le jour et la plage que l'étape « Créneau » montre — `?jour=`, `?plage=`
+   * (#1457). Hors du brouillon : ce sont des filtres d'affichage, que l'adresse
+   * porte seule, et qu'un lien du chat comme un clic sur la rangée de plages
+   * posent de la même façon.
+   */
+  const [slotView, setSlotView] = useState<SlotView>(EMPTY_SLOT_VIEW);
+  const changeSlotView = useCallback((view: SlotView) => {
+    setSlotView(view);
+    // Sur place, sans entrée d'historique : changer de plage n'est pas changer
+    // d'étape, et le geste retour doit ramener à l'étape d'avant.
+    window.history.replaceState(
+      null,
+      '',
+      `${window.location.pathname}${searchWithSlotView(window.location.search, view)}`,
+    );
+  }, []);
   const [notice, setNotice] = useState<Notice | null>(null);
   const noticeRef = useRef<HTMLDivElement | null>(null);
   /**
@@ -429,6 +452,7 @@ export function BookingTunnel({
     // changement d'étape et ne doit pas pousser une entrée d'historique que
     // personne n'a demandée.
     historyStepRef.current = null;
+    setSlotView(slotViewFromSearch(window.location.search));
     setDraft({ ...merged, step });
     setRestoredAppointment(merged.appointment !== null);
     setHydrated(true);
@@ -611,6 +635,7 @@ export function BookingTunnel({
       // L'effet de synchronisation corrigera l'adresse sur place : ce qui suit
       // un retour arrière ne crée jamais d'entrée.
       cameFromHistoryRef.current = true;
+      setSlotView(slotViewFromSearch(window.location.search));
       setDraft((current) => {
         const merged = keepBookedAppointment(
           current,
@@ -1050,6 +1075,8 @@ export function BookingTunnel({
                 }}
                 onStaffChange={chooseStaff}
                 onChoose={chooseSlot}
+                view={slotView}
+                onViewChange={changeSlotView}
               />
             ) : gated ? (
               // Réserver exige un compte : la visiteuse qui n'en a pas ouvert

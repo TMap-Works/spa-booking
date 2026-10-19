@@ -178,8 +178,9 @@ export const COPILOT_ACTIONS = {
     nature: 'navigation',
     exige: 'public',
     description: 'Ouvre le tunnel de réservation, préfiltré sur une prestation, un praticien, un jour et une plage.',
-    // Les clés sont celles de l'adresse du tunnel (lib/booking/draft.ts) ;
-    // `jour` et `plage` y arrivent avec P2-02.
+    // Les clés sont celles de l'adresse du tunnel : `lib/booking/draft.ts` pour
+    // la prestation et le praticien, `lib/booking/slot-view.ts` pour le jour et
+    // la plage (P2-02).
     parametres: z
       .object({
         prestation: uuidSchema.optional(),

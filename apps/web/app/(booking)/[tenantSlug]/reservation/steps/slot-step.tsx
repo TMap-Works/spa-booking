@@ -19,6 +19,7 @@ import { Notification } from '@/components/ui/notification';
 import { Sheet } from '@/components/ui/sheet';
 import { startAvailabilityRefresh } from '@/lib/booking/availability-refresh';
 import { calendarDateInTimeZone } from '@/lib/booking/calendar';
+import { daysInDayPart, DAY_PARTS, EMPTY_SLOT_VIEW, type DayPart, type SlotView } from '@/lib/booking/slot-view';
 import {
   addMonths,
   bookingWindow,
@@ -32,6 +33,16 @@ import type { DisplayLocale } from '@/lib/format';
 import { refusalMessage, type Refusal } from '@/lib/refusal';
 
 import { loadAvailabilityAction } from '../actions';
+
+/** « Toute la journée » (`null`), puis les plages dans l'ordre du jour. */
+const DAY_PART_CHOICES: readonly (DayPart | null)[] = [null, ...DAY_PARTS];
+
+const DAY_PART_LABELS = {
+  tout: 'tunnel.slotStep.dayPart.all',
+  matin: 'tunnel.slotStep.dayPart.morning',
+  'apres-midi': 'tunnel.slotStep.dayPart.afternoon',
+  soir: 'tunnel.slotStep.dayPart.evening',
+} as const;
 
 interface SlotStepProps {
   readonly tenant: PublicTenant;
@@ -58,6 +69,13 @@ interface SlotStepProps {
   readonly onBack: () => void;
   /** Remonte le praticien retenu au brouillon : il survit au rafraîchissement et sert à la réservation. */
   readonly onStaffChange: (staffId: string | null) => void;
+  /**
+   * Le jour et la plage que l'adresse demande — `?jour=`, `?plage=` (#1457).
+   * Filtres d'affichage, posés à la main par la rangée de plages ou par le chat.
+   */
+  readonly view?: SlotView;
+  /** Absent : l'écran n'offre pas la rangée de plages, faute de pouvoir l'écrire dans l'adresse. */
+  readonly onViewChange?: (view: SlotView) => void;
   readonly onChoose: (startsAt: UtcInstant) => void;
 }
 
@@ -180,6 +198,8 @@ export function SlotStep({
   onBack,
   onStaffChange,
   onChoose,
+  view = EMPTY_SLOT_VIEW,
+  onViewChange,
 }: SlotStepProps) {
   const t = useTranslations('booking');
   const locale = useLocale();
@@ -265,8 +285,10 @@ export function SlotStep({
     const now = calendarDateInTimeZone(new Date(), tenant.timezone);
 
     setToday(now);
-    setMonth((current) => current ?? monthOf(retainedDate ?? now));
-  }, [retainedDate, tenant.timezone]);
+    // Le créneau retenu d'abord, puis le jour demandé par l'adresse (#1457) ;
+    // `load` ramène au mois courant un jour sorti de la fenêtre de réservation.
+    setMonth((current) => current ?? monthOf(retainedDate ?? view.day ?? now));
+  }, [retainedDate, tenant.timezone, view.day]);
 
   /**
    * Recharge les journées du mois regardé, et dit si la réponse est arrivée.
@@ -391,6 +413,11 @@ export function SlotStep({
    * nommée de deux façons sur un seul parcours (#846).
    */
   const staffName = staffLabel ?? t('tunnel.staffChoice.noPreference');
+
+  const shownDays = useMemo(
+    () => (days === null ? null : daysInDayPart(days, view.dayPart, tenant.timezone)),
+    [days, view.dayPart, tenant.timezone],
+  );
 
   /** Les bornes réservables, dont le calendrier tire les mois qu'il atteint. */
   const bounds = useMemo(() => (today === null ? null : bookingWindow(today)), [today]);
@@ -586,9 +613,33 @@ export function SlotStep({
         ferait disparaître un état vide déjà affiché — et avec lui le bouton
         qui lève la préférence de praticien — à la première revalidation ratée.
       */}
+      {onViewChange === undefined ? null : (
+      <div className="spa-slot-step__day-parts" role="group" aria-label={t('tunnel.slotStep.dayPart.label')}>
+        {DAY_PART_CHOICES.map((choice) => {
+          const pressed = view.dayPart === choice;
+          return (
+            <Button
+              key={choice ?? 'tout'}
+              variant={pressed ? 'accent' : 'neutral'}
+              aria-pressed={pressed}
+              onClick={() => {
+                onViewChange({ ...view, dayPart: choice });
+              }}
+            >
+              {t(DAY_PART_LABELS[choice ?? 'tout'])}
+            </Button>
+          );
+        })}
+      </div>
+      )}
+
       {days !== null && failure !== null && days.length === 0 ? null : (
         <SlotPicker
-          days={days}
+          // Les journées réduites à la plage choisie : le calendrier et la bande
+          // comptent alors les créneaux **de cette plage**, et un jour sans
+          // après-midi libre se lit « complet » sans qu'on ait à l'ouvrir.
+          days={shownDays}
+          {...(retainedDate === null && view.day !== null ? { initialDate: view.day } : {})}
           month={month}
           bounds={bounds}
           // Ce que le salon **annonce** — le calendrier s'en sert pour écrire

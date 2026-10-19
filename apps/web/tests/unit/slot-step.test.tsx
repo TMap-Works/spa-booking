@@ -32,6 +32,7 @@ import {
 } from '@/lib/booking/availability-refresh';
 import { addCalendarDays } from '@/lib/booking/calendar';
 import { BAND_DAYS } from '@/lib/booking/day-band';
+import type { SlotView } from '@/lib/booking/slot-view';
 
 import { service, tenant } from './fixtures';
 
@@ -151,6 +152,8 @@ function renderStep(
     service: PublicService;
     staffId: string | null;
     startsAt: UtcInstant | null;
+    view: SlotView;
+    onViewChange: (view: SlotView) => void;
   }> = {},
 ): ReturnType<typeof userEvent.setup> {
   render(
@@ -163,6 +166,8 @@ function renderStep(
       onBack={onBack}
       onStaffChange={onStaffChange}
       onChoose={onChoose}
+      {...(overrides.view === undefined ? {} : { view: overrides.view })}
+      {...(overrides.onViewChange === undefined ? {} : { onViewChange: overrides.onViewChange })}
     />,
   );
 
@@ -1085,5 +1090,28 @@ describe('retour sur l’étape avec un créneau déjà retenu (#947)', () => {
         screen.getByRole('button', { name: 'Ouvrir le calendrier — octobre 2026' }),
       ).toBeDefined();
     });
+  });
+});
+
+describe('jour et plage demandés par l’adresse (#1457)', () => {
+  it('ne montre que les créneaux de la plage, et la rangée la propose à la main', async () => {
+    const onViewChange = vi.fn();
+    const user = renderStep({ view: { day: null, dayPart: 'apres-midi' }, onViewChange });
+
+    expect(await screen.findByRole('button', { name: '14 h 00' })).toBeDefined();
+    expect(screen.queryByRole('button', { name: '09 h 00' })).toBeNull();
+
+    const plages = screen.getByRole('group', { name: 'Moment de la journée' });
+    expect(within(plages).getByRole('button', { name: 'Après-midi' }).getAttribute('aria-pressed')).toBe('true');
+
+    await user.click(within(plages).getByRole('button', { name: 'Matin' }));
+    expect(onViewChange).toHaveBeenCalledWith({ day: null, dayPart: 'matin' });
+  });
+
+  it('sans parent pour tenir l’adresse, la rangée de plages n’apparaît pas', async () => {
+    renderStep();
+
+    expect(await screen.findByRole('button', { name: '09 h 00' })).toBeDefined();
+    expect(screen.queryByRole('group', { name: 'Moment de la journée' })).toBeNull();
   });
 });

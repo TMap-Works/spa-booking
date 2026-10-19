@@ -833,6 +833,15 @@
   gap: var(--spa-space-3);
 }
 
+/* La rangée de plages de l'étape « Créneau » (#1457) : « Toute la journée »,
+   matin, après-midi, soir. Elle passe à la ligne sur un écran étroit plutôt que
+   de défiler : quatre mots courts tiennent sur deux lignes à 360 px. */
+.spa-slot-step__day-parts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spa-space-2);
+}
+
 /* --- La carte du rendez-vous, étapes 4 et 5 (#1051) ------------------------- */
 
 /*
