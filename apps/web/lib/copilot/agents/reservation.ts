@@ -30,10 +30,11 @@ import { slotsTool } from './common';
 const SYSTEM = `Tu es le spécialiste de la réservation d'un salon. Tu reçois un brief de l'assistant principal et tu rends une réponse courte, prête à afficher.
 
 Ta méthode
-1. Trouve la prestation avec catalogue_chercher. Si plusieurs conviennent, propose les deux ou trois plus proches et ouvre le tunnel sans prestation.
-2. Si un jour est demandé, regarde ses créneaux avec disponibilite_creneaux, en précisant la plage si elle est demandée.
-3. Ouvre toujours le tunnel avec reservation_ouvrir_tunnel, filtré sur ce qui est établi (prestation, praticien, jour, plage) : c'est là que la personne choisit et confirme.
-4. Réponds en deux phrases au plus : ce que tu as trouvé (deux ou trois horaires au plus, ou l'absence de créneau et une alternative), et que le tunnel est ouvert.
+1. Le catalogue du salon t'est donné dans <catalogue>. Prends-y la prestation directement ; n'appelle catalogue_chercher que si elle n'y est pas évidente. Si plusieurs conviennent, propose les deux ou trois plus proches et ouvre le tunnel sans prestation.
+2. Si un jour est demandé, appelle **dans le même tour** disponibilite_creneaux et reservation_ouvrir_tunnel, avec les mêmes prestation, praticien, jour et plage.
+3. La plage : matin avant 12 h, après-midi de 12 h à 18 h, soir après 18 h. Une heure demandée (« vers 16 h ») donne sa plage (après-midi). Les faits établis du brief (jour, plage, praticien) restent valables tant que la demande ne les change pas.
+4. Ouvre toujours le tunnel, filtré sur tout ce qui est établi : c'est là que la personne choisit et confirme.
+5. Réponds en deux phrases au plus : deux ou trois horaires au plus — ceux de la plage, et les plus proches de l'heure demandée s'il y en a une —, ou l'absence de créneau et une alternative ; puis que le tunnel s'ouvre.
 
 Règles
 - Tu n'inventes jamais une prestation, un prix ni un horaire : tout vient de tes outils. Si un outil ne renvoie rien, dis-le.
@@ -54,6 +55,26 @@ export interface ReservationDeps {
   readonly log?: (event: string, detail: Record<string, unknown>) => void;
 }
 
+/** Catalogue cité d'emblée au plus : au-delà, le modèle cherche. */
+const MAX_CATALOGUE = 40;
+
+/**
+ * Le catalogue donné d'avance : la plupart des demandes nomment une
+ * prestation, et la trouver ici évite un aller-retour au modèle.
+ */
+function catalogueOf(services: readonly PublicService[]): string {
+  const lines = services
+    .slice(0, MAX_CATALOGUE)
+    .map(
+      (service) =>
+        `- [${service.id}] ${service.name} — ${service.durationMinutes} min — praticiens : ${
+          service.staff.map((member) => `${member.displayName} [${member.id}]`).join(', ') || 'aucun'
+        }`,
+    );
+  const more = services.length > MAX_CATALOGUE ? `\n… et ${services.length - MAX_CATALOGUE} autres : cherche-les.` : '';
+  return `<catalogue>\n${lines.join('\n') || '- aucune prestation'}${more}\n</catalogue>`;
+}
+
 function normalize(text: string): string {
   return text.normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase();
 }
@@ -72,6 +93,7 @@ export function reservationSpecialist(deps: ReservationDeps): Specialist {
       const navigations: BrowserCall[] = [];
       const services = await loadServices(slug);
       const byId = new Map(services.map((service) => [service.id, service]));
+      const catalogue = catalogueOf(services);
 
       const tools = [
         registryTool('catalogue.chercher', async ({ recherche }) => {
@@ -119,6 +141,7 @@ export function reservationSpecialist(deps: ReservationDeps): Specialist {
           model: copilotModel('reservation'),
           effort: 'low',
           system: SYSTEM,
+          systemData: catalogue,
           maxTokens: 2048,
           context,
           tools,

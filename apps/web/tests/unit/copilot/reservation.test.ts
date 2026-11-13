@@ -133,6 +133,12 @@ describe('spécialiste Réservation', () => {
     expect(slotsResult.content).toContain('15:30');
     expect(slotsResult.content).not.toContain('09:00');
 
+    // Le catalogue est donné d'avance, en second bloc système mis en cache.
+    const system = calls[0]?.system as Anthropic.TextBlockParam[];
+    expect(system).toHaveLength(2);
+    expect(system[1]?.text).toContain(`[${MASSAGE}] Massage relaxant — 60 min — praticiens : Léa [${LEA}]`);
+    expect(system[1]?.cache_control).toEqual({ type: 'ephemeral' });
+
     // Le brief arrive seul, sans conversation, après le contexte du serveur.
     expect(calls[0]?.messages).toHaveLength(1);
     expect(calls[0]).not.toHaveProperty('tool_choice');
