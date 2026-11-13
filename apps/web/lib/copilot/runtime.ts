@@ -39,6 +39,13 @@ import {
   type WriteExecutor,
 } from './writes';
 
+/*
+ * La télémétrie de CopilotKit part vers un tiers : elle est coupée partout —
+ * en local, dans les tests et en CI —, pas seulement là où Terraform pose la
+ * variable. Lue à la construction du runtime, donc après ce module.
+ */
+process.env.COPILOTKIT_TELEMETRY_DISABLED ??= 'true';
+
 let counters: CounterStore | undefined;
 let pendingWrites: PendingWriteStore | undefined;
 
