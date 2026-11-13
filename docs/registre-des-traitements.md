@@ -10,8 +10,9 @@ explicitement plutôt que de l'omettre — un registre qui décrit un système
 imaginaire est pire qu'une absence de registre, parce qu'il donne à croire que
 la question a été traitée.
 
-Version : 1.0 · Établi le 6 septembre 2026 · À revoir à chaque ajout de table
-portant une donnée personnelle.
+Version : 1.1 · Établi le 6 septembre 2026 · Revu le 13 novembre 2026 (assistant
+conversationnel, §2.7 et §5) · À revoir à chaque ajout de table portant une
+donnée personnelle, et à chaque nouveau destinataire.
 
 ---
 
@@ -21,7 +22,7 @@ portant une donnée personnelle.
 |---|---|---|
 | **Responsable de traitement** | l'établissement (le salon), pour la clientèle qu'il enregistre | il décide des finalités : qui il inscrit, ce qu'il note, ce qu'il conserve |
 | **Sous-traitant** | l'éditeur de la plateforme | il traite ces données sur instruction, et n'en fait aucun usage propre |
-| **Sous-traitants ultérieurs** | AWS, Stripe | voir §5 |
+| **Sous-traitants ultérieurs** | AWS, Stripe, Anthropic (assistant conversationnel) | voir §5 |
 
 Le produit est **multi-tenant** : chaque établissement est un responsable de
 traitement distinct, et l'isolation logique décrite au §4 est ce qui rend cette
@@ -95,6 +96,27 @@ séparation effective plutôt que déclarative.
 | **Où** | `users.marketing_consent`, `users.marketing_consent_at` — module `crm` |
 | **État** | la colonne existe et se recueille ; **aucun traitement de marketing n'est implémenté**, le CDC §1.4 le plaçant hors périmètre MVP. Elle est posée maintenant parce qu'un consentement ne se recueille pas rétroactivement |
 | **Règles** | le défaut est le refus (le consentement est un acte positif, art. 4.11) ; toute prise de position est datée, y compris un refus (la preuve exigée par l'art. 7.1) ; la date ne bouge que sur un changement de valeur |
+
+### 2.7 Assistant conversationnel (copilot IA)
+
+ADR 0018, [spécification](copilot/specification.md) §8. Le chat intégré au site
+et au back-office aide la personne qui parle à se servir du salon : trouver un
+créneau, retrouver ou modifier un rendez-vous, mener à un écran, lire un
+indicateur.
+
+| | |
+|---|---|
+| **Finalité** | répondre aux demandes de la personne sur le salon et sur ses propres données, et préparer les actions qu'elle valide elle-même |
+| **Base légale** | exécution du contrat (art. 6.1.b) pour la clientèle — l'assistant est une manière d'utiliser le service de réservation ; intérêt légitime de l'établissement (art. 6.1.f) pour son personnel — outiller le travail quotidien. Son usage est facultatif : tout ce qu'il fait reste faisable par les écrans |
+| **Personnes concernées** | qui écrit au chat — visiteuse, cliente, personnel — et les clientes dont le personnel parle |
+| **Catégories de données transmises au modèle** | le message tapé ; le contexte de session (rôle, salon, langue, date du jour — **ni nom, ni e-mail, ni identifiant de compte**) ; la page affichée et ses filtres ; les données publiques du salon ; ce que lisent les outils, selon le rôle : créneaux, rendez-vous de la personne (date, prestation, praticien, statut), et pour le personnel le **prénom et l'initiale** des clientes de l'agenda, ou le **nom complet** quand la gérance cherche une fiche |
+| **Jamais transmis** | coordonnées (e-mail, téléphone) et notes d'une cliente, jeton de session, donnée de carte. Les outils ne les rendent pas au modèle — tenu par les tests du copilot. Seule exception : ce que la personne tape elle-même, par exemple un numéro pour retrouver une fiche |
+| **Où** | `apps/web/lib/copilot/` ; fil de conversation dans Redis (ElastiCache), clé `copilot:{salon}:{empreinte du compte ou « visiteur »}:{fil}` ; écritures proposées dans Redis, clé `ecriture:{salon}:{empreinte}:{id}` |
+| **Destinataires** | Anthropic, sous-traitant ultérieur (§5), qui génère la réponse. Aucune conversation n'est montrée au salon ni à l'éditeur |
+| **Conservation** | fil de conversation : **30 minutes** après le dernier message, visiteuses comprises (sans compte, le fil n'est lié qu'à un identifiant aléatoire de la page) ; écriture proposée : **5 minutes**, effacée dès la décision. Aucune conversation n'est stockée en base ni exportée |
+| **Journaux** | compteurs seulement — tokens, étage, quota dépassé, borne atteinte, statut d'une écriture, salon. **Aucun contenu de message** n'est journalisé |
+| **Transparence** | le chat se présente comme un assistant IA et renvoie à la politique de données du salon |
+| **Écarts assumés** | le fil n'est pas vidé à la déconnexion : il expire seul au bout de 30 minutes ; l'empreinte du compte le rend inaccessible à toute autre session. Les droits d'accès et d'effacement ne portent pas sur un fil qui n'existe plus au-delà de cette durée |
 
 ## 3. Les droits des personnes, et comment ils s'exercent
 
@@ -182,6 +204,7 @@ nom. Le refus est temporaire — honorer, ou annuler.
 | **Minimisation des projections** | la liste du fichier client ne lit même pas la note interne ; l'export ne lit les rendez-vous qu'après avoir trouvé la fiche |
 | **Secrets** | AWS Secrets Manager en déployé, jamais dans le code ni dans un `.env` versionné |
 | **Sauvegardes** | RDS, rétention d'au moins 30 jours en production (contrainte vérifiée par la validation Terraform) |
+| **Assistant conversationnel** | le modèle ne reçoit que les outils que le rôle permet, ne navigue que dans le salon de la session, et toute écriture passe par une carte validée par la personne, avec revérification des droits au clic (tests d'isolation P3-05) ; données lues balisées comme données et campagne d'injection de prompt (P5-02, `docs/copilot/evaluation.md`) ; quotas par compte, par visiteur et par salon ; clé Anthropic dans Secrets Manager, jamais côté navigateur |
 
 Les tests d'isolation inter-tenant sont **obligatoires pour tout endpoint
 nouveau ou modifié** : ils créent une ressource chez A, s'authentifient comme B,
@@ -193,6 +216,7 @@ et exigent 404 sur lecture, écriture et suppression.
 |---|---|---|
 | **AWS** | hébergement, base de données, cache, stockage, e-mail (SES), SMS (SNS) | `eu-west-3` (Paris) — voir §6 |
 | **Stripe** | données de paiement, y compris les données de carte que notre code ne voit jamais | selon les conditions du prestataire, qui est certifié PCI-DSS niveau 1 |
+| **Anthropic** | génération des réponses de l'assistant conversationnel (§2.7) : messages et données lues par les outils, par l'API Claude | hors de l'Union européenne, selon les conditions commerciales d'Anthropic. **À établir avant la mise en production (P5-05)** : accord de sous-traitance signé, mécanisme de transfert retenu (clauses contractuelles types), durée de rétention côté prestataire, et mention dans la politique de données présentée aux clientes |
 
 Aucun autre destinataire. Les données ne sont ni revendues, ni mutualisées entre
 établissements, ni utilisées pour entraîner quoi que ce soit.
@@ -229,6 +253,8 @@ l'externalisation de la conformité PCI-DSS (CDC §5.2).
 | Pièces comptables (encaissements, ventes) | durée légale de conservation applicable à l'établissement | conservées, jamais supprimées par l'application |
 | Sessions (`refresh_tokens`) | jusqu'à expiration ou déconnexion | automatique |
 | Journaux applicatifs | selon la rétention CloudWatch configurée | infrastructure |
+| Fil de conversation de l'assistant | 30 minutes après le dernier message | automatique (expiration Redis) |
+| Écriture proposée par l'assistant | 5 minutes, ou jusqu'à la décision | automatique |
 
 **L'écart à assumer, nommé ici plutôt que passé sous silence :** le MVP ne comporte
 aucune purge planifiée des fiches clientes inactives. L'anonymisation est
@@ -242,7 +268,8 @@ fait l'objet d'une issue de suivi.
 Le périmètre MVP est figé à six domaines (CDC §1.4). Les traitements suivants
 n'existent pas, et ce registre sera à reprendre le jour où l'un d'eux sera
 livré : campagnes marketing, programme de fidélité, cartes cadeaux, avis
-clients, assistant IA, marketplace.
+clients, marketplace. L'assistant IA, qui figurait dans cette liste, est entré
+au §2.7 avec son traitement.
 
 C'est aussi pourquoi `marketing_consent` est une **colonne sans traitement** :
 elle recueille aujourd'hui la base légale d'un traitement qui n'existera que

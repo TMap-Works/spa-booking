@@ -141,8 +141,10 @@ fourni par le front avec `useCopilotReadable`. Il est **indicatif** : il sert à
 la pertinence des réponses, jamais à l'autorisation.
 
 **Isolation des conversations** : une conversation est liée au couple
-(utilisateur, salon). Elle est vidée à la déconnexion et au changement de salon.
-Celles des visiteurs ne sont pas conservées.
+(utilisateur, salon) : une autre session ou un autre salon repart d'une
+conversation vide. Elle expire 30 minutes après le dernier message, visiteurs
+compris — leur fil n'est lié qu'à un identifiant aléatoire de la page
+([registre des traitements](../registre-des-traitements.md) §2.7).
 
 ## 6. Architecture technique
 
@@ -373,9 +375,10 @@ un raccourci.
   l'assistant IA).
 - **Minimisation** : le contexte transmis au modèle ne contient ni note interne,
   ni coordonnées d'un client, sauf quand l'action en cours les exige.
-- **Conservation** : les conversations ne sont pas stockées en V1. Si elles le
-  deviennent, ce sera par un module API dédié, avec une durée déclarée au
-  registre.
+- **Conservation** : les conversations ne sont pas stockées en base en V1. Le
+  fil vit 30 minutes dans Redis pour que la conversation se suive, puis
+  expire ; une écriture proposée, 5 minutes. Un historique durable passerait
+  par un module API dédié, avec une durée déclarée au registre.
 - **Transparence** : le chat se présente comme un assistant IA dès le premier
   message et renvoie à la politique de données du salon.
 
