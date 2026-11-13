@@ -182,3 +182,51 @@
     grid-template-columns: repeat(6, minmax(0, 1fr));
   }
 }
+
+/*
+ * Entrée des listes filtrées — P2-03 (#1458), EF-4 de la spécification du
+ * copilot.
+ *
+ * Quand un filtre change — jour, plage, prestation —, les horaires et les
+ * praticiens qui apparaissent glissent d'un quart de rem en fondu, l'un après
+ * l'autre : l'œil voit **que** la liste a changé, qu'on l'ait filtrée soi-même
+ * ou que le copilot l'ait fait. Seuls les éléments **nouveaux** s'animent : ils
+ * sont clés par leur horaire ou leur praticien, et React ne remonte que ceux-là.
+ *
+ * Sous `prefers-reduced-motion: reduce`, rien ne bouge : la règle n'existe
+ * qu'en `no-preference`, et `base.css` coupe de toute façon les durées.
+ */
+@keyframes spa-list-enter {
+  from {
+    opacity: 0;
+    transform: translateY(0.25rem);
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .spa-slot-grid__cell,
+  .spa-booking__staff-option {
+    animation: spa-list-enter var(--spa-duration-normal) var(--spa-easing-standard) both;
+  }
+
+  /* Un léger décalage, plafonné : au-delà du sixième, tout arrive ensemble. */
+  .spa-slot-grid__cell:nth-child(3),
+  .spa-booking__staff-option:nth-child(2) {
+    animation-delay: 30ms;
+  }
+
+  .spa-slot-grid__cell:nth-child(4),
+  .spa-booking__staff-option:nth-child(3) {
+    animation-delay: 60ms;
+  }
+
+  .spa-slot-grid__cell:nth-child(5),
+  .spa-booking__staff-option:nth-child(4) {
+    animation-delay: 90ms;
+  }
+
+  .spa-slot-grid__cell:nth-child(n + 6),
+  .spa-booking__staff-option:nth-child(n + 5) {
+    animation-delay: 120ms;
+  }
+}
