@@ -1,6 +1,13 @@
 import { randomUUID } from 'node:crypto';
 
-import { ERROR_CODES, type CopilotActionId, type Locale } from '@spa/shared';
+import {
+  COPILOT_ACTIONS,
+  ERROR_CODES,
+  meetsRequirement,
+  type CopilotActionId,
+  type CopilotSession,
+  type Locale,
+} from '@spa/shared';
 
 import { ApiClientError } from '@/lib/api-client';
 
@@ -161,11 +168,16 @@ export interface DecideInput {
   readonly accessToken: string | null;
   readonly id: string;
   readonly decision: 'valider' | 'refuser';
-  readonly locale: Locale;
+  /**
+   * La session **au moment du clic** : l'action est revérifiée contre elle,
+   * pas contre celle qui l'a préparée — un rôle retiré entre-temps ne valide
+   * plus rien (P3-05). L'API revérifie encore derrière, avec le jeton.
+   */
+  readonly session: CopilotSession;
 }
 
 export async function decideWrite(input: DecideInput): Promise<WriteOutcome> {
-  const text = TEXTS[input.locale];
+  const text = TEXTS[input.session.locale];
   if (input.scope === null || input.accessToken === null) return { statut: 'echec', message: text.session };
 
   const write = await input.store.take(input.scope, input.id);
@@ -174,12 +186,15 @@ export async function decideWrite(input: DecideInput): Promise<WriteOutcome> {
 
   const execute = input.executors[write.action];
   if (execute === undefined) return { statut: 'echec', message: text.unknown };
+  if (!meetsRequirement(input.session, COPILOT_ACTIONS[write.action].exige)) {
+    return { statut: 'echec', message: text.forbidden };
+  }
 
   try {
     await execute(write.parametres, { accessToken: input.accessToken, tenantSlug: input.scope.tenantSlug });
     return { statut: 'faite', message: write.succes };
   } catch (error) {
-    return { statut: 'echec', message: apiRefusal(error, input.locale) };
+    return { statut: 'echec', message: apiRefusal(error, input.session.locale) };
   }
 }
 

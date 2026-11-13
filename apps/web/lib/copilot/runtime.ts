@@ -202,7 +202,7 @@ export function copilotRoute(
         accessToken: resolved.accessToken,
         id: decision[1]!,
         decision: body.decision,
-        locale: resolved.session.locale,
+        session: resolved.session,
       });
       copilotLog('copilot.write.decided', { tenantSlug, statut: outcome.statut, decision: body.decision });
       return Response.json(outcome);
