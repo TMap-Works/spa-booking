@@ -97,7 +97,7 @@ export function rendezVousSpecialist(deps: RendezVousDeps): Specialist {
   return {
     domaine: 'rendez_vous',
     description:
-      "Spécialiste des rendez-vous et du planning : rendez-vous de la cliente (lire, reporter, annuler), journée du praticien (lire, marquer honoré ou absent), planning du salon (créneaux libres, poser un rendez-vous). Toute modification est proposée sur une carte que la personne valide. À appeler pour « mes rendez-vous », « reporter », « annuler », « ma journée », « poser un rendez-vous »…",
+      "Spécialiste des rendez-vous et du planning : rendez-vous de la cliente (lire, reporter, annuler), journée du praticien (lire, marquer honoré ou absent), planning du salon (créneaux libres, poser un rendez-vous au nom d'une cliente — « pose un massage pour Marie »). Toute modification est proposée sur une carte que la personne valide. À appeler pour « mes rendez-vous », « reporter », « annuler », « ma journée », « poser un rendez-vous »…",
     async run(brief, signal) {
       const navigations: BrowserCall[] = [];
       const confirmation: { current: PendingWrite | null } = { current: null };
