@@ -81,7 +81,7 @@ function specialistsOf(session: CopilotSession, client: Anthropic): Specialist[]
   const shared = { client, session, context: '', accessToken: 'jeton' };
   return [
     reservationSpecialist({ ...shared, services: async () => [] }),
-    guideSpecialist({ ...shared, tenant, policy: async () => 'politique' }),
+    guideSpecialist({ ...shared, tenant, policy: async () => 'politique', services: async () => [] }),
     rendezVousSpecialist({ ...shared, services: async () => [] }),
     encaissementSpecialist(shared),
     clientsSpecialist(shared),

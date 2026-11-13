@@ -200,6 +200,23 @@ export const COPILOT_ACTIONS = {
     confirmation: false,
   },
 
+  'catalogue.ouvrir_prestation': {
+    domaine: 'guide',
+    nature: 'navigation',
+    exige: 'personnel',
+    description: "Ouvre la fiche d'une prestation du catalogue dans le back-office (durée, prix, praticiens, activation).",
+    parametres: z.object({ prestation: z.string().uuid() }).strict(),
+    confirmation: false,
+  },
+  'personnel.ouvrir_fiche': {
+    domaine: 'guide',
+    nature: 'navigation',
+    exige: 'accounts:read',
+    description: "Ouvre la fiche d'un praticien dans le back-office (horaires, absences, prestations).",
+    parametres: z.object({ praticien: z.string().uuid() }).strict(),
+    confirmation: false,
+  },
+
   // --- Rendez-vous, côté cliente --------------------------------------------
   'rendez_vous.mes_prochains': {
     domaine: 'rendez_vous',

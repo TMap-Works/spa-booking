@@ -212,6 +212,22 @@ const CASES: readonly Case[] = [
     check: (turn) => navigatesTo(turn, '/admin/clients', `fiche=${IDS.MARIE}`),
   },
   {
+    name: 'fiche praticien',
+    agent: 'guide',
+    family: 'action',
+    role: 'gerance',
+    prompts: ['Ouvre la fiche de Léa dans le personnel'],
+    check: (turn) => navigatesTo(turn, `/admin/personnel/${IDS.LEA}`),
+  },
+  {
+    name: 'fiche prestation',
+    agent: 'guide',
+    family: 'action',
+    role: 'praticien',
+    prompts: ['Montre-moi la fiche de la prestation coupe et brushing'],
+    check: (turn) => navigatesTo(turn, `/admin/catalogue/${IDS.COUPE}`),
+  },
+  {
     name: 'reporting du mois',
     agent: 'encaissement',
     family: 'action',

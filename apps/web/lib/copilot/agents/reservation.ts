@@ -12,9 +12,7 @@ import { runSpecialistLoop } from '../specialist-loop';
 import type { Specialist } from '../specialists';
 import { registryTool } from '../tools';
 
-import { asData } from '../data-text';
-
-import { slotsTool } from './common';
+import { catalogueBlock, slotsTool } from './common';
 
 /**
  * Le spécialiste Réservation — `agent_reservation`, P2-01 (#1456).
@@ -57,26 +55,6 @@ export interface ReservationDeps {
   readonly log?: (event: string, detail: Record<string, unknown>) => void;
 }
 
-/** Catalogue cité d'emblée au plus : au-delà, le modèle cherche. */
-const MAX_CATALOGUE = 40;
-
-/**
- * Le catalogue donné d'avance : la plupart des demandes nomment une
- * prestation, et la trouver ici évite un aller-retour au modèle.
- */
-function catalogueOf(services: readonly PublicService[]): string {
-  const lines = services
-    .slice(0, MAX_CATALOGUE)
-    .map(
-      (service) =>
-        `- [${service.id}] ${service.name} — ${service.durationMinutes} min — praticiens : ${
-          service.staff.map((member) => `${member.displayName} [${member.id}]`).join(', ') || 'aucun'
-        }`,
-    );
-  const more = services.length > MAX_CATALOGUE ? `\n… et ${services.length - MAX_CATALOGUE} autres : cherche-les.` : '';
-  return `<catalogue>\n${asData(lines.join('\n')) || '- aucune prestation'}${more}\n</catalogue>`;
-}
-
 function normalize(text: string): string {
   return text.normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase();
 }
@@ -95,7 +73,7 @@ export function reservationSpecialist(deps: ReservationDeps): Specialist {
       const navigations: BrowserCall[] = [];
       const services = await loadServices(slug);
       const byId = new Map(services.map((service) => [service.id, service]));
-      const catalogue = catalogueOf(services);
+      const catalogue = catalogueBlock(services);
 
       const tools = [
         registryTool('catalogue.chercher', async ({ recherche }) => {

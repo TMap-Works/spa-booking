@@ -1,14 +1,22 @@
 import type Anthropic from '@anthropic-ai/sdk';
-import type { CopilotSession, Locale, PublicTenant } from '@spa/shared';
+import {
+  type CopilotSession,
+  type Locale,
+  type PublicService,
+  type PublicTenant,
+} from '@spa/shared';
 import { getTranslations } from 'next-intl/server';
 
 import { consentCopy, type ConsentCopy } from '@/lib/booking/consent';
 
-import type { BrowserCall } from '../claude-agent';
+import type { BrowserCall, ServerTool } from '../claude-agent';
 import { copilotModel } from '../config';
+import { cachedServices } from '../salon-data';
 import { runSpecialistLoop } from '../specialist-loop';
 import type { Specialist } from '../specialists';
-import { guideTool, registryTool } from '../tools';
+import { ficheTools, guideTool, registryTool } from '../tools';
+
+import { catalogueBlock } from './common';
 
 /**
  * Le spécialiste Guide — `agent_guide`, P2-04 (#1459).
@@ -35,6 +43,7 @@ ${SITE_GUIDE}
 
 Ta méthode
 - Explique le geste en une ou deux phrases, puis mène à l'écran avec guide_mener si la destination fait partie de celles que l'outil propose. Sinon, dis simplement où le trouver.
+- Pour ouvrir la fiche d'une prestation ou d'un praticien dans le back-office (« ouvre la fiche de Léa », « montre-moi la prestation massage »), utilise catalogue_ouvrir_prestation ou personnel_ouvrir_fiche avec l'identifiant pris dans <catalogue>, si l'outil t'est proposé.
 - Pour une question sur les données personnelles, lis salon_politique_donnees et résume ce qui répond à la question ; mène à la page politique_donnees pour le détail.
 
 Règles
@@ -62,11 +71,15 @@ export interface GuideDeps {
   readonly tenant: PublicTenant;
   readonly context: string;
   readonly policy?: (locale: Locale) => Promise<string>;
+  /** Le catalogue public : il donne les prestations et les praticiens que les fiches ouvrent. */
+  readonly services?: (tenantSlug: string) => Promise<PublicService[]>;
   readonly log?: (event: string, detail: Record<string, unknown>) => void;
 }
 
 export function guideSpecialist(deps: GuideDeps): Specialist {
   const { client, session, tenant, context, log } = deps;
+  const slug = session.tenant.slug;
+  const loadServices = deps.services ?? ((tenantSlug: string) => cachedServices(tenantSlug));
   const policy =
     deps.policy ??
     (async (locale: Locale) => {
@@ -77,14 +90,20 @@ export function guideSpecialist(deps: GuideDeps): Specialist {
   return {
     domaine: 'guide',
     description:
-      "Guide du site : explique comment faire (« comment je reporte ? », « où sont mes coordonnées ? »), mène à l'écran où faire le geste, et répond sur la politique de données du salon.",
+      "Guide du site : explique comment faire (« comment je reporte ? », « où sont mes coordonnées ? »), mène à l'écran où faire le geste, répond sur la politique de données du salon, et ouvre dans le back-office la fiche d'une prestation ou d'un praticien.",
     async run(brief, signal) {
       const navigations: BrowserCall[] = [];
       const guide = guideTool(session, navigations);
-      const tools = [
+      const tools: ServerTool[] = [
         registryTool('salon.politique_donnees', async () => ({ kind: 'resultat', contenu: await policy(session.locale) })),
         ...(guide === null ? [] : [guide]),
       ];
+
+      // Les fiches du back-office, et le catalogue qui en donne les identifiants.
+      const fiches = ficheTools(session, loadServices, navigations);
+      tools.push(...fiches);
+      const catalogue =
+        fiches.length === 0 ? undefined : catalogueBlock(await loadServices(slug).catch(() => [] as PublicService[]));
 
       return runSpecialistLoop(
         {
@@ -92,6 +111,7 @@ export function guideSpecialist(deps: GuideDeps): Specialist {
           model: copilotModel('guide'),
           effort: 'low',
           system: SYSTEM,
+          ...(catalogue === undefined ? {} : { systemData: catalogue }),
           maxTokens: 2048,
           context,
           tools,

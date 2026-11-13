@@ -10,6 +10,7 @@ import { daysInDayPart } from '@/lib/booking/slot-view';
 import { formatDateTimeInTimeZone, formatTimeInTimeZone } from '@/lib/format';
 
 import type { ServerTool } from '../claude-agent';
+import { asData } from '../data-text';
 import { registryTool } from '../tools';
 
 /**
@@ -82,4 +83,25 @@ export function appointmentLine(
   const { service, staff } = namesOf(services, appointment.serviceId, appointment.staffId);
   const when = formatDateTimeInTimeZone(appointment.startsAt, session.tenant.timezone, { locale: session.locale });
   return `- [${appointment.id}] ${service}, ${when}${staff === null ? '' : ` avec ${staff}`} — statut ${appointment.status}, prestation [${appointment.serviceId}]`;
+}
+
+/** Catalogue cité d'emblée au plus : au-delà, le modèle cherche. */
+const MAX_CATALOGUE = 40;
+
+/**
+ * Le catalogue donné d'avance aux spécialistes, en bloc système mis en cache :
+ * la plupart des demandes nomment une prestation ou un praticien, et les
+ * trouver ici évite un aller-retour au modèle — et un identifiant deviné.
+ */
+export function catalogueBlock(services: readonly PublicService[]): string {
+  const lines = services
+    .slice(0, MAX_CATALOGUE)
+    .map(
+      (service) =>
+        `- [${service.id}] ${service.name} — ${service.durationMinutes} min — praticiens : ${
+          service.staff.map((member) => `${member.displayName} [${member.id}]`).join(', ') || 'aucun'
+        }`,
+    );
+  const more = services.length > MAX_CATALOGUE ? `\n… et ${services.length - MAX_CATALOGUE} autres : cherche-les.` : '';
+  return `<catalogue>\n${asData(lines.join('\n')) || '- aucune prestation'}${more}\n</catalogue>`;
 }
