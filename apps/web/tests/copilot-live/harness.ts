@@ -256,7 +256,12 @@ export async function converse(role: Role, traps: Traps = {}): Promise<Conversat
     systemData: await salonData(SLUG, data.tenant, 'fr', async () => data.services, Date.now() + ++conversations * 3_600_000),
     specialists: [
       reservationSpecialist({ ...shared, services: async () => data.services, availability: data.availability }),
-      guideSpecialist({ ...shared, tenant: data.tenant, policy: async () => 'Données conservées 3 ans après le dernier rendez-vous.' }),
+      guideSpecialist({
+        ...shared,
+        tenant: data.tenant,
+        policy: async () => 'Données conservées 3 ans après le dernier rendez-vous.',
+        services: async () => data.services,
+      }),
       rendezVousSpecialist({
         ...shared,
         services: async () => data.services,

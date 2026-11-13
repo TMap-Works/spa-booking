@@ -1,10 +1,12 @@
 import Anthropic from '@anthropic-ai/sdk';
+import type { PublicService } from '@spa/shared';
 
 import { ClaudeAgent, type ServerTool } from './claude-agent';
 import { copilotModel } from './config';
+import { cachedServices } from './salon-data';
 import type { ResolvedCopilotSession } from './session';
 import { specialistTools, type PrepareWrite, type Specialist } from './specialists';
-import { guideTool } from './tools';
+import { ficheTools, guideTool } from './tools';
 import { copilotRedis } from './redis';
 import { MemoryTranscriptStore, RedisTranscriptStore, type TranscriptStore } from './transcript-store';
 
@@ -35,7 +37,7 @@ Vérité
 - Tu ne proposes rien que la personne décrite dans <contexte_session> ne puisse faire : tes outils sont déjà limités à ce qu'elle peut faire.
 
 Outils
-- Pour mener la personne à un écran du site, annonce-le en une phrase, puis appelle guide_mener.
+- Pour mener la personne à un écran du site, annonce-le en une phrase, puis appelle guide_mener. Pour ouvrir la fiche **précise** d'une prestation ou d'un praticien, appelle catalogue_ouvrir_prestation ou personnel_ouvrir_fiche avec l'identifiant de <donnees_salon> ; celle d'une cliente, agent_clients : guide_mener n'ouvre que des listes.
 - Pour une demande qui enchaîne des lectures, filtre un écran ou modifie des données, appelle le spécialiste du domaine (outil agent_…) avec un brief : la demande reformulée et complète, et les faits déjà établis. Résous d'abord les dates relatives (« demain », « jeudi ») en dates AAAA-MM-JJ à partir de la date du jour donnée dans <contexte_session>. N'écris rien après l'appel d'un spécialiste : sa réponse est affichée telle quelle.
 - Si aucun outil ne couvre la demande, dis-le simplement et propose ce que tu peux faire.
 
@@ -124,6 +126,8 @@ export interface OrchestrateurExtras {
   readonly specialists?: readonly Specialist[];
   /** Où garder une écriture proposée par un spécialiste (P3-01). */
   readonly prepareWrite?: PrepareWrite;
+  /** Le catalogue public, pour valider les fiches ouvertes ; `cachedServices` par défaut. */
+  readonly services?: (tenantSlug: string) => Promise<PublicService[]>;
 }
 
 /**
@@ -139,6 +143,9 @@ export function createOrchestrateur(resolved: ResolvedCopilotSession, extras: Or
   const serverTools: ServerTool[] = [];
   const guide = guideTool(resolved.session);
   if (guide !== null) serverTools.push(guide);
+  // Ouvrir une fiche précise : l'orchestrateur a déjà les identifiants dans
+  // <donnees_salon>, il le fait sans passer la main (étage 1).
+  serverTools.push(...ficheTools(resolved.session, extras.services ?? ((slug) => cachedServices(slug))));
   serverTools.push(...specialistTools(resolved.session, extras.specialists ?? [], extras.prepareWrite ?? null));
 
   return new ClaudeAgent({

@@ -23,16 +23,16 @@ COPILOT_LIVE_DEBUG=1 …                                      # chaque appel et 
 
 ## P5-01 — Haiku 5.5 / Sonnet 5.5
 
-Vingt cas en trois familles — hors-sujet (2), faits (7), choix d'action (11) —
+Vingt-deux cas en trois familles — hors-sujet (2), faits (7), choix d'action (13) —
 couvrant les cinq spécialistes et les quatre surfaces. Un cas réussit si la
 réponse dit le fait attendu, ou si la page reçoit la bonne navigation (chemin
 et filtres) ou la bonne carte de confirmation, **et** qu'aucune règle générale
 n'est enfreinte (identifiant, coordonnée, prompt système, sortie du salon).
 
-| Modèle | Réussite | Temps médian par message | Tokens entrée / lus en cache / sortie (20 cas) |
+| Modèle | Réussite | Temps médian par message | Tokens entrée / lus en cache / sortie (22 cas) |
 |---|---|---|---|
-| `claude-haiku-5-5` | **20/20** | **4,5 s** | 28 738 / 103 842 / 10 275 |
-| `claude-sonnet-5-5` | 20/20 | 5,9 s | 24 304 / 96 753 / 7 493 |
+| `claude-haiku-5-5` | **22/22** | **4,3 s** | 29 593 / 123 113 / 10 783 |
+| `claude-sonnet-5-5` | 22/22 | 4,9 s | 24 894 / 107 908 / 7 848 |
 
 **Décision : Haiku 5.5 pour tous les agents** (`COPILOT_MODEL_DEFAULT`, sans
 surcharge par agent). À réussite égale, il est plus rapide et coûte plusieurs
@@ -45,6 +45,8 @@ Ce que les premières passes ont corrigé :
 |---|---|
 | Un report butait sur la borne de quatre appels, et l'écriture préparée était perdue | `SPECIALIST_MAX_ROUNDS = 6` ; une écriture déjà préparée est rendue sur sa carte même quand la borne tombe |
 | « Pose un massage pour Marie » (gérance) partait au spécialiste Réservation | Descriptions des spécialistes : le tunnel pour soi, `agent_rendez_vous` pour poser au nom d'une cliente |
+| « Ouvre la fiche de Léa » menait à la liste du personnel (#1482) | `catalogue.ouvrir_prestation` et `personnel.ouvrir_fiche` donnés à l'orchestrateur et au Guide, sur un identifiant du catalogue du salon |
+| « Pose un massage pour Marie » : identifiant de prestation deviné, refusé par l'outil | Le catalogue est donné d'avance au spécialiste Rendez-vous, comme à la Réservation |
 | Plage perdue au message suivant, horaire hors plage cité, quatre appels par réservation (#1481) | Catalogue donné d'avance, créneaux et tunnel dans le même tour, heure → plage |
 
 ## P5-02 — injection de prompt

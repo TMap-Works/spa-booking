@@ -94,11 +94,11 @@ session, et la frontière réelle est l'API (§6).
 
 | Écran | Route | Accès | Ce qu'on y fait | Copilot |
 |---|---|---|---|---|
-| Catalogue (liste) | `/{salon}/admin/catalogue` | rang ≥ `STAFF` en lecture, ≥ `MANAGER` pour gérer | Prestations, activation | **Guider** |
+| Catalogue (liste) | `/{salon}/admin/catalogue` | rang ≥ `STAFF` en lecture, ≥ `MANAGER` pour gérer | Prestations, activation | **Guider** — et ouvrir une fiche de prestation (`catalogue.ouvrir_prestation`) |
 | Prestation | `/{salon}/admin/catalogue/{id}` · `/nouveau` | rang ≥ `STAFF` en lecture, ≥ `MANAGER` pour créer ou modifier | Créer, modifier, affecter des praticiens | **Guider** |
 | Rubriques | `/{salon}/admin/catalogue/rubriques` · `/{id}` | rang ≥ `STAFF` en lecture, ≥ `MANAGER` pour gérer | Rubriques du catalogue, adresse publique | **Guider** |
 | Aperçu public | `/{salon}/admin/catalogue/apercu` | session (lit l'API publique) | Le catalogue tel que la cliente le voit | **Guider** |
-| Personnel (liste) | `/{salon}/admin/personnel` | `accounts:read` | Fiches praticiens, comptes | **Guider** |
+| Personnel (liste) | `/{salon}/admin/personnel` | `accounts:read` | Fiches praticiens, comptes | **Guider** — et ouvrir la fiche d'un praticien (`personnel.ouvrir_fiche`) |
 | Fiche praticien | `/{salon}/admin/personnel/{id}` | `accounts:read` (menu) ; API : rang ≥ `STAFF` en lecture, ≥ `MANAGER` en écriture | Horaires, absences, prestations, suspension | **Guider** |
 | Nouveau praticien, inviter | `/{salon}/admin/personnel/nouveau` · `/inviter` | `accounts:write` | Créer une fiche, inviter un compte | **Guider** — **jamais d'action** sur les comptes ni les rôles |
 | Réglages | `/{salon}/admin/reglages` | `settings:write` | Adresse, horaires, langue | **Guider** |
@@ -132,6 +132,8 @@ de l'ouvrir.
 | `disponibilite.creneaux` | lecture | public | `GET /public/:slug/availability?serviceId&staffId&from&to` | Réservation | 2 |
 | `reservation.ouvrir_tunnel` | navigation | public | — (adresse du tunnel) | Réservation | 2 |
 | `guide.mener` | navigation | selon la route | — (adresse cible) | Guide | 2 |
+| `catalogue.ouvrir_prestation` | navigation | rang ≥ `STAFF` | — (`/admin/catalogue/<id>`, prestation lue au catalogue public) | Guide | 4 |
+| `personnel.ouvrir_fiche` | navigation | `accounts:read` | — (`/admin/personnel/<id>`, praticien lu au catalogue public) | Guide | 4 |
 | `rendez_vous.mes_prochains` | lecture | session (`CLIENT`) | `GET /appointments/mine?scope=upcoming` | Rendez-vous | 3 |
 | `rendez_vous.mon_historique` | lecture | session (`CLIENT`) | `GET /appointments/mine?scope=past` | Rendez-vous | 3 |
 | `rendez_vous.ouvrir_report` | navigation | session (`CLIENT`) | — (`/compte/rendez-vous/{id}/report?mois=`) | Rendez-vous | 3 |

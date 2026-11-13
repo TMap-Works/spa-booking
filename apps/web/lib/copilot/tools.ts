@@ -2,10 +2,12 @@ import type Anthropic from '@anthropic-ai/sdk';
 import {
   COPILOT_ACTIONS,
   COPILOT_GUIDE_ROUTES,
+  meetsRequirement,
   permittedGuideRoutes,
   type CopilotActionId,
   type CopilotActionParams,
   type CopilotSession,
+  type PublicService,
 } from '@spa/shared';
 import { z } from 'zod';
 import { zodToJsonSchema } from 'zod-to-json-schema';
@@ -85,4 +87,53 @@ export function guideTool(session: CopilotSession, navigations?: BrowserCall[]):
     },
     schema,
   );
+}
+
+/**
+ * Ouvrir la fiche d'une prestation ou d'un praticien dans le back-office —
+ * `catalogue.ouvrir_prestation`, `personnel.ouvrir_fiche`.
+ *
+ * Seulement pour qui peut ouvrir ces écrans, et seulement sur un identifiant
+ * du catalogue **de ce salon** : un identifiant inventé ou venu d'ailleurs
+ * revient au modèle comme une erreur. Comme `guideTool`, l'outil navigue
+ * avec la réponse d'un spécialiste, ou arrête le tour de l'orchestrateur.
+ */
+export function ficheTools(
+  session: CopilotSession,
+  loadServices: (tenantSlug: string) => Promise<PublicService[]>,
+  navigations?: BrowserCall[],
+): ServerTool[] {
+  const slug = session.tenant.slug;
+  const go = (chemin: string, label: string): ServerToolOutcome => {
+    const navigation: BrowserCall = { outil: 'naviguer', arguments: { chemin } };
+    if (navigations !== undefined) {
+      navigations.splice(0, navigations.length, navigation);
+      return { kind: 'resultat', contenu: `La fiche ${label} s'ouvrira avec ta réponse.` };
+    }
+    return { kind: 'fin', contenu: `Navigation lancée vers ${chemin}.`, navigateur: [navigation] };
+  };
+  const catalogue = async () => loadServices(slug).catch(() => [] as PublicService[]);
+
+  const tools: ServerTool[] = [];
+  if (meetsRequirement(session, COPILOT_ACTIONS['catalogue.ouvrir_prestation'].exige)) {
+    tools.push(
+      registryTool('catalogue.ouvrir_prestation', async ({ prestation }) => {
+        if (!(await catalogue()).some((service) => service.id === prestation)) {
+          return { kind: 'resultat', contenu: 'Prestation inconnue de ce salon.', erreur: true };
+        }
+        return go(`/${slug}/admin/catalogue/${prestation}`, 'de la prestation');
+      }),
+    );
+  }
+  if (meetsRequirement(session, COPILOT_ACTIONS['personnel.ouvrir_fiche'].exige)) {
+    tools.push(
+      registryTool('personnel.ouvrir_fiche', async ({ praticien }) => {
+        if (!(await catalogue()).some((service) => service.staff.some((member) => member.id === praticien))) {
+          return { kind: 'resultat', contenu: 'Praticien inconnu de ce salon.', erreur: true };
+        }
+        return go(`/${slug}/admin/personnel/${praticien}`, 'du praticien');
+      }),
+    );
+  }
+  return tools;
 }

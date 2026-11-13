@@ -1,7 +1,7 @@
 // @vitest-environment node
 
 import type Anthropic from '@anthropic-ai/sdk';
-import type { CopilotSession, PublicTenant } from '@spa/shared';
+import { PERMISSIONS, type CopilotSession, type PublicService, type PublicTenant } from '@spa/shared';
 import { describe, expect, it, vi } from 'vitest';
 
 import { dataPolicyText, guideSpecialist } from '@/lib/copilot/agents/guide';
@@ -22,6 +22,19 @@ const use = (id: string, name: string, input: Record<string, unknown>) =>
   ({ type: 'tool_use', id, name, input }) as unknown as Anthropic.ToolUseBlock;
 const text = (value: string) => ({ type: 'text', text: value, citations: null }) as Anthropic.TextBlock;
 
+const MASSAGE = '0b6f8b8e-3f4a-4c2e-9a8e-2f1d3c4b5a69';
+const LEA = '1c6f8b8e-3f4a-4c2e-9a8e-2f1d3c4b5a69';
+const services = [
+  { id: MASSAGE, name: 'Massage relaxant', staff: [{ id: LEA, displayName: 'Léa' }] },
+] as unknown as PublicService[];
+const MANAGER = PERMISSIONS.filter((p) => p !== 'accounts:write' && p !== 'settings:write');
+const gerance: CopilotSession = { ...session('manager'), permissions: MANAGER };
+const praticien: CopilotSession = {
+  ...session('staff'),
+  surface: 'praticien',
+  permissions: ['agenda:read:own', 'appointment:write:own', 'customers:read:own'],
+};
+
 function guide(replies: Reply[], s: CopilotSession) {
   const calls: Anthropic.MessageCreateParams[] = [];
   const client = {
@@ -33,7 +46,11 @@ function guide(replies: Reply[], s: CopilotSession) {
     },
   } as unknown as Anthropic;
   const policy = vi.fn(async () => 'Responsable : Salon Léa.\n- E-mail : confirmer le rendez-vous.');
-  return { agent: guideSpecialist({ client, session: s, tenant, context: '', policy }), calls, policy };
+  return {
+    agent: guideSpecialist({ client, session: s, tenant, context: '', policy, services: async () => services }),
+    calls,
+    policy,
+  };
 }
 
 const signal = new AbortController().signal;
@@ -102,5 +119,37 @@ describe('dataPolicyText', () => {
     expect(dataPolicyText(tenant, booking, account)).toBe(
       'Responsable : Salon Léa, contact@salon-lea.test.\nRésumé.\n- E-mail : confirmer\n- Mot de passe : se connecter\nVos droits.',
     );
+  });
+
+});
+
+describe('fiches du back-office', () => {
+  it("ouvre la fiche d'un praticien ou d'une prestation du salon, et rien d'autre", async () => {
+    const { agent, calls } = guide(
+      [
+        { stop_reason: 'tool_use', content: [use('t1', 'personnel_ouvrir_fiche', { praticien: '9f6f8b8e-3f4a-4c2e-9a8e-2f1d3c4b5a69' })] },
+        { stop_reason: 'tool_use', content: [use('t2', 'personnel_ouvrir_fiche', { praticien: LEA })] },
+        { stop_reason: 'end_turn', content: [text('Je vous ouvre la fiche de Léa.')] },
+      ],
+      gerance,
+    );
+    const result = await agent.run({ demande: 'Ouvre la fiche de Léa', faits: {} }, signal);
+
+    expect((calls[1]?.messages.at(-1)?.content as Anthropic.ToolResultBlockParam[])[0]).toMatchObject({ is_error: true });
+    expect(result.actionsFront).toEqual([{ outil: 'naviguer', arguments: { chemin: `/salon-lea/admin/personnel/${LEA}` } }]);
+    const system = calls[0]?.system as Anthropic.TextBlockParam[];
+    expect(system[1]?.text).toContain(`Léa [${LEA}]`);
+    expect(system[1]?.text).toContain(`[${MASSAGE}] Massage relaxant`);
+  });
+
+  it('un praticien ouvre les prestations, pas les fiches du personnel ; une visiteuse, ni l’un ni l’autre', async () => {
+    const offered = async (s: CopilotSession) => {
+      const { agent, calls } = guide([{ stop_reason: 'end_turn', content: [text('…')] }], s);
+      await agent.run({ demande: 'x', faits: {} }, signal);
+      return (calls[0]?.tools ?? []).map((tool) => ('name' in tool ? tool.name : ''));
+    };
+    expect(await offered(praticien)).toContain('catalogue_ouvrir_prestation');
+    expect(await offered(praticien)).not.toContain('personnel_ouvrir_fiche');
+    expect(await offered(session(null))).not.toContain('catalogue_ouvrir_prestation');
   });
 });
