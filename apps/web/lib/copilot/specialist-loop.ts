@@ -21,6 +21,11 @@ export interface SpecialistLoopOptions {
   readonly model: string;
   readonly effort: 'low' | 'medium' | 'high';
   readonly system: string;
+  /**
+   * Données du salon posées en second bloc système, mises en cache avec le
+   * premier : stables d'un message à l'autre, elles ne se repaient pas.
+   */
+  readonly systemData?: string;
   readonly maxTokens: number;
   /** Ce que le serveur sait d'emblée — date du jour, salon — posé avant le brief. */
   readonly context: string;
@@ -38,7 +43,14 @@ export async function runSpecialistLoop(
   brief: SpecialistBrief,
   signal: AbortSignal,
 ): Promise<SpecialistResult> {
-  const { client, model, effort, system, maxTokens, context, tools, navigations, fallback, log } = options;
+  const { client, model, effort, system, systemData, maxTokens, context, tools, navigations, fallback, log } = options;
+  const systemBlocks: Anthropic.TextBlockParam[] =
+    systemData === undefined
+      ? [{ type: 'text', text: system, cache_control: { type: 'ephemeral' } }]
+      : [
+          { type: 'text', text: system, cache_control: { type: 'ephemeral' } },
+          { type: 'text', text: systemData, cache_control: { type: 'ephemeral' } },
+        ];
   const pending = () => options.confirmation?.current ?? null;
   const byName = new Map(tools.map((tool) => [tool.name, tool]));
   const faits = Object.entries(brief.faits).map(([key, value]) => `- ${key} : ${value}`);
@@ -60,7 +72,7 @@ export async function runSpecialistLoop(
       {
         model,
         max_tokens: maxTokens,
-        system: [{ type: 'text', text: system, cache_control: { type: 'ephemeral' } }],
+        system: systemBlocks,
         messages,
         tools: tools.map((tool) => ({ name: tool.name, description: tool.description, input_schema: tool.inputSchema })),
         output_config: { effort },
