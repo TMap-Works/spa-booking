@@ -20,6 +20,7 @@ import { describePage, isSalonPath } from '@/lib/copilot/paths';
 import type { CopilotSuggestion } from '@/lib/copilot/suggestions';
 
 import { ConfirmationCard } from './confirmation-card';
+import { pointTo } from './curseur-fantome';
 
 /**
  * Le chat du copilot — P1-06 (#1453), EF-2 et EF-5 de la spécification.
@@ -87,6 +88,8 @@ function Chat({ runtimeUrl, tenantSlug, variant }: CopilotChatProps) {
       parameters: z.object({ chemin: z.string().max(512) }).strict(),
       handler: async ({ chemin }) => {
         if (!isSalonPath(chemin, tenantSlug)) return 'Adresse refusée.';
+        // Le curseur fantôme montre d'abord le lien qui y mène (P4-03).
+        await pointTo(chemin);
         const target = new URL(chemin, window.location.origin);
         // Même page, autre filtre : le tunnel lit son adresse au montage, un
         // rechargement est donc ce qui la lui fait relire.

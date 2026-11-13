@@ -122,3 +122,32 @@
     animation-duration: 0s !important;
   }
 }
+
+/*
+ * Le curseur fantôme (P4-03, EF-4) : il glisse du chat jusqu'au lien que la
+ * personne aurait cliqué, qui se souligne un instant. Sa position est posée
+ * par `components/copilot/curseur-fantome.ts` ; sa durée de glissement est
+ * celle de `CURSOR_TIMINGS.glide` (deux fois `--spa-duration-normal`).
+ * Sous `prefers-reduced-motion: reduce`, le script ne le crée pas.
+ */
+.spa-copilot-cursor {
+  position: fixed;
+  inset-block-start: 0;
+  inset-inline-start: 0;
+  z-index: var(--spa-z-notification);
+  inline-size: 1rem;
+  block-size: 1rem;
+  margin: -0.5rem 0 0 -0.5rem;
+  border: 2px solid var(--spa-color-surface);
+  border-radius: 50%;
+  background-color: var(--spa-color-accent);
+  box-shadow: var(--spa-shadow-md);
+  pointer-events: none;
+  transition: transform calc(var(--spa-duration-normal) * 2) var(--spa-easing-standard);
+}
+
+.spa-copilot-target {
+  outline: 2px solid var(--spa-color-accent);
+  outline-offset: 2px;
+  border-radius: var(--spa-radius-sm);
+}
