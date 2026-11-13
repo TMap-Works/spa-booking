@@ -12,6 +12,8 @@ import { runSpecialistLoop } from '../specialist-loop';
 import type { Specialist } from '../specialists';
 import { registryTool } from '../tools';
 
+import { asData } from '../data-text';
+
 import { slotsTool } from './common';
 
 /**
@@ -72,7 +74,7 @@ function catalogueOf(services: readonly PublicService[]): string {
         }`,
     );
   const more = services.length > MAX_CATALOGUE ? `\n… et ${services.length - MAX_CATALOGUE} autres : cherche-les.` : '';
-  return `<catalogue>\n${lines.join('\n') || '- aucune prestation'}${more}\n</catalogue>`;
+  return `<catalogue>\n${asData(lines.join('\n')) || '- aucune prestation'}${more}\n</catalogue>`;
 }
 
 function normalize(text: string): string {
@@ -88,7 +90,7 @@ export function reservationSpecialist(deps: ReservationDeps): Specialist {
   return {
     domaine: 'reservation',
     description:
-      "Spécialiste de la réservation : trouve une prestation, lit les créneaux libres d'un jour et ouvre le tunnel de réservation filtré. À appeler pour toute envie de rendez-vous (« un massage demain après-midi », « une coupe avec Léa jeudi »).",
+      "Spécialiste de la réservation : trouve une prestation, lit les créneaux libres d'un jour et ouvre le tunnel de réservation filtré. À appeler pour toute envie de rendez-vous de la personne qui parle (« un massage demain après-midi », « une coupe avec Léa jeudi »). Poser un rendez-vous au nom d'une cliente, depuis le back-office, relève de agent_rendez_vous.",
     async run(brief, signal) {
       const navigations: BrowserCall[] = [];
       const services = await loadServices(slug);
