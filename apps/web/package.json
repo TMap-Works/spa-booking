@@ -11,7 +11,8 @@
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "npm run test:unit",
     "test:unit": "node --test tests/ && vitest run",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "test:copilot-live": "vitest run -c vitest.live.config.mts"
   },
   "dependencies": {
     "@ag-ui/client": "0.0.59",

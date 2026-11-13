@@ -1,6 +1,7 @@
 import type Anthropic from '@anthropic-ai/sdk';
 
-import { MAX_ROUNDS, type BrowserCall, type ServerTool } from './claude-agent';
+import type { BrowserCall, ServerTool } from './claude-agent';
+import { asData } from './data-text';
 import type { SpecialistBrief, SpecialistResult } from './specialists';
 import type { PendingWrite } from './writes';
 
@@ -15,6 +16,16 @@ import type { PendingWrite } from './writes';
  * Pas de streaming : la réponse d'un spécialiste est courte, et elle est
  * affichée d'un bloc par l'orchestrateur (passe-plat).
  */
+
+/**
+ * Appels au modèle par spécialiste, au plus. Plus large que l'orchestrateur :
+ * un report enchaîne lire, chercher un créneau, proposer, puis répondre — et
+ * l'évaluation (P5-01) a vu Haiku buter sur quatre.
+ */
+export const SPECIALIST_MAX_ROUNDS = 6;
+
+/** Ce que dit la carte quand le spécialiste a préparé l'écriture sans pouvoir conclure. */
+const PENDING_FALLBACK = 'Voici ce que je vous propose : vérifiez le récapitulatif, puis validez ou refusez.';
 
 export interface SpecialistLoopOptions {
   readonly client: Anthropic;
@@ -53,7 +64,7 @@ export async function runSpecialistLoop(
         ];
   const pending = () => options.confirmation?.current ?? null;
   const byName = new Map(tools.map((tool) => [tool.name, tool]));
-  const faits = Object.entries(brief.faits).map(([key, value]) => `- ${key} : ${value}`);
+  const faits = Object.entries(brief.faits).map(([key, value]) => asData(`- ${key} : ${value}`));
   const messages: Anthropic.MessageParam[] = [
     {
       role: 'user',
@@ -61,13 +72,13 @@ export async function runSpecialistLoop(
         { type: 'text', text: context },
         {
           type: 'text',
-          text: `<brief>\nDemande : ${brief.demande}\n${faits.length > 0 ? `Faits établis :\n${faits.join('\n')}` : ''}\n</brief>`,
+          text: `<brief>\nDemande : ${asData(brief.demande)}\n${faits.length > 0 ? `Faits établis :\n${faits.join('\n')}` : ''}\n</brief>`,
         },
       ],
     },
   ];
 
-  for (let round = 1; round <= MAX_ROUNDS; round += 1) {
+  for (let round = 1; round <= SPECIALIST_MAX_ROUNDS; round += 1) {
     const message = await client.messages.create(
       {
         model,
@@ -125,7 +136,9 @@ export async function runSpecialistLoop(
   }
 
   log?.('copilot.specialist.max_rounds', { model });
-  return result(fallback, navigations, null);
+  // Une écriture déjà préparée n'est pas perdue : la carte la soumet au clic.
+  const prepared = pending();
+  return prepared === null ? result(fallback, navigations, null) : result(PENDING_FALLBACK, navigations, prepared);
 }
 
 function result(
