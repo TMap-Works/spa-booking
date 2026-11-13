@@ -25,6 +25,13 @@ const write: PendingWrite = {
   succes: 'Votre rendez-vous de jeudi est annulé.',
 };
 const scope = { tenantSlug: 'salon-lea', subject: 'a'.repeat(32) };
+const cliente: CopilotSession = {
+  surface: 'client',
+  role: 'client',
+  permissions: [],
+  tenant: { slug: 'salon-lea', timezone: 'Europe/Paris', currency: 'EUR' },
+  locale: 'fr',
+};
 
 describe('magasin des écritures en attente', () => {
   it("rend l'écriture une seule fois, et à la même personne seulement", async () => {
@@ -80,7 +87,7 @@ describe('decideWrite', () => {
       accessToken: 'jeton',
       id,
       decision: 'valider',
-      locale: 'fr',
+      session: cliente,
       ...overrides,
     });
     return { outcome, execute };
@@ -120,7 +127,7 @@ describe('decideWrite', () => {
         accessToken: 'jeton',
         id,
         decision: 'valider',
-        locale: 'fr',
+        session: cliente,
       });
       expect(outcome.statut).toBe('echec');
       expect(outcome.message).toContain(expected);
