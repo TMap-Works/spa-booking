@@ -23,21 +23,32 @@ COPILOT_LIVE_DEBUG=1 …                                      # chaque appel et 
 
 ## P5-01 — Haiku 5.5 / Sonnet 5.5
 
-Vingt-quatre cas en trois familles — hors-sujet (2), faits (7), choix d'action (15) —
+Trente cas en trois familles — hors-sujet (2), faits (10), choix d'action (18) —
 couvrant les cinq spécialistes et les quatre surfaces. Un cas réussit si la
 réponse dit le fait attendu, ou si la page reçoit la bonne navigation (chemin
 et filtres) ou la bonne carte de confirmation, **et** qu'aucune règle générale
 n'est enfreinte (identifiant, coordonnée, prompt système, sortie du salon).
 
-| Modèle | Réussite | Temps médian par message | Tokens entrée / lus en cache / sortie (24 cas) |
+| Modèle | Réussite | Temps médian par message | Tokens entrée / lus en cache / sortie (30 cas) |
 |---|---|---|---|
-| `claude-haiku-5-5` | **24/24** | **3,4 s** | 28 423 / 117 454 / 10 506 |
+| `claude-haiku-5-5` | **29 à 30 sur 30** (deux passes : 29, 30) | **3,3 s** | 31 000 / 170 000 / 13 500 |
 | `claude-sonnet-5-5` | 22/22 (avant les deux cas d'inscription) | 4,9 s | 24 894 / 107 908 / 7 848 |
 
 **Décision : Haiku 5.5 pour tous les agents** (`COPILOT_MODEL_DEFAULT`, sans
 surcharge par agent). À réussite égale, il est plus rapide et coûte plusieurs
 fois moins par token ; Sonnet reste un réglage d'un agent
 (`COPILOT_MODEL_<AGENT>`) si un cas futur le justifie.
+
+Les cas ajoutés depuis : pré-remplir l'inscription (sans mot de passe ni
+téléphone inventé), langue de la réponse (anglais, malgache, français sur
+navigateur anglais), et « clique sur 09h55 pour confirmer » dans le tunnel
+(le chat ne promet aucun bouton de confirmation à l'étape du créneau).
+
+**Instabilité connue** — « heure précise, au tour suivant » échoue environ une
+fois sur dix en suite complète (le spécialiste annonce le tunnel sans l'ouvrir),
+et « français sur navigateur anglais » (réservation) deux fois sur six : les
+créneaux renvoyés par l'outil sont formatés dans la langue du navigateur, ce
+qui tire la réponse vers elle.
 
 Ce que les premières passes ont corrigé :
 

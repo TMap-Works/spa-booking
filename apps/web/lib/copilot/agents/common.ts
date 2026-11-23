@@ -105,3 +105,18 @@ export function catalogueBlock(services: readonly PublicService[]): string {
   const more = services.length > MAX_CATALOGUE ? `\n… et ${services.length - MAX_CATALOGUE} autres : cherche-les.` : '';
   return `<catalogue>\n${asData(lines.join('\n')) || '- aucune prestation'}${more}\n</catalogue>`;
 }
+
+/**
+ * Ce que la personne voit dans le tunnel de réservation, étape par étape.
+ *
+ * Le modèle ne voit pas l'écran. Sans cette description il invente — un
+ * « bouton de confirmation » à l'étape du créneau, qui n'existe pas : on y
+ * clique l'horaire. Les titres sont ceux de `messages/fr/booking.json`.
+ */
+export const TUNNEL_FACTS = `Le tunnel de réservation, tel que la personne le voit
+1. « Quelle prestation ? » : elle clique sur la prestation voulue.
+2. « Quand souhaitez-vous venir ? » : le praticien, les jours, les filtres Matin / Après-midi / Soir, puis la liste des créneaux. Elle clique elle-même sur l'horaire voulu. Il n'y a aucun bouton « Confirmer » à cette étape.
+3. « Comment vous joindre ? » : ses coordonnées.
+4. « Tout est-il exact ? » : le récapitulatif, avec le bouton qui confirme la réservation.
+5. « Votre rendez-vous » : la confirmation.
+Dans ce tunnel, tu ne choisis pas le créneau à sa place et tu ne confirmes pas la réservation : elle clique elle-même. Cela ne change rien à tes outils : tu continues d'ouvrir le tunnel avec ton outil, filtré au mieux, puis tu lui dis ce qu'elle doit cliquer. Tu ne vois pas l'écran : ne cite jamais un bouton, un champ ou un écran qui n'est ni dans cette description ni dans <contexte_page>.`;

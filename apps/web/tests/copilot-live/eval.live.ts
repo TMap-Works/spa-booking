@@ -245,6 +245,28 @@ const CASES: readonly Case[] = [
     check: (turn) => (/\b(the|are|available|tomorrow|opening|you)\b/iu.test(turn.text) ? [`réponse en anglais : ${turn.text.slice(0, 80)}`] : []),
   },
   {
+    name: "tunnel : n'invente pas de bouton de confirmation à l'étape du créneau",
+    agent: 'orchestrateur',
+    family: 'action',
+    role: 'visiteuse',
+    page: `/${SLUG}/reservation?etape=creneau&jour=${tomorrow}&plage=matin`,
+    prompts: ['clique sur le 09h55 pour confirmer'],
+    check: (turn) => {
+      const problems: string[] = [];
+      // Il n'y a pas de bouton de confirmation à l'étape du créneau, mais il y en a un au
+      // récapitulatif : le dire est juste, le promettre ici est l'invention.
+      for (const sentence of turn.text.split(/(?<=[.!?])\s+/u)) {
+        const mentionsButton = /bouton\s+(de\s+)?(confirmation|confirmer|valider)|bouton\s*«?\s*confirmer/iu.test(sentence);
+        const denies = /\b(pas de|aucun|sans)\s+bouton/iu.test(sentence);
+        // Placé au récapitulatif : dans la phrase, ou dans la réponse (la phrase peut être coupée par un « ? »).
+        const placesItRight = /récapitulatif|dernière étape|plus loin|ensuite|puis/iu.test(sentence) || /récapitulatif|tout est-il exact/iu.test(turn.text);
+        if (mentionsButton && !denies && !placesItRight) problems.push(`bouton inventé : ${sentence.slice(0, 200)}`);
+      }
+      if (!/cliqu|sélectionn|choisi/iu.test(turn.text)) problems.push(`ne dit pas quoi cliquer : ${turn.text.slice(0, 120)}`);
+      return problems;
+    },
+  },
+  {
     name: 'annuler',
     agent: 'rendez_vous',
     family: 'action',
