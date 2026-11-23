@@ -195,6 +195,8 @@ export function copilotRoute(
       return Response.json({
         suggestions: suggestionsFor(resolved.session, url.searchParams.get('page') ?? ''),
         sujet: resolved.subject ?? 'visiteur',
+        // Des cookies de session sont là, mais l'API ne les accepte plus : le chat le dit.
+        ...(resolved.notice === null ? {} : { motif: resolved.notice }),
       });
     }
 

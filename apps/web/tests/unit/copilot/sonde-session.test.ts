@@ -21,6 +21,11 @@ describe('sondeSession', () => {
     expect((globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0]![0]).toContain(`${COMPTE}/suggestions`);
   });
 
+  it('une session expirée passe aussi par la route du compte, qui sait la nommer', async () => {
+    answer(Response.json({ suggestions: [], sujet: 'visiteur', motif: 'session-expiree' }));
+    expect(await sondeSession(COMPTE, new AbortController().signal)).toBe(true);
+  });
+
   it('une visiteuse reste une visiteuse', async () => {
     answer(Response.json({ suggestions: [], sujet: 'visiteur' }));
     expect(await sondeSession(COMPTE, new AbortController().signal)).toBe(false);

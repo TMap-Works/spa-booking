@@ -96,6 +96,25 @@ describe('suggestions servies par la route', () => {
   });
 });
 
+describe('suggestions : session expirée', () => {
+  it('rend le motif quand les cookies ne sont plus acceptés', async () => {
+    vi.stubEnv('ANTHROPIC_API_KEY', 'k');
+    vi.stubEnv('NODE_ENV', 'development');
+    sessionMock.resolveCopilotSession.mockResolvedValue({
+      session: { surface: 'visiteur', role: null, permissions: [], tenant: { slug: 'salon-lea', timezone: 'Europe/Paris', currency: 'EUR' }, locale: 'fr' },
+      accessToken: null,
+      notice: 'session-expiree',
+      subject: null,
+      tenant: {},
+    } as unknown as ResolvedCopilotSession);
+    const response = await copilotRoute('compte')(
+      new Request(`http://x${copilotBasePath('compte', 'salon-lea')}/suggestions?page=%2F`),
+      { params: Promise.resolve({ tenantSlug: 'salon-lea' }) },
+    );
+    expect(await response.json()).toMatchObject({ sujet: 'visiteur', motif: 'session-expiree' });
+  });
+});
+
 describe('décision sur une écriture, par la route', () => {
   const connected = {
     session: {

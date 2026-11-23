@@ -61,7 +61,10 @@ export async function sondeSession(compteRuntimeUrl: string, signal: AbortSignal
   try {
     const response = await fetch(`${compteRuntimeUrl}/suggestions?page=%2F`, { signal, credentials: 'same-origin' });
     if (!response.ok) return false;
-    const body = (await response.json()) as { sujet?: unknown };
+    const body = (await response.json()) as { sujet?: unknown; motif?: unknown };
+    // Une session **expirée** passe aussi par la route du compte : c'est la seule qui sait la
+    // nommer, et le chat dit alors de se reconnecter plutôt que « vous n'êtes pas connectée ».
+    if (body.motif === 'session-expiree') return true;
     return typeof body.sujet === 'string' && body.sujet !== 'visiteur' && body.sujet !== 'inconnu';
   } catch {
     return false;
