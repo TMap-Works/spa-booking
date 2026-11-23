@@ -193,6 +193,10 @@ export default async function AccountLayout({ children, params }: AccountLayoutP
             </PhoneCountryProvider>
           </main>
         </SalonShell>
+        {/* Connexion et inscription : la personne n'a pas encore de compte, le
+            copilot lui parle comme à une visiteuse — il l'aide à se connecter,
+            à s'inscrire ou à réserver, et ne lit rien d'un compte. */}
+        <CopilotMount space="public" tenantSlug={tenantSlug} />
       </AccountAnnouncementProvider>
     );
   }
