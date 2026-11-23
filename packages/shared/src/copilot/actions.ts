@@ -208,6 +208,27 @@ export const COPILOT_ACTIONS = {
     parametres: z.object({ prestation: z.string().uuid() }).strict(),
     confirmation: false,
   },
+  'formulaire.remplir': {
+    domaine: 'guide',
+    nature: 'navigation',
+    exige: 'public',
+    description:
+      "Pré-remplit, dans le formulaire d'inscription ou de connexion affiché, les champs que la personne vient de te donner (prénom, nom, e-mail, téléphone). Ne valide jamais le formulaire, ne touche jamais au mot de passe, n'invente aucune valeur.",
+    parametres: z
+      .object({
+        prenom: z.string().trim().min(1).max(80).optional(),
+        nom: z.string().trim().min(1).max(80).optional(),
+        email: z.string().trim().email().max(254).optional(),
+        telephone: z
+          .string()
+          .trim()
+          .regex(/^\+?[\d\s().-]{6,24}$/u)
+          .optional(),
+      })
+      .strict()
+      .refine((champs) => Object.values(champs).some((value) => value !== undefined)),
+    confirmation: false,
+  },
   'personnel.ouvrir_fiche': {
     domaine: 'guide',
     nature: 'navigation',

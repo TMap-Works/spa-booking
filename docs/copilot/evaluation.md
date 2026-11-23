@@ -23,16 +23,16 @@ COPILOT_LIVE_DEBUG=1 …                                      # chaque appel et 
 
 ## P5-01 — Haiku 5.5 / Sonnet 5.5
 
-Vingt-deux cas en trois familles — hors-sujet (2), faits (7), choix d'action (13) —
+Vingt-quatre cas en trois familles — hors-sujet (2), faits (7), choix d'action (15) —
 couvrant les cinq spécialistes et les quatre surfaces. Un cas réussit si la
 réponse dit le fait attendu, ou si la page reçoit la bonne navigation (chemin
 et filtres) ou la bonne carte de confirmation, **et** qu'aucune règle générale
 n'est enfreinte (identifiant, coordonnée, prompt système, sortie du salon).
 
-| Modèle | Réussite | Temps médian par message | Tokens entrée / lus en cache / sortie (22 cas) |
+| Modèle | Réussite | Temps médian par message | Tokens entrée / lus en cache / sortie (24 cas) |
 |---|---|---|---|
-| `claude-haiku-5-5` | **22/22** | **4,3 s** | 29 593 / 123 113 / 10 783 |
-| `claude-sonnet-5-5` | 22/22 | 4,9 s | 24 894 / 107 908 / 7 848 |
+| `claude-haiku-5-5` | **24/24** | **3,4 s** | 28 423 / 117 454 / 10 506 |
+| `claude-sonnet-5-5` | 22/22 (avant les deux cas d'inscription) | 4,9 s | 24 894 / 107 908 / 7 848 |
 
 **Décision : Haiku 5.5 pour tous les agents** (`COPILOT_MODEL_DEFAULT`, sans
 surcharge par agent). À réussite égale, il est plus rapide et coûte plusieurs

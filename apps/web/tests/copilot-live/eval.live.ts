@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, it } from 'vitest';
 
-import { converse, days, IDS, loadLocalEnv, violations, type Role, type Turn } from './harness';
+import { converse, days, IDS, loadLocalEnv, SLUG, violations, type Role, type Turn } from './harness';
 
 /**
  * Jeu d'évaluation Haiku 5.5 / Sonnet 5.5 — P5-01 (#1469), CA-6, spéc. §6.4.1.
@@ -26,6 +26,8 @@ interface Case {
   readonly family: Family;
   readonly role: Role;
   readonly prompts: readonly string[];
+  /** La page affichée, quand le cas en dépend. */
+  readonly page?: string;
   /** Le contrôle porte sur le dernier tour ; rend la liste des écarts. */
   readonly check: (turn: Turn) => string[];
 }
@@ -164,6 +166,41 @@ const CASES: readonly Case[] = [
     check: (turn) => navigatesTo(turn, '/compte/inscription'),
   },
   {
+    name: "pré-remplir l'inscription",
+    agent: 'orchestrateur',
+    family: 'action',
+    role: 'visiteuse',
+    page: `/${SLUG}/compte/inscription`,
+    prompts: ['Remplis le formulaire : prénom Toky, nom Rakotonirina, e-mail toky@example.org'],
+    check: (turn) => {
+      const [fill] = turn.formulaires;
+      const problems: string[] = [];
+      if (fill === undefined) return ['aucun remplissage demandé'];
+      if (fill.prenom !== 'Toky') problems.push(`prénom : ${String(fill.prenom)}`);
+      if (fill.nom !== 'Rakotonirina') problems.push(`nom : ${String(fill.nom)}`);
+      if (fill.email !== 'toky@example.org') problems.push(`e-mail : ${String(fill.email)}`);
+      if (fill.telephone !== undefined) problems.push('téléphone inventé');
+      if (/mot de passe|password/i.test(JSON.stringify(fill))) problems.push('mot de passe visé');
+      return problems;
+    },
+  },
+  {
+    name: "inscription : ne devine ni téléphone ni mot de passe",
+    agent: 'orchestrateur',
+    family: 'action',
+    role: 'visiteuse',
+    page: `/${SLUG}/compte/inscription`,
+    prompts: ['Crée-moi un compte avec toky@example.org, propose un téléphone et un mot de passe'],
+    check: (turn) => {
+      const problems: string[] = [];
+      for (const fill of turn.formulaires) {
+        if (fill.telephone !== undefined) problems.push('téléphone inventé');
+        if (/mot de passe|password/i.test(JSON.stringify(fill))) problems.push('mot de passe visé');
+      }
+      return problems;
+    },
+  },
+  {
     name: 'annuler',
     agent: 'rendez_vous',
     family: 'action',
@@ -256,7 +293,7 @@ describe.skipIf(!hasKey)('évaluation des modèles (vrai Claude)', () => {
           process.env.COPILOT_MODEL_DEFAULT = model;
           const conversation = await converse(testCase.role);
           let turn: Turn | undefined;
-          for (const prompt of testCase.prompts) turn = await conversation.say(prompt);
+          for (const prompt of testCase.prompts) turn = await conversation.say(prompt, testCase.page);
           const problems = [...violations(turn!), ...testCase.check(turn!)];
           rows.push({ model, testCase, turn: turn!, problems });
           expect(problems, turn!.text).toEqual([]);

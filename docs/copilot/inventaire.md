@@ -133,6 +133,7 @@ de l'ouvrir.
 | `reservation.ouvrir_tunnel` | navigation | public | — (adresse du tunnel) | Réservation | 2 |
 | `guide.mener` | navigation | selon la route | — (adresse cible) | Guide | 2 |
 | `catalogue.ouvrir_prestation` | navigation | rang ≥ `STAFF` | — (`/admin/catalogue/<id>`, prestation lue au catalogue public) | Guide | 4 |
+| `formulaire.remplir` | navigation | public | — (champs du formulaire d'inscription ou de connexion affiché ; jamais le mot de passe, jamais de validation) | Guide | 4 |
 | `personnel.ouvrir_fiche` | navigation | `accounts:read` | — (`/admin/personnel/<id>`, praticien lu au catalogue public) | Guide | 4 |
 | `rendez_vous.mes_prochains` | lecture | session (`CLIENT`) | `GET /appointments/mine?scope=upcoming` | Rendez-vous | 3 |
 | `rendez_vous.mon_historique` | lecture | session (`CLIENT`) | `GET /appointments/mine?scope=past` | Rendez-vous | 3 |

@@ -22,6 +22,7 @@ import type { CopilotSuggestion } from '@/lib/copilot/suggestions';
 
 import { ConfirmationCard } from './confirmation-card';
 import { pointTo } from './curseur-fantome';
+import { isAuthPath, remplirFormulaire } from './remplir-formulaire';
 import { loadConversation, saveConversation, type Conversation } from './memoire';
 
 /**
@@ -113,6 +114,29 @@ function Chat({ runtimeUrl, tenantSlug, variant }: CopilotChatProps) {
       },
     },
     [router, tenantSlug],
+  );
+
+  // Le formulaire d'inscription ou de connexion, pré-rempli avec ce que la
+  // personne a dit. Il ne pose que quatre champs, ni mot de passe ni validation.
+  useFrontendTool(
+    {
+      name: 'remplir_formulaire',
+      description: "Exécutant du serveur : pose dans le formulaire affiché ce que la personne a donné.",
+      parameters: z
+        .object({
+          prenom: z.string().max(80).optional(),
+          nom: z.string().max(80).optional(),
+          email: z.string().max(254).optional(),
+          telephone: z.string().max(24).optional(),
+        })
+        .strict(),
+      handler: async (valeurs) => {
+        if (!isAuthPath(window.location.pathname, tenantSlug)) return "Aucun formulaire d'inscription ou de connexion à remplir ici.";
+        const { remplis, absents } = remplirFormulaire(valeurs);
+        return absents.length === 0 ? `Champs remplis : ${remplis.join(', ')}.` : `Remplis : ${remplis.join(', ') || 'aucun'}. Absents de l'écran : ${absents.join(', ')}.`;
+      },
+    },
+    [tenantSlug],
   );
 
   // L'écriture proposée par un spécialiste (P3-01) : une carte à valider. Le

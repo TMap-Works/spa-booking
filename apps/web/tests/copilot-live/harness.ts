@@ -208,6 +208,8 @@ export interface Turn {
   readonly text: string;
   /** Les adresses que la page suivrait. */
   readonly navigations: readonly string[];
+  /** Les champs de formulaire que la page poserait. */
+  readonly formulaires: readonly Record<string, unknown>[];
   /** Les écritures proposées (carte de confirmation) — jamais exécutées ici. */
   readonly writes: readonly PendingWrite[];
   readonly ms: number;
@@ -327,12 +329,23 @@ export async function converse(role: Role, traps: Traps = {}): Promise<Conversat
             return [];
           }
         });
+      const formulaires = events
+        .filter((event) => event.type === EventType.TOOL_CALL_ARGS)
+        .flatMap((event) => {
+          try {
+            const args = JSON.parse(field(event, 'delta')) as Record<string, unknown>;
+            return ['prenom', 'nom', 'email', 'telephone'].some((key) => key in args) ? [args] : [];
+          } catch {
+            return [];
+          }
+        });
       const error = events.find((event) => event.type === EventType.RUN_ERROR);
       messages.push({ id: `a${messages.length}`, role: 'assistant', content: text });
       return {
         prompt,
         text,
         navigations,
+        formulaires,
         writes: writes.slice(writesBefore),
         ms: Date.now() - started,
         tokens: {

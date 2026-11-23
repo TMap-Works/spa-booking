@@ -137,3 +137,18 @@ export function ficheTools(
   }
   return tools;
 }
+
+/**
+ * `formulaire.remplir` : le serveur ne remplit rien lui-même, il ordonne au
+ * navigateur de poser les valeurs que la personne a **données** dans son propre
+ * formulaire. Quatre champs, jamais le mot de passe, jamais la validation : le
+ * clic reste le sien. Le schéma du registre est strict, donc le modèle ne peut
+ * viser aucun autre champ.
+ */
+export function formulaireTool(): ServerTool {
+  return registryTool('formulaire.remplir', async (champs) => ({
+    kind: 'fin',
+    contenu: 'Formulaire rempli côté navigateur ; la personne relit et valide elle-même.',
+    navigateur: [{ outil: 'remplir_formulaire', arguments: champs }],
+  }));
+}

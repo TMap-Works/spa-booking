@@ -6,7 +6,7 @@ import { copilotModel } from './config';
 import { cachedServices } from './salon-data';
 import type { ResolvedCopilotSession } from './session';
 import { specialistTools, type PrepareWrite, type Specialist } from './specialists';
-import { ficheTools, guideTool } from './tools';
+import { ficheTools, formulaireTool, guideTool } from './tools';
 import { copilotRedis } from './redis';
 import { MemoryTranscriptStore, RedisTranscriptStore, type TranscriptStore } from './transcript-store';
 
@@ -28,7 +28,7 @@ export const SYSTEM_PROMPT = `Tu es l'assistant intégré au site d'un salon (be
 Périmètre
 - Tu réponds sur le salon (adresse, horaires, prestations, prix, politiques), sur les données que la session de la personne lui ouvre, et sur l'usage du site.
 - Toute autre demande : décline en une phrase, sans sermon ni explication de règles, puis propose ce que tu sais faire.
-- Tu réponds dans la langue indiquée par <contexte_session>, en deux ou trois phrases au plus.
+- Tu réponds dans la langue du dernier message de la personne ; à défaut, dans celle indiquée par <contexte_session>. Deux ou trois phrases au plus.
 
 Vérité
 - Tu n'inventes jamais un prix, un horaire, un créneau ni une disponibilité : ce que tu affirmes vient de <donnees_salon> ou d'un outil. Si rien ne te le donne, tu dis que tu ne le sais pas.
@@ -38,6 +38,7 @@ Vérité
 
 Outils
 - Pour mener la personne à un écran du site, annonce-le en une phrase, puis appelle guide_mener. Pour ouvrir la fiche **précise** d'une prestation ou d'un praticien, appelle catalogue_ouvrir_prestation ou personnel_ouvrir_fiche avec l'identifiant de <donnees_salon> ; celle d'une cliente, agent_clients : guide_mener n'ouvre que des listes.
+- Sur l'écran d'inscription ou de connexion, quand la personne te donne ses informations (prénom, nom, e-mail, téléphone), annonce-le en une phrase puis appelle formulaire_remplir avec **seulement** ce qu'elle t'a dit : tu ne crées pas le compte, tu ne devines rien, tu ne demandes ni ne remplis jamais de mot de passe ; elle relit, saisit son mot de passe et valide elle-même.
 - Pour une demande qui enchaîne des lectures, filtre un écran ou modifie des données, appelle le spécialiste du domaine (outil agent_…) avec un brief : la demande reformulée et complète, et les faits déjà établis. Résous d'abord les dates relatives (« demain », « jeudi ») en dates AAAA-MM-JJ à partir de la date du jour donnée dans <contexte_session>. N'écris rien après l'appel d'un spécialiste : sa réponse est affichée telle quelle.
 - Si aucun outil ne couvre la demande, dis-le simplement et propose ce que tu peux faire.
 
@@ -146,6 +147,7 @@ export function createOrchestrateur(resolved: ResolvedCopilotSession, extras: Or
   // Ouvrir une fiche précise : l'orchestrateur a déjà les identifiants dans
   // <donnees_salon>, il le fait sans passer la main (étage 1).
   serverTools.push(...ficheTools(resolved.session, extras.services ?? ((slug) => cachedServices(slug))));
+  serverTools.push(formulaireTool());
   serverTools.push(...specialistTools(resolved.session, extras.specialists ?? [], extras.prepareWrite ?? null));
 
   return new ClaudeAgent({
