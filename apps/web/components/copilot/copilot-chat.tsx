@@ -248,25 +248,44 @@ function useRememberedConversation(
     // au serveur et efface les messages affichés. Le serveur retrouve le même fil
     // par l'identifiant, et l'écran par la mémoire ci-dessous.
     agent.threadId = conversation.threadId;
+    const trace = (what: string, count: number) => {
+      if (process.env.NODE_ENV !== 'production') {
+        // eslint-disable-next-line no-console -- trace de développement : voir si la conversation est gardée puis rendue.
+        console.info(`[copilot-memoire] ${what} (${count} messages, fil ${conversation.threadId.slice(0, 8)})`);
+      }
+    };
+    const save = () => {
+      if (agent.messages.length === 0) return;
+      saveConversation(tenantSlug, variant, sujet.current, { threadId: conversation.threadId, messages: agent.messages });
+      trace('gardée', agent.messages.length);
+    };
     // Rend à l'agent la **dernière** conversation gardée, relue à chaque fois : CopilotKit
     // peut remplacer son agent en cours de route (le serveur répond après coup), et celui
     // qui arrive est vide. Ce que le premier chargement avait lu serait alors périmé.
     const restore = () => {
       if (agent.messages.length > 0) return;
       const saved = loadConversation(tenantSlug, variant, sujet.current);
-      if (saved.threadId === conversation.threadId && saved.messages.length > 0) agent.setMessages(saved.messages);
+      if (saved.threadId === conversation.threadId && saved.messages.length > 0) {
+        agent.setMessages(saved.messages);
+        trace('rendue', saved.messages.length);
+      } else {
+        trace('rien à rendre', 0);
+      }
     };
     restore();
     const subscription = agent.subscribe({
+      // L'agent ne dit pas `onMessagesChanged` quand on lui **ajoute** un message (celui de
+      // la personne) : sans `onNewMessage`, une page rechargée juste après l'envoi le perdrait.
+      onNewMessage: save,
       onMessagesChanged: () => {
-        if (agent.messages.length === 0) {
-          restore();
-          return;
-        }
-        saveConversation(tenantSlug, variant, sujet.current, { threadId: conversation.threadId, messages: agent.messages });
+        if (agent.messages.length === 0) restore();
+        else save();
       },
     });
+    // Une page qui se décharge en pleine réponse : on garde ce qui est déjà là.
+    window.addEventListener('pagehide', save);
     return () => {
+      window.removeEventListener('pagehide', save);
       subscription.unsubscribe();
     };
   }, [agent, conversation, tenantSlug, variant, sujet]);
