@@ -26,6 +26,8 @@ interface Case {
   readonly family: Family;
   readonly role: Role;
   readonly prompts: readonly string[];
+  /** La langue du navigateur, quand elle diffère du français. */
+  readonly locale?: 'fr' | 'en';
   /** La page affichée, quand le cas en dépend. */
   readonly page?: string;
   /** Le contrôle porte sur le dernier tour ; rend la liste des écarts. */
@@ -201,6 +203,48 @@ const CASES: readonly Case[] = [
     },
   },
   {
+    name: 'langue : répond en anglais à un message en anglais (orchestrateur)',
+    agent: 'orchestrateur',
+    family: 'faits',
+    role: 'visiteuse',
+    prompts: ['Hello, what are your opening hours?'],
+    check: (turn) => (/\b(vous|nous|sont|nos|les|des|pour|ouvert)\b/iu.test(turn.text) ? [`réponse en français : ${turn.text.slice(0, 80)}`] : []),
+  },
+  {
+    name: 'langue : répond en anglais à un message en anglais (spécialiste)',
+    agent: 'reservation',
+    family: 'action',
+    role: 'visiteuse',
+    prompts: ['I would like a massage tomorrow afternoon'],
+    check: (turn) => (/\b(vous|nous|sont|nos|les|des|pour|je|libre)\b/iu.test(turn.text) ? [`réponse en français : ${turn.text.slice(0, 80)}`] : []),
+  },
+  {
+    name: 'langue : répond en malgache à un message en malgache',
+    agent: 'orchestrateur',
+    family: 'faits',
+    role: 'visiteuse',
+    prompts: ['Salama, oviana no misokatra ianareo ?'],
+    check: (turn) => (/\b(vous|nous|sont|les|des|pour|ouvert|hello|open)\b/iu.test(turn.text) ? [`pas en malgache : ${turn.text.slice(0, 80)}`] : []),
+  },
+  {
+    name: 'langue : répond en français à un message en français, navigateur en anglais',
+    agent: 'orchestrateur',
+    family: 'faits',
+    role: 'visiteuse',
+    locale: 'en',
+    prompts: ['Bonjour, quels sont vos horaires ?'],
+    check: (turn) => (/\b(the|are|open|hours|our|we)\b/iu.test(turn.text) ? [`réponse en anglais : ${turn.text.slice(0, 80)}`] : []),
+  },
+  {
+    name: 'langue : réservation en français, navigateur en anglais',
+    agent: 'reservation',
+    family: 'action',
+    role: 'visiteuse',
+    locale: 'en',
+    prompts: ['Je voudrais un massage demain après-midi'],
+    check: (turn) => (/\b(the|are|available|tomorrow|opening|you)\b/iu.test(turn.text) ? [`réponse en anglais : ${turn.text.slice(0, 80)}`] : []),
+  },
+  {
     name: 'annuler',
     agent: 'rendez_vous',
     family: 'action',
@@ -291,7 +335,7 @@ describe.skipIf(!hasKey)('évaluation des modèles (vrai Claude)', () => {
           // Un seul modèle pour tous les agents pendant le cas : on mesure le modèle, pas la répartition.
           for (const key of Object.keys(process.env)) if (key.startsWith('COPILOT_MODEL_')) delete process.env[key];
           process.env.COPILOT_MODEL_DEFAULT = model;
-          const conversation = await converse(testCase.role);
+          const conversation = await converse(testCase.role, {}, testCase.locale);
           let turn: Turn | undefined;
           for (const prompt of testCase.prompts) turn = await conversation.say(prompt, testCase.page);
           const problems = [...violations(turn!), ...testCase.check(turn!)];

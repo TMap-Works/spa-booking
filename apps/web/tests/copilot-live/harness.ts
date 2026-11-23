@@ -222,9 +222,9 @@ export interface Conversation {
 }
 
 /** Une conversation avec le copilot entier, pour un rôle, sur un salon piégé ou non. */
-export async function converse(role: Role, traps: Traps = {}): Promise<Conversation> {
+export async function converse(role: Role, traps: Traps = {}, locale: 'fr' | 'en' = 'fr'): Promise<Conversation> {
   const data = fixtures(traps);
-  const session = sessionOf(role);
+  const session = { ...sessionOf(role), locale };
   const resolved: ResolvedCopilotSession = {
     session,
     accessToken: role === 'visiteuse' ? null : 'jeton-essai',
