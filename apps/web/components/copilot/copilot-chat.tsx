@@ -6,6 +6,7 @@ import {
   CopilotKitProvider,
   CopilotPopup,
   CopilotSidebar,
+  useAgent,
   useAgentContext,
   useConfigureSuggestions,
   useFrontendTool,
@@ -13,7 +14,7 @@ import {
 import Link from 'next/link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useTranslations } from 'next-intl';
-import { useEffect, useMemo, useState, type ComponentProps } from 'react';
+import { useEffect, useMemo, useRef, useState, type ComponentProps, type MutableRefObject } from 'react';
 import { z } from 'zod';
 
 import { describePage, isSalonPath } from '@/lib/copilot/paths';
@@ -21,6 +22,7 @@ import type { CopilotSuggestion } from '@/lib/copilot/suggestions';
 
 import { ConfirmationCard } from './confirmation-card';
 import { pointTo } from './curseur-fantome';
+import { loadConversation, saveConversation, type Conversation } from './memoire';
 
 /**
  * Le chat du copilot — P1-06 (#1453), EF-2 et EF-5 de la spécification.
@@ -59,23 +61,35 @@ function Chat({ runtimeUrl, tenantSlug, variant }: CopilotChatProps) {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const [suggestions, setSuggestions] = useState<readonly CopilotSuggestion[]>([]);
+  // La conversation reprise, connue une fois la personne identifiée par le serveur.
+  const [conversation, setConversation] = useState<Conversation | null>(null);
 
   // Les suggestions de l'écran : le serveur les calcule à partir de la session
   // et de la page, sans modèle. Une panne n'empêche pas de converser.
   useEffect(() => {
     const controller = new AbortController();
     fetch(`${runtimeUrl}/suggestions?page=${encodeURIComponent(pathname)}`, { signal: controller.signal })
-      .then((response) => (response.ok ? (response.json() as Promise<{ suggestions: CopilotSuggestion[] }>) : null))
+      .then((response) =>
+        response.ok ? (response.json() as Promise<{ suggestions: CopilotSuggestion[]; sujet?: string }>) : null,
+      )
       .then((body) => {
         setSuggestions(body?.suggestions ?? []);
+        // Une seule fois : le fil ne change plus en cours de route.
+        setConversation((current) => current ?? loadConversation(tenantSlug, variant, body?.sujet ?? 'inconnu'));
+        sujetRef.current = body?.sujet ?? 'inconnu';
       })
       .catch(() => {
         setSuggestions([]);
+        setConversation((current) => current ?? loadConversation(tenantSlug, variant, 'inconnu'));
+        sujetRef.current = 'inconnu';
       });
     return () => {
       controller.abort();
     };
-  }, [pathname, runtimeUrl]);
+  }, [pathname, runtimeUrl, tenantSlug, variant]);
+
+  const sujetRef = useRef('inconnu');
+  useRememberedConversation(conversation, tenantSlug, variant, sujetRef);
 
   // Contexte indicatif : la page et ses filtres en cours (planning en semaine du
   // 23, tunnel sur l'après-midi…). Il sert la pertinence, jamais l'autorisation.
@@ -175,15 +189,50 @@ function Chat({ runtimeUrl, tenantSlug, variant }: CopilotChatProps) {
     </div>
   );
 
+  // Le fil est fixé avant la première ouverture : tant que la personne n'est pas
+  // identifiée, rien ne s'affiche (une fraction de seconde), plutôt qu'un fil qui change.
+  if (conversation === null) return null;
+
   return (
     <div className={`spa-copilot spa-copilot--${variant}`}>
       {variant === 'panneau' ? (
-        <CopilotSidebar labels={labels} welcomeScreen={welcomeScreen} />
+        <CopilotSidebar labels={labels} welcomeScreen={welcomeScreen} threadId={conversation.threadId} />
       ) : (
-        <CopilotPopup labels={labels} welcomeScreen={welcomeScreen} />
+        <CopilotPopup labels={labels} welcomeScreen={welcomeScreen} threadId={conversation.threadId} />
       )}
     </div>
   );
+}
+
+/**
+ * Rend à l'agent la conversation gardée, puis la garde à chaque message.
+ * Le serveur retrouve l'historique par le même fil ; l'écran, lui, le retrouve ici.
+ */
+function useRememberedConversation(
+  conversation: Conversation | null,
+  tenantSlug: string,
+  variant: string,
+  sujet: MutableRefObject<string>,
+) {
+  // L'agent partagé du chat : la bulle ou le panneau lui pose le fil (`threadId`).
+  const { agent } = useAgent();
+
+  useEffect(() => {
+    if (conversation === null || conversation.messages.length === 0 || agent.messages.length > 0) return;
+    agent.setMessages(conversation.messages);
+  }, [agent, conversation]);
+
+  useEffect(() => {
+    if (conversation === null) return;
+    const subscription = agent.subscribe({
+      onMessagesChanged: () => {
+        saveConversation(tenantSlug, variant, sujet.current, { threadId: conversation.threadId, messages: agent.messages });
+      },
+    });
+    return () => {
+      subscription.unsubscribe();
+    };
+  }, [agent, conversation, tenantSlug, variant, sujet]);
 }
 
 type WelcomeScreen = NonNullable<Exclude<ComponentProps<typeof CopilotPopup>['welcomeScreen'], boolean | string>>;

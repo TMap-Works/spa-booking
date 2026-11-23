@@ -190,7 +190,12 @@ export function copilotRoute(
     // lecture du catalogue — elles n'en ont pas besoin.
     const url = new URL(request.url);
     if (request.method === 'GET' && url.pathname === `${copilotBasePath(space, tenantSlug)}/suggestions`) {
-      return Response.json({ suggestions: suggestionsFor(resolved.session, url.searchParams.get('page') ?? '') });
+      // `sujet` : l'empreinte à sens unique du compte (déjà calculée pour l'historique),
+      // pour que le navigateur ne rende sa mémoire qu'à la même personne.
+      return Response.json({
+        suggestions: suggestionsFor(resolved.session, url.searchParams.get('page') ?? ''),
+        sujet: resolved.subject ?? 'visiteur',
+      });
     }
 
     const basePath = copilotBasePath(space, tenantSlug);

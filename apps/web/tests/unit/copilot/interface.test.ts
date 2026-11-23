@@ -90,6 +90,8 @@ describe('suggestions servies par la route', () => {
         { cle: 'creneaux_demain', type: 'message' },
         { cle: 'tarifs', type: 'message' },
       ],
+      // Une visiteuse n'a pas de compte : le navigateur garde sa conversation sous « visiteur ».
+      sujet: 'visiteur',
     });
   });
 });
