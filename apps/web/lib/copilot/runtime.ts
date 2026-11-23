@@ -229,6 +229,12 @@ export function copilotRoute(
     const allowed =
       (request.method === 'GET' && sub === '/info') ||
       (request.method === 'POST' && (sub === '/agent/default/run' || /^\/agent\/default\/stop\/[\w-]{1,64}$/u.test(sub)));
+    // Développement seulement : la mémoire du chat dit ce qu'elle fait (voir `beacon`).
+    if (process.env.NODE_ENV !== 'production' && request.method === 'POST' && sub === '/trace') {
+      const raw = (await request.text()).slice(0, 600);
+      copilotLog('copilot.memoire.trace', { trace: raw });
+      return new Response(null, { status: 204 });
+    }
     if (!allowed) {
       // La liste des fils, que le chat demande au montage : vide, jamais celle du serveur.
       if (request.method === 'GET' && sub === '/threads') return Response.json({ threads: [], nextCursor: null });

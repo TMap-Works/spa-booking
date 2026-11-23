@@ -89,3 +89,20 @@ export function saveConversation(
     // Rien à faire : la conversation continue, elle ne survivra simplement pas.
   }
 }
+
+/** Ce que le stockage contient, en un mot — pour comprendre pourquoi une conversation n'est pas rendue. */
+export function describeStored(tenantSlug: string, variant: string, sujet: string, now = Date.now()): string {
+  const store = storage();
+  if (store === null) return 'stockage-indisponible';
+  try {
+    const raw = store.getItem(keyOf(tenantSlug, variant));
+    if (raw === null) return 'absent';
+    const saved = JSON.parse(raw) as Partial<Stored>;
+    if (saved.sujet !== sujet) return `autre-personne(${String(saved.sujet)}≠${sujet})`;
+    const age = typeof saved.savedAt === 'number' ? Math.round((now - saved.savedAt) / 1000) : -1;
+    if (age < 0 || age * 1000 >= MEMORY_TTL_MS) return `expiré(${age}s)`;
+    return `ok(${saved.messages?.length ?? 0} messages, ${age}s)`;
+  } catch {
+    return 'illisible';
+  }
+}

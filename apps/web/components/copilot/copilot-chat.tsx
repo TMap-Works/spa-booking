@@ -23,7 +23,7 @@ import type { CopilotSuggestion } from '@/lib/copilot/suggestions';
 import { ConfirmationCard } from './confirmation-card';
 import { pointTo } from './curseur-fantome';
 import { isAuthPath, remplirFormulaire } from './remplir-formulaire';
-import { loadConversation, saveConversation, type Conversation } from './memoire';
+import { describeStored, loadConversation, saveConversation, type Conversation } from './memoire';
 
 /**
  * Le chat du copilot — P1-06 (#1453), EF-2 et EF-5 de la spécification.
@@ -76,6 +76,7 @@ function Chat({ runtimeUrl, tenantSlug, variant }: CopilotChatProps) {
       .then((body) => {
         setSuggestions(body?.suggestions ?? []);
         // Une seule fois : le fil ne change plus en cours de route.
+        beacon(runtimeUrl, 'chargement', { sujet: body?.sujet ?? 'inconnu', stockage: describeStored(tenantSlug, variant, body?.sujet ?? 'inconnu') });
         setConversation((current) => current ?? loadConversation(tenantSlug, variant, body?.sujet ?? 'inconnu'));
         sujetRef.current = body?.sujet ?? 'inconnu';
       })
@@ -90,7 +91,7 @@ function Chat({ runtimeUrl, tenantSlug, variant }: CopilotChatProps) {
   }, [pathname, runtimeUrl, tenantSlug, variant]);
 
   const sujetRef = useRef('inconnu');
-  useRememberedConversation(conversation, tenantSlug, variant, sujetRef);
+  useRememberedConversation(conversation, tenantSlug, variant, sujetRef, runtimeUrl);
 
   // Contexte indicatif : la page et ses filtres en cours (planning en semaine du
   // 23, tunnel sur l'après-midi…). Il sert la pertinence, jamais l'autorisation.
@@ -237,6 +238,7 @@ function useRememberedConversation(
   tenantSlug: string,
   variant: string,
   sujet: MutableRefObject<string>,
+  runtimeUrl: string,
 ) {
   // L'agent partagé du chat, celui que la bulle ou le panneau affiche.
   const { agent } = useAgent();
@@ -253,6 +255,7 @@ function useRememberedConversation(
         // eslint-disable-next-line no-console -- trace de développement : voir si la conversation est gardée puis rendue.
         console.info(`[copilot-memoire] ${what} (${count} messages, fil ${conversation.threadId.slice(0, 8)})`);
       }
+      beacon(runtimeUrl, what, { messages: count, fil: conversation.threadId.slice(0, 8), fil_agent: String(agent.threadId).slice(0, 8), stockage: describeStored(tenantSlug, variant, sujet.current) });
     };
     const save = () => {
       if (agent.messages.length === 0) return;
@@ -288,7 +291,20 @@ function useRememberedConversation(
       window.removeEventListener('pagehide', save);
       subscription.unsubscribe();
     };
-  }, [agent, conversation, tenantSlug, variant, sujet]);
+  }, [agent, conversation, tenantSlug, variant, sujet, runtimeUrl]);
+}
+
+/**
+ * En développement seulement : dit au serveur ce que la mémoire a fait, pour qu'on
+ * le lise dans son journal sans la console du navigateur. Rien en production.
+ */
+function beacon(runtimeUrl: string, event: string, detail: Record<string, string | number>) {
+  if (process.env.NODE_ENV === 'production') return;
+  try {
+    navigator.sendBeacon(`${runtimeUrl}/trace`, JSON.stringify({ event, ...detail, page: window.location.pathname + window.location.search }));
+  } catch {
+    // Une trace perdue ne change rien.
+  }
 }
 
 type WelcomeScreen = NonNullable<Exclude<ComponentProps<typeof CopilotPopup>['welcomeScreen'], boolean | string>>;
