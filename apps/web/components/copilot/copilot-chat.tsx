@@ -242,14 +242,22 @@ function useRememberedConversation(
   const { agent } = useAgent();
 
   useEffect(() => {
-    if (conversation === null || conversation.messages.length === 0 || agent.messages.length > 0) return;
-    agent.setMessages(conversation.messages);
-  }, [agent, conversation]);
-
-  useEffect(() => {
     if (conversation === null) return;
+    // Rend à l'agent la **dernière** conversation gardée, relue à chaque fois : CopilotKit
+    // peut remplacer son agent en cours de route (le serveur répond après coup), et celui
+    // qui arrive est vide. Ce que le premier chargement avait lu serait alors périmé.
+    const restore = () => {
+      if (agent.messages.length > 0) return;
+      const saved = loadConversation(tenantSlug, variant, sujet.current);
+      if (saved.threadId === conversation.threadId && saved.messages.length > 0) agent.setMessages(saved.messages);
+    };
+    restore();
     const subscription = agent.subscribe({
       onMessagesChanged: () => {
+        if (agent.messages.length === 0) {
+          restore();
+          return;
+        }
         saveConversation(tenantSlug, variant, sujet.current, { threadId: conversation.threadId, messages: agent.messages });
       },
     });
