@@ -23,7 +23,7 @@ import type { CopilotSuggestion } from '@/lib/copilot/suggestions';
 import { ConfirmationCard } from './confirmation-card';
 import { pointTo } from './curseur-fantome';
 import { isAuthPath, remplirFormulaire } from './remplir-formulaire';
-import { describeStored, loadConversation, saveConversation, type Conversation } from './memoire';
+import { describeStored, freshConversation, loadConversation, saveConversation, type Conversation } from './memoire';
 
 /**
  * Le chat du copilot — P1-06 (#1453), EF-2 et EF-5 de la spécification.
@@ -81,8 +81,14 @@ function Chat({ runtimeUrl, tenantSlug, variant }: CopilotChatProps) {
         sujetRef.current = body?.sujet ?? 'inconnu';
       })
       .catch(() => {
+        // Une requête **annulée** (le composant se démonte, puis se remonte : mode strict de
+        // React en développement, changement de page) n'est pas une panne : l'autre requête
+        // prend le relais. La traiter en panne effaçait la conversation gardée, puisqu'on ne
+        // sait pas alors à qui elle est.
+        if (controller.signal.aborted) return;
         setSuggestions([]);
-        setConversation((current) => current ?? loadConversation(tenantSlug, variant, 'inconnu'));
+        // Une vraie panne : un fil neuf, sans toucher à la conversation gardée.
+        setConversation((current) => current ?? freshConversation());
         sujetRef.current = 'inconnu';
       });
     return () => {

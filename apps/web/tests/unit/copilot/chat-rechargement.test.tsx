@@ -1,6 +1,7 @@
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { NextIntlClientProvider } from 'next-intl';
+import { StrictMode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import CopilotChat from '@/components/copilot/copilot-chat';
@@ -48,7 +49,13 @@ beforeEach(() => {
     vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = new URL(String(input instanceof Request ? input.url : input), 'http://localhost');
       const path = url.pathname.replace(RUNTIME, '');
-      if (path === '/suggestions') return Response.json({ suggestions: [], sujet: 'visiteur' });
+      if (path === '/suggestions') {
+        // Un vrai `fetch` rejette une requête annulée : c'est ce qui fait passer le composant par son `catch`.
+        const signal = init?.signal;
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        if (signal?.aborted) throw new DOMException('annulée', 'AbortError');
+        return Response.json({ suggestions: [], sujet: 'visiteur' });
+      }
       if (path === '/info') {
         if (infoDelayMs > 0) await new Promise((resolve) => setTimeout(resolve, infoDelayMs));
         return Response.json({
@@ -96,12 +103,15 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-const mount = () =>
-  render(
+/** `strict` : le mode strict de React en développement monte, démonte puis remonte le composant. */
+const mount = (strict = false) => {
+  const chat = (
     <NextIntlClientProvider locale="fr" messages={{ copilot: messages }}>
       <CopilotChat runtimeUrl={RUNTIME} tenantSlug="salon-lea" variant="bulle" />
-    </NextIntlClientProvider>,
+    </NextIntlClientProvider>
   );
+  return render(strict ? <StrictMode>{chat}</StrictMode> : chat);
+};
 
 async function openAndSay(text: string) {
   const user = userEvent.setup();
@@ -165,4 +175,19 @@ describe('rechargement de la page', () => {
 
     expect(screen.queryAllByText('Quelles sont vos prestations ?').length).toBeGreaterThan(0);
   }, 40_000);
+
+  it("rend la conversation en mode strict de React (développement), où le premier chargement est annulé", async () => {
+    const first = mount(true);
+    await openAndSay('Quelles sont vos prestations ?');
+    await waitFor(() => expect(runs.length).toBe(1), { timeout: 8000 });
+    await new Promise((resolve) => setTimeout(resolve, 500));
+
+    first.unmount();
+    mount(true);
+    await new Promise((resolve) => setTimeout(resolve, 2500));
+
+    expect(screen.queryAllByText('Quelles sont vos prestations ?').length).toBeGreaterThan(0);
+    // Le même fil qu'avant le rechargement : le serveur retrouve son historique.
+    expect(window.sessionStorage.getItem('spa-copilot:salon-lea:bulle')).not.toBeNull();
+  }, 30_000);
 });

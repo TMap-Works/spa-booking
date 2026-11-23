@@ -45,6 +45,11 @@ function storage(): Storage | null {
 
 const newThreadId = () => globalThis.crypto.randomUUID();
 
+/** Un fil neuf, **sans toucher** à ce que l'onglet a gardé : quand on ne sait pas qui parle, on n'efface pas. */
+export function freshConversation(): Conversation {
+  return { threadId: newThreadId(), messages: [] };
+}
+
 /** La conversation à reprendre, ou un fil neuf si elle manque, a expiré ou n'est pas à cette personne. */
 export function loadConversation(tenantSlug: string, variant: string, sujet: string, now = Date.now()): Conversation {
   const store = storage();
