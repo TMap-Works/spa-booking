@@ -116,6 +116,7 @@ export const COPILOT_GUIDE_ROUTES = {
   connexion: { chemin: '/compte/connexion', exige: 'public' },
   inscription: { chemin: '/compte/inscription', exige: 'public' },
   coordonnees: { chemin: '/compte/coordonnees', exige: 'client' },
+  mes_rendez_vous: { chemin: '/compte', exige: 'client' },
   historique: { chemin: '/compte/historique', exige: 'client' },
   catalogue: { chemin: '/admin/catalogue', exige: 'personnel' },
   catalogue_rubriques: { chemin: '/admin/catalogue/rubriques', exige: 'personnel' },
