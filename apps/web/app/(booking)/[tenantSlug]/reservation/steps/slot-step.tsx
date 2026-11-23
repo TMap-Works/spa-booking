@@ -290,6 +290,11 @@ export function SlotStep({
     setMonth((current) => current ?? monthOf(retainedDate ?? view.day ?? now));
   }, [retainedDate, tenant.timezone, view.day]);
 
+  // Une adresse qui demande un jour d'un autre mois (le chat, sans rechargement) : le mois suit.
+  useEffect(() => {
+    if (retainedDate === null && view.day !== null) setMonth(monthOf(view.day));
+  }, [retainedDate, view.day]);
+
   /**
    * Recharge les journées du mois regardé, et dit si la réponse est arrivée.
    *

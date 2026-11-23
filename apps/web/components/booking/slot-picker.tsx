@@ -274,6 +274,12 @@ export function SlotPicker({
   );
   /** La journée que la bande et le calendrier montrent comme retenue. */
   const [selectedDate, setSelectedDate] = useState<CalendarDate | null>(initialDate);
+  // Le jour demandé par l'adresse change **en cours de route** quand le chat l'ouvre sur un
+  // autre jour (même page, sans rechargement) : la journée retenue le suit. La cliente qui
+  // clique ensuite sur un autre jour reprend la main, jusqu'à la prochaine adresse.
+  useEffect(() => {
+    if (initialDate !== null) setSelectedDate(initialDate);
+  }, [initialDate]);
   /**
    * La journée posée en tête de bande, quand on l'a fait défiler.
    *

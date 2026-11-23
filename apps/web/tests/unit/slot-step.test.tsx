@@ -1108,6 +1108,42 @@ describe('jour et plage demandés par l’adresse (#1457)', () => {
     expect(onViewChange).toHaveBeenCalledWith({ day: null, dayPart: 'matin' });
   });
 
+  it('suit un jour que l’adresse change en cours de route, sans remontage (le chat)', async () => {
+    loadAvailabilityAction.mockResolvedValue({
+      ok: true,
+      data: availability([
+        { date: LUNDI, slots: [slot(MATIN, HERY)] },
+        { date: MARDI, slots: [slot(MARDI_APRES_MIDI, HERY)] },
+      ]),
+    });
+    const element = (day: CalendarDate) => (
+      <SlotStep
+        tenant={tenant}
+        service={service}
+        staffId={null}
+        startsAt={null}
+        summary={null}
+        onBack={onBack}
+        onStaffChange={onStaffChange}
+        onChoose={onChoose}
+        view={{ day, dayPart: null }}
+        onViewChange={vi.fn()}
+      />
+    );
+    const { rerender } = render(element(LUNDI));
+    await screen.findByRole('grid', { name: /Créneaux/ });
+    const selected = () =>
+      [...document.querySelectorAll('[role="gridcell"][aria-selected="true"]')].map((cell) =>
+        cell.getAttribute('data-day'),
+      );
+    expect(selected()).toContain(LUNDI);
+
+    rerender(element(MARDI));
+
+    await waitFor(() => expect(selected()).toContain(MARDI));
+    expect(selected()).not.toContain(LUNDI);
+  });
+
   it('sans parent pour tenir l’adresse, la rangée de plages n’apparaît pas', async () => {
     renderStep();
 
