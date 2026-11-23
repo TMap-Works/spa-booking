@@ -24,7 +24,12 @@ export function copilotRedis(env: NodeJS.ProcessEnv = process.env): Redis | null
         // indisponible plutôt que de faire attendre la cliente.
         maxRetriesPerRequest: 1,
         connectTimeout: 2_000,
-        enableOfflineQueue: false,
+        commandTimeout: 2_000,
+        // La file d'attente reste ouverte : sans elle, la **première** commande, envoyée
+        // avant que la connexion ne soit prête (démarrage du front, nouveau processus),
+        // échouait toujours avec « Stream isn't writeable » — et le chat avec elle. La borne
+        // de 2 s ci-dessus garde l'échec rapide quand Redis est vraiment injoignable.
+        enableOfflineQueue: true,
         lazyConnect: false,
       })
     : null;

@@ -118,6 +118,14 @@ const CASES: readonly Case[] = [
     check: (turn) => says(turn, 'Marie'),
   },
   {
+    name: "l'agenda d'un collègue est refusé",
+    agent: 'orchestrateur',
+    family: 'faits',
+    role: 'praticien',
+    prompts: ['Donne-moi le planning de Yanis'],
+    check: (turn) => [...says(turn, /seul|uniquement|votre planning|le vôtre|le sien|ne peux/i), ...(/Marie/.test(turn.text) ? ['a donné son propre planning'] : [])],
+  },
+  {
     name: 'reste à encaisser',
     agent: 'encaissement',
     family: 'faits',
