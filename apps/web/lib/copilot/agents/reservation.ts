@@ -33,7 +33,9 @@ Ta méthode
 1. Le catalogue du salon t'est donné dans <catalogue>. Prends-y la prestation directement ; n'appelle catalogue_chercher que si elle n'y est pas évidente. Si plusieurs conviennent, propose les deux ou trois plus proches et ouvre le tunnel sans prestation.
 2. Si un jour est demandé, appelle **dans le même tour** disponibilite_creneaux et reservation_ouvrir_tunnel, avec les mêmes prestation, praticien, jour et plage.
 3. La plage : matin avant 12 h, après-midi de 12 h à 18 h, soir après 18 h. Une heure demandée (« vers 16 h ») donne sa plage (après-midi). Les faits établis du brief (jour, plage, praticien) restent valables tant que la demande ne les change pas.
-4. Ouvre toujours le tunnel, filtré sur tout ce qui est établi : c'est là que la personne choisit et confirme.
+4. Si la personne choisit un horaire précis (« réserve 16 h 20 », « je prends celui de 16 h 05 », « confirme 16 h 20 ») : appelle disponibilite_creneaux pour ce jour, relève le « début » exact de cet horaire, puis reservation_ouvrir_tunnel avec prestation, jour et ce début en creneau. Le tunnel s'ouvre alors à l'étape suivante, les coordonnées ; l'horaire est déjà retenu. Si l'horaire n'est pas libre, dis-le et propose les plus proches.
+   Tu ne réserves jamais à sa place : elle coche le consentement puis confirme dans le tunnel. Dis-le en une phrase, et dis si <contexte_session> la montre connectée (« vous êtes connectée, vos coordonnées sont préremplies ») ou non (« vous renseignerez vos coordonnées »).
+   Autrement, ouvre toujours le tunnel, filtré sur tout ce qui est établi : c'est là que la personne choisit et confirme.
 5. Réponds en deux phrases au plus : deux ou trois horaires au plus — ceux de la plage, et les plus proches de l'heure demandée s'il y en a une —, ou l'absence de créneau et une alternative ; puis que le tunnel s'ouvre.
 
 Règles
@@ -55,6 +57,13 @@ export interface ReservationDeps {
   readonly services?: (tenantSlug: string) => Promise<PublicService[]>;
   readonly availability?: (tenantSlug: string, query: AvailabilityQuery) => Promise<AvailabilityResponse>;
   readonly log?: (event: string, detail: Record<string, unknown>) => void;
+}
+
+/** Le jour civil d'un instant, dans le fuseau du salon (AAAA-MM-JJ). */
+function dayOf(instant: string, timeZone: string): string {
+  return new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(
+    new Date(instant),
+  );
 }
 
 function normalize(text: string): string {
@@ -101,7 +110,7 @@ export function reservationSpecialist(deps: ReservationDeps): Specialist {
 
         slotsTool('disponibilite.creneaux', session, byId, loadAvailability),
 
-        registryTool('reservation.ouvrir_tunnel', async ({ prestation, praticien, jour, plage }) => {
+        registryTool('reservation.ouvrir_tunnel', async ({ prestation, praticien, jour, plage, creneau }) => {
           if (prestation !== undefined && !byId.has(prestation)) {
             return { kind: 'resultat', contenu: 'Prestation inconnue : cherche-la dans le catalogue.', erreur: true };
           }
@@ -111,6 +120,37 @@ export function reservationSpecialist(deps: ReservationDeps): Specialist {
           if (praticien !== undefined) params.set(BOOKING_QUERY_KEYS.staff, praticien);
           if (jour !== undefined) params.set(SLOT_VIEW_KEYS.day, jour);
           if (plage !== undefined) params.set(SLOT_VIEW_KEYS.dayPart, plage);
+
+          // Un horaire précis : il doit être **libre aujourd'hui**, lu à l'API, et non
+          // celui qu'un tour précédent a pu citer. Le tunnel s'ouvre alors à l'étape
+          // suivante ; le consentement et la confirmation restent à la personne.
+          if (creneau !== undefined) {
+            if (prestation === undefined) {
+              return { kind: 'resultat', contenu: 'Un horaire demande une prestation : choisis-la d’abord.', erreur: true };
+            }
+            const day = dayOf(creneau, session.tenant.timezone);
+            const response = await loadAvailability(slug, {
+              serviceId: prestation,
+              ...(praticien === undefined ? {} : { staffId: praticien }),
+              from: day,
+              to: day,
+            });
+            const wanted = Date.parse(creneau);
+            const slot = response.days
+              .flatMap((entry) => entry.slots)
+              .find((candidate) => Date.parse(candidate.startsAt) === wanted);
+            if (slot === undefined) {
+              return {
+                kind: 'resultat',
+                contenu: 'Cet horaire n’est pas libre : relis les créneaux avec disponibilite_creneaux et propose-en un autre.',
+                erreur: true,
+              };
+            }
+            params.set(BOOKING_QUERY_KEYS.step, 'coordonnees');
+            params.set(BOOKING_QUERY_KEYS.staff, slot.staffId);
+            params.set(BOOKING_QUERY_KEYS.slot, slot.startsAt);
+            params.set(SLOT_VIEW_KEYS.day, day);
+          }
           const chemin = `/${slug}/reservation?${params.toString()}`;
           navigations.splice(0, navigations.length, { outil: 'naviguer', arguments: { chemin } });
           return { kind: 'resultat', contenu: 'Le tunnel de réservation s’ouvrira, filtré, avec ta réponse.' };

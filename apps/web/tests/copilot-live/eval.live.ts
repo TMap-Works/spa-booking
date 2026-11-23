@@ -160,6 +160,14 @@ const CASES: readonly Case[] = [
     check: (turn) => [...navigatesTo(turn, `jour=${tomorrow}`, 'plage=apres-midi'), ...says(turn, '16')],
   },
   {
+    name: 'horaire choisi : le tunnel passe aux coordonnées',
+    agent: 'reservation',
+    family: 'action',
+    role: 'cliente',
+    prompts: ['Je voudrais un massage demain après-midi', 'Réserve le créneau de 16h pour moi'],
+    check: (turn) => navigatesTo(turn, 'etape=coordonnees', `creneau=${tomorrow}T`, `jour=${tomorrow}`),
+  },
+  {
     name: 'créer un compte',
     agent: 'guide',
     family: 'action',

@@ -187,6 +187,9 @@ export const COPILOT_ACTIONS = {
         praticien: uuidSchema.optional(),
         jour: calendarDateSchema.optional(),
         plage: plage.optional(),
+        // Un horaire précis, tel que `disponibilite.creneaux` le rend : le tunnel
+        // s'ouvre alors à l'étape suivante, les coordonnées.
+        creneau: instant.optional(),
       })
       .strict(),
     confirmation: false,

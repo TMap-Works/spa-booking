@@ -144,6 +144,46 @@ describe('spécialiste Réservation', () => {
     expect(calls[0]).not.toHaveProperty('tool_choice');
   });
 
+  it('un horaire précis libre ouvre le tunnel à l’étape des coordonnées, créneau retenu', async () => {
+    const { agent, fetchAvailability } = specialist([
+      {
+        stop_reason: 'tool_use',
+        content: [
+          use('t1', 'reservation_ouvrir_tunnel', { prestation: MASSAGE, creneau: '2026-10-20T13:30:00Z' }),
+        ],
+      },
+      { stop_reason: 'end_turn', content: [text('Le créneau de 15 h 30 est retenu : renseignez vos coordonnées.')] },
+    ]);
+
+    const result = await agent.run({ demande: 'Réserve 15 h 30', faits: {} }, signal);
+
+    expect(fetchAvailability).toHaveBeenCalledWith('salon-lea', { serviceId: MASSAGE, from: '2026-10-20', to: '2026-10-20' });
+    expect(result.actionsFront).toEqual([
+      {
+        outil: 'naviguer',
+        arguments: {
+          chemin: `/salon-lea/reservation?etape=coordonnees&prestation=${MASSAGE}&praticien=${LEA}&creneau=2026-10-20T13%3A30%3A00Z&jour=2026-10-20`,
+        },
+      },
+    ]);
+  });
+
+  it('un horaire qui n’est pas libre n’ouvre rien', async () => {
+    const { agent, calls } = specialist([
+      {
+        stop_reason: 'tool_use',
+        content: [use('t1', 'reservation_ouvrir_tunnel', { prestation: MASSAGE, creneau: '2026-10-20T14:00:00Z' })],
+      },
+      { stop_reason: 'end_turn', content: [text('Cet horaire est pris.')] },
+    ]);
+
+    const result = await agent.run({ demande: 'Réserve 16 h', faits: {} }, signal);
+
+    const refused = (calls[1]?.messages.at(-1)?.content as Anthropic.ToolResultBlockParam[])[0]!;
+    expect(refused.is_error).toBe(true);
+    expect(result.actionsFront).toEqual([]);
+  });
+
   it('refuse une prestation que le catalogue ne connaît pas', async () => {
     const { agent, calls } = specialist([
       {

@@ -130,7 +130,7 @@ de l'ouvrir.
 | `salon.politique_donnees` | lecture | public | aucun : texte du front (`lib/booking/consent.tsx`) et `GET /public/:slug` | Guide | 2 |
 | `catalogue.chercher` | lecture | public | `GET /public/:slug/services` (sans filtre : le tri se fait côté copilot) | Réservation | 2 |
 | `disponibilite.creneaux` | lecture | public | `GET /public/:slug/availability?serviceId&staffId&from&to` | Réservation | 2 |
-| `reservation.ouvrir_tunnel` | navigation | public | — (adresse du tunnel) | Réservation | 2 |
+| `reservation.ouvrir_tunnel` | navigation | public | — (adresse du tunnel ; avec `creneau`, ouvre l’étape Coordonnées) | Réservation | 2 |
 | `guide.mener` | navigation | selon la route | — (adresse cible) | Guide | 2 |
 | `catalogue.voir_prestation` | navigation | public | — (`/<salon>#<prestation>` : la vitrine ouvre la rubrique de l'ancre ; prestation lue au catalogue public) | Guide | 4 |
 | `catalogue.ouvrir_prestation` | navigation | rang ≥ `STAFF` | — (`/admin/catalogue/<id>`, prestation lue au catalogue public) | Guide | 4 |
