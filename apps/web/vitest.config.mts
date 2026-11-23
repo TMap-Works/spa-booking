@@ -45,6 +45,9 @@ export default defineConfig({
     // ticket. Trente secondes laissent respirer un worker affamé sans masquer
     // une vraie lenteur — une suite de composants correcte tient en dizaines de
     // millisecondes, pas en secondes.
+    // CopilotKit importe sa feuille de style depuis son propre code : sans passer
+    // par Vite, Node refuse « .css » (test du chat, `chat-rechargement`).
+    server: { deps: { inline: [/@copilotkit\//] } },
     testTimeout: 30_000,
     hookTimeout: 30_000,
   },
