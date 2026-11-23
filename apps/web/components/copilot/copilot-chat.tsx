@@ -220,9 +220,9 @@ function Chat({ runtimeUrl, tenantSlug, variant }: CopilotChatProps) {
   return (
     <div className={`spa-copilot spa-copilot--${variant}`}>
       {variant === 'panneau' ? (
-        <CopilotSidebar labels={labels} welcomeScreen={welcomeScreen} threadId={conversation.threadId} />
+        <CopilotSidebar labels={labels} welcomeScreen={welcomeScreen} />
       ) : (
-        <CopilotPopup labels={labels} welcomeScreen={welcomeScreen} threadId={conversation.threadId} />
+        <CopilotPopup labels={labels} welcomeScreen={welcomeScreen} />
       )}
     </div>
   );
@@ -238,11 +238,16 @@ function useRememberedConversation(
   variant: string,
   sujet: MutableRefObject<string>,
 ) {
-  // L'agent partagé du chat : la bulle ou le panneau lui pose le fil (`threadId`).
+  // L'agent partagé du chat, celui que la bulle ou le panneau affiche.
   const { agent } = useAgent();
 
   useEffect(() => {
     if (conversation === null) return;
+    // Le fil est posé ici, sur l'agent, et **pas** passé au composant : avec un fil
+    // explicite, CopilotKit se « reconnecte » à chaque montage, demande l'historique
+    // au serveur et efface les messages affichés. Le serveur retrouve le même fil
+    // par l'identifiant, et l'écran par la mémoire ci-dessous.
+    agent.threadId = conversation.threadId;
     // Rend à l'agent la **dernière** conversation gardée, relue à chaque fois : CopilotKit
     // peut remplacer son agent en cours de route (le serveur répond après coup), et celui
     // qui arrive est vide. Ce que le premier chargement avait lu serait alors périmé.
