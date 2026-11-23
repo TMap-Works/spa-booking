@@ -150,10 +150,17 @@ function Chat({ runtimeUrl, tenantSlug, variant }: CopilotChatProps) {
         // Le curseur fantôme montre d'abord le lien qui y mène (P4-03).
         await pointTo(chemin);
         const target = new URL(chemin, window.location.origin);
-        // Même page, autre filtre : le tunnel lit son adresse au montage, un
-        // rechargement est donc ce qui la lui fait relire.
-        if (target.pathname === window.location.pathname) window.location.assign(chemin);
-        else router.push(chemin);
+        if (target.pathname !== window.location.pathname) router.push(chemin);
+        else if (target.pathname === `/${tenantSlug}/reservation`) {
+          // Le tunnel relit son adresse au geste retour (`popstate`) : on la change
+          // comme le ferait un clic, sans recharger — le chat et la saisie restent là.
+          window.history.pushState(null, '', chemin);
+          window.dispatchEvent(new PopStateEvent('popstate'));
+        } else {
+          // Même page, autre filtre : ces écrans lisent leur adresse au montage ou
+          // sur le serveur ; un rechargement est ce qui la leur fait relire.
+          window.location.assign(chemin);
+        }
         return 'Navigation faite.';
       },
     },
