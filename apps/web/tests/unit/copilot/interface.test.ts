@@ -155,3 +155,44 @@ describe('describePage — la page et ses filtres', () => {
     expect(describePage('/salon-lea', new URLSearchParams())).toBe('/salon-lea');
   });
 });
+
+describe('chemins du runtime : liste blanche', () => {
+  const visitor = {
+    session: {
+      surface: 'visiteur',
+      role: null,
+      permissions: [],
+      tenant: { slug: 'salon-lea', timezone: 'Europe/Paris', currency: 'EUR' },
+      locale: 'fr',
+    },
+    accessToken: null,
+    notice: null,
+    subject: null,
+    tenant: {},
+  } as unknown as ResolvedCopilotSession;
+  const call = async (method: string, path: string) => {
+    vi.stubEnv('ANTHROPIC_API_KEY', 'k');
+    vi.stubEnv('NODE_ENV', 'development');
+    sessionMock.resolveCopilotSession.mockResolvedValue(visitor);
+    return copilotRoute('public')(new Request(`http://x${copilotBasePath('public', 'salon-lea')}${path}`, { method }), {
+      params: Promise.resolve({ tenantSlug: 'salon-lea' }),
+    });
+  };
+
+  it("ne rejoue aucune conversation du serveur : reconnexion et fils ne sont pas servis", async () => {
+    expect((await call('POST', '/agent/default/connect')).status).toBe(404);
+    expect((await call('GET', '/threads/615a2ca6-8b7a-4a4d-9c44-62642381a4ae')).status).toBe(404);
+    expect((await call('GET', '/threads/615a2ca6-8b7a-4a4d-9c44-62642381a4ae/messages')).status).toBe(404);
+    expect((await call('GET', '/agent/default/capabilities')).status).toBe(404);
+  });
+
+  it("rend une liste de fils toujours vide", async () => {
+    const response = await call('GET', '/threads');
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ threads: [], nextCursor: null });
+  });
+
+  it('laisse passer la découverte du runtime', async () => {
+    expect((await call('GET', '/info')).status).toBe(200);
+  });
+});

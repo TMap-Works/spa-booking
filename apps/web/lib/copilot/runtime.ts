@@ -220,6 +220,21 @@ export function copilotRoute(
       return Response.json(outcome);
     }
 
+    // Liste blanche des chemins du runtime. Le runtime de CopilotKit expose aussi
+    // `/threads` et `/agent/…/connect` : ils rejouent, pour **tout appelant, sans
+    // session et d'un salon à l'autre**, les conversations gardées en mémoire du
+    // processus. Rien de cela n'est servi : l'historique est rangé par salon et par
+    // personne (`transcript-store`), jamais ouvert par un identifiant de fil.
+    const sub = url.pathname.slice(basePath.length);
+    const allowed =
+      (request.method === 'GET' && sub === '/info') ||
+      (request.method === 'POST' && (sub === '/agent/default/run' || /^\/agent\/default\/stop\/[\w-]{1,64}$/u.test(sub)));
+    if (!allowed) {
+      // La liste des fils, que le chat demande au montage : vide, jamais celle du serveur.
+      if (request.method === 'GET' && sub === '/threads') return Response.json({ threads: [], nextCursor: null });
+      return new Response(null, { status: 404 });
+    }
+
     if (isAgentRun(request, basePath)) {
       const verdict = await checkQuotas(counterStore(), { tenantSlug, subject: resolved.subject, request });
       if (!verdict.ok) {
