@@ -118,6 +118,9 @@ export const COPILOT_GUIDE_ROUTES = {
   coordonnees: { chemin: '/compte/coordonnees', exige: 'client' },
   mes_rendez_vous: { chemin: '/compte', exige: 'client' },
   historique: { chemin: '/compte/historique', exige: 'client' },
+  // Le praticien y voit ses clients, la gérance tout le fichier : la page borne elle-même.
+  clients: { chemin: '/admin/clients', exige: 'personnel' },
+  mon_planning: { chemin: '/admin/mon-planning', exige: 'agenda:read:own' },
   catalogue: { chemin: '/admin/catalogue', exige: 'personnel' },
   catalogue_rubriques: { chemin: '/admin/catalogue/rubriques', exige: 'personnel' },
   catalogue_apercu: { chemin: '/admin/catalogue/apercu', exige: 'personnel' },
