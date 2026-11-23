@@ -18,6 +18,7 @@ export function CopilotMount({ space, tenantSlug }: { readonly space: CopilotSpa
       runtimeUrl={copilotBasePath(space, tenantSlug)}
       tenantSlug={tenantSlug}
       variant={space === 'admin' ? 'panneau' : 'bulle'}
+      {...(space === 'public' ? { compteRuntimeUrl: copilotBasePath('compte', tenantSlug) } : {})}
     />
   );
 }

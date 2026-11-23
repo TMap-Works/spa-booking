@@ -46,12 +46,49 @@ export interface CopilotChatProps {
   readonly runtimeUrl: string;
   readonly tenantSlug: string;
   readonly variant: 'panneau' | 'bulle';
+  /**
+   * Sur les pages publiques seulement : la route de l'espace client. Le cookie de
+   * session n'est envoyé qu'aux adresses `/compte` et `/admin`, donc la route
+   * publique ne reconnaît jamais personne. Le chat demande d'abord à celle du
+   * compte qui parle ; si c'est une cliente connectée, toute la conversation passe
+   * par cette route, et le serveur lit alors son vrai cookie.
+   */
+  readonly compteRuntimeUrl?: string;
+}
+
+/** Une cliente connectée : la route du compte rend l'empreinte de son compte, jamais `visiteur`. */
+export async function sondeSession(compteRuntimeUrl: string, signal: AbortSignal): Promise<boolean> {
+  try {
+    const response = await fetch(`${compteRuntimeUrl}/suggestions?page=%2F`, { signal, credentials: 'same-origin' });
+    if (!response.ok) return false;
+    const body = (await response.json()) as { sujet?: unknown };
+    return typeof body.sujet === 'string' && body.sujet !== 'visiteur' && body.sujet !== 'inconnu';
+  } catch {
+    return false;
+  }
 }
 
 export default function CopilotChat(props: CopilotChatProps) {
+  const { compteRuntimeUrl } = props;
+  // `null` tant que la sonde n'a pas répondu : le chat ne se monte qu'une fois la route connue.
+  const [runtimeUrl, setRuntimeUrl] = useState<string | null>(compteRuntimeUrl === undefined ? props.runtimeUrl : null);
+
+  useEffect(() => {
+    if (compteRuntimeUrl === undefined) {
+      setRuntimeUrl(props.runtimeUrl);
+      return;
+    }
+    const controller = new AbortController();
+    void sondeSession(compteRuntimeUrl, controller.signal).then((connectee) => {
+      if (!controller.signal.aborted) setRuntimeUrl(connectee ? compteRuntimeUrl : props.runtimeUrl);
+    });
+    return () => controller.abort();
+  }, [compteRuntimeUrl, props.runtimeUrl]);
+
+  if (runtimeUrl === null) return null;
   return (
-    <CopilotKitProvider runtimeUrl={props.runtimeUrl}>
-      <Chat {...props} />
+    <CopilotKitProvider key={runtimeUrl} runtimeUrl={runtimeUrl}>
+      <Chat {...props} runtimeUrl={runtimeUrl} />
     </CopilotKitProvider>
   );
 }
