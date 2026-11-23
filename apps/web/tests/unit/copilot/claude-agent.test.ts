@@ -3,7 +3,7 @@ import type Anthropic from '@anthropic-ai/sdk';
 import { firstValueFrom, toArray } from 'rxjs';
 import { describe, expect, it, vi } from 'vitest';
 
-import { ClaudeAgent, MAX_ROUNDS, type ClaudeAgentOptions, type ServerTool } from '@/lib/copilot/claude-agent';
+import { appendNewMessages, ClaudeAgent, MAX_ROUNDS, type ClaudeAgentOptions, type ServerTool } from '@/lib/copilot/claude-agent';
 import { MemoryTranscriptStore } from '@/lib/copilot/transcript-store';
 
 /**
@@ -364,5 +364,27 @@ describe('ClaudeAgent — bornes', () => {
     expect(calls).toHaveLength(1);
     const texts = events.filter((e) => e.type === EventType.TEXT_MESSAGE_CONTENT) as unknown as { delta: string }[];
     expect(texts.map((e) => e.delta)).toEqual(['Conversation trop longue.']);
+  });
+});
+
+describe('appendNewMessages — historique reconstruit', () => {
+  it("ne rejoue pas un appel de navigation du serveur : Claude refuserait un tool_use sans résultat", () => {
+    const incoming = [
+      { id: 'u1', role: 'user', content: 'Je veux un massage' },
+      {
+        id: 'msg_1',
+        role: 'assistant',
+        content: 'Je vous ouvre la réservation.',
+        toolCalls: [{ id: 'nav-msg_1-0', type: 'function', function: { name: 'naviguer', arguments: '{"chemin":"/salon/reservation"}' } }],
+      },
+      { id: 'nav-msg_1-0-result', role: 'tool', toolCallId: 'nav-msg_1-0', content: 'ok' },
+      { id: 'u2', role: 'user', content: 'Merci' },
+    ] as Message[];
+
+    const { messages } = appendNewMessages({ messages: [], seen: [] }, incoming, null);
+
+    expect(JSON.stringify(messages)).not.toContain('tool_use');
+    expect(JSON.stringify(messages)).not.toContain('nav-msg_1-0');
+    expect(messages.map((message) => message.role)).toEqual(['user', 'assistant', 'user']);
   });
 });

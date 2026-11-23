@@ -428,6 +428,9 @@ export function appendNewMessages(transcript: Transcript, incoming: Message[], p
       const content: Anthropic.ContentBlockParam[] = [];
       if (message.content) content.push({ type: 'text', text: message.content });
       for (const call of message.toolCalls ?? []) {
+        // Une navigation du serveur n'a jamais été un appel de Claude : la
+        // rejouer sans son résultat ferait refuser l'historique (400).
+        if (call.id.startsWith(NAVIGATION_CALL_PREFIX)) continue;
         content.push({ type: 'tool_use', id: call.id, name: call.function.name, input: parseArguments(call.function.arguments) });
       }
       if (content.length > 0) messages.push({ role: 'assistant', content });
