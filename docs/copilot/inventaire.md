@@ -132,6 +132,7 @@ de l'ouvrir.
 | `disponibilite.creneaux` | lecture | public | `GET /public/:slug/availability?serviceId&staffId&from&to` | Réservation | 2 |
 | `reservation.ouvrir_tunnel` | navigation | public | — (adresse du tunnel) | Réservation | 2 |
 | `guide.mener` | navigation | selon la route | — (adresse cible) | Guide | 2 |
+| `catalogue.voir_prestation` | navigation | public | — (`/<salon>#<prestation>` : la vitrine ouvre la rubrique de l'ancre ; prestation lue au catalogue public) | Guide | 4 |
 | `catalogue.ouvrir_prestation` | navigation | rang ≥ `STAFF` | — (`/admin/catalogue/<id>`, prestation lue au catalogue public) | Guide | 4 |
 | `formulaire.remplir` | navigation | public | — (champs du formulaire d'inscription ou de connexion affiché ; jamais le mot de passe, jamais de validation) | Guide | 4 |
 | `personnel.ouvrir_fiche` | navigation | `accounts:read` | — (`/admin/personnel/<id>`, praticien lu au catalogue public) | Guide | 4 |

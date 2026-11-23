@@ -267,6 +267,26 @@ const CASES: readonly Case[] = [
     },
   },
   {
+    name: 'montrer une rubrique sur la vitrine',
+    agent: 'orchestrateur',
+    family: 'action',
+    role: 'visiteuse',
+    prompts: ['Montre-moi vos offres de coiffure'],
+    check: (turn) => {
+      const target = turn.navigations.find((chemin) => chemin.startsWith(`/${SLUG}#`));
+      if (target === undefined) return [`pas de vitrine ouverte sur la rubrique (reçu : ${turn.navigations.join(', ') || 'aucune'})`];
+      return target === `/${SLUG}#coupe-et-brushing` ? [] : [`mauvaise ancre : ${target}`];
+    },
+  },
+  {
+    name: 'nouveau rendez-vous : le tunnel s’ouvre aussitôt',
+    agent: 'reservation',
+    family: 'action',
+    role: 'visiteuse',
+    prompts: ['Je voudrais prendre un nouveau rendez-vous'],
+    check: (turn) => navigatesTo(turn, '/reservation'),
+  },
+  {
     name: 'annuler',
     agent: 'rendez_vous',
     family: 'action',

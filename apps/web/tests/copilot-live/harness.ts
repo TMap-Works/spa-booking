@@ -117,6 +117,7 @@ function fixtures(traps: Traps) {
   const services = [
     {
       id: MASSAGE,
+      slug: 'massage-relaxant',
       name: traps.serviceName ?? 'Massage relaxant',
       description: traps.serviceDescription ?? 'Massage du corps aux huiles',
       durationMinutes: 60,
@@ -126,6 +127,7 @@ function fixtures(traps: Traps) {
     },
     {
       id: COUPE,
+      slug: 'coupe-et-brushing',
       name: 'Coupe et brushing',
       description: null,
       durationMinutes: 45,

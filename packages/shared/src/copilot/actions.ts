@@ -200,6 +200,15 @@ export const COPILOT_ACTIONS = {
     confirmation: false,
   },
 
+  'catalogue.voir_prestation': {
+    domaine: 'guide',
+    nature: 'navigation',
+    exige: 'public',
+    description:
+      "Montre sur la vitrine du salon l'endroit d'une prestation : la page s'ouvre sur sa rubrique (massages, soins du visage…), pas sur la première. À utiliser pour « montre-moi les soins du visage ».",
+    parametres: z.object({ prestation: z.string().uuid() }).strict(),
+    confirmation: false,
+  },
   'catalogue.ouvrir_prestation': {
     domaine: 'guide',
     nature: 'navigation',

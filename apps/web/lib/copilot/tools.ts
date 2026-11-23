@@ -115,6 +115,14 @@ export function ficheTools(
   const catalogue = async () => loadServices(slug).catch(() => [] as PublicService[]);
 
   const tools: ServerTool[] = [];
+  // La vitrine, ouverte sur la rubrique d'une prestation (l'ancre porte son slug) : publique.
+  tools.push(
+    registryTool('catalogue.voir_prestation', async ({ prestation }) => {
+      const service = (await catalogue()).find((candidate) => candidate.id === prestation);
+      if (service === undefined) return { kind: 'resultat', contenu: 'Prestation inconnue de ce salon.', erreur: true };
+      return go(`/${slug}#${service.slug}`, 'de la vitrine, ouverte sur sa rubrique,');
+    }),
+  );
   if (meetsRequirement(session, COPILOT_ACTIONS['catalogue.ouvrir_prestation'].exige)) {
     tools.push(
       registryTool('catalogue.ouvrir_prestation', async ({ prestation }) => {
