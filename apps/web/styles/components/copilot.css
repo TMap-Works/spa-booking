@@ -151,3 +151,13 @@
   outline-offset: 2px;
   border-radius: var(--spa-radius-sm);
 }
+
+/*
+ * Des angles de rectangle, et non de pilule : la zone de saisie (28 px) et les
+ * bulles de message (18 px) reçoivent le plus petit rayon du design system.
+ * Les classes sont celles, utilitaires, de la feuille de CopilotKit.
+ */
+:root [data-copilotkit][data-copilotkit] .cpk\:rounded-\[28px\],
+:root [data-copilotkit][data-copilotkit] .cpk\:rounded-\[18px\] {
+  border-radius: var(--spa-radius-sm);
+}
